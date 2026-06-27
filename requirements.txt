@@ -1,0 +1,6 @@
+# 토마토 따기 로봇 — Python 의존성
+anthropic>=0.40        # Claude 함수콜 오케스트레이션
+opencv-python>=4.10    # 색 기반 열매 검출
+numpy>=1.26            # 영상 배열 처리
+python-dotenv>=1.0     # .env에서 API 키 로드
+pyserial>=3.5          # 젯슨↔Arduino 메카넘 베이스 시리얼 통신

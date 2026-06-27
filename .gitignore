@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 환경 변수 / 비밀
+.env
+
+# OS / 에디터
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 캡처/로그 산출물
+captures/
+*.log
+
+# 로컬 스크래치 (머신 전용 / 임시)
+autoy4_send.txt
+mon.ps1
