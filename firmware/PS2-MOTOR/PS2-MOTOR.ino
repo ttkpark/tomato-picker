@@ -1,6 +1,5 @@
 #include <PS2X_lib.h>  //for MOEBIUS
 #include "FaBoPWM_PCA9685.h"
-#include <avr/wdt.h>   // 워치독: 루프가 행되면 자동 리셋 → 모터 폭주 방지
 
 //#include "servo.hpp"
 
@@ -57,7 +56,7 @@ void (* resetFunc) (void) = 0;
 #define MAX_PWM   2000
 #define MIN_PWM   300
 
-int Motor_PWM = 600;   // 속도 30% (최대 스케일 2000 기준). 전류↓ → brownout/행 완화.
+int Motor_PWM = 2000;  // 속도 100% (최대 스케일 2000 기준). 전력 측정용 — brownout 가능성 주의.
 
 //    ↑A-----B↑
 //     |  ↑  |
@@ -125,7 +124,6 @@ void IO_init()
 
 void setup()
 {
-  wdt_disable();   // 워치독 리셋 직후 부팅루프 방지(부팅 시 즉시 해제)
   IO_init();
   Serial.begin(115200);   // 젯슨 mirror_toggle.py(115200)와 맞춤
   if(faboPWM.begin())
@@ -153,9 +151,6 @@ void setup()
 
   type = ps2x.readType();
   Serial.print("Controller_type: "); Serial.println(type);
-
-  wdt_enable(WDTO_250MS);   // 루프가 ~0.25초 이상 멈추면 자동 리셋(→setup의 STOP). 폭주 최소화.
-  // 주: 120ms는 PS2X 재동기화 지연으로 오리셋 발생 → 250ms가 안정+짧은 폭주컷의 절충.
 }
 
 // 손상프레임 판정용 전체 버튼 목록 (핀13 노이즈 대응)
@@ -167,33 +162,34 @@ const uint16_t ALLB[] = {
 
 void loop()
 {
-  wdt_reset();   // 루프 정상 동작 중 — 워치독 타이머 리셋
-
   // 아직 컨트롤러 미인식이면 재부팅 없이 조용히 재시도(노이즈로 한 번 실패해도 버팀).
   if (error != 0) {
     STOP();                 // 미인식 상태에선 모터 정지 보장
-    wdt_reset();
     error = ps2x.config_gamepad(PS2_CLK, PS2_CMD, PS2_SEL, PS2_DAT, pressures, rumble);
-    wdt_reset();
     if (error == 0) type = ps2x.readType();
-    delay(50);     // 120ms 워치독 미만 (컨트롤러 미인식 시 모터는 STOP 상태라 안전)
-    wdt_reset();
+    delay(50);
     return;
   }
   if (type == 2) return;        // Guitar Hero 무시
 
   ps2x.read_gamepad(false, vibrate);
 
-  // 손상프레임 가드(핀13 DAT 노이즈): 아날로그 4축이 모두 255거나 모두 0,
-  // 또는 버튼이 7개 이상 동시에 눌림으로 나오면 손상 프레임 → 모터 상태 유지하고 스킵.
-  // (이게 "가끔 멈춤"의 원인 — 손상 프레임에서 방향키가 '뗌'으로 잘못 읽혀 STOP되던 것)
-  int lx = ps2x.Analog(PSS_LX), ly = ps2x.Analog(PSS_LY);
-  int rx = ps2x.Analog(PSS_RX), ry = ps2x.Analog(PSS_RY);
-  bool extreme = (lx == 255 && ly == 255 && rx == 255 && ry == 255) ||
-                 (lx == 0   && ly == 0   && rx == 0   && ry == 0);
+  // 손상프레임 가드(핀13 DAT 노이즈): 버튼이 7개 이상 동시에 눌림으로 나오면 손상 프레임 → 스킵.
+  // 주의: 아날로그 4축이 모두 255/0인지로 판정하면 안 된다 — 컨트롤러가 "디지털 모드"
+  // (아날로그 LED 꺼짐)일 땐 정상 상태에서도 4축이 항상 0xFF(255)라서 매 프레임이
+  // 오탐되어 버튼 입력이 전혀 처리되지 않는다(ps2_toggle.ino에서 확인된 이슈).
   uint8_t nb = 0;
   for (uint8_t i = 0; i < 16; i++) if (ps2x.Button(ALLB[i])) nb++;
-  if (extreme || nb >= 7) { delay(20); return; }
+  static uint8_t corruptStreak = 0;
+  if (nb >= 7) {
+    // 손상 프레임이 잠깐이면 마지막 상태 유지(단발 노이즈 무시), 하지만
+    // 연속으로 계속되면(신호 끊김 등) 마지막 명령이 영원히 래치되어 폭주할 수 있으므로
+    // 안전하게 강제 정지한다.
+    if (++corruptStreak >= 5) STOP();
+    delay(20);
+    return;
+  }
+  corruptStreak = 0;
 
   // L1 -> 젯슨 미러링 토글: 뗐다 다시 누르는 순간 1회 "TOGGLE" 전송.
   // (mirror_toggle.py가 받아 리더->팔로워 미러링 ON/OFF. L1은 주행에 안 쓰임.)
