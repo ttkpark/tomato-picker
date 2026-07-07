@@ -26,7 +26,7 @@ from src.tomato_picker.skills import TomatoPicker
 
 def build_robot() -> TomatoPicker:
     """하드웨어를 조립한 로봇을 만든다. 실제 장비 교체 지점."""
-    from src.tomato_picker.config import USE_REAL_BASE
+    from src.tomato_picker.config import USE_REAL_ARM, USE_REAL_BASE, USE_REAL_CAMERA
 
     if USE_REAL_BASE:
         # 실물 메카넘 베이스(젯슨↔Arduino 시리얼). pyserial 필요.
@@ -35,9 +35,24 @@ def build_robot() -> TomatoPicker:
         base = JetsonBase()
     else:
         base = MockBase()
-    arm = MockArm()  # 집게(Follower) 팔 — 준비되면 실물 RobotArm으로 교체.
-    # MockCamera는 base.position만 읽으므로 Mock/Jetson 어느 베이스든 동작한다.
-    camera = MockCamera(base)
+
+    if USE_REAL_ARM:
+        # 실물 SO-101 Follower(프리셋 재생). lerobot 필요, 젯슨 전용.
+        from src.tomato_picker.hardware.arm import LerobotArm
+
+        arm = LerobotArm()
+    else:
+        arm = MockArm()
+
+    if USE_REAL_CAMERA:
+        # 베이스 전면 고정 USB 카메라(MJPG). 젯슨 전용.
+        from src.tomato_picker.hardware.camera import JetsonCamera
+
+        camera = JetsonCamera()
+    else:
+        # MockCamera는 base.position만 읽으므로 Mock/Jetson 어느 베이스든 동작한다.
+        camera = MockCamera(base)
+
     return TomatoPicker(base=base, arm=arm, camera=camera)
 
 

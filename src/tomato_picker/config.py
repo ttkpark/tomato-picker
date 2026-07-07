@@ -26,6 +26,36 @@ BASE_SERIAL_BAUD = 115200
 # 처음엔 대략값, 실측 후 교정한다. TREES 단위(cm)와 맞춘다.
 BASE_TICKS_PER_CM = 20.0
 
+# --- 카메라(USB, 베이스 전면 고정) ---
+# True면 main.build_robot()이 MockCamera 대신 JetsonCamera(실물)를 쓴다.
+USE_REAL_CAMERA = False
+CAMERA_INDEX = 0  # /dev/video0
+CAMERA_WIDTH = 1280
+CAMERA_HEIGHT = 720
+# MJPG가 아니면(기본 YUYV) 5fps로 떨어지는 카메라라 반드시 MJPG로 연다.
+CAMERA_FOURCC = "MJPG"
+# 자동노출이 안정되기 전 프레임은 어둡고 파랗게 나와 버린다.
+CAMERA_WARMUP_FRAMES = 20
+# 부착/낙과 판정 기준선: 이 y좌표(px) 아래는 "바닥"으로 본다.
+# 베이스에 카메라를 고정한 뒤 실측해 교정한다.
+CAMERA_GROUND_LINE_Y = 600
+
+# --- 로봇팔(SO-101 Follower, 프리셋 재생) ---
+# True면 main.build_robot()이 MockArm 대신 LerobotArm(실물)을 쓴다.
+USE_REAL_ARM = False
+ARM_SERIAL_PORT = "/dev/ttyACM0"
+ARM_ID = "tomato_follower"
+# controller_drive.py가 쓰는 것과 같은 프리셋 파일(PS2 컨트롤러로 저장).
+ARM_PRESET_FILE = "~/arm_presets.json"
+# 프리셋 1→2→3→4 = 접근→집기→들기→놓기(2026-06-27 확인된 전체 수확 시퀀스).
+# pick_fruit()가 1,2(접근+집기)를, place_in_basket()이 3,4(들기+놓기)를 재생한다.
+# ⚠ 추정 매핑 — 실기 테스트 후 다르면 여기 숫자만 바꾸면 된다.
+ARM_PICK_PRESETS = [1, 2]
+ARM_PLACE_PRESETS = [3, 4]
+ARM_HOME_PRESET = 1
+ARM_MOVE_SECS = 1.5
+ARM_MOVE_FPS = 50
+
 # --- 무대 구성 ---
 # 나무 모형 3개 일렬. id → 베이스가 직선 이동할 목표 거리(cm 등 임의 단위).
 TREES: dict[int, float] = {
