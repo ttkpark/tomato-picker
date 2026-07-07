@@ -2,6 +2,7 @@
 
   python main.py demo                      # 오프라인 자동 수확 시퀀스 (망/키 불필요)
   python main.py run "익은 토마토 다 따줘"   # Claude 오케스트레이션 (ANTHROPIC_API_KEY 필요)
+  python main.py voice                     # 음성 명령("팔 움직여") + 실시간 인식 로그(젯슨 전용)
 
 현재는 Mock 하드웨어로 동작한다. 실제 장비가 준비되면 build_robot()에서
 하드웨어 구현만 교체하면 된다.
@@ -63,7 +64,14 @@ def main() -> int:
     sub.add_parser("demo", help="오프라인 자동 수확 시퀀스")
     run_p = sub.add_parser("run", help="Claude 자연어 명령 실행")
     run_p.add_argument("command", help='예: "익은 토마토 다 따줘"')
+    sub.add_parser("voice", help='음성 명령("팔 움직여") + 실시간 인식 로그')
     args = parser.parse_args()
+
+    if args.mode == "voice":
+        from src.tomato_picker.voice_mode import run_voice
+
+        run_voice()
+        return 0
 
     robot = build_robot()
 

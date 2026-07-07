@@ -61,6 +61,10 @@ class LerobotArm(RobotArm):
     def home(self) -> None:
         self._play_preset(ARM_HOME_PRESET)
 
+    def demo_move(self) -> None:
+        """음성 명령 트리거용 — 검증된 전체 시퀀스(1→2→3→4) 재생."""
+        self._play_sequence(ARM_PICK_PRESETS + ARM_PLACE_PRESETS)
+
     def close(self) -> None:
         self._follower.bus.disable_torque()
         self._follower.disconnect()

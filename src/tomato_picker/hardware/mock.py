@@ -42,6 +42,10 @@ class MockArm(RobotArm):
         _log("팔: 홈 포지션 복귀")
         time.sleep(0.2)
 
+    def demo_move(self) -> None:
+        _log("팔: 데모 동작(음성 트리거)")
+        time.sleep(0.3)
+
 
 class MockCamera(Camera):
     """현재 베이스 위치에 따라 무대 한 나무를 합성해 보여준다."""

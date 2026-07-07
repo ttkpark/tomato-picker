@@ -26,7 +26,7 @@ BASE_SERIAL_BAUD = 115200
 # 처음엔 대략값, 실측 후 교정한다. TREES 단위(cm)와 맞춘다.
 BASE_TICKS_PER_CM = 20.0
 
-# --- 카메라(USB, 베이스 전면 고정) ---
+# --- 카메라(USB, 지면 고정 스탠드 — 베이스에 안 붙어있어 위치 불변) ---
 # True면 main.build_robot()이 MockCamera 대신 JetsonCamera(실물)를 쓴다.
 USE_REAL_CAMERA = False
 CAMERA_INDEX = 0  # /dev/video0
@@ -37,7 +37,7 @@ CAMERA_FOURCC = "MJPG"
 # 자동노출이 안정되기 전 프레임은 어둡고 파랗게 나와 버린다.
 CAMERA_WARMUP_FRAMES = 20
 # 부착/낙과 판정 기준선: 이 y좌표(px) 아래는 "바닥"으로 본다.
-# 베이스에 카메라를 고정한 뒤 실측해 교정한다.
+# 카메라가 지면에 고정돼 위치가 안 변하므로 한 번만 실측해 교정하면 된다.
 CAMERA_GROUND_LINE_Y = 600
 
 # --- 로봇팔(SO-101 Follower, 프리셋 재생) ---
@@ -55,6 +55,37 @@ ARM_PLACE_PRESETS = [3, 4]
 ARM_HOME_PRESET = 1
 ARM_MOVE_SECS = 1.5
 ARM_MOVE_FPS = 50
+
+# --- 음성 명령 (온디바이스 STT, Jetson 단독 추론) ---
+# 카메라 내장 마이크(2ce5:c672, arecord -l 기준 card 2). 재부팅 후 카드 번호가
+# 바뀌면 `arecord -l`로 다시 확인.
+MIC_ALSA_DEVICE = "plughw:2,0"
+MIC_SAMPLE_RATE = 16000
+
+# 에너지 기반 발화 구간 검출(VAD). 조용한 방 기준 대략값 — 소음 있으면
+# VOICE_LOG_HTTP_PORT 페이지에서 rms 로그 보며 재조정.
+VAD_RMS_THRESHOLD = 500.0
+VAD_MIN_SPEECH_SEC = 0.3   # 이보다 짧은 소리는 잡음으로 버림
+VAD_SILENCE_HANGOVER_SEC = 0.6  # 발화 끝난 뒤 이만큼 조용하면 구간 종료
+VAD_MAX_UTTERANCE_SEC = 8.0     # 한 발화 최대 길이(안전장치)
+
+# Whisper STT. 이 젯슨의 ctranslate2(aarch64) 빌드는 CUDA를 못 잡아
+# CPU(int8)로만 돈다 — tiny가 2초 발화 기준 추론 ~8초로 그나마 쓸만하다.
+WHISPER_MODEL_SIZE = "tiny"
+WHISPER_DEVICE = "cpu"
+WHISPER_COMPUTE_TYPE = "int8"
+WHISPER_LANGUAGE = "ko"
+
+# 인식된 텍스트에 이 키워드 중 하나라도 포함되면 해당 인텐트로 매칭.
+# 순서 무관, 부분 문자열 매칭(짧은 발화라 오검출보다 미검출이 더 걱정이라 느슨하게).
+VOICE_INTENTS: dict[str, list[str]] = {
+    "arm_move": ["팔 움직여", "팔 움직여줘", "팔움직여", "움직여줘", "팔 이동", "팔 이동해"],
+}
+
+# 실시간 인식 로그를 브라우저로 보는 내장 HTTP(SSE) 서버.
+# 사용법: 젯슨에서 voice 실행 후 PC 브라우저로 http://192.168.0.8:<포트>
+VOICE_LOG_HTTP_PORT = 8090
+VOICE_LOG_HISTORY = 200  # 새로고침 시 보여줄 과거 로그 줄 수
 
 # --- 무대 구성 ---
 # 나무 모형 3개 일렬. id → 베이스가 직선 이동할 목표 거리(cm 등 임의 단위).

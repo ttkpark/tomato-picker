@@ -34,6 +34,10 @@ class RobotArm(ABC):
     def home(self) -> None:
         """홈 포지션으로 복귀."""
 
+    @abstractmethod
+    def demo_move(self) -> None:
+        """음성 명령("팔 움직여") 등으로 트리거하는 전체 시연 동작."""
+
 
 class Camera(ABC):
     """전면/손목 카메라 — 한 프레임을 BGR ndarray로 반환."""
