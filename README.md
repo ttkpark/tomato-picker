@@ -25,8 +25,11 @@ src/tomato_picker/
     ├── color_detect.py         HSV 색검출 (빨강=익음/초록=미익음)
     └── claude_vision.py        Claude 비전 보조
 
-firmware/                       아두이노 펌웨어 (메카넘 주행 + 팔 보조) → firmware/README.md
-tools/mirror_toggle.py          젯슨: SO-101 미러링 + 모션 프리셋 (PS2 패드 연동)
+firmware/mecanum_stable/        ✅ 현재 주행 펌웨어 (젯슨 시리얼 V/S 프로토콜, 데드맨+워치독) → firmware/README.md
+tools/controller_drive.py       젯슨: 게임패드(evdev)→메카넘 주행 + 팔 프리셋. systemd 부팅 자동실행
+tools/mirror_toggle.py          젯슨: SO-101 미러링 + 모션 프리셋 (PS2/키보드 연동, 리더 필요)
+deploy/controller-drive.service systemd 유닛 (controller_drive 부팅 자동실행)
+docs/jetson-gamepad-setup.md    젯슨 셋업: hid-nintendo 빌드·권한·서비스·조작·알려진 이슈
 ```
 
 핵심: 스킬 함수 5종(`drive_to_tree` · `scan_tree` · `pick_fruit` ·
