@@ -7,11 +7,14 @@ config.VAD_RMS_THRESHOLD만 조정하면 된다.
 
 from __future__ import annotations
 
+from collections import deque
+
 import numpy as np
 
 from ..config import (
     VAD_MAX_UTTERANCE_SEC,
     VAD_MIN_SPEECH_SEC,
+    VAD_PRE_ROLL_SEC,
     VAD_RMS_THRESHOLD,
     VAD_SILENCE_HANGOVER_SEC,
 )
@@ -31,15 +34,22 @@ class SpeechSegmenter:
         min_speech_sec: float = VAD_MIN_SPEECH_SEC,
         silence_hangover_sec: float = VAD_SILENCE_HANGOVER_SEC,
         max_utterance_sec: float = VAD_MAX_UTTERANCE_SEC,
+        pre_roll_sec: float = VAD_PRE_ROLL_SEC,
     ) -> None:
         self._threshold = threshold
         self._min_speech_chunks = max(1, int(min_speech_sec / CHUNK_SECONDS))
         self._silence_hangover_chunks = max(1, int(silence_hangover_sec / CHUNK_SECONDS))
         self._max_chunks = max(1, int(max_utterance_sec / CHUNK_SECONDS))
+        pre_roll_chunks = max(0, int(pre_roll_sec / CHUNK_SECONDS))
 
         self._in_speech = False
         self._buffer: list[np.ndarray] = []
         self._silence_run = 0
+        # 임계값을 넘기 직전 몇 청크를 항상 들고 있다가, 발화 시작 시 앞에
+        # 붙인다 — "팔"처럼 파열음으로 시작하는 단어는 VAD가 트리거되는
+        # 순간 이미 어택 일부가 지나가 있어 초성이 잘리는 경우가 있다
+        # (2026-07-08 실측: "팔"이 "파는"/"잘"/"타는"으로 자주 오인식).
+        self._pre_roll: deque[np.ndarray] = deque(maxlen=pre_roll_chunks) if pre_roll_chunks else deque()
 
     def feed(self, chunk: np.ndarray) -> tuple[np.ndarray | None, float, bool]:
         """chunk 하나 처리.
@@ -53,9 +63,12 @@ class SpeechSegmenter:
         if not self._in_speech:
             if speaking:
                 self._in_speech = True
-                self._buffer = [chunk]
+                self._buffer = list(self._pre_roll) + [chunk]
+                self._pre_roll.clear()
                 self._silence_run = 0
                 started = True
+            else:
+                self._pre_roll.append(chunk)
             return None, level, started
 
         self._buffer.append(chunk)

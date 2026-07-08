@@ -79,6 +79,9 @@ VAD_RMS_THRESHOLD = 3000.0
 VAD_MIN_SPEECH_SEC = 0.3   # 이보다 짧은 소리는 잡음으로 버림
 VAD_SILENCE_HANGOVER_SEC = 0.6  # 발화 끝난 뒤 이만큼 조용하면 구간 종료
 VAD_MAX_UTTERANCE_SEC = 8.0     # 한 발화 최대 길이(안전장치)
+# 발화 시작 직전 이만큼을 항상 앞에 붙인다 — "팔"같은 파열음 초성이
+# 트리거 순간에 잘리는 걸 방지(2026-07-08 실측, vad.py 참고).
+VAD_PRE_ROLL_SEC = 0.2
 
 # Whisper STT. 이 젯슨의 ctranslate2(aarch64) 빌드는 CUDA를 못 잡아
 # CPU(int8)로만 돈다 — tiny가 2초 발화 기준 추론 ~8초로 그나마 쓸만하다.
