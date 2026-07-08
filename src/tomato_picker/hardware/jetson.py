@@ -15,6 +15,15 @@
 않는 코드였다. drive_to()의 거리 기반 이동은 이 펌웨어가 엔코더 피드백을
 안 줘서(오픈루프) 아직 캘리브레이션되지 않았다 — 필요해지면 시간×속도
 근사치로 구현할 것. 지금 당장 쓸 수 있는 건 drive_forward/drive_backward(seconds)뿐.
+
+⚠ **연결을 오래 열어두고 재사용하면 안 된다** — 음성 서비스가 시작 시
+한 번 연결해 계속 재사용하는 방식으로는 실기 테스트에서 명령은 "성공"
+응답이 오는데도 바퀴가 실제로 안 움직이는 현상이 반복 재현됐다(2026-07-08,
+CH340 장시간 연결 안정성 이슈로 추정 — moebius-mecanum-hardware 메모의
+"USB 연결 불안정" 항목과 같은 계열). 반면 매번 새로 연결(DTR 리셋 포함)해서
+쓰고 닫는 방식은 여러 차례 반복해도 한 번도 실패하지 않았다. 그래서
+drive_forward/drive_backward가 매 호출마다 새로 연결한다 — 느리지만(호출당
+~2초 추가) 확실하다.
 """
 
 from __future__ import annotations
@@ -33,14 +42,16 @@ from .base import MobileBase
 
 
 class JetsonBase(MobileBase):
-    """PCA9685 기반 메카넘 베이스 — mecanum_stable.ino의 V/S 속도 프로토콜."""
+    """PCA9685 기반 메카넘 베이스 — mecanum_stable.ino의 V/S 속도 프로토콜.
+
+    호출마다 새로 연결한다(위 모듈 docstring 참고) — 인스턴스 생성 자체는
+    포트를 열지 않으므로 가볍고, 하드웨어가 실제로 없어도 생성자는 안 죽는다.
+    """
 
     def __init__(self, port: str = BASE_SERIAL_PORT, baud: int = BASE_SERIAL_BAUD) -> None:
         self.position = 0.0  # MobileBase 인터페이스 호환용 — 실제 위치추적 없음(오픈루프).
-        # Uno는 USB 연결 시(DTR) 자동 리셋되어 부트로더가 ~1.5-2s 잡아먹는다.
-        self._ser = serial.Serial(port, baud, timeout=1.0)
-        time.sleep(2.0)
-        self._ser.reset_input_buffer()
+        self._port = port
+        self._baud = baud
 
     def drive_to(self, distance: float) -> None:
         raise NotImplementedError(
@@ -49,29 +60,38 @@ class JetsonBase(MobileBase):
         )
 
     def drive_forward(self, seconds: float, speed: int = BASE_DRIVE_SPEED) -> None:
-        """seconds초 동안 전진(vx=+speed)한 뒤 정지(블로킹)."""
+        """seconds초 동안 전진(vx=+speed)한 뒤 정지(블로킹). 매번 새로 연결."""
         self._pulse(seconds, speed)
 
     def drive_backward(self, seconds: float, speed: int = BASE_DRIVE_SPEED) -> None:
-        """seconds초 동안 후진(vx=-speed)한 뒤 정지(블로킹)."""
+        """seconds초 동안 후진(vx=-speed)한 뒤 정지(블로킹). 매번 새로 연결."""
         self._pulse(seconds, -speed)
 
-    def _pulse(self, seconds: float, vx: int) -> None:
-        """데드맨(400ms)보다 짧은 주기로 vx를 계속 재전송하다 seconds 후 정지."""
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            self._send(f"V {vx} 0 0")
-            time.sleep(BASE_DRIVE_RESEND_INTERVAL_SEC)
-        self.stop()
-
     def stop(self) -> None:
-        """비상 정지."""
-        self._send("S")
+        """비상 정지 — 새로 연결해서 즉시 S를 보낸다(연결에 ~2초 걸림)."""
+        ser = serial.Serial(self._port, self._baud, timeout=1.0)
+        try:
+            time.sleep(2.0)
+            ser.write(b"S\n")
+            ser.flush()
+        finally:
+            ser.close()
 
     def close(self) -> None:
-        self.stop()
-        self._ser.close()
+        pass  # 상시 연결을 유지하지 않으므로 정리할 게 없다.
 
-    def _send(self, line: str) -> None:
-        self._ser.write((line + "\n").encode("ascii"))
-        self._ser.flush()
+    def _pulse(self, seconds: float, vx: int) -> None:
+        """새 연결을 열고, 데드맨(400ms)보다 짧은 주기로 vx를 재전송하다 정지 후 닫는다."""
+        ser = serial.Serial(self._port, self._baud, timeout=1.0)
+        try:
+            time.sleep(2.0)  # Uno가 DTR로 리셋되어 부트로더+setup()이 끝나길 대기
+            ser.reset_input_buffer()
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                ser.write(f"V {vx} 0 0\n".encode("ascii"))
+                ser.flush()
+                time.sleep(BASE_DRIVE_RESEND_INTERVAL_SEC)
+            ser.write(b"S\n")
+            ser.flush()
+        finally:
+            ser.close()
