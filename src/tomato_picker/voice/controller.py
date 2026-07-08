@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -31,6 +32,7 @@ class VoiceController:
     def __init__(self, log_hub: LogHub, on_intent: Callable[[str], None] | None = None) -> None:
         self._log_hub = log_hub
         self._on_intent = on_intent
+        self._intent_queue: queue.Queue[str] = queue.Queue()
 
     def run(self) -> None:
         """블로킹 루프. STT 모델 로드 포함 — 첫 실행에 수십 초 걸린다.
@@ -42,6 +44,15 @@ class VoiceController:
         self._log_hub.publish({"ts": _now(), "kind": "status", "text": "Whisper 모델 로딩 중..."})
         stt = WhisperSTT()
         self._log_hub.publish({"ts": _now(), "kind": "status", "text": "준비 완료 — 듣는 중"})
+
+        if self._on_intent:
+            # 인텐트 실행은 이 워커 스레드 하나가 큐에서 꺼내 순차로 처리한다.
+            # 인식마다 새 스레드를 띄우면(예전 방식) "토마토"와 "앞으로 가"가
+            # 겹쳐 인식됐을 때 두 스레드가 동시에 같은 시리얼 포트에 써서
+            # 명령이 깨지는 문제가 있었다(2026-07-08 실측 — 에러 없이 조용히
+            # 무시됨). 큐 하나로 직렬화하면 마이크 읽기는 안 막으면서도
+            # 하드웨어 명령은 겹치지 않는다.
+            threading.Thread(target=self._intent_worker, daemon=True).start()
 
         segmenter = SpeechSegmenter()
         while True:
@@ -75,8 +86,16 @@ class VoiceController:
                 self._log_hub.publish({"ts": _now(), "kind": kind, "text": label})
 
                 if intent and self._on_intent:
-                    # 별도 스레드로 실행 — 팔 동작(수 초 블로킹)이 마이크 읽기를
-                    # 막으면 arecord 파이프가 밀려 다음 발화를 놓칠 수 있다.
-                    threading.Thread(target=self._on_intent, args=(intent,), daemon=True).start()
+                    self._intent_queue.put(intent)
         finally:
             mic.close()
+
+    def _intent_worker(self) -> None:
+        """인텐트를 큐에서 하나씩 꺼내 순차 실행 — 하드웨어 명령이 겹치지 않게."""
+        assert self._on_intent is not None
+        while True:
+            intent = self._intent_queue.get()
+            try:
+                self._on_intent(intent)
+            except Exception as exc:  # noqa: BLE001 - 워커가 죽으면 이후 명령이 전부 무시됨
+                self._log_hub.publish({"ts": _now(), "kind": "error", "text": f"'{intent}' 처리 중 오류: {exc}"})
