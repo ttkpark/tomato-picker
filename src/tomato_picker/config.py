@@ -18,7 +18,7 @@ USE_LLM_VISION = False
 
 # --- 베이스(메카넘) 시리얼 연결 ---
 # True면 main.build_robot()이 MockBase 대신 JetsonBase(실물)를 쓴다.
-USE_REAL_BASE = False
+USE_REAL_BASE = True
 # ⚠ ttyACM0은 팔(SO-101 Follower) 포트다 — 베이스는 CH340이라 ttyUSB0
 # (2026-07-08 확인, firmware/README.md 참고). 예전엔 이게 틀려있었음.
 BASE_SERIAL_PORT = "/dev/ttyUSB0"
