@@ -25,6 +25,7 @@ _PAGE = """<!doctype html>
          background: color-mix(in srgb, CanvasText 6%, Canvas); font-size: 0.95rem; }
   .row.intent { background: color-mix(in srgb, #2ecc71 25%, Canvas); font-weight: 600; }
   .row.heard { opacity: 0.55; font-style: italic; }
+  .row.error { background: color-mix(in srgb, #e74c3c 25%, Canvas); }
   .ts { opacity: 0.55; white-space: nowrap; font-variant-numeric: tabular-nums; }
   #status { font-size: 0.85rem; opacity: 0.6; margin-bottom: 0.75rem; }
 </style></head>

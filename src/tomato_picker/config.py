@@ -57,9 +57,12 @@ ARM_MOVE_SECS = 1.5
 ARM_MOVE_FPS = 50
 
 # --- 음성 명령 (온디바이스 STT, Jetson 단독 추론) ---
-# 카메라 내장 마이크(2ce5:c672, arecord -l 기준 card 2). 재부팅 후 카드 번호가
-# 바뀌면 `arecord -l`로 다시 확인.
-MIC_ALSA_DEVICE = "plughw:2,0"
+# 카메라 내장 마이크(2ce5:c672). ALSA 카드 번호가 재부팅/USB 재연결마다
+# 바뀌는 게 실측으로 확인돼(2026-07-08: card 2 → card 0), 번호 대신
+# `arecord -l` 카드 이름으로 찾는다(mic_stream.resolve_alsa_device).
+# 이름으로도 못 찾으면 아래 폴백 번호를 쓴다 — 그때그때 `arecord -l`로 갱신.
+MIC_ALSA_CARD_NAME = "Camera"
+MIC_ALSA_DEVICE_FALLBACK = "plughw:0,0"
 MIC_SAMPLE_RATE = 16000
 
 # 에너지 기반 발화 구간 검출(VAD). 조용한 방 기준 대략값 — 소음 있으면
