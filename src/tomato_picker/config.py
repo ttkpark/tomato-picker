@@ -28,7 +28,7 @@ BASE_SERIAL_BAUD = 115200
 # (예전 BASE_TICKS_PER_CM/JetsonBase.drive_to는 mecanum_serial.ino의
 # G-ticks 프로토콜을 가정했는데 실제 보드는 그 펌웨어를 쓴 적이 없어
 # 애초에 동작한 적 없는 코드였음 — 2026-07-08 확인 후 폐기.)
-BASE_DRIVE_SPEED = 150            # V vx 크기. -255..255. 실내 데모용 저속.
+BASE_DRIVE_SPEED = 220            # V vx 크기. -255..255. 2026-07-08 150→220(사용자 확인 후 상향).
 BASE_DRIVE_RESEND_INTERVAL_SEC = 0.15  # 데드맨(400ms) 안에 재전송해야 함
 BASE_DRIVE_FORWARD_SECONDS = 1.5  # 음성 "앞으로 가" 기본 전진 시간
 
