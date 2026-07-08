@@ -18,6 +18,10 @@ class MobileBase(ABC):
     def drive_to(self, distance: float) -> None:
         """기준점에서 지정 거리 위치까지 직선 이동(블로킹)."""
 
+    @abstractmethod
+    def drive_forward(self, seconds: float) -> None:
+        """seconds초 동안 전진한 뒤 정지(블로킹). 음성 명령("앞으로 가") 등에 씀."""
+
 
 class RobotArm(ABC):
     """LeRobot SO-ARM101 류 로봇팔 — 사전 정의 시퀀스 재생."""

@@ -19,12 +19,18 @@ USE_LLM_VISION = False
 # --- 베이스(메카넘) 시리얼 연결 ---
 # True면 main.build_robot()이 MockBase 대신 JetsonBase(실물)를 쓴다.
 USE_REAL_BASE = False
-# Orin에서 Arduino Uno는 보통 /dev/ttyACM0. Windows 테스트면 "COM5" 식.
-BASE_SERIAL_PORT = "/dev/ttyACM0"
+# ⚠ ttyACM0은 팔(SO-101 Follower) 포트다 — 베이스는 CH340이라 ttyUSB0
+# (2026-07-08 확인, firmware/README.md 참고). 예전엔 이게 틀려있었음.
+BASE_SERIAL_PORT = "/dev/ttyUSB0"
 BASE_SERIAL_BAUD = 115200
-# 엔코더 보정값: 바퀴를 알려진 거리(예 50cm)만큼 굴려 나온 틱 ÷ 거리.
-# 처음엔 대략값, 실측 후 교정한다. TREES 단위(cm)와 맞춘다.
-BASE_TICKS_PER_CM = 20.0
+# 실제 펌웨어는 firmware/mecanum_stable/mecanum_stable.ino — 젯슨이
+# "V vx vy w" 속도 지령을 400ms마다 새로 보내야 하는 데드맨 프로토콜.
+# (예전 BASE_TICKS_PER_CM/JetsonBase.drive_to는 mecanum_serial.ino의
+# G-ticks 프로토콜을 가정했는데 실제 보드는 그 펌웨어를 쓴 적이 없어
+# 애초에 동작한 적 없는 코드였음 — 2026-07-08 확인 후 폐기.)
+BASE_DRIVE_SPEED = 150            # V vx 크기. -255..255. 실내 데모용 저속.
+BASE_DRIVE_RESEND_INTERVAL_SEC = 0.15  # 데드맨(400ms) 안에 재전송해야 함
+BASE_DRIVE_FORWARD_SECONDS = 1.5  # 음성 "앞으로 가" 기본 전진 시간
 
 # --- 카메라(USB, 지면 고정 스탠드 — 베이스에 안 붙어있어 위치 불변) ---
 # True면 main.build_robot()이 MockCamera 대신 JetsonCamera(실물)를 쓴다.
@@ -107,6 +113,12 @@ VOICE_INTENTS: dict[str, list[str]] = {
     "arm_move": [
         "팔 움직여", "팔 움직여줘", "팔움직여", "팔 이동", "팔 이동해",
         "움직여줘", "움직여봐", "움직여라", "움직여", "움직이라",
+    ],
+    # 실제로 바퀴가 구르는 명령이라 오작동 리스크가 더 크다 — "가"처럼
+    # 짧고 흔한 음절 하나만으로는 매칭하지 않고 "전진"/"앞으로" 계열만 인정.
+    "drive_forward": [
+        "앞으로 가", "앞으로가", "앞으로 가자", "앞으로가자",
+        "전진해", "전진 해", "전진", "앞으로 이동",
     ],
 }
 
