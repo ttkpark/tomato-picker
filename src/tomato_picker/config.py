@@ -83,6 +83,15 @@ WHISPER_DEVICE = "cpu"
 WHISPER_COMPUTE_TYPE = "int8"
 WHISPER_LANGUAGE = "ko"
 
+# 이 카메라 마이크는 평소 말소리 레벨이 낮아(실측 2026-07-08: 보통 톤은
+# 대부분 인식 실패, 크게 외쳐야 인식됨) STT에 넣기 전 피크 정규화로
+# 증폭한다. 거의 무음(peak<MIN)까지 증폭하면 잡음만 커지니 그런 구간은
+# 건드리지 않는다. GAIN_CAP은 무음에 가까운 낮은 피크가 우연히 MIN을
+# 넘었을 때 과증폭(귀청 터지는 잡음)되는 걸 막는 안전장치.
+WHISPER_NORMALIZE_TARGET_PEAK = 0.9
+WHISPER_NORMALIZE_MIN_PEAK = 0.02
+WHISPER_NORMALIZE_GAIN_CAP = 20.0
+
 # 인식된 텍스트에 이 키워드 중 하나라도 포함되면 해당 인텐트로 매칭.
 # 순서 무관, 부분 문자열 매칭(짧은 발화라 오검출보다 미검출이 더 걱정이라 느슨하게).
 VOICE_INTENTS: dict[str, list[str]] = {
