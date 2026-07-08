@@ -1,0 +1,16 @@
+[Unit]
+Description=Tomato-picker gamepad drive (mecanum + arm presets)
+After=network.target
+
+[Service]
+Type=simple
+User=server
+Group=server
+SupplementaryGroups=input dialout
+# 게임패드/모터보드가 아직 안 붙었으면 스크립트가 exit → 3초 뒤 재시도(붙을 때까지)
+ExecStart=/home/server/lerobot/.venv/bin/python -u /home/server/controller_drive.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
