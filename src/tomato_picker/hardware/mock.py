@@ -32,6 +32,10 @@ class MockBase(MobileBase):
         _log(f"베이스: {seconds:.1f}초간 전진(음성 트리거)")
         time.sleep(min(seconds, 0.3))
 
+    def drive_backward(self, seconds: float) -> None:
+        _log(f"베이스: {seconds:.1f}초간 후진(음성 트리거)")
+        time.sleep(min(seconds, 0.3))
+
 
 class MockArm(RobotArm):
     def pick(self, position: tuple[float, float]) -> None:

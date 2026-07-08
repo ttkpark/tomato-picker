@@ -14,7 +14,7 @@
 가정했는데, 실제 보드에 그 펌웨어가 올라간 적이 없어 처음부터 동작하지
 않는 코드였다. drive_to()의 거리 기반 이동은 이 펌웨어가 엔코더 피드백을
 안 줘서(오픈루프) 아직 캘리브레이션되지 않았다 — 필요해지면 시간×속도
-근사치로 구현할 것. 지금 당장 쓸 수 있는 건 drive_forward(seconds)뿐.
+근사치로 구현할 것. 지금 당장 쓸 수 있는 건 drive_forward/drive_backward(seconds)뿐.
 """
 
 from __future__ import annotations
@@ -49,13 +49,18 @@ class JetsonBase(MobileBase):
         )
 
     def drive_forward(self, seconds: float, speed: int = BASE_DRIVE_SPEED) -> None:
-        """seconds초 동안 전진(vx=speed)한 뒤 정지(블로킹).
+        """seconds초 동안 전진(vx=+speed)한 뒤 정지(블로킹)."""
+        self._pulse(seconds, speed)
 
-        데드맨(400ms)보다 짧은 주기로 계속 V 명령을 재전송해야 정지하지 않는다.
-        """
+    def drive_backward(self, seconds: float, speed: int = BASE_DRIVE_SPEED) -> None:
+        """seconds초 동안 후진(vx=-speed)한 뒤 정지(블로킹)."""
+        self._pulse(seconds, -speed)
+
+    def _pulse(self, seconds: float, vx: int) -> None:
+        """데드맨(400ms)보다 짧은 주기로 vx를 계속 재전송하다 seconds 후 정지."""
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            self._send(f"V {speed} 0 0")
+            self._send(f"V {vx} 0 0")
             time.sleep(BASE_DRIVE_RESEND_INTERVAL_SEC)
         self.stop()
 
