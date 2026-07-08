@@ -42,7 +42,7 @@ CAMERA_GROUND_LINE_Y = 600
 
 # --- 로봇팔(SO-101 Follower, 프리셋 재생) ---
 # True면 main.build_robot()이 MockArm 대신 LerobotArm(실물)을 쓴다.
-USE_REAL_ARM = False
+USE_REAL_ARM = True
 ARM_SERIAL_PORT = "/dev/ttyACM0"
 ARM_ID = "tomato_follower"
 # controller_drive.py가 쓰는 것과 같은 프리셋 파일(PS2 컨트롤러로 저장).
