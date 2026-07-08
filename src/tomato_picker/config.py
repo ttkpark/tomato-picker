@@ -61,8 +61,12 @@ ARM_MOVE_FPS = 50
 # 바뀌는 게 실측으로 확인돼(2026-07-08: card 2 → card 0), 번호 대신
 # `arecord -l` 카드 이름으로 찾는다(mic_stream.resolve_alsa_device).
 # 이름으로도 못 찾으면 아래 폴백 번호를 쓴다 — 그때그때 `arecord -l`로 갱신.
+# ⚠ 반드시 hw(raw), plughw 아님 — 이유는 mic_stream.py 모듈 docstring 참고
+# (plug 리샘플 레이어를 거치면 이 카메라는 완전 무음이 잡힘, 2026-07-08 실측).
 MIC_ALSA_CARD_NAME = "Camera"
-MIC_ALSA_DEVICE_FALLBACK = "plughw:0,0"
+MIC_ALSA_DEVICE_FALLBACK = "hw:0,0"
+# 카메라가 광고하는 48kHz 그대로 raw로 받고, 코드에서 16kHz로 다운샘플한다.
+MIC_NATIVE_SAMPLE_RATE = 48000
 MIC_SAMPLE_RATE = 16000
 
 # 에너지 기반 발화 구간 검출(VAD). 조용한 방 기준 대략값 — 소음 있으면
