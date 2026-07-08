@@ -57,21 +57,25 @@ ARM_MOVE_SECS = 1.5
 ARM_MOVE_FPS = 50
 
 # --- 음성 명령 (온디바이스 STT, Jetson 단독 추론) ---
-# 카메라 내장 마이크(2ce5:c672). ALSA 카드 번호가 재부팅/USB 재연결마다
-# 바뀌는 게 실측으로 확인돼(2026-07-08: card 2 → card 0), 번호 대신
-# `arecord -l` 카드 이름으로 찾는다(mic_stream.resolve_alsa_device).
-# 이름으로도 못 찾으면 아래 폴백 번호를 쓴다 — 그때그때 `arecord -l`로 갱신.
-# ⚠ 반드시 hw(raw), plughw 아님 — 이유는 mic_stream.py 모듈 docstring 참고
-# (plug 리샘플 레이어를 거치면 이 카메라는 완전 무음이 잡힘, 2026-07-08 실측).
-MIC_ALSA_CARD_NAME = "Camera"
+# 마이크 카드가 재부팅/USB 재연결/장치 교체마다 번호와 이름이 다 바뀌는 게
+# 실측으로 확인돼(2026-07-08: 카메라 card 2→0, 이후 웹캠으로 교체하니
+# 이름도 "Camera"→"webcam"), 특정 이름을 하드코딩하지 않는다. 대신
+# `arecord -l`에서 젯슨 내장 오디오(APE)가 아닌 첫 카드를 자동으로 쓴다
+# (mic_stream.resolve_alsa_device). 못 찾으면 아래 폴백 번호를 쓴다.
+MIC_ALSA_EXCLUDE_NAME = "APE"  # 젯슨 내장 오디오 — 이건 마이크가 아니라 제외
 MIC_ALSA_DEVICE_FALLBACK = "hw:0,0"
-# 카메라가 광고하는 48kHz 그대로 raw로 받고, 코드에서 16kHz로 다운샘플한다.
-MIC_NATIVE_SAMPLE_RATE = 48000
+# 원래 카메라(2ce5:c672)는 plughw로 열면 클럭 버그로 완전 무음이 잡혀서
+# (mic_stream.py 모듈 docstring 참고) hw(raw)로 광고 레이트 그대로 받고
+# 코드에서 다운샘플하는 우회책을 씀. 지금 쓰는 마이크가 16kHz를 네이티브
+# 지원하면(예: 교체한 웹캠, `/proc/asound/card0/stream0`로 확인) 아래를
+# 16000으로 맞춰 다운샘플을 생략해도 된다 — factor=1이라 코드는 그대로 동작.
+MIC_NATIVE_SAMPLE_RATE = 16000
 MIC_SAMPLE_RATE = 16000
 
-# 에너지 기반 발화 구간 검출(VAD). 조용한 방 기준 대략값 — 소음 있으면
-# VOICE_LOG_HTTP_PORT 페이지에서 rms 로그 보며 재조정.
-VAD_RMS_THRESHOLD = 500.0
+# 에너지 기반 발화 구간 검출(VAD). 마이크마다 바닥 노이즈 레벨이 크게
+# 달라서(카메라 마이크는 ~120, 웹캠은 ~1500~1800) 마이크 바꾸면 반드시
+# VOICE_LOG_HTTP_PORT 페이지에서 rms 로그 보며 재조정해야 한다.
+VAD_RMS_THRESHOLD = 3000.0
 VAD_MIN_SPEECH_SEC = 0.3   # 이보다 짧은 소리는 잡음으로 버림
 VAD_SILENCE_HANGOVER_SEC = 0.6  # 발화 끝난 뒤 이만큼 조용하면 구간 종료
 VAD_MAX_UTTERANCE_SEC = 8.0     # 한 발화 최대 길이(안전장치)

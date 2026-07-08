@@ -3,17 +3,19 @@
 pyaudio/sounddevice 같은 네이티브 바인딩 없이, 이미 동작 확인된 `arecord`를
 그대로 파이프로 읽는다. 젯슨에 이미 있는 도구라 의존성 추가가 없다.
 
-카드 번호는 재부팅/USB 재연결마다 바뀔 수 있음이 실측으로 확인됐다
-(2026-07-08: 카메라 마이크가 card 2 → card 0으로 이동). 그래서 숫자를
-고정하지 않고 `arecord -l`에서 카드 이름으로 찾는다.
+카드 번호와 이름은 재부팅/USB 재연결/마이크 교체마다 바뀌는 게 실측으로
+확인됐다(2026-07-08: 카메라 마이크가 card 2→0, 이후 웹캠으로 교체하니
+이름도 "Camera"→"webcam"). 그래서 특정 이름을 찾지 않고 젯슨 내장
+오디오(APE)가 아닌 첫 카드를 자동으로 쓴다.
 
-⚠ `plughw`(ALSA plug 리샘플 레이어)로 열면 이 카메라는 완전 무음이 잡힌다
-(2026-07-08 실측) — 이 카메라의 오디오 코덱이 광고한 48kHz와 실제 클럭이
-안 맞아(dmesg: "current rate 33186 is different from the runtime rate
-48000") plug의 리샘플러가 깨지는 것으로 보인다. `hw`(리샘플 없는 raw)로
-열고 48kHz 그대로 받은 뒤 파이썬에서 16kHz로 직접 다운샘플하면 정상
-캡처된다. Windows에서는 같은 마이크가 멀쩡히 동작해 하드웨어 결함은
-아니고 리눅스 usb-audio 드라이버 쪽 클럭/리샘플 이슈로 판단.
+⚠ 원래 쓰던 카메라(2ce5:c672)는 `plughw`(ALSA plug 리샘플 레이어)로 열면
+완전 무음이 잡혔다(2026-07-08 실측) — 그 카메라의 오디오 코덱이 광고한
+48kHz와 실제 클럭이 안 맞아(dmesg: "current rate 33186 is different from
+the runtime rate 48000") plug의 리샘플러가 깨지는 것으로 보임. `hw`(리샘플
+없는 raw)로 열고 광고 레이트 그대로 받은 뒤 파이썬에서 다운샘플하면 정상
+캡처됐다. Windows에서는 같은 마이크가 멀쩡히 동작해 하드웨어 결함이
+아니라 리눅스 usb-audio 드라이버 쪽 클럭/리샘플 이슈로 판단. 그래서 항상
+hw로 열도록 해뒀다 — 다음에 어떤 마이크를 꽂아도 안전한 경로.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from collections.abc import Iterator
 
 import numpy as np
 
-from ..config import MIC_ALSA_CARD_NAME, MIC_ALSA_DEVICE_FALLBACK, MIC_NATIVE_SAMPLE_RATE, MIC_SAMPLE_RATE
+from ..config import MIC_ALSA_DEVICE_FALLBACK, MIC_ALSA_EXCLUDE_NAME, MIC_NATIVE_SAMPLE_RATE, MIC_SAMPLE_RATE
 
 CHUNK_SECONDS = 0.1
 BYTES_PER_SAMPLE = 2  # S16_LE
@@ -34,8 +36,8 @@ class MicStreamError(RuntimeError):
     """arecord가 의도치 않게 죽었을 때(USB I/O 오류 등)."""
 
 
-def resolve_alsa_device(card_name_hint: str = MIC_ALSA_CARD_NAME) -> str:
-    """`arecord -l`에서 이름에 card_name_hint가 들어간 첫 카드를 찾아 raw hw 문자열로.
+def resolve_alsa_device(exclude_name: str = MIC_ALSA_EXCLUDE_NAME) -> str:
+    """`arecord -l`에서 exclude_name(젯슨 내장 오디오)이 아닌 첫 카드를 raw hw 문자열로.
 
     plughw가 아니라 hw인 이유는 위 모듈 docstring 참고.
     """
@@ -44,8 +46,8 @@ def resolve_alsa_device(card_name_hint: str = MIC_ALSA_CARD_NAME) -> str:
     except (subprocess.SubprocessError, FileNotFoundError):
         return MIC_ALSA_DEVICE_FALLBACK
     for line in out.splitlines():
-        m = re.match(r"card (\d+): .*" + re.escape(card_name_hint), line)
-        if m:
+        m = re.match(r"card (\d+): (.*)", line)
+        if m and exclude_name not in m.group(2):
             return f"hw:{m.group(1)},0"
     return MIC_ALSA_DEVICE_FALLBACK
 
