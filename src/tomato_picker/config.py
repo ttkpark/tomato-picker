@@ -103,13 +103,16 @@ WHISPER_DEVICE = "cpu"
 WHISPER_COMPUTE_TYPE = "int8"
 WHISPER_LANGUAGE = "ko"
 
-# 이 카메라 마이크는 평소 말소리 레벨이 낮아(실측 2026-07-08: 보통 톤은
-# 대부분 인식 실패, 크게 외쳐야 인식됨) STT에 넣기 전 피크 정규화로
-# 증폭한다. 거의 무음(peak<MIN)까지 증폭하면 잡음만 커지니 그런 구간은
-# 건드리지 않는다. GAIN_CAP은 무음에 가까운 낮은 피크가 우연히 MIN을
-# 넘었을 때 과증폭(귀청 터지는 잡음)되는 걸 막는 안전장치.
+# STT에 넣기 전 피크 정규화로 발화를 증폭한다. 거의 무음(peak<MIN)까지
+# 증폭하면 잡음만 커지고, 그 증폭된 잡음이 Whisper 환각을 유발하니 그런
+# 구간은 건드리지 않는다. GAIN_CAP은 우연히 MIN을 넘은 낮은 피크의
+# 과증폭 방지 안전장치.
+# MIN_PEAK 실측 튜닝(2026-07-21): 바닥 노이즈 peak≈0.061, VAD를 통과하는
+# 실제 발화 peak≫0.3(RMS 3000 통과 시 크레스트팩터상 필연). 그 사이인
+# 0.15로 잡아 노이즈는 증폭 안 하고 발화만 증폭한다. 0.02였을 땐 노이즈가
+# 16배 증폭돼 "이 영상은"/"ㄷㄷㄷ" 환각을 냈다(no_speech 게이트와 병행).
 WHISPER_NORMALIZE_TARGET_PEAK = 0.9
-WHISPER_NORMALIZE_MIN_PEAK = 0.02
+WHISPER_NORMALIZE_MIN_PEAK = 0.15
 WHISPER_NORMALIZE_GAIN_CAP = 20.0
 
 # 인식된 텍스트에 이 키워드 중 하나라도 포함되면 해당 인텐트로 매칭.
