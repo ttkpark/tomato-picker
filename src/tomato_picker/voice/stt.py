@@ -46,5 +46,16 @@ class WhisperSTT:
 
     def transcribe(self, utterance_int16: np.ndarray) -> str:
         audio = _normalize(utterance_int16.astype(np.float32) / 32768.0)
-        segments, _info = self._model.transcribe(audio, language=self._language, beam_size=1)
+        # temperature fallback(품질 임계 미달 시 온도 올려 재디코딩)을 끈다.
+        # 애매한 오디오에서 재시도가 5~6회 반복돼 지연이 1초→3~12초로 튀는 게
+        # 실측(2026-07-21)으로 확인됨. 짧은 명령어 인식엔 1차 디코딩이면 충분.
+        segments, _info = self._model.transcribe(
+            audio,
+            language=self._language,
+            beam_size=1,
+            temperature=0.0,
+            compression_ratio_threshold=None,
+            log_prob_threshold=None,
+            no_speech_threshold=None,
+        )
         return "".join(seg.text for seg in segments).strip()

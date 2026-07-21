@@ -94,8 +94,11 @@ VAD_MAX_UTTERANCE_SEC = 8.0     # 한 발화 최대 길이(안전장치)
 VAD_PRE_ROLL_SEC = 0.2
 
 # Whisper STT. 이 젯슨의 ctranslate2(aarch64) 빌드는 CUDA를 못 잡아
-# CPU(int8)로만 돈다 — tiny가 2초 발화 기준 추론 ~8초로 그나마 쓸만하다.
-WHISPER_MODEL_SIZE = "tiny"
+# CPU(int8)로만 돈다. 실측(2026-07-21): 정상 디코딩 시 tiny ~0.6초/base ~1.2초로
+# 둘 다 빠르고, 과거 "~8초"의 원인은 모델 크기가 아니라 temperature fallback
+# 재시도였다(stt.py에서 비활성화). 정확도는 base가 압도적("팔 움직여"를
+# tiny는 '파울 문지겨', base는 그대로 인식)이라 base 채택.
+WHISPER_MODEL_SIZE = "base"
 WHISPER_DEVICE = "cpu"
 WHISPER_COMPUTE_TYPE = "int8"
 WHISPER_LANGUAGE = "ko"
