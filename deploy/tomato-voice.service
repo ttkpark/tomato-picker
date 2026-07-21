@@ -1,0 +1,19 @@
+[Unit]
+Description=Tomato-picker voice command (arm + mecanum base, on-device STT)
+After=network.target sound.target
+
+[Service]
+Type=simple
+User=server
+Group=server
+# 마이크(audio)와 팔/베이스 시리얼(dialout) 접근에 둘 다 필요
+SupplementaryGroups=audio dialout
+# main.py가 `from src.tomato_picker...`로 임포트하므로 레포 루트가 cwd여야 함
+WorkingDirectory=/home/server/tomato-picker
+# 팔/베이스/마이크가 아직 안 붙었거나 Whisper 로드 실패면 exit → 3초 뒤 재시도(붙을 때까지)
+ExecStart=/home/server/lerobot/.venv/bin/python -u /home/server/tomato-picker/main.py voice
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
