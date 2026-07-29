@@ -29,9 +29,10 @@ JPEG_PATH = os.environ.get("TV_JPEG", "/dev/shm/tomato_vision.jpg")
 COUNT_PATH = os.environ.get("TV_COUNT", "/dev/shm/tomato_count")
 TARGET_FPS = float(os.environ.get("TV_FPS", "8"))
 JPEG_QUALITY = int(os.environ.get("TV_JPEG_QUALITY", "70"))
-# 검출이 프레임마다 깜빡이면(어두운 조명 등) 개수가 0↔1로 튄다. 최근 N프레임의
-# 최댓값을 보고하는 롤링 평활으로, 잠깐 안 잡혀도 개수를 유지한다(약 N/FPS초).
-SMOOTH_WINDOW = int(os.environ.get("TV_SMOOTH", "10"))
+# 검출이 프레임마다 깜빡여도(어두운 조명 등) 개수가 안 튀도록, 최근 HOLD_SEC초
+# 안에 잡힌 최댓값을 보고한다(시간 기반 유지). 60초면 1분 안에 본 토마토는 계속
+# 개수로 유지되고, 토마토를 치우면 1분 뒤 0으로 내려간다.
+HOLD_SEC = float(os.environ.get("TV_HOLD_SEC", "60"))
 
 
 def _atomic_write(path: str, data: bytes) -> None:
@@ -76,7 +77,7 @@ def main() -> None:
     interval = 1.0 / TARGET_FPS
     cap = None
     last_count = -1
-    history: deque[int] = deque(maxlen=SMOOTH_WINDOW)
+    history: deque[tuple[float, int]] = deque()  # (시각, raw개수) — 최근 HOLD_SEC초 유지
     fail = 0
     while True:
         t0 = time.monotonic()
@@ -93,8 +94,11 @@ def main() -> None:
             res = model.predict(frame, device="cuda", conf=CONF, verbose=False)
             boxes = res[0].boxes
             raw = 0 if boxes is None else len(boxes)
-            history.append(raw)
-            count = max(history)  # 최근 N프레임 최댓값 = 깜빡임에도 안정적
+            now = time.monotonic()
+            history.append((now, raw))
+            while history and now - history[0][0] > HOLD_SEC:
+                history.popleft()
+            count = max(r for _, r in history)  # 최근 HOLD_SEC초 최댓값 = 안정적
             annotated = _annotate(frame, boxes, count)
             ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             if ok:
