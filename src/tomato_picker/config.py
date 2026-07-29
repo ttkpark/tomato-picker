@@ -38,6 +38,7 @@ BASE_DRIVE_FORWARD_SECONDS = 1.5  # 음성 "앞으로 가" 기본 전진 시간
 
 # --- 카메라(USB, 지면 고정 스탠드 — 베이스에 안 붙어있어 위치 불변) ---
 # True면 main.build_robot()이 MockCamera 대신 JetsonCamera(실물)를 쓴다.
+# 단 음성 대시보드 비전은 아래 USE_SHARED_VISION 경로를 우선한다.
 USE_REAL_CAMERA = True
 CAMERA_INDEX = 0  # /dev/video0
 CAMERA_WIDTH = 1280
@@ -49,6 +50,15 @@ CAMERA_WARMUP_FRAMES = 20
 # 부착/낙과 판정 기준선: 이 y좌표(px) 아래는 "바닥"으로 본다.
 # 카메라가 지면에 고정돼 위치가 안 변하므로 한 번만 실측해 교정하면 된다.
 CAMERA_GROUND_LINE_Y = 600
+
+# --- 대시보드 비전 소스 ---
+# True면 음성 서비스는 카메라를 직접 열지 않고, 별도 GPU YOLO 프로세스
+# (tools/tomato_vision.py, vision venv)가 /dev/shm에 쓴 주석 프레임·개수를 읽는다.
+# 이렇게 무거운 CUDA/torch/ultralytics를 음성·팔 스택(~/lerobot/.venv, CPU)에서
+# 분리한다. False면 예전 색검출(VisionStreamer, 같은 프로세스)로 폴백.
+USE_SHARED_VISION = True
+VISION_SHM_JPEG = "/dev/shm/tomato_vision.jpg"
+VISION_SHM_COUNT = "/dev/shm/tomato_count"
 
 # --- 로봇팔(SO-101 Follower, 프리셋 재생) ---
 # True면 main.build_robot()이 MockArm 대신 LerobotArm(실물)을 쓴다.

@@ -1,0 +1,23 @@
+[Unit]
+Description=Tomato-picker GPU vision (YOLO-World tomato detection -> /dev/shm)
+After=network.target
+
+[Service]
+Type=simple
+User=server
+Group=server
+# 카메라(/dev/video0) 접근에 video 그룹 필요. 오디오/시리얼은 불필요.
+SupplementaryGroups=video
+# 모델 파일(yolov8s-worldv2.pt)·CLIP 캐시가 홈에 받아지므로 홈을 cwd로.
+WorkingDirectory=/home/server
+# JetPack7 CUDA 런타임 경로(torch cu132가 GPU 커널 JIT에 필요)
+Environment=CUDA_HOME=/usr/local/cuda-13.2
+Environment=LD_LIBRARY_PATH=/usr/local/cuda-13.2/lib64
+Environment=PYTHONUNBUFFERED=1
+# 카메라·GPU가 준비될 때까지 재시도(스크립트 내부도 자동 재연결)
+ExecStart=/home/server/.venvs/vision/bin/python /home/server/tomato-picker/tools/tomato_vision.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

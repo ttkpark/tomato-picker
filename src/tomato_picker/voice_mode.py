@@ -14,6 +14,9 @@ from .config import (
     USE_REAL_ARM,
     USE_REAL_BASE,
     USE_REAL_CAMERA,
+    USE_SHARED_VISION,
+    VISION_SHM_COUNT,
+    VISION_SHM_JPEG,
     VOICE_LOG_HTTP_PORT,
 )
 from .hardware.base import MobileBase, RobotArm
@@ -21,6 +24,7 @@ from .hardware.mock import MockArm, MockBase
 from .voice.controller import VoiceController
 from .voice.log_hub import LogHub
 from .voice.server import start_log_server
+from .voice.shared_vision import SharedFrameSource
 from .voice.vision_stream import VisionStreamer
 
 
@@ -44,8 +48,18 @@ def _build_base() -> MobileBase:
     return MockBase()
 
 
-def _build_vision(log_hub: LogHub) -> VisionStreamer | None:
-    """USE_REAL_CAMERA면 카메라+비전 스트리머를 만든다. 카메라 실패 시 None(영상 없이 계속)."""
+def _build_vision(log_hub: LogHub):
+    """대시보드 비전 소스를 만든다.
+
+    - USE_SHARED_VISION: 별도 GPU YOLO 프로세스(/dev/shm)를 읽는 SharedFrameSource
+      (카메라를 직접 안 열어 음성 서비스와 카메라 점유 충돌 없음). 우선.
+    - USE_REAL_CAMERA: 같은 프로세스에서 색검출하는 VisionStreamer(폴백).
+    카메라/소스 실패해도 음성·주행은 계속돼야 하므로 예외 시 None.
+    """
+    if USE_SHARED_VISION:
+        src = SharedFrameSource(log_hub, VISION_SHM_JPEG, VISION_SHM_COUNT)
+        src.start()
+        return src
     if not USE_REAL_CAMERA:
         return None
     try:
