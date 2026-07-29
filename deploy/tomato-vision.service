@@ -14,6 +14,8 @@ WorkingDirectory=/home/server
 Environment=CUDA_HOME=/usr/local/cuda-13.2
 Environment=LD_LIBRARY_PATH=/usr/local/cuda-13.2/lib64
 Environment=PYTHONUNBUFFERED=1
+# 개수 시간유지(초): 최근 이 시간 안에 잡힌 최댓값을 개수로 유지(깜빡임 방지)
+Environment=TV_HOLD_SEC=3
 # 카메라·GPU가 준비될 때까지 재시도(스크립트 내부도 자동 재연결)
 ExecStart=/home/server/.venvs/vision/bin/python /home/server/tomato-picker/tools/tomato_vision.py
 Restart=always
