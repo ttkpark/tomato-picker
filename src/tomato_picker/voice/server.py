@@ -69,7 +69,8 @@ def _page(has_video: bool) -> str:
     row.scrollIntoView({{block: 'end'}});
   }}
   function onEvent(ev) {{
-    if (ev.kind === 'count') countEl.textContent = '🍅 토마토: ' + ev.count + '개';
+    // 개수는 상단 배너만 갱신하고 로그 줄로는 안 쌓는다(도배 방지).
+    if (ev.kind === 'count') {{ countEl.textContent = '🍅 토마토: ' + ev.count + '개'; return; }}
     addRow(ev);
   }}
   const src = new EventSource('/events');

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections import deque
 
 import cv2
 import numpy as np
@@ -28,6 +29,9 @@ JPEG_PATH = os.environ.get("TV_JPEG", "/dev/shm/tomato_vision.jpg")
 COUNT_PATH = os.environ.get("TV_COUNT", "/dev/shm/tomato_count")
 TARGET_FPS = float(os.environ.get("TV_FPS", "8"))
 JPEG_QUALITY = int(os.environ.get("TV_JPEG_QUALITY", "70"))
+# 검출이 프레임마다 깜빡이면(어두운 조명 등) 개수가 0↔1로 튄다. 최근 N프레임의
+# 최댓값을 보고하는 롤링 평활으로, 잠깐 안 잡혀도 개수를 유지한다(약 N/FPS초).
+SMOOTH_WINDOW = int(os.environ.get("TV_SMOOTH", "10"))
 
 
 def _atomic_write(path: str, data: bytes) -> None:
@@ -49,9 +53,9 @@ def _open_camera() -> cv2.VideoCapture:
     return cap
 
 
-def _annotate(frame: np.ndarray, boxes) -> np.ndarray:
+def _annotate(frame: np.ndarray, boxes, count: int) -> np.ndarray:
+    """박스는 이번 프레임 raw로, 개수 라벨은 평활된 count로 표시."""
     out = frame
-    n = 0 if boxes is None else len(boxes)
     if boxes is not None:
         for b in boxes:
             x1, y1, x2, y2 = (int(v) for v in b.xyxy[0].tolist())
@@ -59,7 +63,7 @@ def _annotate(frame: np.ndarray, boxes) -> np.ndarray:
             cv2.rectangle(out, (x1, y1), (x2, y2), (0, 0, 255), 3)
             cv2.putText(out, f"tomato {conf:.2f}", (x1, max(20, y1 - 8)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    label = f"tomatoes: {n}"
+    label = f"tomatoes: {count}"
     cv2.putText(out, label, (14, 44), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 0, 0), 6)
     cv2.putText(out, label, (14, 44), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (60, 220, 60), 2)
     return out
@@ -72,6 +76,7 @@ def main() -> None:
     interval = 1.0 / TARGET_FPS
     cap = None
     last_count = -1
+    history: deque[int] = deque(maxlen=SMOOTH_WINDOW)
     fail = 0
     while True:
         t0 = time.monotonic()
@@ -87,15 +92,17 @@ def main() -> None:
             fail = 0
             res = model.predict(frame, device="cuda", conf=CONF, verbose=False)
             boxes = res[0].boxes
-            n = 0 if boxes is None else len(boxes)
-            annotated = _annotate(frame, boxes)
+            raw = 0 if boxes is None else len(boxes)
+            history.append(raw)
+            count = max(history)  # 최근 N프레임 최댓값 = 깜빡임에도 안정적
+            annotated = _annotate(frame, boxes, count)
             ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             if ok:
                 _atomic_write(JPEG_PATH, buf.tobytes())
-            if n != last_count:
-                last_count = n
-                _atomic_write(COUNT_PATH, str(n).encode("ascii"))
-                print(f"[tomato_vision] 토마토 {n}개", flush=True)
+            if count != last_count:
+                last_count = count
+                _atomic_write(COUNT_PATH, str(count).encode("ascii"))
+                print(f"[tomato_vision] 토마토 {count}개", flush=True)
         except Exception as exc:  # noqa: BLE001 - 카메라 순단에도 계속 재시도
             fail += 1
             if fail == 1:
