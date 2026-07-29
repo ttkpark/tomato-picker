@@ -15,8 +15,8 @@ from .config import (
     USE_REAL_BASE,
     USE_REAL_CAMERA,
     USE_SHARED_VISION,
-    VISION_SHM_COUNT,
     VISION_SHM_JPEG,
+    VISION_SHM_STATUS,
     VOICE_LOG_HTTP_PORT,
 )
 from .hardware.base import MobileBase, RobotArm
@@ -57,7 +57,7 @@ def _build_vision(log_hub: LogHub):
     카메라/소스 실패해도 음성·주행은 계속돼야 하므로 예외 시 None.
     """
     if USE_SHARED_VISION:
-        src = SharedFrameSource(log_hub, VISION_SHM_JPEG, VISION_SHM_COUNT)
+        src = SharedFrameSource(log_hub, VISION_SHM_JPEG, VISION_SHM_STATUS)
         src.start()
         return src
     if not USE_REAL_CAMERA:

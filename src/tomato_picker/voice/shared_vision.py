@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -30,11 +31,11 @@ def _placeholder() -> bytes:
 class SharedFrameSource:
     """/dev/shm의 최신 JPEG를 /video로 흘려보내고, 개수 파일 변화를 log_hub로 발행."""
 
-    def __init__(self, log_hub: LogHub, jpeg_path: str, count_path: str,
-                 poll_sec: float = 0.3) -> None:
+    def __init__(self, log_hub: LogHub, jpeg_path: str, status_path: str,
+                 poll_sec: float = 0.4) -> None:
         self._log_hub = log_hub
         self._jpeg_path = jpeg_path
-        self._count_path = count_path
+        self._status_path = status_path
         self._poll = poll_sec
         self._placeholder = _placeholder()
         self._stop = False
@@ -54,17 +55,23 @@ class SharedFrameSource:
             return self._placeholder
 
     def _count_loop(self) -> None:
+        """공중(부착) 토마토 개수가 바뀔 때만 개수·위치를 발행(도배 방지)."""
         last = None
         while not self._stop:
             try:
-                with open(self._count_path, encoding="ascii") as f:
-                    n = int(f.read().strip())
-                if n != last:
-                    last = n
+                with open(self._status_path, encoding="utf-8") as f:
+                    st = json.load(f)
+                air = int(st.get("air", 0))
+                if air != last:
+                    last = air
+                    positions = st.get("positions", [])
+                    fallen = int(st.get("fallen", 0))
+                    pos_str = ", ".join(f"({x},{y})" for x, y in positions) or "-"
                     self._log_hub.publish({
                         "ts": _now(), "kind": "count",
-                        "text": f"토마토 {n}개 인식", "count": n,
+                        "count": air, "fallen": fallen, "positions": positions,
+                        "text": f"공중 토마토 {air}개 (낙과 {fallen}) 위치: {pos_str}",
                     })
-            except (OSError, ValueError):
+            except (OSError, ValueError, json.JSONDecodeError):
                 pass
             time.sleep(self._poll)

@@ -11,6 +11,7 @@ self-contained: 프로젝트 config를 임포트하지 않는다(다른 venv라 
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections import deque
@@ -27,6 +28,10 @@ MODEL = os.environ.get("TV_MODEL", "yolov8s-worldv2.pt")
 CLASSES = [c.strip() for c in os.environ.get("TV_CLASSES", "tomato").split(",") if c.strip()]
 JPEG_PATH = os.environ.get("TV_JPEG", "/dev/shm/tomato_vision.jpg")
 COUNT_PATH = os.environ.get("TV_COUNT", "/dev/shm/tomato_count")
+STATUS_PATH = os.environ.get("TV_STATUS", "/dev/shm/tomato_status")
+# 이 y좌표(px)보다 위(작은 y)면 '공중(부착)', 아래(큰 y)면 '바닥(낙과)'.
+# 카메라가 고정이라 장면에 맞게 한 번 교정하면 된다(720p 기준 기본 600).
+GROUND_LINE_Y = int(os.environ.get("TV_GROUND_Y", "600"))
 TARGET_FPS = float(os.environ.get("TV_FPS", "8"))
 JPEG_QUALITY = int(os.environ.get("TV_JPEG_QUALITY", "70"))
 # 검출이 프레임마다 깜빡여도(어두운 조명 등) 개수가 안 튀도록, 최근 HOLD_SEC초
@@ -54,19 +59,38 @@ def _open_camera() -> cv2.VideoCapture:
     return cap
 
 
-def _annotate(frame: np.ndarray, boxes, count: int) -> np.ndarray:
-    """박스는 이번 프레임 raw로, 개수 라벨은 평활된 count로 표시."""
-    out = frame
+def _classify(boxes, width: int) -> tuple[list, list]:
+    """각 검출을 공중/바닥으로 분류. (air_list, ground_list) 반환.
+    각 항목 = (x1,y1,x2,y2,conf,cx,cy). 중심 cy < GROUND_LINE_Y면 공중."""
+    air, ground = [], []
     if boxes is not None:
         for b in boxes:
             x1, y1, x2, y2 = (int(v) for v in b.xyxy[0].tolist())
             conf = float(b.conf[0])
-            cv2.rectangle(out, (x1, y1), (x2, y2), (0, 0, 255), 3)
-            cv2.putText(out, f"tomato {conf:.2f}", (x1, max(20, y1 - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    label = f"tomatoes: {count}"
-    cv2.putText(out, label, (14, 44), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 0, 0), 6)
-    cv2.putText(out, label, (14, 44), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (60, 220, 60), 2)
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            item = (x1, y1, x2, y2, conf, cx, cy)
+            (air if cy < GROUND_LINE_Y else ground).append(item)
+    return air, ground
+
+
+def _draw(frame: np.ndarray, air: list, ground: list, air_count: int) -> np.ndarray:
+    """기준선 + 공중(초록)/바닥(회색) 박스 + 위치 라벨 + 공중 개수."""
+    out = frame
+    h, w = out.shape[:2]
+    cv2.line(out, (0, GROUND_LINE_Y), (w, GROUND_LINE_Y), (0, 140, 255), 2)
+    cv2.putText(out, "ground line", (w - 190, GROUND_LINE_Y - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 140, 255), 2)
+    for x1, y1, x2, y2, conf, cx, cy in air:
+        cv2.rectangle(out, (x1, y1), (x2, y2), (0, 220, 0), 3)
+        cv2.putText(out, f"air ({cx},{cy})", (x1, max(20, y1 - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 220, 0), 2)
+    for x1, y1, x2, y2, conf, cx, cy in ground:
+        cv2.rectangle(out, (x1, y1), (x2, y2), (150, 150, 150), 2)
+        cv2.putText(out, f"ground ({cx},{cy})", (x1, max(20, y1 - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 2)
+    label = f"air tomatoes: {air_count}   fallen: {len(ground)}"
+    cv2.putText(out, label, (14, 44), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 0, 0), 6)
+    cv2.putText(out, label, (14, 44), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (60, 220, 60), 2)
     return out
 
 
@@ -92,21 +116,25 @@ def main() -> None:
                 raise RuntimeError("프레임 읽기 실패")
             fail = 0
             res = model.predict(frame, device="cuda", conf=CONF, verbose=False)
-            boxes = res[0].boxes
-            raw = 0 if boxes is None else len(boxes)
+            air, ground = _classify(res[0].boxes, frame.shape[1])
+            raw = len(air)  # 공중(부착) 토마토만 센다
             now = time.monotonic()
             history.append((now, raw))
             while history and now - history[0][0] > HOLD_SEC:
                 history.popleft()
             count = max(r for _, r in history)  # 최근 HOLD_SEC초 최댓값 = 안정적
-            annotated = _annotate(frame, boxes, count)
+            positions = [[cx, cy] for *_, cx, cy in air]
+            annotated = _draw(frame, air, ground, count)
             ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             if ok:
                 _atomic_write(JPEG_PATH, buf.tobytes())
+            # 위치는 매 프레임 갱신(상태 파일), 개수는 변할 때만 로그
+            _atomic_write(STATUS_PATH, json.dumps(
+                {"air": count, "fallen": len(ground), "positions": positions}).encode("utf-8"))
             if count != last_count:
                 last_count = count
                 _atomic_write(COUNT_PATH, str(count).encode("ascii"))
-                print(f"[tomato_vision] 토마토 {count}개", flush=True)
+                print(f"[tomato_vision] 공중 토마토 {count}개, 위치 {positions}", flush=True)
         except Exception as exc:  # noqa: BLE001 - 카메라 순단에도 계속 재시도
             fail += 1
             if fail == 1:

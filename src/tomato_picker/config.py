@@ -59,6 +59,8 @@ CAMERA_GROUND_LINE_Y = 600
 USE_SHARED_VISION = True
 VISION_SHM_JPEG = "/dev/shm/tomato_vision.jpg"
 VISION_SHM_COUNT = "/dev/shm/tomato_count"
+# 공중/바닥 판정·위치 상태(JSON): {"air":n,"fallen":m,"positions":[[x,y],...]}
+VISION_SHM_STATUS = "/dev/shm/tomato_status"
 
 # --- 로봇팔(SO-101 Follower, 프리셋 재생) ---
 # True면 main.build_robot()이 MockArm 대신 LerobotArm(실물)을 쓴다.

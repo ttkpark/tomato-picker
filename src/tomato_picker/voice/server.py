@@ -30,8 +30,10 @@ def _page(has_video: bool) -> str:
          background: Canvas; color: CanvasText; }}
   h1 {{ font-size: 1.1rem; opacity: 0.8; }}
   #count {{ font-size: 1.6rem; font-weight: 700; padding: 0.5rem 0.9rem; border-radius: 10px;
-           background: color-mix(in srgb, #e74c3c 22%, Canvas); margin-bottom: 0.75rem;
+           background: color-mix(in srgb, #2ecc71 22%, Canvas); margin-bottom: 0.4rem;
            display: inline-block; }}
+  #positions {{ font-size: 0.95rem; opacity: 0.8; margin-bottom: 0.75rem;
+               font-variant-numeric: tabular-nums; }}
   #cam {{ width: 100%; max-width: 720px; border-radius: 10px; display: block;
           margin-bottom: 0.75rem; background: #000; }}
   #novideo {{ opacity: 0.6; margin-bottom: 0.75rem; }}
@@ -47,7 +49,8 @@ def _page(has_video: bool) -> str:
 </style></head>
 <body>
 <h1>토마토피커 — 실시간 대시보드</h1>
-<div id="count">🍅 토마토: —</div>
+<div id="count">🍅 공중 토마토: —</div>
+<div id="positions">위치: —</div>
 {video_block}
 <div id="status">연결 중...</div>
 <div id="log"></div>
@@ -55,6 +58,7 @@ def _page(has_video: bool) -> str:
   const log = document.getElementById('log');
   const status = document.getElementById('status');
   const countEl = document.getElementById('count');
+  const posEl = document.getElementById('positions');
   function addRow(ev) {{
     const row = document.createElement('div');
     row.className = 'row ' + (ev.kind || '');
@@ -69,8 +73,13 @@ def _page(has_video: bool) -> str:
     row.scrollIntoView({{block: 'end'}});
   }}
   function onEvent(ev) {{
-    // 개수는 상단 배너만 갱신하고 로그 줄로는 안 쌓는다(도배 방지).
-    if (ev.kind === 'count') {{ countEl.textContent = '🍅 토마토: ' + ev.count + '개'; return; }}
+    // 개수·위치는 상단 배너만 갱신하고 로그 줄로는 안 쌓는다(도배 방지).
+    if (ev.kind === 'count') {{
+      countEl.textContent = '🍅 공중 토마토: ' + ev.count + '개';
+      const ps = (ev.positions || []).map(p => '(' + p[0] + ',' + p[1] + ')').join(', ') || '—';
+      posEl.textContent = '위치: ' + ps + '   ·   낙과: ' + (ev.fallen || 0) + '개';
+      return;
+    }}
     addRow(ev);
   }}
   const src = new EventSource('/events');
