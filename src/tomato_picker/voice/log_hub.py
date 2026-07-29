@@ -13,8 +13,16 @@ class LogHub:
         self._subscribers: list[queue.Queue] = []
         self._history: deque[dict] = deque(maxlen=history_size)
 
-    def publish(self, event: dict) -> None:
+    def publish(self, event: dict, *, latest_only: bool = False) -> None:
+        """latest_only=True면 같은 kind의 이전 이벤트를 history에서 지우고 최신 하나만 남긴다.
+        개수·위치처럼 자주 갱신되는 상태값이 history(200칸)를 밀어내지 않게 하면서도,
+        새로 접속한 브라우저가 현재 상태를 바로 받도록."""
         with self._lock:
+            if latest_only:
+                kind = event.get("kind")
+                stale = [e for e in self._history if e.get("kind") == kind]
+                for e in stale:
+                    self._history.remove(e)
             self._history.append(event)
             subs = list(self._subscribers)
         for q in subs:

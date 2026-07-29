@@ -16,6 +16,12 @@ import numpy as np
 from .log_hub import LogHub
 
 
+# 좌표 지터로 갱신이 도배되지 않게 이 픽셀 격자로 반올림해서 변화를 판단한다.
+POS_QUANT = 16
+# 변화가 없어도 이 주기로는 재발행해 배너가 낡은 값에 머무르지 않게 한다.
+HEARTBEAT_SEC = 5.0
+
+
 def _now() -> str:
     return time.strftime("%H:%M:%S")
 
@@ -55,23 +61,32 @@ class SharedFrameSource:
             return self._placeholder
 
     def _count_loop(self) -> None:
-        """공중(부착) 토마토 개수가 바뀔 때만 개수·위치를 발행(도배 방지)."""
-        last = None
+        """개수·낙과·위치 중 하나라도 바뀌면 발행(+HEARTBEAT_SEC마다 재발행).
+
+        예전엔 공중 개수가 바뀔 때만 발행해서, 개수가 그대로면 낙과 수와 좌표가
+        옛 값에 고정됐다(영상 오버레이와 배너가 어긋나던 원인). 좌표는 픽셀 지터로
+        매 프레임 흔들리므로 POS_QUANT 격자로 반올림해 비교한다.
+        """
+        last_key = None
+        last_sent = 0.0
         while not self._stop:
             try:
                 with open(self._status_path, encoding="utf-8") as f:
                     st = json.load(f)
                 air = int(st.get("air", 0))
-                if air != last:
-                    last = air
-                    positions = st.get("positions", [])
-                    fallen = int(st.get("fallen", 0))
+                fallen = int(st.get("fallen", 0))
+                positions = st.get("positions", [])
+                key = (air, fallen, tuple(
+                    (round(x / POS_QUANT), round(y / POS_QUANT)) for x, y in positions))
+                now = time.monotonic()
+                if key != last_key or now - last_sent >= HEARTBEAT_SEC:
+                    last_key, last_sent = key, now
                     pos_str = ", ".join(f"({x},{y})" for x, y in positions) or "-"
                     self._log_hub.publish({
                         "ts": _now(), "kind": "count",
                         "count": air, "fallen": fallen, "positions": positions,
                         "text": f"공중 토마토 {air}개 (낙과 {fallen}) 위치: {pos_str}",
-                    })
+                    }, latest_only=True)
             except (OSError, ValueError, json.JSONDecodeError):
                 pass
             time.sleep(self._poll)
