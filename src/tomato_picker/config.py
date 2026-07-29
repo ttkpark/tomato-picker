@@ -38,7 +38,7 @@ BASE_DRIVE_FORWARD_SECONDS = 1.5  # 음성 "앞으로 가" 기본 전진 시간
 
 # --- 카메라(USB, 지면 고정 스탠드 — 베이스에 안 붙어있어 위치 불변) ---
 # True면 main.build_robot()이 MockCamera 대신 JetsonCamera(실물)를 쓴다.
-USE_REAL_CAMERA = False
+USE_REAL_CAMERA = True
 CAMERA_INDEX = 0  # /dev/video0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720

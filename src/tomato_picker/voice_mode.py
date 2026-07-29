@@ -13,6 +13,7 @@ from .config import (
     TOMATO_RETREAT_SECONDS,
     USE_REAL_ARM,
     USE_REAL_BASE,
+    USE_REAL_CAMERA,
     VOICE_LOG_HTTP_PORT,
 )
 from .hardware.base import MobileBase, RobotArm
@@ -20,6 +21,7 @@ from .hardware.mock import MockArm, MockBase
 from .voice.controller import VoiceController
 from .voice.log_hub import LogHub
 from .voice.server import start_log_server
+from .voice.vision_stream import VisionStreamer
 
 
 def _now() -> str:
@@ -42,12 +44,28 @@ def _build_base() -> MobileBase:
     return MockBase()
 
 
+def _build_vision(log_hub: LogHub) -> VisionStreamer | None:
+    """USE_REAL_CAMERA면 카메라+비전 스트리머를 만든다. 카메라 실패 시 None(영상 없이 계속)."""
+    if not USE_REAL_CAMERA:
+        return None
+    try:
+        from .hardware.camera import JetsonCamera
+
+        streamer = VisionStreamer(JetsonCamera(), log_hub)
+        streamer.start()
+        return streamer
+    except Exception as exc:  # noqa: BLE001 - 카메라 없어도 음성/주행은 계속돼야 함
+        print(f"[voice] 카메라 열기 실패: {exc} — 영상 없이 계속")
+        return None
+
+
 def run_voice() -> None:
     arm = _build_arm()
     base = _build_base()
     log_hub = LogHub()
-    start_log_server(log_hub, port=VOICE_LOG_HTTP_PORT)
-    print(f"[voice] 실시간 인식 로그: http://<젯슨IP>:{VOICE_LOG_HTTP_PORT}  (Ctrl+C로 종료)")
+    vision = _build_vision(log_hub)
+    start_log_server(log_hub, port=VOICE_LOG_HTTP_PORT, vision=vision)
+    print(f"[voice] 실시간 대시보드: http://<젯슨IP>:{VOICE_LOG_HTTP_PORT}  (Ctrl+C로 종료)")
 
     def on_intent(intent: str) -> None:
         if intent == "arm_move":
