@@ -26,18 +26,23 @@ def _page(has_video: bool) -> str:
 <title>토마토피커 대시보드</title>
 <style>
   :root {{ color-scheme: light dark; }}
+  html, body {{ height: 100%; }}
   body {{ font-family: -apple-system, "Malgun Gothic", sans-serif; margin: 0; padding: 1rem;
+         box-sizing: border-box; height: 100vh; display: flex; flex-direction: column;
          background: Canvas; color: CanvasText; }}
-  h1 {{ font-size: 1.1rem; opacity: 0.8; }}
+  /* 상단(영상·개수)은 고정, 로그만 아래에서 스크롤 */
+  #top {{ flex: 0 0 auto; }}
+  h1 {{ font-size: 1.1rem; opacity: 0.8; margin: 0 0 0.5rem; }}
   #count {{ font-size: 1.6rem; font-weight: 700; padding: 0.5rem 0.9rem; border-radius: 10px;
            background: color-mix(in srgb, #2ecc71 22%, Canvas); margin-bottom: 0.4rem;
            display: inline-block; }}
   #positions {{ font-size: 0.95rem; opacity: 0.8; margin-bottom: 0.75rem;
                font-variant-numeric: tabular-nums; }}
-  #cam {{ width: 100%; max-width: 720px; border-radius: 10px; display: block;
-          margin-bottom: 0.75rem; background: #000; }}
+  #cam {{ width: 100%; max-width: 720px; max-height: 50vh; object-fit: contain;
+          border-radius: 10px; display: block; margin-bottom: 0.5rem; background: #000; }}
   #novideo {{ opacity: 0.6; margin-bottom: 0.75rem; }}
-  #log {{ display: flex; flex-direction: column; gap: 0.4rem; }}
+  #log {{ flex: 1 1 auto; min-height: 0; overflow-y: auto;
+          display: flex; flex-direction: column; gap: 0.4rem; }}
   .row {{ display: flex; gap: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 8px;
          background: color-mix(in srgb, CanvasText 6%, Canvas); font-size: 0.95rem; }}
   .row.intent {{ background: color-mix(in srgb, #2ecc71 25%, Canvas); font-weight: 600; }}
@@ -48,11 +53,13 @@ def _page(has_video: bool) -> str:
   #status {{ font-size: 0.85rem; opacity: 0.6; margin-bottom: 0.75rem; }}
 </style></head>
 <body>
+<div id="top">
 <h1>토마토피커 — 실시간 대시보드</h1>
 <div id="count">🍅 공중 토마토: —</div>
 <div id="positions">위치: —</div>
 {video_block}
 <div id="status">연결 중...</div>
+</div>
 <div id="log"></div>
 <script>
   const log = document.getElementById('log');
@@ -68,9 +75,8 @@ def _page(has_video: bool) -> str:
     const text = document.createElement('span');
     text.textContent = ev.text;
     row.append(ts, text);
-    log.appendChild(row);
-    while (log.children.length > 200) log.removeChild(log.firstChild);
-    row.scrollIntoView({{block: 'end'}});
+    log.insertBefore(row, log.firstChild);  // 최신이 맨 위로
+    while (log.children.length > 200) log.removeChild(log.lastChild);
   }}
   function onEvent(ev) {{
     // 개수·위치는 상단 배너만 갱신하고 로그 줄로는 안 쌓는다(도배 방지).
