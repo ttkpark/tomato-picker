@@ -13,8 +13,10 @@ from __future__ import annotations
 import queue
 import threading
 import time
+import wave
 from collections.abc import Callable
 
+from ..config import MIC_SAMPLE_RATE
 from .intents import match_intent
 from .log_hub import LogHub
 from .mic_stream import MicStream, MicStreamError
@@ -22,17 +24,51 @@ from .stt import WhisperSTT
 from .vad import SpeechSegmenter
 
 RECONNECT_BACKOFF_SEC = 2.0
+# 인식 실패한 발화를 귀로 확인할 수 있게 /dev/shm에 최근 것만 돌려가며 남긴다
+# (tmpfs라 SD카드 수명에 영향 없음, 재부팅하면 사라짐).
+FAIL_WAV_DIR = "/dev/shm"
+FAIL_WAV_SLOTS = 5
 
 
 def _now() -> str:
     return time.strftime("%H:%M:%S")
 
 
+def _dump_wav(utterance) -> str | None:
+    """실패한 발화를 WAV로 저장하고 경로 반환. 실패해도 인식 루프는 멈추지 않는다."""
+    global _fail_slot
+    try:
+        path = f"{FAIL_WAV_DIR}/voice_fail_{_fail_slot}.wav"
+        _fail_slot = (_fail_slot + 1) % FAIL_WAV_SLOTS
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(MIC_SAMPLE_RATE)
+            w.writeframes(utterance.tobytes())
+        return path
+    except OSError:
+        return None
+
+
+_fail_slot = 0
+
+
 class VoiceController:
-    def __init__(self, log_hub: LogHub, on_intent: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        log_hub: LogHub,
+        on_intent: Callable[[str], None] | None = None,
+        on_mic_state: Callable[[str], None] | None = None,
+    ) -> None:
         self._log_hub = log_hub
         self._on_intent = on_intent
+        # 대시보드 상단 장비 배지용 — 마이크가 붙었나/끊겼나를 'ok'/'down'으로 알린다.
+        self._on_mic_state = on_mic_state
         self._intent_queue: queue.Queue[str] = queue.Queue()
+
+    def _mic_state(self, state: str) -> None:
+        if self._on_mic_state:
+            self._on_mic_state(state)
 
     def run(self) -> None:
         """블로킹 루프. STT 모델 로드 포함 — 첫 실행에 수십 초 걸린다.
@@ -59,6 +95,7 @@ class VoiceController:
             try:
                 self._listen_until_error(stt, segmenter)
             except MicStreamError as exc:
+                self._mic_state("down")
                 self._log_hub.publish(
                     {"ts": _now(), "kind": "error", "text": f"마이크 끊김: {exc} — {RECONNECT_BACKOFF_SEC:.0f}초 후 재연결"}
                 )
@@ -66,6 +103,7 @@ class VoiceController:
 
     def _listen_until_error(self, stt: WhisperSTT, segmenter: SpeechSegmenter) -> None:
         mic = MicStream()
+        self._mic_state("ok")
         self._log_hub.publish({"ts": _now(), "kind": "status", "text": f"마이크 연결됨({mic.device})"})
         try:
             for chunk in mic.chunks():
@@ -75,9 +113,19 @@ class VoiceController:
                 if utterance is None:
                     continue
 
-                text = stt.transcribe(utterance)
+                text, info = stt.transcribe_debug(utterance)
                 if not text:
-                    self._log_hub.publish({"ts": _now(), "kind": "heard", "text": "(인식 실패/무음)"})
+                    # 실패는 원인을 눈으로 가릴 수 있게 근거를 같이 남긴다:
+                    # gated에 뭔가 있으면 오디오는 들어왔고 no_speech 게이트가 막은 것,
+                    # 비어 있으면 입력 자체가 음성이 아니다(마이크/게인/거리 문제).
+                    gated = info.get("gated") or ""
+                    detail = (f"{info['sec']}s peak={info['peak']} rms={info['rms']}"
+                              + (f" 게이트막음='{gated}'" if gated else " 오디오에 음성 없음"))
+                    path = _dump_wav(utterance)
+                    self._log_hub.publish({
+                        "ts": _now(), "kind": "heard",
+                        "text": f"(인식 실패) {detail}" + (f" → {path}" if path else ""),
+                    })
                     continue
 
                 intent = match_intent(text)

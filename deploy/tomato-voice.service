@@ -8,9 +8,15 @@ User=server
 Group=server
 # 마이크(audio)와 팔/베이스 시리얼(dialout) 접근에 둘 다 필요
 SupplementaryGroups=audio dialout
+# 대시보드를 80번에서도 열어주기 위해(→8090 리다이렉트). 비특권 유저라
+# 이게 없으면 80 바인드가 거부되는데, 그래도 8090은 정상 동작한다.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 # main.py가 `from src.tomato_picker...`로 임포트하므로 레포 루트가 cwd여야 함
 WorkingDirectory=/home/server/tomato-picker
-# 팔/베이스/마이크가 아직 안 붙었거나 Whisper 로드 실패면 exit → 3초 뒤 재시도(붙을 때까지)
+# 장비가 하나도 안 붙어 있어도 프로세스는 살아서 대시보드를 서빙한다
+# (voice_mode.run_voice가 팔/바퀴/카메라/마이크 실패를 각각 흡수) —
+# 예전엔 팔 없으면 exit해서 3초마다 재시작만 반복하고 화면이 안 떴다.
 ExecStart=/home/server/lerobot/.venv/bin/python -u /home/server/tomato-picker/main.py voice
 Restart=always
 RestartSec=3

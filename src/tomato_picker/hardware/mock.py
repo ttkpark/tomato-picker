@@ -36,6 +36,21 @@ class MockBase(MobileBase):
         _log(f"베이스: {seconds:.1f}초간 후진(음성 트리거)")
         time.sleep(min(seconds, 0.3))
 
+    def drive(self, seconds: float, vx: int = 0, vy: int = 0, w: int = 0) -> None:
+        """JetsonBase.drive와 같은 시그니처 — 수동조작 화면이 Mock에서도 돌게."""
+        _log(f"베이스: vx={vx} vy={vy} w={w} 로 {seconds:.1f}초")
+        time.sleep(min(seconds, 0.3))
+
+    def hold(self, vx: int = 0, vy: int = 0, w: int = 0) -> None:
+        """홀드 주행(키보드) — Mock에서는 로그만. 도배 방지로 값이 바뀔 때만 찍는다."""
+        target = (vx, vy, w)
+        if target != getattr(self, "_last_hold", None):
+            self._last_hold = target
+            _log(f"베이스 홀드: vx={vx} vy={vy} w={w}")
+
+    def stop(self) -> None:
+        _log("베이스: 정지")
+
 
 class MockArm(RobotArm):
     def pick(self, position: tuple[float, float]) -> None:
@@ -53,6 +68,16 @@ class MockArm(RobotArm):
     def demo_move(self) -> None:
         _log("팔: 데모 동작(음성 트리거)")
         time.sleep(0.3)
+
+    # 수동조작 화면이 LerobotArm과 같은 방식으로 부를 수 있게 맞춰둔다.
+    preset_ids = [1, 2, 3, 4]
+
+    def play_preset(self, preset_id: int) -> None:
+        _log(f"팔: 프리셋 {preset_id} 재생")
+        time.sleep(0.3)
+
+    def relax(self) -> None:
+        _log("팔: 토크 해제(힘 빼기)")
 
 
 class MockCamera(Camera):
