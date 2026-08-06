@@ -62,10 +62,16 @@ def open_motor():
             ser = None
         p = find_motor()
         if p:
-            ser = _pyserial.Serial(p, BAUD, timeout=0.1)
+            # exclusive=True: 대시보드(voice 서비스의 MotorLink)도 같은 포트를
+            # 상시 점유하므로, 둘이 동시에 쓰면 지령이 섞인다. 먼저 잡은 쪽이
+            # 이기고 나중 쪽은 "busy"로 명확히 실패하게 한다.
+            ser = _pyserial.Serial(p, BAUD, timeout=0.1, exclusive=True)
             print('motor (re)opened:', p)
     except Exception as e:
-        print('motor open 실패:', e); ser = None
+        print('motor open 실패:', e)
+        print('  ↳ "busy"라면 대시보드(tomato-voice)가 이미 모터보드를 쓰는 중이다.')
+        print('    둘 중 하나만 켤 것:  sudo systemctl stop tomato-voice   (또는 controller-drive)')
+        ser = None
 
 open_motor()
 if not DRY and ser is None:
@@ -78,8 +84,10 @@ if not NO_ARM:
         from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
         follower = SOFollower(SOFollowerRobotConfig(port='/dev/ttyACM0', id='tomato_follower'))
         print('arm 연결 중...'); follower.connect(calibrate=False); follower.bus.disable_torque()
-        presets = json.load(open(PRESET_FILE))
-        print('arm OK. 프리셋:', sorted(presets.keys()))
+        raw = json.load(open(PRESET_FILE))
+        # "__meta__"(이름·높이앵커)는 자세가 아니다 — 숫자 슬롯만 골라낸다.
+        presets = {k: v for k, v in raw.items() if k.isdigit() and v}
+        print('arm OK. 프리셋:', sorted(presets.keys(), key=int))
     except Exception as e:
         print('arm 초기화 실패 → 주행만:', e); follower = None
 
@@ -102,6 +110,18 @@ def play_preset(n, secs=1.5, fps=50):
         follower.send_action(a); time.sleep(secs / steps)
     print('[preset %s] 완료' % n)
 
+def framed(cmd):
+    """펌웨어 v2의 XOR 체크섬 형식 "<payload>*HH".
+
+    v2는 올바른 체크섬을 한 번 받으면 그 뒤로 무체크섬 V를 거부한다(strict 모드).
+    대시보드(MotorLink)가 체크섬을 쓰므로 여기서도 반드시 붙여야 한다 —
+    안 붙이면 게임패드 주행만 조용히 먹히지 않는다."""
+    crc = 0
+    for ch in cmd:
+        crc ^= ord(ch)
+    return '%s*%02X\n' % (cmd, crc)
+
+
 def send(cmd):
     global ser
     if DRY:
@@ -112,7 +132,7 @@ def send(cmd):
         if ser is None:
             return
     try:
-        ser.write((cmd + '\n').encode())
+        ser.write(framed(cmd).encode())
     except Exception as e:
         print('motor write 실패 → 재연결:', e)
         try: ser.close()
@@ -125,7 +145,7 @@ raw = {ecodes.ABS_X: 0, ecodes.ABS_Y: 0, ecodes.ABS_RX: 0}
 az = arz = 0            # LT / RT 아날로그값(X360)
 zl_btn = zr_btn = False # ZL / ZR 디지털(Switch)
 hatx = haty = 0
-pidx = 0
+pidx = -1        # 채워진 슬롯 목록의 인덱스. 첫 RB에서 0(첫 슬롯)이 되게 -1로 시작
 
 def pump():
     global az, arz, zl_btn, zr_btn, hatx, haty, pidx
@@ -143,8 +163,13 @@ def pump():
                     if   e.code == ecodes.BTN_TL2:   zl_btn = bool(e.value)
                     elif e.code == ecodes.BTN_TR2:   zr_btn = bool(e.value)
                     elif e.value == 1:
-                        if   e.code == ecodes.BTN_TR:   send('S'); pidx = pidx % 4 + 1;       play_preset(pidx)
-                        elif e.code == ecodes.BTN_TL:   send('S'); pidx = (pidx - 2) % 4 + 1; play_preset(pidx)
+                        # LB/RB = 저장된 슬롯 목록을 순환(0~9 중 **채워진 것만**).
+                        # 예전엔 1~4 고정이라 슬롯을 늘려도 못 돌았다.
+                        slots = sorted((int(k) for k in presets), key=int)
+                        if   e.code == ecodes.BTN_TR and slots:
+                            send('S'); pidx = (pidx + 1) % len(slots); play_preset(slots[pidx])
+                        elif e.code == ecodes.BTN_TL and slots:
+                            send('S'); pidx = (pidx - 1) % len(slots); play_preset(slots[pidx])
                         elif e.code == ecodes.BTN_EAST: send('S')
         except BlockingIOError:
             pass

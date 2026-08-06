@@ -52,6 +52,23 @@ class SharedFrameSource:
     def stop(self) -> None:
         self._stop = True
 
+    def latest_status(self) -> dict:
+        """비전이 마지막으로 쓴 상태 {"air","fallen","positions"}.
+
+        수동조작 화면의 "감지된 토마토 높이로 팔 이동"이 여기서 y좌표를 가져간다
+        (SSE는 브라우저로만 흐르므로 서버가 다시 파일을 읽는다 — 파일이 곧 진실).
+        """
+        try:
+            with open(self._status_path, encoding="utf-8") as f:
+                st = json.load(f)
+        except (OSError, ValueError):
+            return {"air": 0, "fallen": 0, "positions": []}
+        return {
+            "air": int(st.get("air", 0)),
+            "fallen": int(st.get("fallen", 0)),
+            "positions": st.get("positions", []),
+        }
+
     def latest_jpeg(self) -> bytes:
         try:
             with open(self._jpeg_path, "rb") as f:

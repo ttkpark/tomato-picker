@@ -60,3 +60,36 @@ def resolve_arm_port(fallback: str) -> str:
 def resolve_base_port(fallback: str) -> str:
     """베이스 시리얼 경로. by-id → /dev/ttyUSB* 스캔 → fallback 순."""
     return _by_id(BASE_BY_ID_HINT) or _first_existing(["/dev/ttyUSB*"]) or fallback
+
+
+def list_arm_ports() -> list[str]:
+    """팔 계열(ttyACM) 후보 경로 전부. 리더/팔로워가 둘 다 CH343이라
+    by-id 이름도 시리얼번호로만 갈리므로, 어느 쪽인지는 **사용자가 고른다**
+    (웹 화면의 리더 포트 선택). by-id를 앞에 두어 재열거에 안전한 경로를 우선."""
+    ports: list[str] = []
+    try:
+        for name in sorted(os.listdir(BY_ID_DIR)):
+            if ARM_BY_ID_HINT in name:
+                path = f"{BY_ID_DIR}/{name}"
+                if os.path.exists(os.path.realpath(path)):
+                    ports.append(path)
+    except OSError:
+        pass
+    seen = {os.path.realpath(p) for p in ports}
+    for path in sorted(glob.glob("/dev/ttyACM*")):
+        if os.path.realpath(path) not in seen:
+            ports.append(path)
+    return ports
+
+
+def resolve_leader_port(exclude: str | None) -> str | None:
+    """리더암 경로 — 팔로워가 이미 잡은 포트를 뺀 첫 후보.
+
+    exclude에는 팔로워가 **실제로 열어둔** 경로를 넘긴다. by-id 링크와 실경로가
+    섞여 들어와도 같은 장치를 두 번 열지 않도록 realpath로 비교한다.
+    """
+    blocked = {os.path.realpath(exclude)} if exclude else set()
+    for path in list_arm_ports():
+        if os.path.realpath(path) not in blocked:
+            return path
+    return None

@@ -11,8 +11,30 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from ..config import BASE_DRIVE_SPEED
+from ..config import BASE_DRIVE_SPEED, CAMERA_HEIGHT
 from .log_hub import LogHub
+
+
+def _status_payload(arm, base) -> dict:
+    """조작 화면이 폴링하는 상태. 어떤 조회가 실패해도 페이지는 떠야 하므로
+    항목마다 개별로 감싸고, 없는 장비는 None으로 내려보낸다."""
+    def _safe(fn, fallback):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - 상태 조회 실패가 화면을 죽이면 안 됨
+            return {**fallback, "error": str(exc)}
+
+    arm_status = (
+        _safe(arm.status, {"presets": {"slots": [], "anchors": []}})
+        if arm is not None and hasattr(arm, "status")
+        else {"presets": {"slots": [], "anchors": []}, "error": "팔 미연결"}
+    )
+    base_status = (
+        _safe(base.link_stats, {"connected": False})
+        if base is not None and hasattr(base, "link_stats")
+        else {"connected": False, "error": "바퀴 미연결"}
+    )
+    return {"arm": arm_status, "base": base_status}
 
 # 하드웨어가 하나도 없어도 대시보드는 떠야 한다(부스 데모에서 화면이 검은 것보다
 # "장비 미연결"이라고 떠 있는 게 낫다). 그래서 이 모듈의 어떤 것도 하드웨어
@@ -122,58 +144,85 @@ def _page(has_video: bool) -> str:
 </body></html>"""
 
 
-def _control_page(preset_ids: list[int], default_speed: int) -> str:
-    """수동 조작 화면 — 음성 없이 브라우저에서 바퀴/팔을 직접 움직인다.
+def _control_page(default_speed: int, frame_height: int) -> str:
+    """수동 조작 화면 — 음성 없이 브라우저에서 바퀴/팔/프리셋을 직접 다룬다.
 
-    데모 현장에서 음성이 안 먹히거나(소음·마이크 문제) 자세를 잡아둬야 할 때
-    쓰는 백업 조작반. 명령은 전부 POST /cmd 하나로 보낸다.
+    데모 현장에서 음성이 안 먹히거나(소음·마이크 문제) 자세를 새로 잡아둬야 할 때
+    쓰는 조작반. 명령은 전부 POST /cmd 하나로 보내고, 화면 상태는 GET /status를
+    1초마다 폴링해 갱신한다(프리셋 목록·리더암·링크 품질이 서버 쪽 진실).
+
+    브레이스 이스케이프 지옥을 피하려고 f-string이 아니라 치환 방식으로 만든다.
     """
-    preset_buttons = "".join(
-        f'<button onclick="cmd({{action:\'arm_preset\',preset:{i}}})">프리셋 {i}</button>'
-        for i in preset_ids
-    ) or '<span class="dim">저장된 프리셋 없음</span>'
-    return f"""<!doctype html>
+    return (
+        _CONTROL_HTML
+        .replace("__SPEED__", str(default_speed))
+        .replace("__FRAME_H__", str(frame_height))
+    )
+
+
+_CONTROL_HTML = """<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>토마토피커 수동 조작</title>
 <style>
-  :root {{ color-scheme: light dark; }}
-  body {{ font-family: -apple-system, "Malgun Gothic", sans-serif; margin: 0; padding: 1rem;
-         background: Canvas; color: CanvasText; }}
-  h1 {{ font-size: 1.1rem; opacity: 0.8; margin: 0 0 0.75rem; }}
-  h2 {{ font-size: 0.95rem; opacity: 0.7; margin: 1.25rem 0 0.5rem; }}
-  a {{ color: inherit; }}
-  button {{ font: inherit; padding: 0.9rem 0.6rem; border-radius: 10px; cursor: pointer;
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Malgun Gothic", sans-serif; margin: 0; padding: 1rem;
+         background: Canvas; color: CanvasText; }
+  h1 { font-size: 1.1rem; opacity: 0.8; margin: 0 0 0.75rem; }
+  h2 { font-size: 0.95rem; opacity: 0.7; margin: 1.4rem 0 0.5rem; }
+  a { color: inherit; }
+  button { font: inherit; padding: 0.7rem 0.6rem; border-radius: 10px; cursor: pointer;
            border: 1px solid color-mix(in srgb, CanvasText 25%, Canvas);
-           background: color-mix(in srgb, CanvasText 8%, Canvas); color: inherit; }}
-  button:active {{ background: color-mix(in srgb, #2ecc71 35%, Canvas); }}
-  button.stop {{ background: color-mix(in srgb, #e74c3c 30%, Canvas); font-weight: 700; }}
-  /* 메카넘 방향키 — 십자 배치 그대로가 제일 직관적 */
-  #pad {{ display: grid; grid-template-columns: repeat(3, minmax(84px, 110px));
-         gap: 0.5rem; }}
-  #arm {{ display: flex; flex-wrap: wrap; gap: 0.5rem; }}
-  .dim {{ opacity: 0.6; }}
-  #keys {{ font-size: 0.9rem; margin-bottom: 0.75rem; padding: 0.6rem 0.8rem; border-radius: 8px;
-          background: color-mix(in srgb, CanvasText 6%, Canvas); line-height: 1.9; }}
-  kbd {{ font: inherit; font-size: 0.85em; padding: 0.1em 0.45em; border-radius: 5px;
+           background: color-mix(in srgb, CanvasText 8%, Canvas); color: inherit; }
+  button:active { background: color-mix(in srgb, #2ecc71 35%, Canvas); }
+  button.stop { background: color-mix(in srgb, #e74c3c 30%, Canvas); font-weight: 700; }
+  button.on { background: color-mix(in srgb, #2ecc71 40%, Canvas); font-weight: 700; }
+  button.small { padding: 0.3rem 0.5rem; font-size: 0.85rem; border-radius: 7px; }
+  #pad { display: grid; grid-template-columns: repeat(3, minmax(84px, 110px)); gap: 0.5rem; }
+  .row-flex { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .dim { opacity: 0.6; }
+  .card { padding: 0.6rem 0.8rem; border-radius: 10px;
+          background: color-mix(in srgb, CanvasText 6%, Canvas); }
+  #keys { font-size: 0.9rem; margin-bottom: 0.75rem; line-height: 1.9; }
+  kbd { font: inherit; font-size: 0.85em; padding: 0.1em 0.45em; border-radius: 5px;
         border: 1px solid color-mix(in srgb, CanvasText 30%, Canvas);
-        background: color-mix(in srgb, CanvasText 10%, Canvas); }}
-  #held {{ font-weight: 700; }}
-  label {{ display: block; margin: 0.5rem 0; font-size: 0.9rem; }}
-  input[type=range] {{ width: min(320px, 90vw); vertical-align: middle; }}
-  #out {{ margin-top: 1rem; padding: 0.6rem 0.8rem; border-radius: 8px; min-height: 1.2em;
+        background: color-mix(in srgb, CanvasText 10%, Canvas); }
+  #held { font-weight: 700; }
+  label { display: block; margin: 0.5rem 0; font-size: 0.9rem; }
+  input[type=range] { width: min(320px, 90vw); vertical-align: middle; }
+  input[type=text], input[type=number] { font: inherit; padding: 0.35rem 0.5rem; border-radius: 7px;
+        border: 1px solid color-mix(in srgb, CanvasText 25%, Canvas);
+        background: Canvas; color: inherit; }
+  select { font: inherit; padding: 0.35rem; border-radius: 7px; background: Canvas; color: inherit;
+        border: 1px solid color-mix(in srgb, CanvasText 25%, Canvas); }
+  /* 프리셋 0~9 그리드 */
+  #presets { display: grid; gap: 0.5rem;
+             grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); max-width: 900px; }
+  .slot { border-radius: 10px; padding: 0.5rem 0.6rem; display: flex; flex-direction: column;
+          gap: 0.35rem; border: 1px solid color-mix(in srgb, CanvasText 20%, Canvas);
+          background: color-mix(in srgb, CanvasText 5%, Canvas); }
+  .slot.empty { opacity: 0.55; border-style: dashed; }
+  .slot .no { font-weight: 700; font-size: 1.05rem; }
+  .slot .nm { font-size: 0.85rem; opacity: 0.75; min-height: 1.1em; }
+  .tag { font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 999px;
+         background: color-mix(in srgb, #3498db 35%, Canvas); }
+  #mode { font-weight: 700; }
+  #link { font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+  #out { margin-top: 1rem; padding: 0.6rem 0.8rem; border-radius: 8px; min-height: 1.2em;
          background: color-mix(in srgb, CanvasText 6%, Canvas); font-size: 0.9rem;
-         white-space: pre-wrap; }}
+         white-space: pre-wrap; }
 </style></head>
 <body>
 <h1>토마토피커 — 수동 조작 <span class="dim">(<a href="/">대시보드로</a>)</span></h1>
 
-<div id="keys">⌨ <b>키보드</b>: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 또는 방향키 = 이동(누르는 동안 계속) ·
-<kbd>Q</kbd><kbd>E</kbd> = 회전 · <kbd>Space</kbd> = 정지 · <kbd>1</kbd>~<kbd>4</kbd> = 프리셋 · <kbd>R</kbd> = 힘 빼기
+<div class="card" id="link">링크 상태 확인 중...</div>
+
+<div class="card" id="keys">⌨ <b>키보드</b>: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 또는 방향키 = 이동(누르는 동안 계속) ·
+<kbd>Q</kbd><kbd>E</kbd> = 회전 · <kbd>Space</kbd> = 정지 · <kbd>0</kbd>~<kbd>9</kbd> = 프리셋(현재 모드로) · <kbd>R</kbd> = 힘 빼기
 <span id="held" class="dim"></span></div>
 
-<label>속도 <input type="range" id="speed" min="40" max="255" value="{default_speed}"
-  oninput="speedOut.textContent=this.value"> <b id="speedOut">{default_speed}</b> / 255</label>
+<label>속도 <input type="range" id="speed" min="40" max="255" value="__SPEED__"
+  oninput="speedOut.textContent=this.value"> <b id="speedOut">__SPEED__</b> / 255</label>
 <label>동작 시간 <input type="range" id="secs" min="0.2" max="3" step="0.1" value="0.6"
   oninput="secsOut.textContent=this.value"> <b id="secsOut">0.6</b> 초</label>
 
@@ -183,7 +232,7 @@ def _control_page(preset_ids: list[int], default_speed: int) -> str:
   <button onclick="drive(1,0,0)">▲ 전진</button>
   <button onclick="drive(1,1,0)">↗ 우전</button>
   <button onclick="drive(0,-1,0)">◀ 좌이동</button>
-  <button class="stop" onclick="cmd({{action:'stop'}})">■ 정지</button>
+  <button class="stop" onclick="cmd({action:'stop'})">■ 정지</button>
   <button onclick="drive(0,1,0)">▶ 우이동</button>
   <button onclick="drive(-1,-1,0)">↙ 좌후</button>
   <button onclick="drive(-1,0,0)">▼ 후진</button>
@@ -193,89 +242,369 @@ def _control_page(preset_ids: list[int], default_speed: int) -> str:
   <button onclick="drive(0,0,1)">↻ 우회전</button>
 </div>
 
-<h2>로봇팔</h2>
-<div id="arm">
-  {preset_buttons}
-  <button onclick="cmd({{action:'arm_demo'}})">전체 시퀀스</button>
-  <button onclick="cmd({{action:'arm_relax'}})">힘 빼기</button>
+<h2>모터 튜닝 <span class="dim">— 소음 ↔ 속도 (재플래시 없이 즉시 반영)</span></h2>
+<div class="card">
+  <div class="row-flex" style="margin-bottom:0.5rem">
+    <button onclick="preset(50,2000)">🔊 힘 최대 · 50Hz "우우웅"</button>
+    <button onclick="preset(400,2400)">400Hz</button>
+    <button onclick="preset(700,2600)">700Hz (균형)</button>
+    <button onclick="preset(1100,2900)">1100Hz</button>
+    <button onclick="preset(1526,3200)">🔇 1526Hz "찌잉" (상한)</button>
+  </div>
+  <label>PWM 주파수 <input type="range" id="tHz" min="24" max="1526" step="1" value="700"
+    oninput="tHzOut.textContent=this.value"> <b id="tHzOut">700</b> Hz
+    <span class="dim">낮을수록 저음·힘셈 / 높을수록 고음·힘약함</span></label>
+  <label>듀티 상한 <input type="range" id="tPwm" min="800" max="4095" step="25" value="2600"
+    oninput="tPwmOut.textContent=this.value"> <b id="tPwmOut">2600</b> / 4095
+    <span class="dim">주파수 올려 잃은 속도를 여기서 되찾는다 (⚠ 전류도 같이 커짐)</span></label>
+  <label>가속 <input type="range" id="tAcc" min="1" max="40" value="6"
+    oninput="tAccOut.textContent=this.value"> <b id="tAccOut">6</b>
+    <span class="dim">클수록 즉답 / 작을수록 인러시가 낮아 젯슨 리셋에 안전</span></label>
+  <div class="row-flex">
+    <button onclick="applyTune()">적용</button>
+    <span id="tNow" class="dim"></span>
+  </div>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    PCA9685는 <b>1526Hz가 물리적 상한</b>이라 가청대역 위로는 못 올린다 — "무음"은 선택지가
+    아니고 저역 울림과 고역 휘파람 중 하나를 고르는 것. 마음에 드는 값을 찾으면
+    <code>config.py</code>의 <code>BASE_PWM_HZ</code> / <code>BASE_MAX_PWM</code>에 적어두면
+    다음 부팅부터 기본값이 된다. 젯슨이 리셋되면 듀티 상한부터 내릴 것.
+  </p>
+</div>
+
+<h2>리더암 (자세 만들기)</h2>
+<div class="card">
+  <div class="row-flex">
+    <select id="leaderPort"><option value="">포트 자동선택</option></select>
+    <button id="btnLeader" onclick="toggleLeader()">리더암 연결</button>
+    <button id="btnMirror" onclick="toggleMirror()">미러링 시작</button>
+    <span id="leaderInfo" class="dim"></span>
+  </div>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    미러링 ON → 리더를 손으로 움직이면 팔로워가 따라온다. 원하는 자세에서
+    아래 <b>등록 모드</b>로 바꾸고 슬롯을 누르면 그 자세가 저장된다.
+    리더 없이도 <b>힘 빼기</b> 후 손으로 자세를 잡아 저장할 수 있다.
+  </p>
+</div>
+
+<h2>프리셋 슬롯 0~9</h2>
+<div class="card" style="margin-bottom:0.6rem">
+  <div class="row-flex">
+    <span>모드:</span>
+    <button id="btnPlay" onclick="setMode('play')">▶ 재생</button>
+    <button id="btnSave" onclick="setMode('save')">● 등록(저장)</button>
+    <span id="mode" class="dim"></span>
+  </div>
+</div>
+<div id="presets"></div>
+
+<h2>시퀀스 · 힘 빼기</h2>
+<div class="row-flex">
+  <input type="text" id="seq" value="1,2,3,4" size="12">
+  <button onclick="runSeq()">순서대로 재생</button>
+  <button onclick="cmd({action:'arm_demo'})">전체 시퀀스(1→4)</button>
+  <button onclick="cmd({action:'arm_relax'})">힘 빼기</button>
+</div>
+
+<h2>높이 보간 — 앵커 사이 자세 계산</h2>
+<div class="card">
+  <div id="anchorList" class="dim" style="margin-bottom:0.5rem">앵커 없음</div>
+  <label>목표 높이 y <input type="range" id="blendY" min="0" max="__FRAME_H__" value="360"
+    oninput="blendOut.textContent=this.value"> <b id="blendOut">360</b> px</label>
+  <div class="row-flex">
+    <button onclick="cmd({action:'arm_blend', y:+document.getElementById('blendY').value})">이 높이로 이동</button>
+    <button onclick="cmd({action:'arm_blend', from_vision:true})">🍅 감지된 토마토 높이로 이동</button>
+  </div>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    y는 카메라 화면의 세로 픽셀(위=0, 아래=__FRAME_H__). 앵커를 2개 이상 등록하면
+    그 사이는 관절값 선형보간으로 채워지고, 바깥은 <b>외삽하지 않고</b> 끝 앵커로 고정된다.
+  </p>
 </div>
 
 <div id="out">명령 대기 중</div>
 <script>
   const out = document.getElementById('out');
   let busy = false;
-  async function cmd(body) {{
+  let mode = 'play';
+  let state = null;
+  let tuneInit = false;   // 튜닝 슬라이더를 서버값으로 맞추는 건 첫 로드 1회만
+
+  async function cmd(body) {
     // 시리얼 명령은 블로킹이라 겹쳐 보내면 포트가 깨진다 — 한 번에 하나만.
-    if (busy) {{ out.textContent = '이전 명령 실행 중...'; return; }}
+    if (busy) { out.textContent = '이전 명령 실행 중...'; return; }
     busy = true;
     out.textContent = '실행 중: ' + JSON.stringify(body);
-    try {{
-      const r = await fetch('/cmd', {{method: 'POST', body: JSON.stringify(body)}});
+    try {
+      const r = await fetch('/cmd', {method: 'POST', body: JSON.stringify(body)});
       const j = await r.json();
       out.textContent = (j.ok ? '완료: ' : '실패: ') + (j.detail || JSON.stringify(body));
-    }} catch (e) {{
+    } catch (e) {
       out.textContent = '요청 실패: ' + e;
-    }} finally {{ busy = false; }}
-  }}
-  function drive(vx, vy, w) {{
+    } finally { busy = false; refresh(); }
+  }
+
+  function drive(vx, vy, w) {
     const s = +document.getElementById('speed').value;
-    cmd({{action:'drive', vx: vx*s, vy: vy*s, w: w*s,
-         seconds: +document.getElementById('secs').value}});
-  }}
+    cmd({action:'drive', vx: vx*s, vy: vy*s, w: w*s,
+         seconds: +document.getElementById('secs').value});
+  }
+
+  // --- 모드(재생/등록) ---
+  function setMode(m) {
+    mode = m;
+    document.getElementById('btnPlay').className = m === 'play' ? 'on' : '';
+    document.getElementById('btnSave').className = m === 'save' ? 'on' : '';
+    document.getElementById('mode').textContent =
+      m === 'play' ? '슬롯을 누르면 그 자세로 이동합니다.'
+                   : '슬롯을 누르면 지금 팔 자세를 그 슬롯에 덮어씁니다.';
+    render();
+  }
+
+  function slotClick(n) {
+    if (mode === 'save') {
+      if (!confirm(n + '번 슬롯에 지금 자세를 저장할까요?' +
+                   (slotFilled(n) ? '\\n(기존 자세는 덮어써집니다)' : ''))) return;
+      cmd({action:'arm_save', slot:n});
+    } else {
+      cmd({action:'arm_preset', preset:n});
+    }
+  }
+  function slotFilled(n) {
+    const s = state && state.arm && state.arm.presets.slots.find(x => x.slot === n);
+    return !!(s && s.filled);
+  }
+
+  function rename(n) {
+    const cur = (state.arm.presets.slots.find(x => x.slot === n) || {}).name || '';
+    const name = prompt(n + '번 슬롯 이름 (예: 접근, 집기)', cur);
+    if (name === null) return;
+    cmd({action:'arm_rename', slot:n, name});
+  }
+  function anchor(n) {
+    const s = state.arm.presets.slots.find(x => x.slot === n) || {};
+    if (s.anchor) { if (confirm(n + '번의 높이 앵커를 해제할까요?')) cmd({action:'arm_anchor_clear', slot:n}); return; }
+    const label = prompt('앵커 라벨 (상 / 중 / 하 등)', '중');
+    if (!label) return;
+    const y = prompt('이 자세가 가리키는 화면 높이 y (0=맨위, __FRAME_H__=맨아래)', '360');
+    if (y === null) return;
+    cmd({action:'arm_anchor', slot:n, label, y:+y});
+  }
+  function del(n) {
+    if (!confirm(n + '번 슬롯을 비울까요?')) return;
+    cmd({action:'arm_delete', slot:n});
+  }
+  function runSeq() {
+    const list = document.getElementById('seq').value.split(',')
+      .map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+    if (!list.length) { out.textContent = '슬롯 번호를 쉼표로 입력하세요 (예: 1,2,3,4)'; return; }
+    cmd({action:'arm_sequence', presets:list});
+  }
+
+  // --- 모터 튜닝 ---
+  function preset(hz, pwm) {
+    document.getElementById('tHz').value = hz;  tHzOut.textContent = hz;
+    document.getElementById('tPwm').value = pwm; tPwmOut.textContent = pwm;
+    applyTune();
+  }
+  function applyTune() {
+    cmd({action:'base_tune',
+         hz:      +document.getElementById('tHz').value,
+         max_pwm: +document.getElementById('tPwm').value,
+         accel:   +document.getElementById('tAcc').value});
+  }
+
+  // --- 리더암 ---
+  function toggleLeader() {
+    if (state && state.arm && state.arm.leader_connected) cmd({action:'leader_disconnect'});
+    else cmd({action:'leader_connect', port: document.getElementById('leaderPort').value || null});
+  }
+  function toggleMirror() {
+    const on = state && state.arm && state.arm.mirroring;
+    cmd({action:'mirror', on: !on});
+  }
+
+  // --- 상태 렌더링 ---
+  function render() {
+    if (!state) return;
+    const arm = state.arm || {};
+    const base = state.base || {};
+
+    // 링크 상태
+    const ok = base.connected;
+    const bits = [(ok ? '● 바퀴 링크 정상' : '○ 바퀴 링크 끊김')];
+    if (base.port) bits.push(base.port);
+    if (base.hb_age !== null && base.hb_age !== undefined) bits.push('hb ' + base.hb_age + 's 전');
+    bits.push('수신 ' + (base.fw_rx || 0));
+    if (base.fw_bad) bits.push('⚠ 깨진프레임 ' + base.fw_bad);
+    if (base.nak) bits.push('⚠ nak ' + base.nak);
+    if (base.error) bits.push(base.error);
+    const link = document.getElementById('link');
+    link.textContent = bits.join('  ·  ');
+    link.style.background = ok ? 'color-mix(in srgb, #2ecc71 18%, Canvas)'
+                               : 'color-mix(in srgb, #e74c3c 18%, Canvas)';
+
+    // 모터 튜닝 — 현재 적용값 표시. 첫 로드 때만 슬라이더를 서버값으로 맞춘다
+    // (그 뒤엔 사용자가 끌고 있는 값을 폴링이 덮어쓰면 안 되므로 건드리지 않는다).
+    const t = base.tuning;
+    if (t) {
+      // acks = 펌웨어가 실제로 되돌려준 "ok F/P/R ..." — 값이 먹혔다는 증거.
+      // 이게 안 뜨면 요청만 갔고 보드는 예전 값 그대로다.
+      document.getElementById('tNow').textContent =
+        '요청값: ' + t.hz + 'Hz · 듀티 ' + t.max_pwm + '/4095 · 가속 ' + t.accel + ' / 감속 ' + t.decel
+        + (base.acks && base.acks.length ? '   ← 보드 확인: ' + base.acks.join(' | ') : '   ← 보드 확인 없음');
+      if (!tuneInit) {
+        tuneInit = true;
+        for (const [id, v] of [['tHz', t.hz], ['tPwm', t.max_pwm], ['tAcc', t.accel]]) {
+          document.getElementById(id).value = v;
+          document.getElementById(id + 'Out').textContent = v;
+        }
+      }
+    }
+
+    // 리더암
+    const bl = document.getElementById('btnLeader');
+    bl.textContent = arm.leader_connected ? '리더암 연결 해제' : '리더암 연결';
+    bl.className = arm.leader_connected ? 'on' : '';
+    const bm = document.getElementById('btnMirror');
+    bm.textContent = arm.mirroring ? '미러링 중지' : '미러링 시작';
+    bm.className = arm.mirroring ? 'on' : '';
+    document.getElementById('leaderInfo').textContent =
+      (arm.leader_port ? '리더 ' + arm.leader_port + ' · ' : '') +
+      (arm.follower_port ? '팔로워 ' + arm.follower_port : '') +
+      (arm.mirror_error ? '  ⚠ ' + arm.mirror_error : '');
+    const sel = document.getElementById('leaderPort');
+    const want = ['', ...(arm.leader_candidates || [])].join('|');
+    if (sel.dataset.opts !== want) {
+      sel.dataset.opts = want;
+      const keep = sel.value;
+      sel.innerHTML = '<option value="">포트 자동선택</option>';
+      for (const p of (arm.leader_candidates || [])) {
+        const o = document.createElement('option'); o.value = p; o.textContent = p; sel.append(o);
+      }
+      sel.value = keep;
+    }
+
+    // 프리셋 슬롯
+    const grid = document.getElementById('presets');
+    grid.textContent = '';
+    for (const s of ((arm.presets || {}).slots || [])) {
+      const el = document.createElement('div');
+      el.className = 'slot' + (s.filled ? '' : ' empty');
+      const head = document.createElement('div');
+      head.className = 'row-flex';
+      const no = document.createElement('span');
+      no.className = 'no'; no.textContent = s.slot;
+      head.append(no);
+      if (s.anchor) {
+        const t = document.createElement('span');
+        t.className = 'tag';
+        t.textContent = s.anchor.label + ' y=' + Math.round(s.anchor.y);
+        head.append(t);
+      }
+      const nm = document.createElement('div');
+      nm.className = 'nm'; nm.textContent = s.name || (s.filled ? '' : '비어 있음');
+      const main = document.createElement('button');
+      main.textContent = mode === 'save' ? '● 여기에 저장' : '▶ 재생';
+      if (mode === 'play' && !s.filled) main.disabled = true;
+      main.onclick = () => slotClick(s.slot);
+      const tools = document.createElement('div');
+      tools.className = 'row-flex';
+      for (const [label, fn] of [['이름', rename], ['앵커', anchor], ['비우기', del]]) {
+        const b = document.createElement('button');
+        b.className = 'small'; b.textContent = label;
+        b.disabled = !s.filled && label !== '이름';
+        b.onclick = () => fn(s.slot);
+        tools.append(b);
+      }
+      el.append(head, nm, main, tools);
+      grid.append(el);
+    }
+
+    // 앵커 목록
+    const anchors = (arm.presets || {}).anchors || [];
+    document.getElementById('anchorList').textContent = anchors.length
+      ? '앵커(위→아래): ' + anchors.map(a => a.label + '=슬롯' + a.slot + '(y' + Math.round(a.y) + ')').join('  →  ')
+      : '앵커 없음 — 슬롯의 [앵커] 버튼으로 상/중/하를 지정하세요.';
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('/status');
+      state = await r.json();
+      render();
+    } catch (e) { /* 다음 주기에 다시 */ }
+  }
+  setInterval(refresh, 1000);
+  setMode('play');
+  refresh();
 
   // --- 키보드 홀드 주행 ---
   // 누르고 있는 키 집합을 유지하고, 100ms마다 현재 합성 속도를 서버로 보낸다.
-  // 서버(JetsonBase.hold)는 연결을 열어둔 채 50ms마다 펌웨어에 재전송하므로
-  // 키를 누르고 있는 동안 끊김 없이 굴러간다. 키를 떼면 (0,0,0)이 가고,
-  // 브라우저가 죽어도 서버가 0.5초 뒤 자동 정지한다(이중 안전).
-  const KEY_VEC = {{
+  // 서버(MotorLink)는 연결을 열어둔 채 20ms마다 펌웨어에 재전송하므로 키를
+  // 누르고 있는 동안 끊김 없이 굴러간다. 키를 떼면 (0,0,0)이 가고, 브라우저가
+  // 죽어도 서버가 0.5초 뒤 자동 정지한다(그마저 못 가면 펌웨어 데드맨).
+  const KEY_VEC = {
     w: [1,0,0], arrowup: [1,0,0], s: [-1,0,0], arrowdown: [-1,0,0],
     a: [0,-1,0], arrowleft: [0,-1,0], d: [0,1,0], arrowright: [0,1,0],
     q: [0,0,-1], e: [0,0,1],
-  }};
+  };
   const held = new Set();
   const heldEl = document.getElementById('held');
   let lastSent = null;
 
-  function heldVector() {{
+  function heldVector() {
     let v = [0,0,0];
-    for (const k of held) {{
+    for (const k of held) {
       const d = KEY_VEC[k];
-      if (d) {{ v[0]+=d[0]; v[1]+=d[1]; v[2]+=d[2]; }}
-    }}
+      if (d) { v[0]+=d[0]; v[1]+=d[1]; v[2]+=d[2]; }
+    }
     // 대각선에서 두 축이 겹쳐 2배가 되지 않게 -1..1로 자른다.
     return v.map(x => Math.max(-1, Math.min(1, x)));
-  }}
+  }
 
-  async function sendHold() {{
+  async function sendHold() {
     const s = +document.getElementById('speed').value;
     const [vx, vy, w] = heldVector().map(x => Math.round(x * s));
     const key = vx + ',' + vy + ',' + w;
     // 정지 상태가 계속되면 굳이 반복해 보내지 않는다(서버가 알아서 멈춰 있음).
     if (key === '0,0,0' && lastSent === '0,0,0') return;
     lastSent = key;
-    heldEl.textContent = (vx||vy||w) ? `  ▶ vx=${{vx}} vy=${{vy}} w=${{w}}` : '';
-    try {{
-      await fetch('/cmd', {{method:'POST', body: JSON.stringify({{action:'hold', vx, vy, w}})}});
-    }} catch (e) {{ /* 한 번 실패해도 다음 주기에 다시 보낸다 */ }}
-  }}
+    heldEl.textContent = (vx||vy||w) ? ('  ▶ vx=' + vx + ' vy=' + vy + ' w=' + w) : '';
+    try {
+      await fetch('/cmd', {method:'POST', body: JSON.stringify({action:'hold', vx, vy, w})});
+    } catch (e) { /* 한 번 실패해도 다음 주기에 다시 보낸다 */ }
+  }
   setInterval(sendHold, 100);
 
-  addEventListener('keydown', (e) => {{
+  addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     const k = e.key.toLowerCase();
-    if (k === ' ') {{ held.clear(); e.preventDefault(); cmd({{action:'stop'}}); return; }}
-    if (k === 'r') {{ cmd({{action:'arm_relax'}}); return; }}
-    if ('1234'.includes(k)) {{ cmd({{action:'arm_preset', preset:+k}}); return; }}
-    if (KEY_VEC[k]) {{ held.add(k); e.preventDefault(); }}
-  }});
-  addEventListener('keyup', (e) => {{ held.delete(e.key.toLowerCase()); }});
+    if (k === ' ') { held.clear(); e.preventDefault(); cmd({action:'stop'}); return; }
+    if (k === 'r') { cmd({action:'arm_relax'}); return; }
+    if ('0123456789'.includes(k)) { slotClick(+k); return; }
+    if (KEY_VEC[k]) { held.add(k); e.preventDefault(); }
+  });
+  addEventListener('keyup', (e) => { held.delete(e.key.toLowerCase()); });
   // 탭을 벗어나면 키를 뗀 걸로 본다 — 안 그러면 keyup을 놓쳐 계속 굴러간다.
   addEventListener('blur', () => held.clear());
 </script>
 </body></html>"""
 
+def _lowest_tomato_y(vision) -> float | None:
+    """비전이 본 공중 토마토 중 **가장 아래(y가 큰) 것**의 y좌표.
 
-def _handle_command(body: dict, arm, base) -> tuple[bool, str]:
+    여러 개가 보일 때 무엇을 딸지 정하는 규칙 — 아래쪽부터 따는 게
+    수확 순서로 자연스럽고(위 열매를 건드려 떨어뜨리지 않는다), 낙과선
+    바로 위 열매가 팔 사거리에도 가장 가깝다.
+    """
+    if vision is None or not hasattr(vision, "latest_status"):
+        return None
+    positions = vision.latest_status().get("positions") or []
+    ys = [float(p[1]) for p in positions if len(p) >= 2]
+    return max(ys) if ys else None
+
+
+def _handle_command(body: dict, arm, base, vision=None) -> tuple[bool, str]:
     """수동 조작 명령 하나를 실행. (성공여부, 사람이 읽을 설명)을 돌려준다.
 
     장비가 없으면(Mock/None) 에러 대신 그 사실을 문자열로 알려준다 —
@@ -304,22 +633,85 @@ def _handle_command(body: dict, arm, base) -> tuple[bool, str]:
             base.hold(0, 0, 0)  # 홀드 세션이 돌고 있으면 그걸 먼저 멈춘다
             base.stop()
             return True, "정지"
-        if action == "arm_preset":
-            if arm is None:
+        if action == "base_tune":
+            # PWM 주파수·듀티상한·가감속 실시간 변경(재플래시 불필요).
+            if base is None or not hasattr(base, "tune"):
+                return False, "바퀴 미연결"
+            t = base.tune(
+                hz=body.get("hz"), max_pwm=body.get("max_pwm"),
+                accel=body.get("accel"), decel=body.get("decel"),
+            )
+            return True, (f"튜닝 적용: {t['hz']}Hz · 듀티상한 {t['max_pwm']}/4095"
+                          f" · 가속 {t['accel']}/감속 {t['decel']}")
+        if arm is None:
+            # 아래 명령은 전부 팔이 필요하다 — 한 곳에서 걸러낸다.
+            if str(action).startswith(("arm_", "leader_", "mirror")):
                 return False, "팔 미연결"
+        elif action == "arm_preset":
             preset = int(body.get("preset", 1))
             arm.play_preset(preset)
             return True, f"프리셋 {preset} 재생"
-        if action == "arm_demo":
-            if arm is None:
-                return False, "팔 미연결"
+        elif action == "arm_sequence":
+            presets = [int(p) for p in (body.get("presets") or [])]
+            if not presets:
+                return False, "재생할 슬롯이 비어 있습니다"
+            arm.play_sequence(presets)
+            return True, "시퀀스 재생: " + " → ".join(str(p) for p in presets)
+        elif action == "arm_blend":
+            # 높이 앵커 사이 자세를 계산해 재생. from_vision이면 비전이 본
+            # 가장 아래 토마토의 y를 그대로 쓴다.
+            if body.get("from_vision"):
+                y = _lowest_tomato_y(vision)
+                if y is None:
+                    return False, "비전이 잡은 토마토가 없습니다"
+                source = f"비전 y={y:.0f}"
+            else:
+                y = float(body.get("y", 0))
+                source = f"수동 y={y:.0f}"
+            desc = arm.play_blended(y)
+            return True, f"높이 보간 재생 ({source} → {desc})"
+        elif action == "arm_save":
+            slot = int(body.get("slot", 0))
+            name = body.get("name")
+            pose = arm.save_preset(slot, name)
+            joints = ", ".join(f"{k.split('.')[0]}={v:.0f}" for k, v in sorted(pose.items()))
+            return True, f"슬롯 {slot} 저장: {joints}"
+        elif action == "arm_rename":
+            slot = int(body.get("slot", 0))
+            arm.presets.set_name(slot, str(body.get("name", "")))
+            return True, f"슬롯 {slot} 이름 변경"
+        elif action == "arm_delete":
+            slot = int(body.get("slot", 0))
+            arm.delete_preset(slot)
+            return True, f"슬롯 {slot} 비움"
+        elif action == "arm_anchor":
+            slot = int(body.get("slot", 0))
+            label = str(body.get("label", "")) or "앵커"
+            y = float(body.get("y", 0))
+            arm.set_anchor(slot, label, y)
+            return True, f"슬롯 {slot} = 높이앵커 '{label}' (y={y:.0f})"
+        elif action == "arm_anchor_clear":
+            slot = int(body.get("slot", 0))
+            arm.clear_anchor(slot)
+            return True, f"슬롯 {slot} 앵커 해제"
+        elif action == "arm_demo":
             arm.demo_move()
             return True, "전체 시퀀스 재생"
-        if action == "arm_relax":
-            if arm is None:
-                return False, "팔 미연결"
+        elif action == "arm_relax":
             arm.relax()
             return True, "팔 토크 해제"
+        elif action == "leader_connect":
+            port = arm.connect_leader(body.get("port") or None)
+            return True, f"리더암 연결됨: {port}"
+        elif action == "leader_disconnect":
+            arm.disconnect_leader()
+            return True, "리더암 연결 해제"
+        elif action == "mirror":
+            if body.get("on"):
+                arm.start_mirror()
+                return True, "미러링 시작 — 리더를 움직이면 팔로워가 따라옵니다"
+            arm.stop_mirror()
+            return True, "미러링 중지 (자세 유지)"
     except Exception as exc:  # noqa: BLE001 - 조작 실패가 서버를 죽이면 안 됨
         return False, f"{action} 실패: {exc}"
     return False, f"알 수 없는 명령: {action}"
@@ -344,9 +736,14 @@ def _make_handler(log_hub: LogHub, vision=None, hardware: dict | None = None) ->
                 self.wfile.write(body)
                 return
 
+            if self.path == "/status":
+                # 조작 화면이 1초마다 폴링하는 상태 스냅샷. 하드웨어가 없거나
+                # 상태 조회가 실패해도 화면은 떠 있어야 하므로 전부 감싼다.
+                self._write_json(_status_payload(hw.get("arm"), hw.get("base")))
+                return
+
             if self.path == "/control":
-                presets = list(getattr(hw.get("arm"), "preset_ids", []) or [])
-                body = _control_page(presets, BASE_DRIVE_SPEED).encode("utf-8")
+                body = _control_page(BASE_DRIVE_SPEED, CAMERA_HEIGHT).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -418,7 +815,7 @@ def _make_handler(log_hub: LogHub, vision=None, hardware: dict | None = None) ->
             except ValueError:
                 ok, detail = False, "JSON 파싱 실패"
             else:
-                ok, detail = _handle_command(body, hw.get("arm"), hw.get("base"))
+                ok, detail = _handle_command(body, hw.get("arm"), hw.get("base"), vision)
                 # 홀드는 초당 여러 번 오므로 로그에 안 쌓는다(실패했을 때만 알림).
                 if body.get("action") != "hold" or not ok:
                     log_hub.publish({
@@ -426,10 +823,14 @@ def _make_handler(log_hub: LogHub, vision=None, hardware: dict | None = None) ->
                         "kind": "intent" if ok else "error",
                         "text": f"[수동조작] {detail}",
                     })
-            payload = json.dumps({"ok": ok, "detail": detail}, ensure_ascii=False).encode("utf-8")
+            self._write_json({"ok": ok, "detail": detail})
+
+        def _write_json(self, obj: dict) -> None:
+            payload = json.dumps(obj, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(payload)
 

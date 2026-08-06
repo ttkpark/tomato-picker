@@ -51,6 +51,21 @@ class MockBase(MobileBase):
     def stop(self) -> None:
         _log("베이스: 정지")
 
+    _tuning = {"hz": 700, "max_pwm": 2600, "accel": 6, "decel": 12}
+
+    def link_stats(self) -> dict:
+        """JetsonBase와 같은 모양 — 대시보드 링크/튜닝 패널이 Mock에서도 뜨게."""
+        return {"connected": False, "port": None, "hb_age": None,
+                "fw_rx": 0, "fw_bad": 0, "nak": 0, "error": "Mock(미연결)",
+                "target": getattr(self, "_last_hold", (0, 0, 0)),
+                "tuning": dict(self._tuning)}
+
+    def tune(self, **values) -> dict:
+        self._tuning = {**self._tuning,
+                        **{k: int(v) for k, v in values.items() if v is not None}}
+        _log(f"베이스 튜닝: {self._tuning}")
+        return dict(self._tuning)
+
 
 class MockArm(RobotArm):
     def pick(self, position: tuple[float, float]) -> None:
@@ -69,15 +84,77 @@ class MockArm(RobotArm):
         _log("팔: 데모 동작(음성 트리거)")
         time.sleep(0.3)
 
-    # 수동조작 화면이 LerobotArm과 같은 방식으로 부를 수 있게 맞춰둔다.
-    preset_ids = [1, 2, 3, 4]
+    # --- 수동조작 화면이 LerobotArm과 같은 방식으로 부를 수 있게 맞춰둔다 ---
+    #
+    # 프리셋은 **읽기만** 실제 파일에서 한다. 팔이 없는 상태에서 저장하면
+    # 진짜 관절값이 아닌 가짜 값이 ~/arm_presets.json을 덮어써 데모용 자세가
+    # 통째로 날아가므로, 쓰기 계열은 전부 거부한다.
+    def __init__(self) -> None:
+        from ..config import ARM_PRESET_FILE
+        from .presets import PresetStore
 
-    def play_preset(self, preset_id: int) -> None:
+        self.presets = PresetStore(ARM_PRESET_FILE)
+
+    @property
+    def preset_ids(self) -> list[int]:
+        return self.presets.slot_ids()
+
+    def play_preset(self, preset_id: int, secs: float | None = None) -> None:
         _log(f"팔: 프리셋 {preset_id} 재생")
         time.sleep(0.3)
 
+    def play_sequence(self, preset_ids: list[int]) -> None:
+        for preset_id in preset_ids:
+            self.play_preset(preset_id)
+
+    def play_blended(self, y: float, secs: float | None = None) -> str:
+        _, desc = self.presets.blend(y)
+        _log(f"팔: 높이 {y:.0f} 보간 재생 ({desc})")
+        time.sleep(0.3)
+        return desc
+
     def relax(self) -> None:
         _log("팔: 토크 해제(힘 빼기)")
+
+    def _no_hardware(self, what: str):
+        raise RuntimeError(f"팔이 연결되지 않아 {what}을(를) 할 수 없습니다(Mock)")
+
+    def current_pose(self) -> dict[str, float]:
+        self._no_hardware("자세 읽기")
+
+    def save_preset(self, slot: int, name: str | None = None):
+        self._no_hardware("프리셋 저장")
+
+    def delete_preset(self, slot: int) -> None:
+        self.presets.delete(slot)
+
+    def set_anchor(self, slot: int, label: str, y: float) -> None:
+        self.presets.set_anchor(slot, label, y)
+
+    def clear_anchor(self, slot: int) -> None:
+        self.presets.clear_anchor(slot)
+
+    def connect_leader(self, port: str | None = None):
+        self._no_hardware("리더암 연결")
+
+    def disconnect_leader(self) -> None:
+        pass
+
+    def start_mirror(self) -> None:
+        self._no_hardware("미러링")
+
+    def stop_mirror(self) -> None:
+        pass
+
+    leader_connected = False
+    mirroring = False
+
+    def status(self) -> dict:
+        return {
+            "follower_port": None, "leader_connected": False, "leader_port": None,
+            "leader_candidates": [], "mirroring": False,
+            "mirror_error": "Mock(팔 미연결)", "presets": self.presets.snapshot(),
+        }
 
 
 class MockCamera(Camera):

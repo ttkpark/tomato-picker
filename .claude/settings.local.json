@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh -i /c/Users/parkg/.ssh/id_ed25519 -o ConnectTimeout=10 server@192.168.0.8 ' *)"
+    ]
+  }
+}

@@ -1,20 +1,18 @@
 """SO-101 Follower 팔 — 프리셋 포즈 보간 재생으로 구현한 실물 RobotArm.
 
-controller_drive.py의 play_preset() 로직(현재 자세→목표 자세 선형 보간)을
-그대로 가져온다. 프리셋은 PS2 컨트롤러로 저장한 ~/arm_presets.json에 있고,
-1→2→3→4 재생이 "접근→집기→들기→놓기" 전체 수확 시퀀스임이 실기로 확인됐다
-([[tomato-pick-sequence]]). pick_fruit()과 place_in_basket()이 스킬 함수로
-나뉘어 있으므로 이 시퀀스를 앞/뒤 절반으로 쪼개 배정한다(config.py 참고).
+담당 범위:
+  · 프리셋 슬롯 0~9 재생/저장 (저장소는 presets.PresetStore)
+  · **높이 앵커 보간 재생** — 비전이 준 토마토 y좌표로 상/중/하 사이 자세를 계산
+  · **리더암 미러링** — 리더(SO-101 Leader)를 손으로 움직이면 팔로워가 따라오고,
+    원하는 자세에서 슬롯에 저장한다. 예전에는 tools/mirror_toggle.py를 터미널에서
+    돌려야 했지만(리더 필요 + SSH 필요), 이제 대시보드에서 켜고 끈다.
 
-RobotArm.pick()의 position 인자는 아직 쓰이지 않는다 — 프리셋 재생은
-비전 좌표와 무관한 고정 시퀀스이기 때문. 좌표 기반 접근(비전 서보잉)은
-색검출이 부착/낙과 판정 이상으로 확장될 때 추가한다.
+RobotArm.pick()의 position 인자는 아직 고정 시퀀스만 쓴다 — 좌표 기반 접근은
+play_blended(y) 쪽이 담당한다(비전 y → 자세).
 """
 
 from __future__ import annotations
 
-import json
-import os
 import threading
 import time
 
@@ -23,6 +21,8 @@ from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
 from ..config import (
     ARM_HOME_PRESET,
     ARM_ID,
+    ARM_LEADER_ID,
+    ARM_MIRROR_FPS,
     ARM_MOVE_FPS,
     ARM_MOVE_SECS,
     ARM_PICK_PRESETS,
@@ -31,7 +31,8 @@ from ..config import (
     ARM_SERIAL_PORT,
 )
 from .base import RobotArm
-from .ports import resolve_arm_port
+from .ports import list_arm_ports, resolve_arm_port, resolve_leader_port
+from .presets import PresetStore
 
 
 def _pose_only(observation: dict) -> dict[str, float]:
@@ -39,7 +40,7 @@ def _pose_only(observation: dict) -> dict[str, float]:
 
 
 class LerobotArm(RobotArm):
-    """arm_presets.json의 저장 자세를 순서대로 보간 재생하는 실물 팔."""
+    """arm_presets.json의 저장 자세를 보간 재생하고, 리더암 미러링으로 저장하는 실물 팔."""
 
     def __init__(
         self,
@@ -49,18 +50,28 @@ class LerobotArm(RobotArm):
     ) -> None:
         self._port_fallback = port
         self._arm_id = arm_id
-        # 두 스레드(음성 인텐트 워커 / 대시보드 수동조작)가 같은 시리얼 버스를
-        # 동시에 건드리면 scservo가 "Port is in use!"를 낸다 — 여기서 직렬화한다.
+        # 두 스레드(음성 인텐트 워커 / 대시보드 수동조작 / 미러링)가 같은 시리얼
+        # 버스를 동시에 건드리면 scservo가 "Port is in use!"를 낸다 — 여기서 직렬화.
         self._lock = threading.RLock()
         self._follower: SOFollower | None = None
+        self._port = port
         self._connect()
-        with open(os.path.expanduser(preset_file), encoding="utf-8") as f:
-            self._presets: dict[str, dict] = json.load(f)
+        self.presets = PresetStore(preset_file)
+        # --- 리더암(미러링) 상태 ---
+        self._leader = None
+        self._leader_port: str | None = None
+        self._mirroring = False
+        self._mirror_thread: threading.Thread | None = None
+        self._mirror_error: str | None = None
+
+    # ------------------------------------------------------------------
+    # 연결 관리
+    # ------------------------------------------------------------------
 
     @property
     def preset_ids(self) -> list[int]:
-        """저장된 프리셋 번호(오름차순) — 대시보드 수동조작 버튼 생성용."""
-        return sorted(int(k) for k in self._presets if k.isdigit())
+        """저장된 프리셋 번호(오름차순) — 대시보드 버튼 생성용."""
+        return self.presets.slot_ids()
 
     def _connect(self) -> None:
         """지금 실제로 존재하는 경로를 다시 찾아 연결한다(재열거 대응)."""
@@ -96,29 +107,33 @@ class LerobotArm(RobotArm):
                     raise RuntimeError(f"팔 재연결 실패: {exc}") from first
                 return fn()
 
+    # ------------------------------------------------------------------
+    # RobotArm 인터페이스
+    # ------------------------------------------------------------------
+
     def pick(self, position: tuple[float, float]) -> None:
-        """position은 아직 미사용 — 고정 프리셋 시퀀스만 재생."""
+        """position은 아직 미사용 — 고정 프리셋 시퀀스만 재생.
+        좌표 기반 접근은 play_blended(y)를 쓸 것."""
         self._play_sequence(ARM_PICK_PRESETS)
 
     def place_in_basket(self) -> None:
         self._play_sequence(ARM_PLACE_PRESETS)
 
     def home(self) -> None:
-        self._play_preset(ARM_HOME_PRESET)
+        self.play_preset(ARM_HOME_PRESET)
 
     def demo_move(self) -> None:
         """음성 명령 트리거용 — 검증된 전체 시퀀스(1→2→3→4) 재생."""
         self._play_sequence(ARM_PICK_PRESETS + ARM_PLACE_PRESETS)
 
-    def play_preset(self, preset_id: int) -> None:
-        """프리셋 하나 재생 — 대시보드 수동조작에서 직접 부른다."""
-        self._play_preset(preset_id)
-
     def relax(self) -> None:
         """토크를 풀어 손으로 자세를 바꿀 수 있게 한다(수동조작 화면의 '힘 빼기')."""
+        self.stop_mirror()
         self._with_retry(lambda: self._follower.bus.disable_torque())
 
     def close(self) -> None:
+        self.stop_mirror()
+        self.disconnect_leader()
         with self._lock:
             if self._follower is None:
                 return
@@ -128,19 +143,172 @@ class LerobotArm(RobotArm):
             except Exception:  # noqa: BLE001 - 종료 경로에서 실패는 무시
                 pass
 
-    # --- 내부 ---
+    # ------------------------------------------------------------------
+    # 프리셋 — 재생
+    # ------------------------------------------------------------------
+
+    def play_preset(self, preset_id: int, secs: float = ARM_MOVE_SECS) -> None:
+        """프리셋 하나 재생. 미러링 중이면 먼저 끈다(리더와 목표가 싸우지 않게)."""
+        target = self.presets.get(preset_id)
+        if not target:
+            raise KeyError(f"프리셋 {preset_id}가 {self.presets.path}에 없습니다.")
+        self.stop_mirror()
+        self._with_retry(lambda: self._move_to(target, secs, ARM_MOVE_FPS))
+
+    def play_sequence(self, preset_ids: list[int]) -> None:
+        """여러 슬롯을 순서대로 재생 — 웹에서 '4,6,8' 같이 지정할 수 있다."""
+        self._play_sequence(preset_ids)
+
+    def play_blended(self, y: float, secs: float = ARM_MOVE_SECS) -> str:
+        """토마토 높이(y, 화면 세로 픽셀)에 맞춰 앵커 사이 자세를 계산해 재생.
+
+        반환값은 "'상'(슬롯 4) : '중'(슬롯 6) = 53% : 47%" 같은 설명 문자열 —
+        대시보드가 무엇을 어떻게 섞었는지 그대로 보여준다.
+        """
+        pose, desc = self.presets.blend(y)
+        self.stop_mirror()
+        self._with_retry(lambda: self._move_to(pose, secs, ARM_MOVE_FPS))
+        return desc
+
+    # ------------------------------------------------------------------
+    # 프리셋 — 저장/편집
+    # ------------------------------------------------------------------
+
+    def current_pose(self) -> dict[str, float]:
+        """지금 팔로워의 관절값. 토크가 풀려 있어도 읽힌다(엔코더 값)."""
+        return self._with_retry(lambda: _pose_only(self._follower.get_observation()))
+
+    def save_preset(self, slot: int, name: str | None = None) -> dict[str, float]:
+        """**지금 팔로워 자세**를 슬롯에 저장.
+
+        미러링 ON이면 리더가 만든 자세가, OFF(힘 빼기)면 손으로 잡아둔 자세가
+        그대로 저장된다 — 두 방식 다 같은 경로를 쓴다.
+        """
+        pose = self.current_pose()
+        self.presets.save(slot, pose, name)
+        return pose
+
+    def delete_preset(self, slot: int) -> None:
+        self.presets.delete(slot)
+
+    def set_anchor(self, slot: int, label: str, y: float) -> None:
+        self.presets.set_anchor(slot, label, y)
+
+    def clear_anchor(self, slot: int) -> None:
+        self.presets.clear_anchor(slot)
+
+    # ------------------------------------------------------------------
+    # 리더암 미러링
+    # ------------------------------------------------------------------
+
+    @property
+    def leader_connected(self) -> bool:
+        return self._leader is not None
+
+    @property
+    def mirroring(self) -> bool:
+        return self._mirroring
+
+    def leader_port_candidates(self) -> list[str]:
+        """웹에서 리더 포트를 고를 수 있게, 팔로워가 쓰는 포트를 뺀 후보 목록."""
+        follower_real = self._port
+        return [p for p in list_arm_ports() if p != follower_real]
+
+    def connect_leader(self, port: str | None = None) -> str:
+        """리더암 연결. port 생략 시 팔로워가 안 쓰는 첫 ttyACM을 자동 선택."""
+        from lerobot.teleoperators.so_leader import SOLeader, SOLeaderTeleopConfig
+
+        if self._leader is not None:
+            return self._leader_port or ""
+        chosen = port or resolve_leader_port(self._port)
+        if not chosen:
+            raise RuntimeError(
+                "리더암 포트를 찾지 못했습니다 — 리더 USB가 꽂혀 있는지 확인하세요 "
+                f"(팔로워={self._port})"
+            )
+        leader = SOLeader(SOLeaderTeleopConfig(port=chosen, id=ARM_LEADER_ID))
+        leader.connect(calibrate=False)
+        self._leader = leader
+        self._leader_port = chosen
+        self._mirror_error = None
+        return chosen
+
+    def disconnect_leader(self) -> None:
+        self.stop_mirror()
+        leader, self._leader = self._leader, None
+        self._leader_port = None
+        if leader is None:
+            return
+        try:
+            leader.disconnect()
+        except Exception:  # noqa: BLE001 - 정리 경로 실패는 무시
+            pass
+
+    def start_mirror(self) -> None:
+        """리더 → 팔로워 실시간 추종 시작. 리더가 없으면 자동으로 연결을 시도한다."""
+        if self._leader is None:
+            self.connect_leader()
+        if self._mirroring:
+            return
+        self._mirror_error = None
+        self._mirroring = True
+        self._mirror_thread = threading.Thread(
+            target=self._mirror_loop, daemon=True, name="arm-mirror"
+        )
+        self._mirror_thread.start()
+
+    def stop_mirror(self) -> None:
+        """미러링 정지. 팔로워는 **토크를 유지**해 마지막 자세를 잡고 있는다
+        (여기서 힘을 빼면 방금 잡아둔 자세가 중력에 무너져 저장할 수가 없다)."""
+        if not self._mirroring:
+            return
+        self._mirroring = False
+        thread, self._mirror_thread = self._mirror_thread, None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+
+    def _mirror_loop(self) -> None:
+        period = 1.0 / max(1.0, ARM_MIRROR_FPS)
+        try:
+            with self._lock:
+                self._follower.bus.enable_torque()
+            while self._mirroring:
+                start = time.monotonic()
+                with self._lock:
+                    if not self._mirroring:
+                        break
+                    action = self._leader.get_action()
+                    self._follower.send_action(action)
+                slack = period - (time.monotonic() - start)
+                if slack > 0:
+                    time.sleep(slack)
+        except Exception as exc:  # noqa: BLE001 - 미러링이 죽어도 서비스는 살아야 함
+            self._mirror_error = str(exc)
+            self._mirroring = False
+            print(f"  [arm] 미러링 중단: {exc}")
+
+    # ------------------------------------------------------------------
+    # 상태 스냅샷 (웹 UI)
+    # ------------------------------------------------------------------
+
+    def status(self) -> dict:
+        return {
+            "follower_port": self._port,
+            "leader_connected": self.leader_connected,
+            "leader_port": self._leader_port,
+            "leader_candidates": self.leader_port_candidates(),
+            "mirroring": self._mirroring,
+            "mirror_error": self._mirror_error,
+            "presets": self.presets.snapshot(),
+        }
+
+    # ------------------------------------------------------------------
+    # 내부
+    # ------------------------------------------------------------------
 
     def _play_sequence(self, preset_ids: list[int]) -> None:
         for preset_id in preset_ids:
-            self._play_preset(preset_id)
-
-    def _play_preset(
-        self, preset_id: int, secs: float = ARM_MOVE_SECS, fps: int = ARM_MOVE_FPS
-    ) -> None:
-        target = self._presets.get(str(preset_id))
-        if not target:
-            raise KeyError(f"프리셋 {preset_id}가 {ARM_PRESET_FILE}에 없습니다.")
-        self._with_retry(lambda: self._move_to(target, secs, fps))
+            self.play_preset(preset_id)
 
     def _move_to(self, target: dict, secs: float, fps: int) -> None:
         self._follower.bus.enable_torque()
