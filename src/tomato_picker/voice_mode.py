@@ -18,8 +18,12 @@ import time
 
 from .config import (
     BASE_DRIVE_FORWARD_SECONDS,
+    FLOOR_CAM_JPEG,
+    FLOOR_LINE_STATUS,
+    FLOOR_VIEW_JPEG,
     TOMATO_APPROACH_SECONDS,
     TOMATO_RETREAT_SECONDS,
+    USE_FLOOR_CAM,
     USE_REAL_ARM,
     USE_REAL_BASE,
     USE_REAL_CAMERA,
@@ -144,7 +148,17 @@ def run_voice() -> None:
     hardware: dict = {"arm": None, "base": None}
     vision = _build_vision(log_hub)
     hw["카메라"] = "ok" if vision is not None else "down"
-    start_log_server(log_hub, port=VOICE_LOG_HTTP_PORT, vision=vision, hardware=hardware)
+    # 바닥 카메라(CSI) — line-cam.service가 /dev/shm에 쓰는 프레임을 읽기만 한다.
+    # count 루프는 안 돌린다(start() 안 함 — 라인캠엔 개수 이벤트가 없다).
+    floor = None
+    if USE_FLOOR_CAM:
+        floor = SharedFrameSource(
+            log_hub, FLOOR_CAM_JPEG, FLOOR_LINE_STATUS, prefer_path=FLOOR_VIEW_JPEG
+        )
+        floor.start_line_publisher()
+    start_log_server(
+        log_hub, port=VOICE_LOG_HTTP_PORT, vision=vision, hardware=hardware, floor=floor
+    )
     start_redirect_server(VOICE_LOG_HTTP_REDIRECT_PORT, VOICE_LOG_HTTP_PORT)
     print(f"[voice] 실시간 대시보드: http://<젯슨IP>:{VOICE_LOG_HTTP_PORT}  (Ctrl+C로 종료)")
     print(f"[voice] 수동 조작:      http://<젯슨IP>:{VOICE_LOG_HTTP_PORT}/control")

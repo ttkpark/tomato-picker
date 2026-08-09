@@ -11,6 +11,7 @@ self-contained: 프로젝트 config를 임포트하지 않는다(다른 venv라 
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import time
@@ -19,8 +20,6 @@ from collections import deque
 import cv2
 import numpy as np
 from ultralytics import YOLOWorld
-
-CAMERA_INDEX = int(os.environ.get("TV_CAMERA_INDEX", "0"))
 WIDTH = int(os.environ.get("TV_WIDTH", "1280"))
 HEIGHT = int(os.environ.get("TV_HEIGHT", "720"))
 CONF = float(os.environ.get("TV_CONF", "0.10"))
@@ -47,13 +46,41 @@ def _atomic_write(path: str, data: bytes) -> None:
     os.replace(tmp, path)
 
 
+def _resolve_camera_source() -> int | str:
+    """무대용 USB 웹캠을 **안정 경로**로 찾는다.
+
+    CSI 카메라(IMX219, 바닥 라인캠) 추가 후 /dev/video0은 부팅 순서에 따라
+    CSI가 차지한다. 숫자 인덱스 0으로 열면 이 서비스가 CSI 노드를 선점해
+    라인캠은 물론 Argus 데몬까지 마비시킨다(2026-08-09 실사고 — "Failed to
+    create CaptureSession"의 정체가 이거였다). /dev/v4l/by-id/ 심볼릭 링크는
+    USB 장치 식별자 기반이라 열거 순서와 무관하게 항상 웹캠만 가리킨다.
+
+    웹캠이 안 보이면 인덱스 0으로 폴백하지 않고 **명확히 실패**한다 —
+    systemd가 5초마다 재시작하므로 케이블만 다시 꽂으면 알아서 살아난다.
+    """
+    dev = os.environ.get("TV_CAMERA_DEV")
+    if dev:
+        return dev
+    idx = os.environ.get("TV_CAMERA_INDEX")  # 수동 디버깅용 명시 오버라이드
+    if idx is not None:
+        return int(idx)
+    cands = sorted(glob.glob("/dev/v4l/by-id/usb-*-video-index0"))
+    if not cands:
+        raise RuntimeError(
+            "USB 웹캠을 못 찾았습니다(/dev/v4l/by-id/usb-* 없음) — 케이블 확인. "
+            "CSI 라인캠(video0)은 이 서비스가 잡으면 안 되므로 인덱스 폴백은 안 한다."
+        )
+    return cands[0]
+
+
 def _open_camera() -> cv2.VideoCapture:
-    cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_V4L2)
+    source = _resolve_camera_source()
+    cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
     if not cap.isOpened():
-        raise RuntimeError(f"카메라(index={CAMERA_INDEX})를 열 수 없습니다.")
+        raise RuntimeError(f"카메라({source})를 열 수 없습니다.")
     for _ in range(12):
         cap.read()
     return cap

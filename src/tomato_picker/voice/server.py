@@ -41,12 +41,20 @@ def _status_payload(arm, base) -> dict:
 # 객체를 요구하지 않고, 없는 건 페이지에 상태로 표시만 한다.
 
 
-def _page(has_video: bool) -> str:
+def _page(has_video: bool, has_floor: bool = False) -> str:
     video_block = (
         '<img id="cam" src="/video" alt="카메라 영상">'
         if has_video else
         '<div id="novideo">카메라 미연결 — 영상 없음</div>'
     )
+    if has_floor:
+        # 바닥 카메라(CSI, 라인트레이싱) — 무대 카메라 아래 작게. 스트림이 아직
+        # 없으면 SharedFrameSource가 placeholder를 내보내므로 깨진 이미지는 없다.
+        video_block += (
+            '<div id="floorlabel">🛞 바닥 카메라 (라인트레이싱) '
+            '<span id="line">라인 검출 대기 중...</span></div>'
+            '<img id="floorcam" src="/video2" alt="바닥 카메라 영상">'
+        )
     return f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -67,6 +75,14 @@ def _page(has_video: bool) -> str:
                font-variant-numeric: tabular-nums; }}
   #cam {{ width: 100%; max-width: 720px; max-height: 50vh; object-fit: contain;
           border-radius: 10px; display: block; margin-bottom: 0.5rem; background: #000; }}
+  #floorlabel {{ font-size: 0.85rem; opacity: 0.7; margin: 0.25rem 0 0.2rem; }}
+  #line {{ padding: 0.1rem 0.5rem; border-radius: 999px; font-variant-numeric: tabular-nums;
+          background: color-mix(in srgb, CanvasText 10%, Canvas); }}
+  #line.ok {{ background: color-mix(in srgb, #2ecc71 30%, Canvas); }}
+  #line.lost {{ background: color-mix(in srgb, #e74c3c 28%, Canvas); }}
+  #line.mark {{ background: color-mix(in srgb, #f39c12 40%, Canvas); font-weight: 700; }}
+  #floorcam {{ width: 100%; max-width: 400px; border-radius: 10px; display: block;
+              margin-bottom: 0.5rem; background: #000; }}
   #novideo {{ opacity: 0.7; margin-bottom: 0.75rem; padding: 1.5rem; text-align: center;
              border: 1px dashed color-mix(in srgb, CanvasText 30%, Canvas); border-radius: 10px;
              max-width: 720px; }}
@@ -125,8 +141,27 @@ def _page(has_video: bool) -> str:
     log.insertBefore(row, log.firstChild);  // 최신이 맨 위로
     while (log.children.length > 200) log.removeChild(log.lastChild);
   }}
+  const lineEl = document.getElementById('line');
   function onEvent(ev) {{
     if (ev.kind === 'hw') {{ renderHw(ev.items); return; }}
+    // 바닥 카메라 라인 검출 — 배지만 갈아끼우고 로그로는 안 쌓는다.
+    if (ev.kind === 'line') {{
+      if (!lineEl) return;
+      if (ev.mark) {{
+        lineEl.className = 'mark';
+        lineEl.textContent = '■ 정지마크 감지';
+      }} else if (ev.found) {{
+        lineEl.className = 'ok';
+        const off = Math.round(ev.offset_px);
+        const dir = off === 0 ? '중앙' : (off > 0 ? '오른쪽' : '왼쪽');
+        lineEl.textContent = '● 라인 ' + dir + ' ' + Math.abs(off) + 'px'
+          + (ev.angle_deg === null || ev.angle_deg === undefined ? '' : '  ∠' + ev.angle_deg + '°');
+      }} else {{
+        lineEl.className = 'lost';
+        lineEl.textContent = '○ 라인 없음';
+      }}
+      return;
+    }}
     // 개수·위치는 상단 배너만 갱신하고 로그 줄로는 안 쌓는다(도배 방지).
     if (ev.kind === 'count') {{
       countEl.textContent = '🍅 공중 토마토: ' + ev.count + '개';
@@ -717,7 +752,9 @@ def _handle_command(body: dict, arm, base, vision=None) -> tuple[bool, str]:
     return False, f"알 수 없는 명령: {action}"
 
 
-def _make_handler(log_hub: LogHub, vision=None, hardware: dict | None = None) -> type[BaseHTTPRequestHandler]:
+def _make_handler(
+    log_hub: LogHub, vision=None, hardware: dict | None = None, floor=None
+) -> type[BaseHTTPRequestHandler]:
     # hardware는 {"arm": ..., "base": ...} 형태의 **가변** 딕셔너리다. 서버를
     # 하드웨어보다 먼저 띄우는 게 원칙이라(voice_mode 참고) 핸들러 생성 시점엔
     # 아직 팔·바퀴가 없다 — 요청이 올 때마다 이 딕셔너리를 다시 읽는다.
@@ -728,7 +765,7 @@ def _make_handler(log_hub: LogHub, vision=None, hardware: dict | None = None) ->
 
         def do_GET(self) -> None:
             if self.path == "/":
-                body = _page(vision is not None).encode("utf-8")
+                body = _page(vision is not None, floor is not None).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -752,34 +789,12 @@ def _make_handler(log_hub: LogHub, vision=None, hardware: dict | None = None) ->
                 return
 
             if self.path == "/video":
-                if vision is None:
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-                self.send_header("Cache-Control", "no-cache")
-                self.end_headers()
-                try:
-                    while True:
-                        # 비전 프로세스가 아직 프레임을 안 썼거나 죽어도 스트림
-                        # 핸들러가 예외로 죽지 않게 — 대기했다 다시 본다.
-                        try:
-                            jpeg = vision.latest_jpeg()
-                        except Exception:  # noqa: BLE001 - 영상 없어도 페이지는 살아야 함
-                            jpeg = None
-                        if not jpeg:
-                            time.sleep(0.5)
-                            continue
-                        self.wfile.write(b"--frame\r\n")
-                        self.wfile.write(b"Content-Type: image/jpeg\r\n")
-                        self.wfile.write(f"Content-Length: {len(jpeg)}\r\n\r\n".encode("ascii"))
-                        self.wfile.write(jpeg)
-                        self.wfile.write(b"\r\n")
-                        self.wfile.flush()
-                        time.sleep(0.1)  # ~10fps 상한
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
+                self._stream_mjpeg(vision)
+                return
+
+            if self.path == "/video2":
+                # 바닥 카메라(CSI) — line-cam.service가 /dev/shm에 쓰는 프레임.
+                self._stream_mjpeg(floor)
                 return
 
             if self.path == "/events":
@@ -825,6 +840,39 @@ def _make_handler(log_hub: LogHub, vision=None, hardware: dict | None = None) ->
                     })
             self._write_json({"ok": ok, "detail": detail})
 
+        def _stream_mjpeg(self, source) -> None:
+            """MJPEG 스트림 — source.latest_jpeg()를 ~10fps로 흘려보낸다.
+
+            소스 프로세스가 아직 프레임을 안 썼거나 죽어도 핸들러가 예외로
+            죽지 않게 — 대기했다 다시 본다.
+            """
+            if source is None:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            try:
+                while True:
+                    try:
+                        jpeg = source.latest_jpeg()
+                    except Exception:  # noqa: BLE001 - 영상 없어도 페이지는 살아야 함
+                        jpeg = None
+                    if not jpeg:
+                        time.sleep(0.5)
+                        continue
+                    self.wfile.write(b"--frame\r\n")
+                    self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                    self.wfile.write(f"Content-Length: {len(jpeg)}\r\n\r\n".encode("ascii"))
+                    self.wfile.write(jpeg)
+                    self.wfile.write(b"\r\n")
+                    self.wfile.flush()
+                    time.sleep(0.1)  # ~10fps 상한
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
         def _write_json(self, obj: dict) -> None:
             payload = json.dumps(obj, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
@@ -843,15 +891,18 @@ def _make_handler(log_hub: LogHub, vision=None, hardware: dict | None = None) ->
 
 
 def start_log_server(
-    log_hub: LogHub, port: int, vision=None, hardware: dict | None = None
+    log_hub: LogHub, port: int, vision=None, hardware: dict | None = None, floor=None
 ) -> ThreadingHTTPServer:
     """백그라운드 스레드에서 서버를 띄우고 서버 객체를 반환(종료 시 shutdown() 호출용).
 
     vision(VisionStreamer)을 넘기면 /video MJPEG 엔드포인트가 활성화된다.
+    floor(latest_jpeg()를 가진 소스)를 넘기면 /video2(바닥 카메라)도 켜진다.
     hardware는 {"arm":..., "base":...} 가변 딕셔너리 — 서버를 먼저 띄우고
     나중에 채워도 /control과 POST /cmd가 그때부터 동작한다.
     """
-    server = ThreadingHTTPServer(("0.0.0.0", port), _make_handler(log_hub, vision, hardware))
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", port), _make_handler(log_hub, vision, hardware, floor)
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server

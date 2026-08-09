@@ -95,6 +95,16 @@ VISION_SHM_COUNT = "/dev/shm/tomato_count"
 # 공중/바닥 판정·위치 상태(JSON): {"air":n,"fallen":m,"positions":[[x,y],...]}
 VISION_SHM_STATUS = "/dev/shm/tomato_status"
 
+# --- 바닥 카메라 (CSI IMX219, 전면 우측 바퀴 앞 — 라인트레이싱용) ---
+# deploy/line-cam.service(gst 파이프라인)가 /dev/shm에 JPEG를 계속 덮어쓰고,
+# 대시보드는 /video2로 그대로 보여준다. 라인 검출은 추후 이 프레임 위에 얹는다.
+USE_FLOOR_CAM = True
+FLOOR_CAM_JPEG = "/dev/shm/line_cam.jpg"
+# line-follow.service(tools/line_follow.py)가 쓰는 검출 오버레이·상태.
+# 오버레이가 있으면 대시보드는 그걸 우선 보여준다(원본보다 정보량이 많다).
+FLOOR_VIEW_JPEG = "/dev/shm/line_view.jpg"
+FLOOR_LINE_STATUS = "/dev/shm/line_status"
+
 # --- 로봇팔(SO-101 Follower, 프리셋 재생) ---
 # True면 main.build_robot()이 MockArm 대신 LerobotArm(실물)을 쓴다.
 USE_REAL_ARM = True

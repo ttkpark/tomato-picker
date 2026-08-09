@@ -1,0 +1,22 @@
+[Unit]
+Description=Line detection on floor camera frames (-> /dev/shm/line_view.jpg, line_status)
+# line-cam이 원본 프레임을 써줘야 할 일이 있다. 없어도 죽지 않고 기다린다.
+After=line-cam.service
+Wants=line-cam.service
+
+[Service]
+Type=simple
+User=server
+Group=server
+# 카메라를 직접 안 연다(파일만 읽음) — video 그룹도 필요 없다.
+Environment=PYTHONUNBUFFERED=1
+# 로봇이 라인 정중앙일 때 검출되는 x(px). 카메라가 전면 우측 바퀴 앞이라
+# 화면 중앙이 아니다 — 실측 후 여기에 넣는다(미설정 시 화면 중앙 사용).
+# Environment=LF_CENTER_X=760
+# 조명·바닥 반사가 심하면 Otsu 대신 고정 임계로: Environment=LF_THRESH=90
+ExecStart=/home/server/.venvs/vision/bin/python /home/server/tomato-picker/tools/line_follow.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
