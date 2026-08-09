@@ -30,5 +30,65 @@
     "wrist_flex.pos": -100.43956043956044,
     "wrist_roll.pos": 0.3076923076923077,
     "gripper.pos": 3.6988110964332894
+  },
+  "__meta__": {
+    "version": 2,
+    "names": {
+      "0": "대기",
+      "5": "3층 잡기준비",
+      "6": "3층잡기",
+      "7": "잡기대기",
+      "9": "놓기",
+      "8": "놓을준비"
+    },
+    "anchors": {}
+  },
+  "6": {
+    "shoulder_pan.pos": -7.736263736263736,
+    "shoulder_lift.pos": -15.428571428571429,
+    "elbow_flex.pos": -34.46153846153846,
+    "wrist_flex.pos": 37.934065934065934,
+    "wrist_roll.pos": -3.2967032967032965,
+    "gripper.pos": 53.76486129458389
+  },
+  "5": {
+    "shoulder_pan.pos": -5.626373626373627,
+    "shoulder_lift.pos": -16.13186813186813,
+    "elbow_flex.pos": -41.142857142857146,
+    "wrist_flex.pos": 48.92307692307692,
+    "wrist_roll.pos": 0.3956043956043956,
+    "gripper.pos": 52.11360634081902
+  },
+  "7": {
+    "shoulder_pan.pos": -3.956043956043956,
+    "shoulder_lift.pos": -96.21978021978022,
+    "elbow_flex.pos": 24.439560439560438,
+    "wrist_flex.pos": 70.46153846153847,
+    "wrist_roll.pos": 12.87912087912088,
+    "gripper.pos": 10.568031704095112
+  },
+  "8": {
+    "shoulder_pan.pos": -74.02197802197803,
+    "shoulder_lift.pos": -32.747252747252745,
+    "elbow_flex.pos": 42.37362637362637,
+    "wrist_flex.pos": 64.3956043956044,
+    "wrist_roll.pos": 0.4835164835164835,
+    "gripper.pos": 52.11360634081902
+  },
+  "9": {
+    "shoulder_pan.pos": -74.02197802197803,
+    "shoulder_lift.pos": -32.747252747252745,
+    "elbow_flex.pos": 42.54945054945055,
+    "wrist_flex.pos": 64.3956043956044,
+    "wrist_roll.pos": 0.3956043956043956,
+    "gripper.pos": 89.2998678996037
+  },
+  "0": {
+    "shoulder_pan.pos": -4.21978021978022,
+    "shoulder_lift.pos": -27.560439560439562,
+    "elbow_flex.pos": -33.40659340659341,
+    "wrist_flex.pos": 52.43956043956044,
+    "wrist_roll.pos": -3.2967032967032965,
+    "gripper.pos": 64.13474240422721
   }
 }
