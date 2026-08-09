@@ -110,10 +110,21 @@ FLOOR_LINE_STATUS = "/dev/shm/line_status"
 USE_REAL_ARM = True
 ARM_SERIAL_PORT = "/dev/ttyACM0"
 ARM_ID = "tomato_follower"
-# 리더암(SO-101 Leader) — 대시보드에서 "미러링"으로 자세를 만들어 프리셋에 저장할 때만
-# 쓴다. 포트는 고정하지 않는다: 리더/팔로워가 둘 다 CH343이라 ttyACM 번호가 서로
-# 바뀔 수 있어, 팔로워가 잡은 포트를 뺀 나머지에서 고른다(ports.resolve_leader_port).
+# 리더암(SO-101 Leader) — 대시보드에서 "미러링"으로 자세를 만들어 프리셋에 저장할 때만 쓴다.
 ARM_LEADER_ID = "tomato_leader"
+
+# ⚠ **어느 팔인지는 시리얼번호로만 구분된다** (2026-08-09 사고로 확정).
+# 리더·팔로워가 둘 다 같은 CH343(1a86:55d3, product="USB Single Serial")이라
+# ttyACM 번호도, by-id 이름의 앞부분도 똑같다 — 시리얼번호만 다르다. 예전엔
+# "USB_Single_Serial이 들어간 첫 by-id"를 팔로워로 삼았는데, 그러면 **먼저 꽂혀
+# 있던 쪽/이름이 앞서는 쪽**이 팔로워가 된다. 실제로 리더만 꽂힌 채 서비스가
+# 뜬 날, 리더암이 팔로워로 열려서 **리더암이 토마토 따는 프리셋을 재생**했다
+# (id=6 Torque_Enable Overload error가 그 흔적). 그래서 여기에 못 박는다.
+#
+# 보드를 갈면 젯슨에서 `ls -l /dev/serial/by-id/`로 다시 확인해 바꿀 것.
+# 값을 ""로 비우면 옛 자동탐색으로 돌아가되, 리더로 알려진 시리얼은 계속 제외한다.
+ARM_FOLLOWER_SERIAL = "5AE6055389"   # 집게 달린 팔 — 실제로 구동되는 쪽
+ARM_LEADER_SERIAL = "5AE6083531"     # 손으로 잡는 팔 — 절대 구동하면 안 되는 쪽
 ARM_MIRROR_FPS = 50.0
 # controller_drive.py가 쓰는 것과 같은 프리셋 파일(슬롯 0~9 + 높이 앵커 메타데이터).
 # 형식은 hardware/presets.py 참고 — 옛 {"1": {...}} 파일을 그대로 읽는다.

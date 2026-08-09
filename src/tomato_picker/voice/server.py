@@ -171,8 +171,28 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
     }}
     addRow(ev);
   }}
+  // MJPEG(<img> multipart)는 스트림이 끊겨도 **스스로 재연결하지 않고 마지막
+  // 프레임에서 얼어붙는다**. tomato-voice를 재시작하면 열려 있던 탭은 기동 직후의
+  // "vision starting..." placeholder를 계속 붙들고 있게 된다(2026-08-09 실사고 —
+  // 서버는 멀쩡한데 화면만 죽어 보였다). 연결이 정상 종료되면 error 이벤트도 안
+  // 오므로, **SSE 재연결**을 신호로 삼는다(EventSource는 알아서 다시 붙는다).
+  const camImgs = ['cam', 'floorcam'].map(id => document.getElementById(id)).filter(Boolean);
+  const camSrc = new Map(camImgs.map(img => [img, img.getAttribute('src')]));
+  function reloadCams() {{
+    // 캐시버스터가 없으면 같은 URL이라 브라우저가 재요청을 안 한다.
+    for (const img of camImgs) img.src = camSrc.get(img) + '?t=' + Date.now();
+  }}
+  for (const img of camImgs) img.addEventListener('error', reloadCams);
+  // 탭을 한참 접어뒀다 돌아오면 스트림이 끊겨 있는 경우가 많다.
+  document.addEventListener('visibilitychange', () => {{ if (!document.hidden) reloadCams(); }});
+
   const src = new EventSource('/events');
-  src.onopen = () => status.textContent = '연결됨';
+  let sseOpened = false;  // 첫 open에서 다시 물면 방금 뜬 영상만 껌뻑인다.
+  src.onopen = () => {{
+    status.textContent = '연결됨';
+    if (sseOpened) reloadCams();
+    sseOpened = true;
+  }};
   src.onerror = () => status.textContent = '연결 끊김 — 재연결 시도 중...';
   src.onmessage = (e) => onEvent(JSON.parse(e.data));
 </script>
@@ -472,6 +492,8 @@ _CONTROL_HTML = """<!doctype html>
     bits.push('수신 ' + (base.fw_rx || 0));
     if (base.fw_bad) bits.push('⚠ 깨진프레임 ' + base.fw_bad);
     if (base.nak) bits.push('⚠ nak ' + base.nak);
+    // 하트비트가 끊겨 보드를 되살린 횟수 — 0이 아니면 전원/펌웨어를 의심할 것.
+    if (base.hb_resets) bits.push('⚠ 링크복구 ' + base.hb_resets + '회');
     if (base.error) bits.push(base.error);
     const link = document.getElementById('link');
     link.textContent = bits.join('  ·  ');

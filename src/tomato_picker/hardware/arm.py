@@ -19,9 +19,11 @@ import time
 from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
 
 from ..config import (
+    ARM_FOLLOWER_SERIAL,
     ARM_HOME_PRESET,
     ARM_ID,
     ARM_LEADER_ID,
+    ARM_LEADER_SERIAL,
     ARM_MIRROR_FPS,
     ARM_MOVE_FPS,
     ARM_MOVE_SECS,
@@ -74,8 +76,16 @@ class LerobotArm(RobotArm):
         return self.presets.slot_ids()
 
     def _connect(self) -> None:
-        """지금 실제로 존재하는 경로를 다시 찾아 연결한다(재열거 대응)."""
-        port = resolve_arm_port(self._port_fallback)
+        """지금 실제로 존재하는 경로를 다시 찾아 연결한다(재열거 대응).
+
+        ⚠ 포트는 **시리얼번호로 못 박은 팔로워**만 연다 — 리더/팔로워가 같은
+        CH343이라 아무거나 집으면 리더암이 프리셋을 재생하게 된다(config 참고).
+        """
+        port = resolve_arm_port(
+            self._port_fallback,
+            follower_serial=ARM_FOLLOWER_SERIAL,
+            leader_serial=ARM_LEADER_SERIAL,
+        )
         follower = SOFollower(SOFollowerRobotConfig(port=port, id=self._arm_id))
         follower.connect(calibrate=False)
         follower.bus.disable_torque()
@@ -220,7 +230,7 @@ class LerobotArm(RobotArm):
 
         if self._leader is not None:
             return self._leader_port or ""
-        chosen = port or resolve_leader_port(self._port)
+        chosen = port or resolve_leader_port(self._port, ARM_LEADER_SERIAL)
         if not chosen:
             raise RuntimeError(
                 "리더암 포트를 찾지 못했습니다 — 리더 USB가 꽂혀 있는지 확인하세요 "

@@ -57,6 +57,14 @@ class MotorLink:
     STALE_SEC = 0.5
     # 재연결 시도 간격(포트가 아직 안 붙었을 때 과하게 두드리지 않게).
     RECONNECT_SEC = 1.0
+    # 하트비트가 이만큼 끊기면 **포트가 열려 있어도** 보드가 죽은 것으로 보고
+    # 링크를 다시 연다. 2026-08-09 실사고: USB는 멀쩡히 붙어 있는데(ch341 disconnect
+    # 로그도 없다) 보드가 조용해졌고, 젯슨은 14분 동안 아무도 안 듣는 포트에 V를
+    # 계속 써 넣고 있었다 — 대시보드엔 "연결됨"으로 뜨고 바퀴만 안 움직였다.
+    # 포트를 닫았다 다시 열면 커널 DTR 토글로 Uno가 리셋되는데(_open 주석 참고),
+    # 그게 멈춘 보드를 원격에서 살리는 유일한 수단이다. 펌웨어 hb는 1Hz라
+    # 5초 침묵은 확실한 사망 신호(부트로더 ~2초보다도 넉넉하다).
+    HB_DEAD_SEC = 5.0
 
     def __init__(
         self,
@@ -80,6 +88,8 @@ class MotorLink:
         self._connected = False
         self._port_now: str | None = None
         self._last_hb = 0.0
+        self._opened_at = 0.0     # 이번 연결을 연 시각(첫 하트비트 대기 기준)
+        self._hb_resets = 0       # 하트비트 끊김으로 링크를 되살린 횟수
         self._rx_ok = 0
         self._rx_bad = 0
         self._nak = 0
@@ -125,12 +135,17 @@ class MotorLink:
         """링크 품질 스냅샷 — 대시보드 배지/디버깅용."""
         age = time.monotonic() - self._last_hb if self._last_hb else None
         return {
-            "connected": self._connected,
+            # ⚠ 여기 "connected"는 **하트비트까지 본** 판정이다(connected 프로퍼티).
+            # 예전엔 포트 열림 플래그를 그대로 내보내서, 보드가 죽어도 대시보드엔
+            # 파란 "연결됨"이 떠 있었다 — 바퀴가 왜 안 도는지 화면만 봐선 몰랐다.
+            "connected": self.connected,
+            "port_open": self._connected,   # 포트 자체가 열려 있는지(진단용)
             "port": self._port_now,
             "hb_age": round(age, 2) if age is not None else None,
             "fw_rx": self._rx_ok,
             "fw_bad": self._rx_bad,
             "nak": self._nak,
+            "hb_resets": self._hb_resets,
             "acks": list(self._acks),
             "error": self._last_error,
             "target": self._target,
@@ -184,6 +199,8 @@ class MotorLink:
         self._connected = True
         self._last_error = None
         self._generation += 1
+        self._opened_at = time.monotonic()
+        self._last_hb = 0.0   # 새 연결 — 옛 하트비트 시각은 무효
         # 이미 돌고 있던 보드일 수도, 방금 리셋된 보드일 수도 있다 — 어느 쪽이든
         # 확실히 멈춘 상태에서 시작한다.
         try:
@@ -233,7 +250,30 @@ class MotorLink:
 
             moving = self._tick()
             self._drain_input()
+            self._watch_heartbeat()
             time.sleep(self.SEND_INTERVAL_SEC if moving else self.IDLE_INTERVAL_SEC)
+
+    def _watch_heartbeat(self) -> None:
+        """말이 없어진 보드를 되살린다 — 포트 재개방 = Uno 리셋.
+
+        USB가 빠지면 write가 터져서 재연결 루프가 알아서 돌지만, 보드만 조용히
+        죽는 경우(전원 순간강하·펌웨어 정지)엔 포트가 멀쩡히 열려 있어 아무도
+        눈치채지 못한다. 하트비트가 유일한 생존 신호이므로 그걸로 판단한다.
+        """
+        if self._ser is None:
+            return
+        # 첫 하트비트 전(부트로더 구간)에는 연 시각을 기준으로 센다.
+        last = self._last_hb or self._opened_at
+        if time.monotonic() - last < self.HB_DEAD_SEC:
+            return
+        self._hb_resets += 1
+        self._last_error = (
+            f"하트비트 {self.HB_DEAD_SEC:.0f}초 이상 없음 — 링크 재시작(보드 리셋) "
+            f"#{self._hb_resets}"
+        )
+        print(f"  [base] {self._last_error}")
+        # 닫고 나면 _run이 RECONNECT_SEC 뒤에 다시 열고, 그때 DTR로 보드가 선다.
+        self._shutdown_port()
 
     def _tick(self) -> bool:
         """지령 한 번 송신. 실제로 움직이는 중이면 True(→ 빠른 주기 유지)."""
