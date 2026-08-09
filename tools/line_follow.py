@@ -25,25 +25,37 @@ gst에 맡기고 여기서는 JPEG만 받아 처리한다. 지연은 한 프레�
     │            ▲ 띠의 y = 무대와의 거리          │
     └────────────────────────────────────────────┘
 
-  · 띠의 **세로 위치(y)** = 무대까지의 거리 오차  → vx(전후)로 보정
+  · 띠의 **세로 위치(y)** = 테이프까지의 거리 오차 → **vy**(게걸음)로 보정
   · 띠의 **기울기(angle)** = 로봇 요(yaw) 오차     → w(회전)로 보정
-  · 화면 **가로(x)** = 진행 방향                    → vy(게걸음)로 이동
+  · 화면 **가로(x)** = 진행 방향                    → **vx**(전후)로 이동
   · 양끝 **검은 테이프** = 코스 끝(정지)
   · 중간 **색 마스킹테이프** = 토마토 스테이션 표식
 
 ⚠ 흔한 "검은 선을 따라간다" 구성이 **아니다.** 세로선 x-오프셋으로 조향하는
-   코드로 착각하고 고치지 말 것.
+   코드로 착각하고 고치지 말 것. 축 대응은 hardware/line_drive.py가 확정한다.
 
 
-색 분리 (2026-08-09 실측)
+색 분리 — 절대값이 아니라 **프레임 자기 기준** (2026-08-09 실측)
 -----------------------------------------------------------
 주행 테이프가 **밝은 회색**이고 바닥이 **밝은 원목**이라 밝기 차이는 겨우 18로
-약하다. 대신 테이프는 **무채색**, 마루는 **따뜻한 갈색(채도 높음)**이라
-`score = V - 2*S`로 보면 확실히 갈린다:
+약하다. 대신 테이프는 상대적으로 **무채색**, 마루는 **따뜻한 갈색(채도 높음)**이라
+`score = V - 2*S`로 보면 갈린다.
 
-    흰 테이프 124  /  마루 56  /  검은 마커 10
+⚠ 그런데 이 값을 **절대 임계로 박으면 안 된다.** 카메라 AWB가 흔들려 화면 전체가
+보라빛으로 물든 순간(실기) 이렇게 무너졌다:
 
-밝기만 쓰면(예전 Otsu 방식) 마루 나뭇결을 갈라 유령 라인을 만들어냈다.
+                     score 중앙값   테이프   절대임계 90 통과
+    중립 프레임            66        124        16.4%  → 정상
+    보라 캐스트             7         58         0.0%  → 전멸(TAPE LOST)
+
+게다가 캐스트를 받으면 **검은 끝마커의 채도가 프레임에서 가장 높아져**(113 vs
+중앙값 66) 색 마커로 오인됐다. 그래서 지금은 전부 프레임 통계 기준으로 판단한다:
+
+    테이프 = score 상위 8% 이면서 중앙값보다 뚜렷이 높을 것(+22)
+    끝마커 = 밝기가 중앙값보다 40 이상 어두울 것 (채도는 안 본다)
+    스테이션 = 채도가 중앙값보다 50 이상 높고 **어둡지 않을 것**
+
+밝기만 쓰면(더 예전의 Otsu 방식) 마루 나뭇결을 갈라 유령 라인을 만들어냈다.
 """
 
 from __future__ import annotations
@@ -62,8 +74,15 @@ FPS = float(os.environ.get("LF_FPS", "15"))
 JPEG_QUALITY = int(os.environ.get("LF_JPEG_QUALITY", "70"))
 
 # --- 주행 테이프(무채색·밝음) ---
-# score = V - 2*S 의 임계. 실측: 테이프 124, 마루 56 → 그 사이인 90.
-TAPE_SCORE = float(os.environ.get("LF_TAPE_SCORE", "90"))
+# ⚠ 임계는 **절대값이 아니라 프레임 자기 기준**이다. 카메라 AWB가 흔들리면
+# 화면 전체에 색이 물드는데(2026-08-09 실기: 보라 캐스트), 그러면 흰 테이프도
+# 더 이상 "무채색"이 아니게 돼 절대 임계로는 통과 픽셀이 **0%**가 된다.
+#   중립 프레임: score 중앙값 66, 테이프 124   → 절대 90으로 검출 성공
+#   보라 캐스트: score 중앙값  7, 상위2% 58    → 절대 90으로 **전멸**
+# 반면 "프레임에서 가장 밝고 무채색인 상위 몇 %"는 두 조건 모두에서 테이프를
+# 정확히 짚는다. 그래서 백분위 + 중앙값 대비 여유폭으로 간다.
+TAPE_PCT = float(os.environ.get("LF_TAPE_PCT", "92"))      # 상위 8%
+TAPE_MARGIN = float(os.environ.get("LF_TAPE_MARGIN", "22"))  # 중앙값보다 이만큼은 높아야
 # 한 행이 "띠"로 인정되려면 화면 폭의 이 비율 이상이 테이프여야 한다.
 # 테이프는 화면을 가로지르므로 값이 크고, 얼룩·반사는 이 폭이 안 나온다.
 BAND_ROW_FRAC = float(os.environ.get("LF_BAND_ROW_FRAC", "0.35"))
@@ -89,8 +108,11 @@ ODOM_MIN_RESPONSE = float(os.environ.get("LF_ODOM_MIN_RESPONSE", "0.05"))
 ODOM_MAX_JUMP = float(os.environ.get("LF_ODOM_MAX_JUMP", "120"))
 
 # --- 코스 끝 표식(검은 테이프) ---
-DARK_V = float(os.environ.get("LF_DARK_V", "105"))    # 이보다 어두우면 후보
-DARK_S = float(os.environ.get("LF_DARK_S", "90"))     # 채도가 높으면 색마커지 검정이 아니다
+# 여기도 상대값: 프레임 밝기 중앙값보다 이만큼 어두우면 "검은 테이프".
+# 실측으로 끝마커는 중앙값보다 63(중립)~75(보라캐스트) 어두웠다.
+# ⚠ 채도로는 검정을 못 가른다 — 보라 캐스트에서 끝마커의 채도가 113으로
+# **프레임에서 가장 높아져** 색 마커로 오인됐다(2026-08-09). 그래서 밝기로만 가른다.
+DARK_MARGIN = float(os.environ.get("LF_DARK_MARGIN", "40"))
 DARK_MIN_AREA = int(os.environ.get("LF_DARK_MIN_AREA", "4000"))
 # 끝 마커는 주행 테이프 **끝에 붙어 있으므로** 띠와 세로로 가까워야 한다.
 # 이 조건이 없으면 화면에 들어온 검은 전선·그림자를 코스 끝으로 오인해
@@ -98,8 +120,10 @@ DARK_MIN_AREA = int(os.environ.get("LF_DARK_MIN_AREA", "4000"))
 DARK_NEAR_BAND = float(os.environ.get("LF_DARK_NEAR_BAND", "0.30"))  # 화면 높이 대비
 
 # --- 스테이션 표식(색 마스킹테이프) ---
-COLOR_S = float(os.environ.get("LF_COLOR_S", "90"))   # 이보다 채도가 높으면 색마커
-COLOR_V = float(os.environ.get("LF_COLOR_V", "60"))   # 너무 어두우면 그림자
+# 상대값 + **어두운 건 제외**. 색 마스킹테이프는 밝고 진하지만, 검은 테이프는
+# 캐스트를 받으면 채도만 높고 어둡다 — 이 둘을 밝기로 갈라야 한다.
+COLOR_S_MARGIN = float(os.environ.get("LF_COLOR_S_MARGIN", "50"))  # 중앙값 대비
+COLOR_S_MIN = float(os.environ.get("LF_COLOR_S_MIN", "80"))        # 절대 하한(무채색 장면 방지)
 COLOR_MIN_AREA = int(os.environ.get("LF_COLOR_MIN_AREA", "2500"))
 
 # OpenCV Hue는 0~179. 데모에서 헷갈리지 않게 한국어 이름으로 바꿔 보고한다.
@@ -240,10 +264,21 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
     H, S, V = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
     target_y = _read_target_y(h / 2.0)
 
-    # --- 주행 테이프: 무채색이면서 밝은 영역 ---
+    # --- 주행 테이프: 프레임에서 가장 밝고 무채색인 영역 ---
+    # 프레임 자기 통계를 기준으로 삼아 색 캐스트/조명 변화에 안 흔들리게 한다.
     score = V - 2 * S
-    tape = ((score > TAPE_SCORE) * 255).astype(np.uint8)
+    med_score = float(np.median(score))
+    med_v = float(np.median(V))
+    med_s = float(np.median(S))
+    tape_thr = max(med_score + TAPE_MARGIN, float(np.percentile(score, TAPE_PCT)))
+    tape = ((score > tape_thr) * 255).astype(np.uint8)
     tape = cv2.morphologyEx(tape, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+    # 선택된 영역이 배경보다 실제로 뚜렷해야 한다 — 텅 빈 마루에서 상위 8%를
+    # 뽑으면 나뭇결이 잡히는데, 그건 중앙값과 거의 차이가 없어 여기서 걸린다.
+    sel = score[tape > 0]
+    separation = float(sel.mean() - med_score) if sel.size else 0.0
+    if separation < TAPE_MARGIN:
+        tape[:] = 0
 
     rows = (tape > 0).sum(axis=1)
     band_rows = np.nonzero(rows > w * BAND_ROW_FRAC)[0]
@@ -261,8 +296,9 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
             angle = _band_angle(tape, max(0, int(band_rows.min()) - margin),
                                 min(h, int(band_rows.max()) + margin + 1))
 
-    # --- 코스 끝(검은 테이프) ---
-    dark = (((V < DARK_V) & (S < DARK_S)) * 255).astype(np.uint8)
+    # --- 코스 끝(검은 테이프) --- 밝기로만 가른다(위 DARK_MARGIN 주석 참고)
+    dark_mask = V < (med_v - DARK_MARGIN)
+    dark = (dark_mask * 255).astype(np.uint8)
     end_blob = _largest_blob(dark, DARK_MIN_AREA)
     end_marker = None
     # 띠를 못 찾은 프레임에서는 근접 조건을 걸 기준이 없으므로 그냥 통과시킨다.
@@ -276,15 +312,17 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
             "side": "left" if cx < w / 2 else "right",
         }
 
-    # --- 스테이션(색 마스킹테이프) ---
-    color = (((S > COLOR_S) & (V > COLOR_V)) * 255).astype(np.uint8)
+    # --- 스테이션(색 마스킹테이프) --- 진한 색 + **어둡지 않을 것**
+    color_thr = max(COLOR_S_MIN, med_s + COLOR_S_MARGIN)
+    color = (((S > color_thr) & ~dark_mask) * 255).astype(np.uint8)
     color_blob = _largest_blob(color, COLOR_MIN_AREA)
     color_marker = None
     if color_blob:
         cx, cy, bw, bh, area = color_blob
         mask = np.zeros((h, w), np.uint8)
         cv2.circle(mask, (int(cx), int(cy)), max(6, min(bw, bh) // 3), 255, -1)
-        hue = float(np.median(H[(mask > 0) & (S > COLOR_S)])) if np.any((mask > 0) & (S > COLOR_S)) else 0.0
+        hot = (mask > 0) & (S > color_thr)
+        hue = float(np.median(H[hot])) if np.any(hot) else 0.0
         color_marker = {
             "x": round(cx, 1), "y": round(cy, 1), "w": bw, "h": bh, "area": area,
             "hue": round(hue, 1), "name": _hue_name(hue),
@@ -310,6 +348,10 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
         "odom_y_px": None if odom is None else round(odom.y, 1),
         "odom_dx": None if odom is None else round(odom.dx, 2),
         "odom_conf": None if odom is None else round(odom.response, 3),
+        # 튜닝/진단용 — 검출이 안 될 때 임계가 어디에 걸렸는지 숫자로 본다.
+        "tape_thr": round(tape_thr, 1),
+        "separation": round(separation, 1),
+        "med_v": round(med_v, 1), "med_s": round(med_s, 1),
     }
 
 
