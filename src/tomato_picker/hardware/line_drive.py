@@ -45,6 +45,8 @@ from ..config import (
     LINE_LOST_STOP_SEC,
     LINE_MAX_CORRECTION,
     LINE_MAX_DY_NORM,
+    LINE_PULSE_ON,
+    LINE_PULSE_PERIOD,
     LINE_SPEED,
     LINE_STATUS_PATH,
     LINE_TARGET_Y_FILE,
@@ -57,7 +59,8 @@ from ..config import (
 )
 
 # 런타임에 뒤집을 수 있는 축·부호. 실기에서만 확정되는 값이라 파일로 뺀다.
-TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain")
+TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain",
+               "speed", "pulse_on", "pulse_period")
 
 
 def _load_saved(path: str) -> dict:
@@ -103,6 +106,9 @@ class LineDriver:
             "yaw_sign": float(LINE_YAW_SIGN),
             "travel_sign": float(LINE_TRAVEL_SIGN),
             "yaw_gain": float(LINE_YAW_GAIN),
+            "speed": float(LINE_SPEED),
+            "pulse_on": float(LINE_PULSE_ON),
+            "pulse_period": float(LINE_PULSE_PERIOD),
         }
         self._tune.update(_load_saved(LINE_TUNING_FILE))
         self._thread = threading.Thread(target=self._run, daemon=True, name="line-drive")
@@ -127,9 +133,35 @@ class LineDriver:
                     f"{'왼쪽' if side == 'left' else '오른쪽'}으로 {seconds:.1f}초 이동")
         return self._detail
 
-    def jog(self, side: str, seconds: float = 0.25, speed: int | None = None) -> str:
-        """아주 짧게 톡 — 미세 정렬용. travel과 같지만 기본 시간이 짧다."""
-        return self.travel(side, seconds, speed)
+    def jog(self, side: str, seconds: float | None = None, speed: int | None = None) -> str:
+        """버튼 한 번 = **펄스 한 번**. 톡 치고 바로 멈춘다(미세 정렬용).
+
+        기본 시간을 펄스 ON과 같게 둬서, 연타하면 같은 크기의 걸음이 반복된다.
+        """
+        return self.travel(side, seconds or float(self._tune.get("pulse_on", LINE_PULSE_ON)), speed)
+
+    def set_params(self, **values) -> str:
+        """속도·펄스 설정을 런타임에 바꾸고 파일에 남긴다(재시작해도 유지)."""
+        limits = {"speed": (30, 255), "pulse_on": (0.02, 3.0), "pulse_period": (0.02, 3.0)}
+        with self._lock:
+            for key, (lo, hi) in limits.items():
+                if values.get(key) is not None:
+                    self._tune[key] = float(max(lo, min(hi, float(values[key]))))
+            # 주기가 ON보다 짧으면 의미가 없다 — 연속 주행으로 해석한다.
+            if self._tune["pulse_period"] < self._tune["pulse_on"]:
+                self._tune["pulse_period"] = self._tune["pulse_on"]
+            snapshot = dict(self._tune)
+        self._save_tuning(snapshot)
+        mode = ("연속 주행" if snapshot["pulse_period"] <= snapshot["pulse_on"]
+                else f"펄스 {snapshot['pulse_on']:.2f}s / {snapshot['pulse_period']:.2f}s 주기")
+        return f"속도 {snapshot['speed']:.0f} · {mode}"
+
+    def _save_tuning(self, snapshot: dict) -> None:
+        try:
+            with open(os.path.expanduser(LINE_TUNING_FILE), "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            self._detail = f"설정 저장 실패: {exc}"
 
     def goto_color(self, side: str, name: str | None = None, speed: int | None = None) -> str:
         """색 마커가 화면 중앙에 올 때까지 이동 후 정지(스테이션 정지)."""
@@ -199,6 +231,10 @@ class LineDriver:
             "yaw_sign": self._tune["yaw_sign"],
             "travel_sign": self._tune["travel_sign"],
             "yaw_gain": self._tune["yaw_gain"],
+            "speed": self._tune["speed"],
+            "pulse_on": self._tune["pulse_on"],
+            "pulse_period": self._tune["pulse_period"],
+            "pulsing": self._tune["pulse_on"] < self._tune["pulse_period"] - 1e-6,
         }
 
     @property
@@ -220,9 +256,24 @@ class LineDriver:
     # 내부
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _speed(speed: int | None) -> int:
-        return int(LINE_SPEED if speed is None else max(30, min(255, int(speed))))
+    def _speed(self, speed: int | None) -> int:
+        base = self._tune.get("speed", LINE_SPEED) if speed is None else speed
+        return int(max(30, min(255, float(base))))
+
+    def _travel_dir(self, goal: dict) -> int:
+        """지금 이 순간 진행분을 실을지 정한다 — **펄스 구동**.
+
+        저속으로 계속 미는 대신 짧고 빠른 펄스를 반복한다. 정지마찰 근처에서
+        질질 끌리다 갑자기 미끄러지는 걸 막고, 한 번에 가는 거리가 일정해진다.
+        ON == 주기면 항상 True가 되어 연속 주행과 같아진다(별도 모드가 아니다).
+        """
+        on = float(self._tune.get("pulse_on", LINE_PULSE_ON))
+        period = float(self._tune.get("pulse_period", LINE_PULSE_PERIOD))
+        base = 1 if goal.get("side") == "right" else -1
+        if period <= on:
+            return base
+        phase = (time.monotonic() - goal["started"]) % period
+        return base if phase < on else 0
 
     def _preflight(self) -> None:
         """출발 전 점검 — 여기서 막아야 "눌렀는데 바로 멈춘다"가 안 생긴다.
@@ -275,11 +326,7 @@ class LineDriver:
             else:
                 raise ValueError(f"알 수 없는 항목: {what}")
             snapshot = dict(self._tune)
-        try:
-            with open(os.path.expanduser(LINE_TUNING_FILE), "w", encoding="utf-8") as f:
-                json.dump(snapshot, f, ensure_ascii=False, indent=2)
-        except OSError as exc:
-            return f"{what} 뒤집음(저장 실패: {exc})"
+        self._save_tuning(snapshot)
         return (f"보정축={snapshot['dy_axis']} dy부호={snapshot['dy_sign']:+.0f} "
                 f"회전보정={'켜짐' if snapshot['yaw_gain'] else '꺼짐'}"
                 f"(부호{snapshot['yaw_sign']:+.0f}) 진행부호={snapshot['travel_sign']:+.0f}")
@@ -382,7 +429,7 @@ class LineDriver:
                 continue
 
             speed = goal.get("speed", LINE_SPEED)
-            vx, vy, w = self._command(self._line, 1 if goal.get("side") == "right" else -1, speed)
+            vx, vy, w = self._command(self._line, self._travel_dir(goal), speed)
             try:
                 self._base.hold(vx, vy, w)
             except Exception as exc:  # noqa: BLE001 - 링크가 죽어도 루프는 살아야 함
