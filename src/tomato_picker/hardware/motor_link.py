@@ -65,6 +65,12 @@ class MotorLink:
     # 그게 멈춘 보드를 원격에서 살리는 유일한 수단이다. 펌웨어 hb는 1Hz라
     # 5초 침묵은 확실한 사망 신호(부트로더 ~2초보다도 넉넉하다).
     HB_DEAD_SEC = 5.0
+    # 보드가 **재부팅했다**고 인정할 uptime 상한. 펌웨어 첫 하트비트가 ~1000ms이므로
+    # 넉넉히 10초. (uptime이 뒤로 갔다는 것만으로 판단하면 49.7일 millis 랩어라운드에
+    # 오검출이 나므로, "뒤로 갔고 && 아주 작다"를 함께 본다.)
+    BOOT_MS_WINDOW = 10_000
+    # 펌웨어가 부팅 때마다 뱉는 배너의 앞머리 — 리셋의 가장 빠른 증거.
+    BOOT_BANNER = "mecanum_stable"
 
     def __init__(
         self,
@@ -90,6 +96,8 @@ class MotorLink:
         self._last_hb = 0.0
         self._opened_at = 0.0     # 이번 연결을 연 시각(첫 하트비트 대기 기준)
         self._hb_resets = 0       # 하트비트 끊김으로 링크를 되살린 횟수
+        self._fw_ms = 0           # 보드가 보고한 uptime(ms) — 되돌아가면 재부팅
+        self._board_resets = 0    # 우리가 안 시킨 보드 재부팅 횟수(전원/워치독 의심)
         self._rx_ok = 0
         self._rx_bad = 0
         self._nak = 0
@@ -146,6 +154,8 @@ class MotorLink:
             "fw_bad": self._rx_bad,
             "nak": self._nak,
             "hb_resets": self._hb_resets,
+            "board_resets": self._board_resets,
+            "fw_ms": self._fw_ms,          # 보드 uptime — 0으로 되감기면 재부팅한 것
             "acks": list(self._acks),
             "error": self._last_error,
             "target": self._target,
@@ -275,6 +285,25 @@ class MotorLink:
         # 닫고 나면 _run이 RECONNECT_SEC 뒤에 다시 열고, 그때 DTR로 보드가 선다.
         self._shutdown_port()
 
+    def _note_board_restart(self, reason: str) -> None:
+        """보드가 스스로 재부팅했다 — 설정이 전부 컴파일 기본값으로 날아갔다.
+
+        **연결 세대를 올린다**: JetsonBase는 세대가 바뀔 때만 F/P/R을 다시 밀어넣는데,
+        세대는 지금까지 포트를 새로 열 때만 올라갔다. 보드만 리셋되면 포트는 그대로라
+        세대가 안 변해서, 대시보드에서 고른 주파수·듀티가 조용히 사라진 채로 남았다.
+        추가로 _pending_on_connect를 세워 **주행 명령을 기다리지 않고** 즉시 되민다.
+        """
+        self._board_resets += 1
+        self._generation += 1
+        self._fw_ms = 0
+        self._rx_ok = 0
+        self._rx_bad = 0
+        self._pending_on_connect = self._on_connect is not None
+        self._last_error = (
+            f"보드 재부팅 감지({reason}) — 튜닝 재적용 #{self._board_resets}"
+        )
+        print(f"  [base] {self._last_error}")
+
     def _tick(self) -> bool:
         """지령 한 번 송신. 실제로 움직이는 중이면 True(→ 빠른 주기 유지)."""
         with self._lock:
@@ -320,6 +349,29 @@ class MotorLink:
                 continue
             if line.startswith("hb "):
                 self._last_hb = time.monotonic()
+                # "hb <ms> rx=<n> bad=<n> v=..." — <ms>는 보드의 millis().
+                parts = line.split()
+                ms = _int_or(parts[1], -1) if len(parts) > 1 else -1
+                rx = bad = None
+                for token in parts[2:]:
+                    if token.startswith("rx="):
+                        rx = _int_or(token[3:], None)
+                    elif token.startswith("bad="):
+                        bad = _int_or(token[4:], None)
+                # ★ 보드 재부팅 판정 — 우리가 안 시켰는데 uptime/수신카운터가 되감겼다.
+                #   포트는 멀쩡히 열려 있어 write 예외도, 재연결도 없다. 이걸 안 보면
+                #   보드는 컴파일 기본값(1500Hz·듀티2000·슬루6/12)으로 돌아가 있는데
+                #   젯슨은 "이미 튜닝했다"고 믿는다 — 사용자가 매번 손으로 다시 눌러야 했던 이유.
+                if 0 <= ms < self._fw_ms and ms < self.BOOT_MS_WINDOW:
+                    self._note_board_restart(f"uptime {self._fw_ms}→{ms}ms")
+                elif rx is not None and rx < self._rx_ok:
+                    self._note_board_restart(f"rx {self._rx_ok}→{rx}")
+                if ms >= 0:
+                    self._fw_ms = ms
+                if rx is not None:
+                    self._rx_ok = rx
+                if bad is not None:
+                    self._rx_bad = bad
                 if self._pending_on_connect:
                     # 보드가 부팅을 마치고 말을 걸어왔다 — 이제 설정이 먹는다.
                     self._pending_on_connect = False
@@ -327,11 +379,11 @@ class MotorLink:
                         self._on_connect(self)
                     except Exception as exc:  # noqa: BLE001 - 튜닝 실패가 링크를 죽이면 안 됨
                         self._last_error = f"on_connect: {exc}"
-                for token in line.split():
-                    if token.startswith("rx="):
-                        self._rx_ok = _int_or(token[3:], self._rx_ok)
-                    elif token.startswith("bad="):
-                        self._rx_bad = _int_or(token[4:], self._rx_bad)
+            elif self.BOOT_BANNER in line and not self._pending_on_connect:
+                # 배너는 부팅마다 나온다. 연결 직후(=우리가 연 DTR 리셋) 배너는
+                # 이미 _pending_on_connect로 처리 중이므로 세지 않는다 —
+                # 그 뒤에 나오는 배너만 "예상 못 한 재부팅"이다.
+                self._note_board_restart("부팅 배너")
             elif line.startswith("ok "):
                 # 설정계열(F/P/R/S) 확인 응답. 튜닝이 **실제로 보드에 먹혔는지**를
                 # 화면에서 눈으로 확인할 수 있게 마지막 것들을 들고 있는다.
@@ -347,7 +399,8 @@ def _clamp(v: int) -> int:
     return max(-255, min(255, int(v)))
 
 
-def _int_or(text: str, default: int) -> int:
+def _int_or(text: str, default: int | None) -> int | None:
+    """숫자로 못 읽으면 default. default=None은 "이 토큰은 없었다"는 뜻으로 쓴다."""
     try:
         return int(text)
     except ValueError:
