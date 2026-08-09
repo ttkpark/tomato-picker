@@ -71,8 +71,22 @@ BAND_ROW_FRAC = float(os.environ.get("LF_BAND_ROW_FRAC", "0.35"))
 MIN_BAND_FRAC = float(os.environ.get("LF_MIN_BAND_FRAC", "0.03"))
 MAX_BAND_FRAC = float(os.environ.get("LF_MAX_BAND_FRAC", "0.45"))
 # 로봇이 무대와 올바른 거리에 있을 때 띠 중심이 오는 y(px). 미설정이면 화면 중앙.
-# ★ 장착 후 반드시 실측해 넣을 것(로봇을 정위치에 놓고 band_y를 읽어 그 값).
 TARGET_Y = os.environ.get("LF_TARGET_Y")
+# 런타임 교정: 이 파일에 숫자가 있으면 위 환경변수보다 우선한다. 대시보드의
+# "현재 위치를 기준으로" 버튼이 여기에 쓴다 — 코스(도화지·테이프 색)가 바뀔
+# 때마다 서비스 파일을 고치고 재시작하는 건 현장에서 너무 느리다.
+TARGET_Y_FILE = os.environ.get("LF_TARGET_Y_FILE", "/dev/shm/line_target_y")
+
+# --- 시각 오도메트리 (바닥 무늬 흐름으로 이동량 측정) ---
+# 바퀴 엔코더가 없고 메카넘은 슬립이 심해 "몇 초 굴렸다"로는 변위를 못 믿는다.
+# 바닥 카메라가 보는 나뭇결이 프레임마다 얼마나 흘렀는지를 위상상관으로 재면
+# **실제로 움직인 거리**가 나온다(슬립·배터리 전압과 무관). 저속일수록 정확.
+ODOM = os.environ.get("LF_ODOM", "1") not in ("0", "false", "no")
+ODOM_SCALE = float(os.environ.get("LF_ODOM_SCALE", "0.25"))   # 축소 배율(속도↑)
+# 위상상관 신뢰도가 이보다 낮으면 그 프레임은 버린다(모션블러·균일면 대비).
+ODOM_MIN_RESPONSE = float(os.environ.get("LF_ODOM_MIN_RESPONSE", "0.05"))
+# 한 프레임에 이보다 크게 튀면 오검출로 보고 버린다(원본 px 기준).
+ODOM_MAX_JUMP = float(os.environ.get("LF_ODOM_MAX_JUMP", "120"))
 
 # --- 코스 끝 표식(검은 테이프) ---
 DARK_V = float(os.environ.get("LF_DARK_V", "105"))    # 이보다 어두우면 후보
@@ -115,6 +129,62 @@ def _read_frame() -> np.ndarray | None:
     return cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
 
 
+def _read_target_y(default: float) -> float:
+    """런타임 교정 파일 → 환경변수 → 기본값(화면 중앙) 순."""
+    try:
+        with open(TARGET_Y_FILE) as f:
+            return float(f.read().strip())
+    except (OSError, ValueError):
+        pass
+    try:
+        return float(TARGET_Y) if TARGET_Y else default
+    except ValueError:
+        return default
+
+
+class _Odometry:
+    """연속 프레임의 위상상관으로 바닥 이동량을 누적한다.
+
+    cv2.phaseCorrelate는 두 영상 사이의 **평행이동**을 서브픽셀로 찾는다. 바닥은
+    통째로 같이 움직이므로(테이프도 바닥의 일부다) 회전이 작은 구간에서는 이게
+    곧 로봇의 이동량이다. 축소해서 돌리므로 비용도 싸다.
+
+    ⚠ 절대 위치가 아니라 **증분의 누적**이라 시간이 지나면 조금씩 흐른다.
+    그래서 상위(LineDriver)가 끝단 검은 테이프를 만날 때마다 원점을 다시 잡는다.
+    """
+
+    def __init__(self) -> None:
+        self._prev = None
+        self._hann = None
+        self.x = 0.0          # 누적 이동(원본 px). 화면 가로 = 진행 방향
+        self.y = 0.0
+        self.response = 0.0
+        self.dx = 0.0         # 직전 프레임 증분(속도 추정용)
+        self.dy = 0.0
+
+    def update(self, gray: np.ndarray) -> None:
+        small = cv2.resize(gray, None, fx=ODOM_SCALE, fy=ODOM_SCALE,
+                           interpolation=cv2.INTER_AREA).astype(np.float32)
+        if self._prev is None or self._prev.shape != small.shape:
+            self._prev = small
+            self._hann = cv2.createHanningWindow(small.shape[::-1], cv2.CV_32F)
+            return
+        (sx, sy), response = cv2.phaseCorrelate(self._prev, small, self._hann)
+        self._prev = small
+        self.response = float(response)
+        if response < ODOM_MIN_RESPONSE:
+            self.dx = self.dy = 0.0
+            return
+        # 축소분 되돌리기. 부호: 영상 내용이 왼쪽으로 흐르면 로봇은 오른쪽으로 갔다.
+        dx, dy = -sx / ODOM_SCALE, -sy / ODOM_SCALE
+        if abs(dx) > ODOM_MAX_JUMP or abs(dy) > ODOM_MAX_JUMP:
+            self.dx = self.dy = 0.0
+            return
+        self.dx, self.dy = float(dx), float(dy)
+        self.x += self.dx
+        self.y += self.dy
+
+
 def _hue_name(hue: float) -> str:
     for limit, name in HUE_NAMES:
         if hue < limit:
@@ -147,11 +217,11 @@ def _band_center(tape: np.ndarray, x0: int, x1: int, min_count: int) -> float | 
     return float(ys.mean())
 
 
-def _detect(frame: np.ndarray) -> dict:
+def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
     h, w = frame.shape[:2]
     hsv = cv2.cvtColor(cv2.GaussianBlur(frame, (7, 7), 0), cv2.COLOR_BGR2HSV).astype(np.int16)
     H, S, V = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
-    target_y = float(TARGET_Y) if TARGET_Y else h / 2.0
+    target_y = _read_target_y(h / 2.0)
 
     # --- 주행 테이프: 무채색이면서 밝은 영역 ---
     score = V - 2 * S
@@ -217,6 +287,12 @@ def _detect(frame: np.ndarray) -> dict:
         "end_marker": end_marker,
         "color_marker": color_marker,
         "width": w, "height": h,
+        # 시각 오도메트리 — 누적 이동(px)과 직전 증분. 절대 위치가 아니라
+        # 증분 누적이므로 상위가 끝단 마커에서 원점을 다시 잡는다.
+        "odom_x_px": None if odom is None else round(odom.x, 1),
+        "odom_y_px": None if odom is None else round(odom.y, 1),
+        "odom_dx": None if odom is None else round(odom.dx, 2),
+        "odom_conf": None if odom is None else round(odom.response, 3),
     }
 
 
@@ -261,6 +337,7 @@ def main() -> None:
     print(f"[line_follow] {SRC} → {VIEW} / {STATUS}", flush=True)
     period = 1.0 / max(1.0, FPS)
     last_shape = None
+    odom = _Odometry() if ODOM else None
     while True:
         start = time.monotonic()
         frame = _read_frame()
@@ -271,7 +348,9 @@ def main() -> None:
             last_shape = frame.shape[:2]
             print(f"[line_follow] 프레임 {frame.shape[1]}x{frame.shape[0]}", flush=True)
 
-        st = _detect(frame)
+        if odom is not None:
+            odom.update(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+        st = _detect(frame, odom)
         _atomic_write(STATUS, json.dumps(st, ensure_ascii=False).encode("utf-8"))
         ok, buf = cv2.imencode(".jpg", _annotate(frame, st),
                                [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])

@@ -20,6 +20,8 @@ v2에서 달라진 점 — **가감속(소프트 스타트)은 펌웨어가 한�
 
 from __future__ import annotations
 
+import json
+import os
 import time
 
 from ..config import (
@@ -30,6 +32,7 @@ from ..config import (
     BASE_SERIAL_PORT,
     BASE_SLEW_ACCEL,
     BASE_SLEW_DECEL,
+    BASE_TUNING_FILE,
 )
 from .base import MobileBase
 from .motor_link import MotorLink
@@ -37,6 +40,16 @@ from .motor_link import MotorLink
 # 펌웨어에 밀어넣는 튜닝 값과, 그걸 만드는 명령. 보드가 리셋되면 전부 기본값으로
 # 돌아가므로 연결이 새로 열릴 때마다(MotorLink.generation 변화) 다시 보낸다.
 TUNING_KEYS = ("hz", "max_pwm", "accel", "decel")
+
+
+def _load_saved_tuning(path: str) -> dict:
+    """지난번에 현장에서 고른 튜닝 값. 없거나 깨졌으면 빈 dict(=config 기본값 사용)."""
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return {k: int(v) for k, v in saved.items() if k in TUNING_KEYS and isinstance(v, (int, float))}
 
 
 class JetsonBase(MobileBase):
@@ -56,6 +69,10 @@ class JetsonBase(MobileBase):
             "accel": BASE_SLEW_ACCEL,
             "decel": BASE_SLEW_DECEL,
         }
+        # 현장에서 고른 값이 config 기본값을 이긴다. 이게 없던 시절엔 서비스가
+        # 재시작될 때마다(팔 재연결·배포·크래시) 주파수가 조용히 기본값으로
+        # 돌아가서, 사용자가 대시보드에서 매번 다시 눌러야 했다.
+        self._tuning.update(_load_saved_tuning(BASE_TUNING_FILE))
         self._tuned_generation = -1
         # 링크가 열리는 즉시 튜닝을 밀어넣는다(주행 명령을 기다리지 않는다) —
         # 안 그러면 첫 주행만 컴파일 기본값 소리·속도로 나간다.
@@ -89,8 +106,24 @@ class JetsonBase(MobileBase):
         self._tuning["accel"] = max(1, min(255, self._tuning["accel"]))
         self._tuning["decel"] = max(1, min(255, self._tuning["decel"]))
         self._tuned_generation = -1   # 다음 지령에서 다시 밀어넣게
+        self._save_tuning()
         self._ensure_tuning()
         return dict(self._tuning)
+
+    def _save_tuning(self) -> None:
+        """고른 값을 디스크에 남긴다 — 서비스가 재시작돼도 살아남게.
+
+        저장 실패가 주행을 막으면 안 되므로 조용히 넘어간다(다음 재시작에서
+        기본값으로 돌아갈 뿐, 지금 주행에는 영향이 없다).
+        """
+        path = os.path.expanduser(BASE_TUNING_FILE)
+        try:
+            tmp = f"{path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._tuning, f)
+            os.replace(tmp, path)   # 원자적 — 반쯤 쓰인 파일을 다음 부팅이 읽지 않게
+        except OSError as exc:
+            print(f"  [base] 튜닝 저장 실패({exc}) — 재시작하면 기본값으로 돌아간다")
 
     def _ensure_tuning(self) -> None:
         """연결이 (다시) 열렸으면 튜닝 값을 펌웨어에 밀어넣는다.

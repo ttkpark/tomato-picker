@@ -15,7 +15,7 @@ from ..config import BASE_DRIVE_SPEED, CAMERA_HEIGHT
 from .log_hub import LogHub
 
 
-def _status_payload(arm, base) -> dict:
+def _status_payload(arm, base, line=None) -> dict:
     """조작 화면이 폴링하는 상태. 어떤 조회가 실패해도 페이지는 떠야 하므로
     항목마다 개별로 감싸고, 없는 장비는 None으로 내려보낸다."""
     def _safe(fn, fallback):
@@ -34,7 +34,12 @@ def _status_payload(arm, base) -> dict:
         if base is not None and hasattr(base, "link_stats")
         else {"connected": False, "error": "바퀴 미연결"}
     )
-    return {"arm": arm_status, "base": base_status}
+    line_status = (
+        _safe(line.status, {"mode": "idle"})
+        if line is not None
+        else {"mode": "off", "error": "라인 주행 비활성"}
+    )
+    return {"arm": arm_status, "base": base_status, "line": line_status}
 
 # 하드웨어가 하나도 없어도 대시보드는 떠야 한다(부스 데모에서 화면이 검은 것보다
 # "장비 미연결"이라고 떠 있는 게 낫다). 그래서 이 모듈의 어떤 것도 하드웨어
@@ -298,6 +303,40 @@ _CONTROL_HTML = """<!doctype html>
   <button onclick="drive(0,0,1)">↻ 우회전</button>
 </div>
 
+<h2>라인 주행 <span class="dim">— 테이프를 유지하며 무대 앞을 오간다</span></h2>
+<div class="card">
+  <div id="lineState" style="margin-bottom:0.6rem">라인 상태 확인 중...</div>
+  <div class="row-flex" style="margin-bottom:0.5rem">
+    <button onclick="lineCmd('line_goto_end','left')">◀◀ 왼쪽 끝까지</button>
+    <button class="stop" onclick="lineCmd('line_stop')">■ 정지</button>
+    <button onclick="lineCmd('line_goto_end','right')">오른쪽 끝까지 ▶▶</button>
+  </div>
+  <div class="row-flex" style="margin-bottom:0.5rem">
+    <button onclick="lineCmd('line_jog','left')">◀ 조금</button>
+    <button onclick="lineCmd('line_jog','right')">조금 ▶</button>
+    <span class="dim">|</span>
+    <button onclick="lineTravel('left')">◀ 시간이동</button>
+    <input type="number" id="lineSecs" value="1.5" step="0.1" min="0.1" max="20" style="width:5rem">초
+    <button onclick="lineTravel('right')">시간이동 ▶</button>
+  </div>
+  <div class="row-flex" style="margin-bottom:0.5rem">
+    <button onclick="lineCmd('line_goto_color','left')">◀ 색 마커까지</button>
+    <button onclick="lineCmd('line_goto_color','right')">색 마커까지 ▶</button>
+    <span class="dim">|</span>
+    <button class="small" onclick="cmd({action:'line_set_target'})">현재 위치를 기준선으로</button>
+    <button class="small" onclick="cmd({action:'line_reset_origin'})">변위 0으로</button>
+  </div>
+  <label>주행 속도 <input type="range" id="lineSpeed" min="40" max="200" value="90"
+    oninput="lineSpeedOut.textContent=this.value"> <b id="lineSpeedOut">90</b> / 255
+    <span class="dim">느릴수록 정지 정밀도와 변위 측정이 좋아진다</span></label>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    ⚠ <b>처음 움직이기 전에</b> 위 "예상 지령"의 <b>vx 부호</b>를 확인하세요. 로봇을 손으로
+    무대에서 멀리 밀었을 때 <b>vx가 +</b>로 나와야 맞습니다. 반대면 <code>config.py</code>의
+    <code>LINE_DY_SIGN</code>을 −1로 뒤집으세요. 부호가 반대라도 기준선에서 크게 벗어나면
+    자동으로 정지합니다(폭주 방지).
+  </p>
+</div>
+
 <h2>모터 튜닝 <span class="dim">— 소음 ↔ 속도 (재플래시 없이 즉시 반영)</span></h2>
 <div class="card">
   <div class="row-flex" style="margin-bottom:0.5rem">
@@ -456,6 +495,42 @@ _CONTROL_HTML = """<!doctype html>
     cmd({action:'arm_sequence', presets:list});
   }
 
+  // --- 라인 주행 ---
+  function lineSpeedVal() { return +document.getElementById('lineSpeed').value; }
+  function lineCmd(action, side) {
+    cmd({action, side, speed: lineSpeedVal()});
+  }
+  function lineTravel(side) {
+    cmd({action:'line_travel', side, speed: lineSpeedVal(),
+         seconds: +document.getElementById('lineSecs').value});
+  }
+  function renderLine(ln) {
+    const el = document.getElementById('lineState');
+    if (!el) return;
+    if (!ln || ln.mode === 'off') { el.textContent = ln && ln.error ? ln.error : '라인 주행 비활성'; return; }
+    const bits = [];
+    bits.push(ln.mode === 'idle' ? '⏸ 대기' : '▶ ' + ln.mode);
+    bits.push(ln.detail || '');
+    if (ln.found) {
+      const dy = Math.round(ln.offset_y_px);
+      bits.push('테이프 ' + (dy > 0 ? '아래 ' : '위 ') + Math.abs(dy) + 'px'
+                + (ln.angle_deg == null ? '' : ' ∠' + ln.angle_deg + '°'));
+    } else bits.push('⚠ 테이프 없음');
+    // 오늘의 목표 — 끝단 검은 테이프를 기준으로 한 현재 변위
+    if (ln.position_px != null) {
+      bits.push('변위 ' + Math.round(ln.position_px) + 'px'
+                + (ln.position_pct != null ? ' (' + ln.position_pct + '%)' : ''));
+    } else bits.push('변위 미기준 — 끝단을 한 번 지나가세요');
+    if (ln.color_name) bits.push('🎨 ' + ln.color_name);
+    if (ln.end_side) bits.push('■ 끝(' + (ln.end_side === 'left' ? '좌' : '우') + ')');
+    // 부호 검증용 — 정지 중에도 "지금이라면 이렇게 보낸다"를 보여준다
+    bits.push('예상 지령 vx=' + ln.would_vx + ' w=' + ln.would_w);
+    el.textContent = bits.filter(Boolean).join('  ·  ');
+    el.style.background = ln.mode !== 'idle'
+      ? 'color-mix(in srgb, #2ecc71 22%, Canvas)'
+      : (ln.found ? '' : 'color-mix(in srgb, #e74c3c 15%, Canvas)');
+  }
+
   // --- 모터 튜닝 ---
   function preset(hz, pwm) {
     document.getElementById('tHz').value = hz;  tHzOut.textContent = hz;
@@ -484,6 +559,7 @@ _CONTROL_HTML = """<!doctype html>
     if (!state) return;
     const arm = state.arm || {};
     const base = state.base || {};
+    renderLine(state.line);
 
     // 링크 상태
     const ok = base.connected;
@@ -495,6 +571,11 @@ _CONTROL_HTML = """<!doctype html>
     if (base.nak) bits.push('⚠ nak ' + base.nak);
     // 하트비트가 끊겨 보드를 되살린 횟수 — 0이 아니면 전원/펌웨어를 의심할 것.
     if (base.hb_resets) bits.push('⚠ 링크복구 ' + base.hb_resets + '회');
+    // 보드가 **스스로** 재부팅한 횟수. 이때 F/P/R이 컴파일 기본값으로 날아가므로
+    // 젯슨이 자동으로 되밀지만, 숫자가 늘어난다는 건 전원이 흔들린다는 뜻이다.
+    if (base.board_resets) bits.push('⚠ 보드재부팅 ' + base.board_resets + '회(튜닝 자동복구)');
+    if (base.fw_ms !== undefined && base.fw_ms !== null)
+      bits.push('보드가동 ' + Math.floor(base.fw_ms / 1000) + 's');
     if (base.error) bits.push(base.error);
     const link = document.getElementById('link');
     link.textContent = bits.join('  ·  ');
@@ -662,7 +743,34 @@ def _lowest_tomato_y(vision) -> float | None:
     return max(ys) if ys else None
 
 
-def _handle_command(body: dict, arm, base, vision=None) -> tuple[bool, str]:
+def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
+    """라인 주행 명령. 이 모듈이 처리할 게 아니면 None."""
+    action = body.get("action")
+    if not str(action).startswith("line_"):
+        return None
+    if line is None:
+        return False, "라인 주행 비활성(바닥 카메라/바퀴 확인)"
+    side = body.get("side", "right")
+    speed = body.get("speed")
+    if action == "line_goto_end":
+        return True, line.goto_end(side, speed)
+    if action == "line_travel":
+        return True, line.travel(side, float(body.get("seconds", 1.0)), speed)
+    if action == "line_jog":
+        return True, line.jog(side, float(body.get("seconds", 0.25)), speed)
+    if action == "line_goto_color":
+        return True, line.goto_color(side, body.get("name") or None, speed)
+    if action == "line_stop":
+        line.cancel("사용자 정지")
+        return True, "라인 주행 정지"
+    if action == "line_reset_origin":
+        return True, line.reset_origin()
+    if action == "line_set_target":
+        return True, line.set_target_y()
+    return False, f"알 수 없는 라인 명령: {action}"
+
+
+def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool, str]:
     """수동 조작 명령 하나를 실행. (성공여부, 사람이 읽을 설명)을 돌려준다.
 
     장비가 없으면(Mock/None) 에러 대신 그 사실을 문자열로 알려준다 —
@@ -670,6 +778,14 @@ def _handle_command(body: dict, arm, base, vision=None) -> tuple[bool, str]:
     """
     action = body.get("action")
     try:
+        handled = _handle_line_command(body, line)
+        if handled is not None:
+            return handled
+        # 수동 조작이 들어오면 자동주행은 취소한다 — 두 주체가 같은 바퀴를
+        # 서로 다른 방향으로 몰면 아무도 예측 못 하는 움직임이 나온다.
+        if line is not None and action in ("drive", "hold", "stop"):
+            if action != "hold" or any(int(body.get(k, 0)) for k in ("vx", "vy", "w")):
+                line.cancel("수동 조작으로 전환")
         if action == "drive":
             if base is None:
                 return False, "바퀴 미연결"
@@ -799,7 +915,7 @@ def _make_handler(
             if self.path == "/status":
                 # 조작 화면이 1초마다 폴링하는 상태 스냅샷. 하드웨어가 없거나
                 # 상태 조회가 실패해도 화면은 떠 있어야 하므로 전부 감싼다.
-                self._write_json(_status_payload(hw.get("arm"), hw.get("base")))
+                self._write_json(_status_payload(hw.get("arm"), hw.get("base"), hw.get("line")))
                 return
 
             if self.path == "/control":
@@ -853,7 +969,8 @@ def _make_handler(
             except ValueError:
                 ok, detail = False, "JSON 파싱 실패"
             else:
-                ok, detail = _handle_command(body, hw.get("arm"), hw.get("base"), vision)
+                ok, detail = _handle_command(body, hw.get("arm"), hw.get("base"), vision,
+                                             hw.get("line"))
                 # 홀드는 초당 여러 번 오므로 로그에 안 쌓는다(실패했을 때만 알림).
                 if body.get("action") != "hold" or not ok:
                     log_hub.publish({

@@ -65,6 +65,11 @@ BASE_PWM_HZ = 700
 # 주파수로 내는 셈). ⚠ 듀티를 키우면 전류도 커진다 — 젯슨이 리셋되면
 # 여기부터 되돌릴 것([[battery-power-system]]). 슬루가 기동 피크는 눌러준다.
 BASE_MAX_PWM = 2600
+# 대시보드에서 손으로 고른 값을 여기에 남긴다 — 위 상수는 "공장 초기값"이고,
+# 이 파일이 있으면 그쪽이 이긴다. 없으면 위 값으로 시작한다.
+# ⚠ 이게 없던 시절엔 tomato-voice가 재시작될 때마다 _tuning이 위 상수로 돌아가서,
+# 현장에서 고른 주파수를 매번 다시 눌러야 했다(2026-08-09).
+BASE_TUNING_FILE = "~/base_tuning.json"
 # 젯슨 → 보드 지령 재전송 주기는 motor_link.MotorLink.SEND_INTERVAL_SEC(20ms).
 # 전용 스레드가 담당하므로 Whisper/YOLO가 CPU를 다 먹어도 데드맨에 안 걸린다.
 BASE_DRIVE_FORWARD_SECONDS = 1.5  # 음성 "앞으로 가" 기본 전진 시간
@@ -104,6 +109,30 @@ FLOOR_CAM_JPEG = "/dev/shm/line_cam.jpg"
 # 오버레이가 있으면 대시보드는 그걸 우선 보여준다(원본보다 정보량이 많다).
 FLOOR_VIEW_JPEG = "/dev/shm/line_view.jpg"
 FLOOR_LINE_STATUS = "/dev/shm/line_status"
+
+# --- 라인 유지 주행 (hardware/line_drive.py) ---
+LINE_STATUS_PATH = FLOOR_LINE_STATUS
+# 대시보드 "현재 위치를 기준으로" 버튼이 여기에 band_y를 써서 즉시 반영시킨다
+# (코스를 도화지로 새로 깔면 기준선이 통째로 바뀌므로 재시작 없이 잡아야 한다).
+LINE_TARGET_Y_FILE = "/dev/shm/line_target_y"
+# 진행(게걸음) 속도. 시연은 느릴수록 안전하고, 시각 오도메트리도 저속에서 정확하다.
+LINE_SPEED = 90
+# 라인 유지 보정 게인. dy는 -1..1 정규화값, yaw는 도(deg) 단위.
+LINE_DY_GAIN = 120.0
+LINE_YAW_GAIN = 4.0
+# ⚠ 부호는 카메라 장착 방향에 따라 달라진다. 움직이기 전에 /control의
+# "예상 지령(would_vx)"을 보며 로봇을 손으로 밀어 확인할 것 — 무대에서 멀어졌을 때
+# vx가 +(전진)로 나와야 맞다. 반대면 여기를 -1로 뒤집는다.
+LINE_DY_SIGN = 1.0
+LINE_YAW_SIGN = -1.0
+# 보정이 주행보다 세지면 안 된다(라인 잡다가 무대로 돌진하는 걸 막는 상한).
+LINE_MAX_CORRECTION = 70
+# 이만큼 벗어나면 정지 — 부호가 반대여도 폭주 대신 멈춘다.
+LINE_MAX_DY_NORM = 0.55
+# 테이프를 이 시간 넘게 놓치면 정지(눈 감고 달리지 않는다).
+LINE_LOST_STOP_SEC = 0.4
+# 한 명령의 최대 수행 시간 — 마커를 영영 못 만나도 언젠가 선다.
+LINE_TIMEOUT_SEC = 25.0
 
 # --- 로봇팔(SO-101 Follower, 프리셋 재생) ---
 # True면 main.build_robot()이 MockArm 대신 LerobotArm(실물)을 쓴다.

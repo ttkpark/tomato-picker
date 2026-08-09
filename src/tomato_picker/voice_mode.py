@@ -145,7 +145,7 @@ def run_voice() -> None:
     log_hub = LogHub()
     hw: dict[str, str] = {}
     # /control 수동 조작 화면이 참조하는 가변 핸들 — 아래에서 채운다.
-    hardware: dict = {"arm": None, "base": None}
+    hardware: dict = {"arm": None, "base": None, "line": None}
     vision = _build_vision(log_hub)
     hw["카메라"] = "ok" if vision is not None else "down"
     # 바닥 카메라(CSI) — line-cam.service가 /dev/shm에 쓰는 프레임을 읽기만 한다.
@@ -166,6 +166,15 @@ def run_voice() -> None:
     # 2) 하드웨어는 실패해도 Mock으로 대체 — 상태는 페이지 상단 배지로.
     hardware["arm"] = _safe_build("로봇팔", _build_arm, MockArm, log_hub, hw)
     hardware["base"] = _safe_build("바퀴", _build_base, MockBase, log_hub, hw)
+    # 3) 라인 주행 — 바닥 카메라 상태를 읽어 바퀴를 몬다. 모터보드 포트를 독점하는
+    #    MotorLink가 이 프로세스에 있으므로 제어 루프도 여기 있어야 한다.
+    if USE_FLOOR_CAM and hardware["base"] is not None:
+        try:
+            from .hardware.line_drive import LineDriver
+
+            hardware["line"] = LineDriver(hardware["base"])
+        except Exception as exc:  # noqa: BLE001 - 라인 주행이 없어도 나머지는 돈다
+            print(f"[voice] 라인 주행 초기화 실패: {exc} — 수동 조작은 정상")
     hw["마이크"] = "확인 중"
 
     def publish_hw() -> None:
