@@ -221,7 +221,26 @@ class LineDriver:
     def _speed(speed: int | None) -> int:
         return int(LINE_SPEED if speed is None else max(30, min(255, int(speed))))
 
+    def _preflight(self) -> None:
+        """출발 전 점검 — 여기서 막아야 "눌렀는데 바로 멈춘다"가 안 생긴다.
+
+        기준선이 지금 위치와 너무 어긋나 있으면(코스를 새로 깔았거나 로봇을 옮긴
+        뒤 기준을 다시 안 잡은 경우) 출발하자마자 안전정지에 걸린다. 그 상태를
+        '실패'로 조용히 넘기지 말고, **무엇을 눌러야 하는지**까지 알려준다.
+        """
+        line = self._line or {}
+        if not line.get("found"):
+            raise RuntimeError("테이프가 안 보입니다 — 카메라가 띠를 보는지 확인하세요")
+        dy = line.get("offset_y_norm")
+        if dy is not None and abs(dy) > LINE_MAX_DY_NORM:
+            raise RuntimeError(
+                f"기준선에서 너무 멀어 출발할 수 없습니다(dy={line.get('offset_y_px'):.0f}px). "
+                "지금 거리가 맞다면 [현재 위치를 기준선으로]를 누르고, "
+                "아니면 로봇을 기준 거리로 옮긴 뒤 다시 시도하세요."
+            )
+
     def _start(self, mode: str, goal: dict, detail: str) -> None:
+        self._preflight()
         with self._lock:
             self._mode = mode
             self._goal = goal
