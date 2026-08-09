@@ -390,6 +390,22 @@ _CONTROL_HTML = """<!doctype html>
   </p>
 </div>
 
+<h2>팔 범위 캘리브레이션 <span class="dim">— 관절 가동범위 다시 잡기</span></h2>
+<div class="card">
+  <div class="row-flex" style="margin-bottom:0.5rem">
+    <button onclick="cmd({action:'arm_cal_start'})">① 중앙에서 시작</button>
+    <button onclick="cmd({action:'arm_cal_finish'})">② 완료 &amp; 저장</button>
+    <button class="small" onclick="cmd({action:'arm_cal_cancel'})">취소</button>
+  </div>
+  <div id="calState" class="dim">캘리브레이션 대기</div>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    ① 팔을 <b>가동범위 한가운데</b>로 손으로 옮긴 뒤 누르세요(그 자세가 원점이 됩니다).
+    ② 토크가 풀린 팔의 <b>모든 관절을 끝에서 끝까지</b> 움직이면 아래에 폭이 쌓입니다.
+    ③ 다 움직였으면 저장하세요. <code>wrist_roll</code>은 연속 회전이라 한 바퀴(0~4095)로 고정됩니다.
+    <br>⚠ 저장하면 <b>기존 프리셋 숫자는 다른 자세를 가리키게 됩니다</b> — 다시 교시하세요.
+  </p>
+</div>
+
 <h2>프리셋 슬롯 0~9</h2>
 <div class="card" style="margin-bottom:0.6rem">
   <div class="row-flex">
@@ -633,6 +649,22 @@ _CONTROL_HTML = """<!doctype html>
         const o = document.createElement('option'); o.value = p; o.textContent = p; sel.append(o);
       }
       sel.value = keep;
+    }
+
+    // 팔 범위 캘리브레이션 — 진행 중이면 관절별 폭이 실시간으로 쌓인다
+    const calEl = document.getElementById('calState');
+    const cal = arm.calibration;
+    if (calEl) {
+      if (!cal || !cal.active) {
+        calEl.textContent = '캘리브레이션 대기 — ①을 누르면 지금 자세가 원점이 됩니다';
+        calEl.style.background = '';
+      } else {
+        const rows = (cal.joints || []).map(j =>
+          j.name + ': ' + (j.full_turn ? '한바퀴 고정'
+            : j.min + '~' + j.max + ' (폭 ' + j.span + (j.span < 100 ? ' ⚠아직' : '') + ')'));
+        calEl.textContent = '● 기록 중 — ' + rows.join('  ·  ') + (cal.error ? '  ⚠' + cal.error : '');
+        calEl.style.background = 'color-mix(in srgb, #f39c12 25%, Canvas)';
+      }
     }
 
     // 프리셋 슬롯
@@ -894,6 +926,12 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
         elif action == "arm_relax":
             arm.relax()
             return True, "팔 토크 해제"
+        elif action == "arm_cal_start":
+            return True, arm.start_calibration()
+        elif action == "arm_cal_finish":
+            return True, arm.finish_calibration()
+        elif action == "arm_cal_cancel":
+            return True, arm.cancel_calibration()
         elif action == "leader_connect":
             port = arm.connect_leader(body.get("port") or None)
             return True, f"리더암 연결됨: {port}"

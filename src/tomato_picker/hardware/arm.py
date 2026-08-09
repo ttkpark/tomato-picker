@@ -65,6 +65,14 @@ class LerobotArm(RobotArm):
         self._mirroring = False
         self._mirror_thread: threading.Thread | None = None
         self._mirror_error: str | None = None
+        # --- 범위 캘리브레이션 상태 ---
+        self._cal_thread: threading.Thread | None = None
+        self._cal_stop = threading.Event()
+        self._cal_homings: dict = {}
+        self._cal_min: dict = {}
+        self._cal_max: dict = {}
+        self._cal_now: dict = {}
+        self._cal_error: str | None = None
 
     # ------------------------------------------------------------------
     # 연결 관리
@@ -298,6 +306,148 @@ class LerobotArm(RobotArm):
             print(f"  [arm] 미러링 중단: {exc}")
 
     # ------------------------------------------------------------------
+    # 범위 캘리브레이션 (대시보드에서 수행)
+    # ------------------------------------------------------------------
+    #
+    # lerobot의 `lerobot-calibrate`는 터미널에서 ENTER를 기다리는 **대화형**이라
+    # 원격/웹에서 돌릴 수 없다. 여기서 같은 절차를 이벤트 기반으로 다시 구현한다:
+    #
+    #   ① start_calibration()  팔을 가동범위 **한가운데** 두고 호출
+    #                          → 토크 해제 + set_half_turn_homings()로 원점 재설정
+    #                          → 백그라운드에서 관절별 raw 최소/최대 기록 시작
+    #   ② (사용자가 손으로 모든 관절을 끝에서 끝까지 움직인다 — 화면에 실시간 표시)
+    #   ③ finish_calibration() 기록된 범위를 캘리브레이션으로 저장
+    #
+    # ⚠ wrist_roll은 SOFollower.calibrate와 동일하게 **한 바퀴 전체(0~4095)**로 둔다.
+    #   이 관절만 연속 회전이라 끝이 없고, 0/4095 불연속이 가동구간에 걸리면
+    #   텔레오프가 튄다([[wrist-roll-wrap-fix]]).
+    # ⚠ 캘리브레이션이 바뀌면 저장된 프리셋의 숫자는 **다른 자세**를 가리키게 된다.
+    #   자세를 살리려면 tools/remap_presets.py로 변환할 것(그냥 다시 교시해도 된다).
+
+    FULL_TURN_MOTOR = "wrist_roll"
+
+    @property
+    def calibrating(self) -> bool:
+        return self._cal_thread is not None and self._cal_thread.is_alive()
+
+    def start_calibration(self) -> str:
+        """지금 자세를 '가동범위 중앙'으로 잡고 범위 기록을 시작한다."""
+        if self.calibrating:
+            return "이미 캘리브레이션 중입니다"
+        self.stop_mirror()
+
+        def _begin():
+            from lerobot.motors.feetech import OperatingMode
+
+            bus = self._follower.bus
+            bus.disable_torque()
+            for motor in bus.motors:
+                bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+            homings = bus.set_half_turn_homings()
+            start = bus.sync_read("Present_Position", list(bus.motors), normalize=False)
+            return homings, dict(start)
+
+        self._cal_homings, start = self._with_retry(_begin)
+        self._cal_min = dict(start)
+        self._cal_max = dict(start)
+        self._cal_now = dict(start)
+        self._cal_stop = threading.Event()
+        self._cal_thread = threading.Thread(target=self._cal_loop, daemon=True, name="arm-cal")
+        self._cal_thread.start()
+        return "원점 재설정 완료 — 이제 모든 관절을 끝에서 끝까지 움직이세요"
+
+    def _cal_loop(self) -> None:
+        """토크가 풀린 팔을 사람이 움직이는 동안 관절별 raw 최소/최대를 추적."""
+        bus = self._follower.bus
+        motors = list(bus.motors)
+        while not self._cal_stop.is_set():
+            try:
+                with self._lock:
+                    pos = bus.sync_read("Present_Position", motors, normalize=False)
+            except Exception as exc:  # noqa: BLE001 - 한 번 실패해도 기록은 계속
+                self._cal_error = str(exc)
+                time.sleep(0.2)
+                continue
+            self._cal_now = dict(pos)
+            for motor, value in pos.items():
+                self._cal_min[motor] = min(self._cal_min.get(motor, value), value)
+                self._cal_max[motor] = max(self._cal_max.get(motor, value), value)
+            time.sleep(0.02)
+
+    def cancel_calibration(self) -> str:
+        if not self.calibrating:
+            return "캘리브레이션 중이 아닙니다"
+        self._cal_stop.set()
+        self._cal_thread.join(timeout=2.0)
+        self._cal_thread = None
+        return "캘리브레이션 취소 — 저장하지 않았습니다(원점은 이미 바뀐 상태)"
+
+    def finish_calibration(self) -> str:
+        """기록된 범위를 저장한다. 움직이지 않은 관절이 있으면 거부."""
+        from lerobot.motors import MotorCalibration
+
+        if not self.calibrating:
+            raise RuntimeError("먼저 [① 중앙에서 시작]을 누르세요")
+        self._cal_stop.set()
+        self._cal_thread.join(timeout=2.0)
+        self._cal_thread = None
+
+        bus = self._follower.bus
+        stuck = [
+            m for m in bus.motors
+            if m != self.FULL_TURN_MOTOR and self._cal_max[m] - self._cal_min[m] < 100
+        ]
+        if stuck:
+            raise RuntimeError(
+                "거의 안 움직인 관절이 있어 저장하지 않았습니다: " + ", ".join(stuck)
+                + " — 다시 [① 중앙에서 시작]부터 하고 이 관절들을 끝까지 움직이세요."
+            )
+
+        calibration = {}
+        for motor, m in bus.motors.items():
+            if motor == self.FULL_TURN_MOTOR:
+                lo, hi = 0, 4095      # 연속 회전 관절은 한 바퀴 전체
+            else:
+                lo, hi = int(self._cal_min[motor]), int(self._cal_max[motor])
+            calibration[motor] = MotorCalibration(
+                id=m.id, drive_mode=0,
+                homing_offset=int(self._cal_homings[motor]),
+                range_min=lo, range_max=hi,
+            )
+
+        def _save():
+            bus.write_calibration(calibration)
+            self._follower.calibration = calibration
+            self._follower._save_calibration()  # noqa: SLF001 - lerobot이 제공하는 유일한 경로
+
+        self._with_retry(_save)
+        spans = ", ".join(
+            f"{m}={calibration[m].range_max - calibration[m].range_min}" for m in calibration
+        )
+        return (f"저장 완료 (폭: {spans}). ⚠ 기존 프리셋 숫자는 이제 다른 자세를 "
+                "가리킵니다 — 다시 교시하거나 tools/remap_presets.py로 변환하세요.")
+
+    def calibration_status(self) -> dict:
+        """진행 중 화면 표시용 — 관절별 현재값과 지금까지의 최소/최대."""
+        if not self.calibrating:
+            return {"active": False}
+        return {
+            "active": True,
+            "error": self._cal_error,
+            "joints": [
+                {
+                    "name": m,
+                    "now": int(self._cal_now.get(m, 0)),
+                    "min": int(self._cal_min.get(m, 0)),
+                    "max": int(self._cal_max.get(m, 0)),
+                    "span": int(self._cal_max.get(m, 0) - self._cal_min.get(m, 0)),
+                    "full_turn": m == self.FULL_TURN_MOTOR,
+                }
+                for m in self._follower.bus.motors
+            ],
+        }
+
+    # ------------------------------------------------------------------
     # 상태 스냅샷 (웹 UI)
     # ------------------------------------------------------------------
 
@@ -310,6 +460,7 @@ class LerobotArm(RobotArm):
             "mirroring": self._mirroring,
             "mirror_error": self._mirror_error,
             "presets": self.presets.snapshot(),
+            "calibration": self.calibration_status(),
         }
 
     # ------------------------------------------------------------------
