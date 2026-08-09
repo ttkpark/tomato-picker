@@ -3,9 +3,17 @@
 코스 기하는 tools/line_follow.py 참고 — 테이프가 **진행 방향과 나란한 가로 띠**라
 제어 축이 통상적 라인트레이서와 다르다:
 
-    띠의 세로 위치(dy) → vx (전후, 무대와의 거리 유지)
-    띠의 기울기(yaw)   → w  (회전, 무대와 평행 유지)
-    진행 방향           → vy (게걸음, 여기가 실제 이동)
+    띠의 세로 위치(dy) → **vy** (게걸음, 테이프까지의 거리 유지)
+    띠의 기울기(yaw)   → w    (회전, 테이프와 평행 유지)
+    진행 방향           → **vx** (전후, 여기가 실제 이동)
+
+⚠ 이 대응은 2026-08-09 실기에서 확정됐다. 처음엔 반대로(거리→vx, 진행→vy) 잡았는데
+**테이프까지의 거리는 로봇의 횡방향 오차**라 게걸음으로 잡아야 한다 — vx(앞뒤)로는
+테이프 거리를 만들 수 없다. 부호도 둘 다 반대였다.
+
+축·부호는 카메라 장착 방향에 따라 또 달라질 수 있어 **런타임에 뒤집을 수 있게**
+했다(대시보드 버튼 → LINE_TUNING_FILE에 저장 → 재시작해도 유지). 실물을 손으로
+밀어보지 않고는 확정할 수 없는 값이라, 코드에 박아두면 매번 배포가 필요해진다.
 
 **왜 voice 서비스 안에 있나** — 모터보드 포트는 MotorLink가 독점하고, 그건
 tomato-voice 프로세스가 들고 있다. 별도 서비스로 빼면 포트를 못 잡는다.
@@ -26,10 +34,12 @@ tomato-voice 프로세스가 들고 있다. 별도 서비스로 빼면 포트를
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 
 from ..config import (
+    LINE_DY_AXIS,
     LINE_DY_GAIN,
     LINE_DY_SIGN,
     LINE_LOST_STOP_SEC,
@@ -39,9 +49,27 @@ from ..config import (
     LINE_STATUS_PATH,
     LINE_TARGET_Y_FILE,
     LINE_TIMEOUT_SEC,
+    LINE_TRAVEL_SIGN,
+    LINE_TUNING_FILE,
     LINE_YAW_GAIN,
     LINE_YAW_SIGN,
 )
+
+# 런타임에 뒤집을 수 있는 축·부호. 실기에서만 확정되는 값이라 파일로 뺀다.
+TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign")
+
+
+def _load_saved(path: str) -> dict:
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for key in TUNING_KEYS:
+        if key in saved:
+            out[key] = str(saved[key]) if key == "dy_axis" else float(saved[key])
+    return out
 
 
 class LineDriver:
@@ -67,6 +95,14 @@ class LineDriver:
         self._line: dict = {}
         self._would: tuple[int, int, int] = (0, 0, 0)
         self._lost_since: float | None = None
+        # 축·부호 — config 기본값 위에 현장에서 뒤집은 값을 얹는다.
+        self._tune = {
+            "dy_axis": LINE_DY_AXIS,
+            "dy_sign": float(LINE_DY_SIGN),
+            "yaw_sign": float(LINE_YAW_SIGN),
+            "travel_sign": float(LINE_TRAVEL_SIGN),
+        }
+        self._tune.update(_load_saved(LINE_TUNING_FILE))
         self._thread = threading.Thread(target=self._run, daemon=True, name="line-drive")
         self._thread.start()
 
@@ -151,10 +187,15 @@ class LineDriver:
             "position_pct": self.position_pct,
             "last_end": self._last_end,
             # 정지 중에도 계속 계산한다 — 로봇을 손으로 밀어보며 **부호가 맞는지**
-            # 움직이기 전에 확인할 수 있다(반대면 LINE_DY_SIGN을 뒤집는다).
+            # 움직이기 전에 확인할 수 있다(반대면 대시보드에서 바로 뒤집는다).
             "would_vx": self._would[0],
             "would_vy": self._would[1],
             "would_w": self._would[2],
+            "dy_axis": self._tune["dy_axis"],
+            "travel_axis": "vx" if self._tune["dy_axis"] == "vy" else "vy",
+            "dy_sign": self._tune["dy_sign"],
+            "yaw_sign": self._tune["yaw_sign"],
+            "travel_sign": self._tune["travel_sign"],
         }
 
     @property
@@ -199,17 +240,42 @@ class LineDriver:
         except (OSError, ValueError):
             return {}
 
-    def _corrections(self, line: dict) -> tuple[int, int]:
-        """라인 유지 보정 (vx, w). 띠가 없으면 (0,0)."""
-        if not line.get("found"):
-            return 0, 0
-        dy = line.get("offset_y_norm") or 0.0
-        yaw = line.get("angle_deg") or 0.0
-        vx = int(max(-LINE_MAX_CORRECTION, min(LINE_MAX_CORRECTION,
-                                               LINE_DY_SIGN * LINE_DY_GAIN * dy)))
-        w = int(max(-LINE_MAX_CORRECTION, min(LINE_MAX_CORRECTION,
-                                              LINE_YAW_SIGN * LINE_YAW_GAIN * yaw)))
-        return vx, w
+    def flip(self, what: str) -> str:
+        """축/부호를 런타임에 뒤집고 파일에 남긴다(재시작해도 유지)."""
+        with self._lock:
+            if what == "dy_axis":
+                self._tune["dy_axis"] = "vx" if self._tune["dy_axis"] == "vy" else "vy"
+            elif what in ("dy_sign", "yaw_sign", "travel_sign"):
+                self._tune[what] = -self._tune[what]
+            else:
+                raise ValueError(f"알 수 없는 항목: {what}")
+            snapshot = dict(self._tune)
+        try:
+            with open(os.path.expanduser(LINE_TUNING_FILE), "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            return f"{what} 뒤집음(저장 실패: {exc})"
+        return (f"보정축={snapshot['dy_axis']} dy부호={snapshot['dy_sign']:+.0f} "
+                f"yaw부호={snapshot['yaw_sign']:+.0f} 진행부호={snapshot['travel_sign']:+.0f}")
+
+    def _command(self, line: dict, travel_dir: int, speed: int) -> tuple[int, int, int]:
+        """(vx, vy, w) 지령을 만든다.
+
+        테이프까지의 거리 오차는 **횡방향**이라 보정축(기본 vy)에 싣고, 진행은
+        나머지 축에 싣는다. 둘은 항상 직교해야 하므로 한쪽이 정해지면 다른 쪽도 정해진다.
+        """
+        corr = w = 0
+        if line.get("found"):
+            dy = line.get("offset_y_norm") or 0.0
+            yaw = line.get("angle_deg") or 0.0
+            corr = int(max(-LINE_MAX_CORRECTION, min(LINE_MAX_CORRECTION,
+                                                     self._tune["dy_sign"] * LINE_DY_GAIN * dy)))
+            w = int(max(-LINE_MAX_CORRECTION, min(LINE_MAX_CORRECTION,
+                                                  self._tune["yaw_sign"] * LINE_YAW_GAIN * yaw)))
+        travel = int(self._tune["travel_sign"] * travel_dir * speed)
+        if self._tune["dy_axis"] == "vy":
+            return travel, corr, w      # 보정=게걸음, 진행=전후
+        return corr, travel, w          # 보정=전후,   진행=게걸음
 
     def _latch_end(self, side: str) -> None:
         """끝단 마커에 도착 — 절대 기준점으로 원점/스팬을 갱신한다.
@@ -265,9 +331,8 @@ class LineDriver:
             with self._lock:
                 mode, goal = self._mode, dict(self._goal)
 
-            # 정지 중에도 보정값을 계산해 둔다(부호 검증용)
-            corr_vx, corr_w = self._corrections(self._line)
-            self._would = (corr_vx, 0, corr_w)
+            # 정지 중에도 보정값을 계산해 둔다(부호 검증용 — 진행분은 빼고 보정만)
+            self._would = self._command(self._line, 0, 0)
 
             # 끝단 마커는 **주행 중이 아니어도** 지나가면 기준을 잡는다.
             end = (self._line or {}).get("end_marker")
@@ -291,9 +356,9 @@ class LineDriver:
                 continue
 
             speed = goal.get("speed", LINE_SPEED)
-            vy = speed if goal.get("side") == "right" else -speed
+            vx, vy, w = self._command(self._line, 1 if goal.get("side") == "right" else -1, speed)
             try:
-                self._base.hold(corr_vx, vy, corr_w)
+                self._base.hold(vx, vy, w)
             except Exception as exc:  # noqa: BLE001 - 링크가 죽어도 루프는 살아야 함
                 self.cancel(f"주행 실패: {exc}")
             time.sleep(self.RATE)

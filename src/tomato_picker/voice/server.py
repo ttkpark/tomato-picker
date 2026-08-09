@@ -329,11 +329,18 @@ _CONTROL_HTML = """<!doctype html>
   <label>주행 속도 <input type="range" id="lineSpeed" min="40" max="200" value="90"
     oninput="lineSpeedOut.textContent=this.value"> <b id="lineSpeedOut">90</b> / 255
     <span class="dim">느릴수록 정지 정밀도와 변위 측정이 좋아진다</span></label>
+  <div class="row-flex" style="margin-top:0.5rem">
+    <span class="dim">축·부호(즉시 반영·재시작해도 유지):</span>
+    <button class="small" onclick="cmd({action:'line_flip',what:'dy_axis'})">보정축 vx↔vy</button>
+    <button class="small" onclick="cmd({action:'line_flip',what:'dy_sign'})">거리 부호 ±</button>
+    <button class="small" onclick="cmd({action:'line_flip',what:'yaw_sign'})">회전 부호 ±</button>
+    <button class="small" onclick="cmd({action:'line_flip',what:'travel_sign'})">진행 좌우 ±</button>
+  </div>
   <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
-    ⚠ <b>처음 움직이기 전에</b> 위 "예상 지령"의 <b>vx 부호</b>를 확인하세요. 로봇을 손으로
-    무대에서 멀리 밀었을 때 <b>vx가 +</b>로 나와야 맞습니다. 반대면 <code>config.py</code>의
-    <code>LINE_DY_SIGN</code>을 −1로 뒤집으세요. 부호가 반대라도 기준선에서 크게 벗어나면
-    자동으로 정지합니다(폭주 방지).
+    ⚠ <b>처음 움직이기 전에</b> 위 "예상 지령"을 보며 확인하세요. 로봇을 손으로 밀어
+    <b>테이프에서 멀어지면, 되돌아가는 방향</b>의 지령이 나와야 맞습니다. 반대면 위
+    [거리 부호 ±]를 누르면 즉시 뒤집힙니다. 부호가 반대라도 기준선에서 크게 벗어나면
+    자동 정지하므로 폭주하지는 않습니다.
   </p>
 </div>
 
@@ -523,8 +530,11 @@ _CONTROL_HTML = """<!doctype html>
     } else bits.push('변위 미기준 — 끝단을 한 번 지나가세요');
     if (ln.color_name) bits.push('🎨 ' + ln.color_name);
     if (ln.end_side) bits.push('■ 끝(' + (ln.end_side === 'left' ? '좌' : '우') + ')');
-    // 부호 검증용 — 정지 중에도 "지금이라면 이렇게 보낸다"를 보여준다
-    bits.push('예상 지령 vx=' + ln.would_vx + ' w=' + ln.would_w);
+    // 부호 검증용 — 정지 중에도 "지금이라면 이렇게 보낸다"를 보여준다.
+    // 보정이 실리는 축을 **이름으로** 찍어 어느 쪽이 거리 보정인지 헷갈리지 않게.
+    const corr = ln.dy_axis === 'vy' ? ln.would_vy : ln.would_vx;
+    bits.push('보정 ' + (ln.dy_axis || '?') + '=' + corr + ' w=' + ln.would_w
+              + ' (진행축 ' + (ln.travel_axis || '?') + ')');
     el.textContent = bits.filter(Boolean).join('  ·  ');
     el.style.background = ln.mode !== 'idle'
       ? 'color-mix(in srgb, #2ecc71 22%, Canvas)'
@@ -767,6 +777,8 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
         return True, line.reset_origin()
     if action == "line_set_target":
         return True, line.set_target_y()
+    if action == "line_flip":
+        return True, line.flip(str(body.get("what", "dy_sign")))
     return False, f"알 수 없는 라인 명령: {action}"
 
 
