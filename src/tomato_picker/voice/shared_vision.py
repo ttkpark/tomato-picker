@@ -65,17 +65,21 @@ class SharedFrameSource:
             st = self.latest_raw_status()
             if st is not None:
                 found = bool(st.get("found"))
-                mark = bool(st.get("mark"))
-                offset = st.get("offset_px")
+                offset = st.get("offset_y_px")
+                end = st.get("end_marker") or None
+                color = st.get("color_marker") or None
                 # 픽셀 지터로 도배되지 않게 10px 격자로 반올림해 변화를 판단한다.
-                key = (found, mark, None if offset is None else round(offset / 10))
+                key = (found, None if offset is None else round(offset / 10),
+                       bool(end), (color or {}).get("name"))
                 now = time.monotonic()
                 if key != last_key or now - last_sent >= HEARTBEAT_SEC:
                     last_key, last_sent = key, now
                     self._log_hub.publish({
                         "ts": _now(), "kind": "line",
-                        "found": found, "mark": mark,
-                        "offset_px": offset, "angle_deg": st.get("angle_deg"),
+                        "found": found,
+                        "offset_y_px": offset, "angle_deg": st.get("angle_deg"),
+                        "end_side": (end or {}).get("side"),
+                        "color_name": (color or {}).get("name"),
                     }, latest_only=True)
             time.sleep(self._poll)
 

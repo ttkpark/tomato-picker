@@ -147,19 +147,20 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
     // 바닥 카메라 라인 검출 — 배지만 갈아끼우고 로그로는 안 쌓는다.
     if (ev.kind === 'line') {{
       if (!lineEl) return;
-      if (ev.mark) {{
-        lineEl.className = 'mark';
-        lineEl.textContent = '■ 정지마크 감지';
-      }} else if (ev.found) {{
-        lineEl.className = 'ok';
-        const off = Math.round(ev.offset_px);
-        const dir = off === 0 ? '중앙' : (off > 0 ? '오른쪽' : '왼쪽');
-        lineEl.textContent = '● 라인 ' + dir + ' ' + Math.abs(off) + 'px'
-          + (ev.angle_deg === null || ev.angle_deg === undefined ? '' : '  ∠' + ev.angle_deg + '°');
+      // 테이프는 진행방향과 나란한 **가로 띠**다 — 세로 위치(dy)가 무대와의
+      // 거리 오차, 기울기가 로봇 요(yaw) 오차. 자세한 기하는 line_follow.py.
+      const parts = [];
+      if (ev.found) {{
+        const dy = Math.round(ev.offset_y_px);
+        parts.push('● 테이프 ' + (dy === 0 ? '기준' : (dy > 0 ? '아래 ' : '위 ') + Math.abs(dy) + 'px'));
+        if (ev.angle_deg !== null && ev.angle_deg !== undefined) parts.push('∠' + ev.angle_deg + '°');
       }} else {{
-        lineEl.className = 'lost';
-        lineEl.textContent = '○ 라인 없음';
+        parts.push('○ 테이프 없음');
       }}
+      if (ev.color_name) parts.push('🎨 ' + ev.color_name + ' 스테이션');
+      if (ev.end_side) parts.push('■ 코스 끝(' + (ev.end_side === 'left' ? '좌' : '우') + ')');
+      lineEl.className = ev.end_side ? 'mark' : (ev.found ? 'ok' : 'lost');
+      lineEl.textContent = parts.join('  ·  ');
       return;
     }}
     // 개수·위치는 상단 배너만 갱신하고 로그 줄로는 안 쌓는다(도배 방지).

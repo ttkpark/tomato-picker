@@ -1,4 +1,4 @@
-"""바닥 CSI 카메라 프레임에서 **검은 라인**을 검출해 /dev/shm에 결과를 쓴다.
+"""바닥 CSI 카메라로 **주행 테이프와 마커**를 검출해 /dev/shm에 결과를 쓴다.
 
 파이프라인 (기존 tomato_vision과 같은 /dev/shm 릴레이 패턴):
 
@@ -13,9 +13,37 @@ nvarguscamerasrc를 직접 열 수 없다. V4L2로 CSI를 직접 열면 Bayer ra
 ISP(디베이어·화이트밸런스)를 거치지 않아 쓸 수 없다. 그래서 ISP를 태우는 일은
 gst에 맡기고 여기서는 JPEG만 받아 처리한다. 지연은 한 프레임(~30ms) 수준.
 
-⚠ 카메라가 **전면 우측 바퀴 앞**에 달려 차체 중심이 아니다. 따라서 "라인이 화면
-중앙"이 곧 "로봇이 라인 위"가 아니다. LF_CENTER_X로 그 오프셋을 교정한다
-(로봇을 라인 정중앙에 손으로 놓고, 그때 검출된 x를 이 값으로 넣으면 된다).
+
+코스 기하 (2026-08-09 실측 확정 — 이게 이 파일의 전제다)
+-----------------------------------------------------------
+테이프는 **진행 방향과 나란히** 깔려 있고(무대 앞을 좌우로 가로지름), 로봇은 그
+위를 게걸음으로 오간다. 그래서 바닥 카메라에는 테이프가 **가로 띠**로 보인다.
+
+    ┌───────────── 바닥 카메라 화면 ─────────────┐
+    │  ▓▓▓ 검은 마커(코스 끝)                     │
+    │ ═══════════════════════════════  ← 주행 테이프 (가로 띠)
+    │            ▲ 띠의 y = 무대와의 거리          │
+    └────────────────────────────────────────────┘
+
+  · 띠의 **세로 위치(y)** = 무대까지의 거리 오차  → vx(전후)로 보정
+  · 띠의 **기울기(angle)** = 로봇 요(yaw) 오차     → w(회전)로 보정
+  · 화면 **가로(x)** = 진행 방향                    → vy(게걸음)로 이동
+  · 양끝 **검은 테이프** = 코스 끝(정지)
+  · 중간 **색 마스킹테이프** = 토마토 스테이션 표식
+
+⚠ 흔한 "검은 선을 따라간다" 구성이 **아니다.** 세로선 x-오프셋으로 조향하는
+   코드로 착각하고 고치지 말 것.
+
+
+색 분리 (2026-08-09 실측)
+-----------------------------------------------------------
+주행 테이프가 **밝은 회색**이고 바닥이 **밝은 원목**이라 밝기 차이는 겨우 18로
+약하다. 대신 테이프는 **무채색**, 마루는 **따뜻한 갈색(채도 높음)**이라
+`score = V - 2*S`로 보면 확실히 갈린다:
+
+    흰 테이프 124  /  마루 56  /  검은 마커 10
+
+밝기만 쓰면(예전 Otsu 방식) 마루 나뭇결을 갈라 유령 라인을 만들어냈다.
 """
 
 from __future__ import annotations
@@ -33,28 +61,38 @@ STATUS = os.environ.get("LF_STATUS", "/dev/shm/line_status")
 FPS = float(os.environ.get("LF_FPS", "15"))
 JPEG_QUALITY = int(os.environ.get("LF_JPEG_QUALITY", "70"))
 
-# 관심영역(ROI): 화면 세로 비율. 아래쪽(발밑)일수록 즉각적이고, 위쪽일수록 선행시야.
-ROI_TOP = float(os.environ.get("LF_ROI_TOP", "0.50"))
-ROI_BOT = float(os.environ.get("LF_ROI_BOT", "0.98"))
-# 로봇이 라인 정중앙일 때 라인이 찍히는 x좌표(px). 미설정이면 화면 중앙.
-CENTER_X = os.environ.get("LF_CENTER_X")
-# 이 픽셀 수보다 어두운 점이 적으면 "라인 없음"으로 본다(노이즈 방지).
-MIN_PIX = int(os.environ.get("LF_MIN_PIX", "150"))
-# --- 유령 라인 방지 (2026-08-09 실측) ---
-# Otsu는 "밝기를 두 무리로 가르는" 알고리즘이라 화면에 라인이 하나도 없어도
-# 마루 나뭇결을 반으로 갈라 없는 라인을 만들어낸다(실제로 offset -563px 오검출).
-# 그래서 "검은 테이프"의 물리적 특징 세 가지를 통과해야 라인으로 인정한다.
-#  ① 대비: 어두운 무리와 밝은 무리의 평균 밝기 차. 진짜 테이프면 크게 벌어진다.
-MIN_CONTRAST = float(os.environ.get("LF_MIN_CONTRAST", "45"))
-#  ② 폭: 테이프는 화면 폭의 일부만 차지한다(너무 좁으면 노이즈, 넓으면 그림자).
-MIN_W_FRAC = float(os.environ.get("LF_MIN_W_FRAC", "0.02"))
-MAX_W_FRAC = float(os.environ.get("LF_MAX_W_FRAC", "0.35"))
-#  ③ 면적: ROI의 이 비율을 넘게 검으면 라인이 아니라 그늘/장애물이다.
-MAX_AREA_FRAC = float(os.environ.get("LF_MAX_AREA_FRAC", "0.45"))
-# 가로 정지마크 판정: 하단 밴드의 가로 폭 중 이 비율 이상이 검으면 마크.
-MARK_FRAC = float(os.environ.get("LF_MARK_FRAC", "0.55"))
-# 고정 임계값(0~255). 미설정이면 Otsu 자동 임계.
-THRESH = os.environ.get("LF_THRESH")
+# --- 주행 테이프(무채색·밝음) ---
+# score = V - 2*S 의 임계. 실측: 테이프 124, 마루 56 → 그 사이인 90.
+TAPE_SCORE = float(os.environ.get("LF_TAPE_SCORE", "90"))
+# 한 행이 "띠"로 인정되려면 화면 폭의 이 비율 이상이 테이프여야 한다.
+# 테이프는 화면을 가로지르므로 값이 크고, 얼룩·반사는 이 폭이 안 나온다.
+BAND_ROW_FRAC = float(os.environ.get("LF_BAND_ROW_FRAC", "0.35"))
+# 띠 두께 허용범위(화면 높이 대비). 너무 두꺼우면 밝은 바닥 전체를 잡은 것.
+MIN_BAND_FRAC = float(os.environ.get("LF_MIN_BAND_FRAC", "0.03"))
+MAX_BAND_FRAC = float(os.environ.get("LF_MAX_BAND_FRAC", "0.45"))
+# 로봇이 무대와 올바른 거리에 있을 때 띠 중심이 오는 y(px). 미설정이면 화면 중앙.
+# ★ 장착 후 반드시 실측해 넣을 것(로봇을 정위치에 놓고 band_y를 읽어 그 값).
+TARGET_Y = os.environ.get("LF_TARGET_Y")
+
+# --- 코스 끝 표식(검은 테이프) ---
+DARK_V = float(os.environ.get("LF_DARK_V", "105"))    # 이보다 어두우면 후보
+DARK_S = float(os.environ.get("LF_DARK_S", "90"))     # 채도가 높으면 색마커지 검정이 아니다
+DARK_MIN_AREA = int(os.environ.get("LF_DARK_MIN_AREA", "4000"))
+# 끝 마커는 주행 테이프 **끝에 붙어 있으므로** 띠와 세로로 가까워야 한다.
+# 이 조건이 없으면 화면에 들어온 검은 전선·그림자를 코스 끝으로 오인해
+# 주행이 엉뚱한 데서 멈춘다(2026-08-09 실측: 우하단 케이블을 END로 잡음).
+DARK_NEAR_BAND = float(os.environ.get("LF_DARK_NEAR_BAND", "0.30"))  # 화면 높이 대비
+
+# --- 스테이션 표식(색 마스킹테이프) ---
+COLOR_S = float(os.environ.get("LF_COLOR_S", "90"))   # 이보다 채도가 높으면 색마커
+COLOR_V = float(os.environ.get("LF_COLOR_V", "60"))   # 너무 어두우면 그림자
+COLOR_MIN_AREA = int(os.environ.get("LF_COLOR_MIN_AREA", "2500"))
+
+# OpenCV Hue는 0~179. 데모에서 헷갈리지 않게 한국어 이름으로 바꿔 보고한다.
+HUE_NAMES = [
+    (10, "빨강"), (22, "주황"), (33, "노랑"), (85, "초록"),
+    (100, "청록"), (130, "파랑"), (160, "보라"), (170, "분홍"), (180, "빨강"),
+]
 
 
 def _atomic_write(path: str, data: bytes) -> None:
@@ -77,76 +115,145 @@ def _read_frame() -> np.ndarray | None:
     return cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
 
 
-def _binarize(gray: np.ndarray) -> tuple[np.ndarray, float]:
-    """어두운 라인 = 255인 이진 영상과, 두 무리의 밝기 **대비**를 함께 돌려준다.
-
-    Otsu는 장면 밝기가 바뀌어도 따라가므로 조명이 변하는 시연장에 맞다. 대신
-    "가를 게 없어도 가른다"는 성질이 있어 대비를 같이 재서 호출부가 판단한다.
-    """
-    blur = cv2.GaussianBlur(gray, (7, 7), 0)
-    if THRESH:
-        level = float(THRESH)
-        _, binary = cv2.threshold(blur, int(level), 255, cv2.THRESH_BINARY_INV)
-    else:
-        level, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    kernel = np.ones((5, 5), np.uint8)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-
-    dark = blur[binary > 0]
-    bright = blur[binary == 0]
-    if dark.size == 0 or bright.size == 0:
-        return binary, 0.0
-    return binary, float(bright.mean() - dark.mean())
+def _hue_name(hue: float) -> str:
+    for limit, name in HUE_NAMES:
+        if hue < limit:
+            return name
+    return "빨강"
 
 
-def _row_center(binary: np.ndarray, y0: int, y1: int, frame_w: int) -> tuple[float | None, int]:
-    """[y0,y1) 밴드에서 라인 중심 x와 검은 픽셀 수.
-
-    가장 큰 연결 덩어리의 무게중심을 쓴다 — 단순 평균은 화면 구석의 그림자나
-    전선 같은 다른 어두운 것이 섞이면 중심이 통째로 끌려간다. 그리고 그 덩어리가
-    **테이프처럼 생겼는지**(폭·면적) 확인해 유령 라인을 버린다.
-    """
-    band = binary[y0:y1]
-    count = int(cv2.countNonZero(band))
-    if count < MIN_PIX or band.size == 0:
-        return None, count
-    if count > band.size * MAX_AREA_FRAC:
-        return None, count      # ROI 절반 이상이 검다 = 그늘/장애물이지 라인이 아니다
-    num, _labels, stats, centroids = cv2.connectedComponentsWithStats(band, connectivity=8)
+def _largest_blob(mask: np.ndarray, min_area: int):
+    """가장 큰 연결 덩어리 (중심x, 중심y, 폭, 높이, 면적). 없으면 None."""
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+    num, _labels, stats, centroids = cv2.connectedComponentsWithStats(mask, 8)
     if num <= 1:
-        return None, count
-    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    if int(stats[largest, cv2.CC_STAT_AREA]) < MIN_PIX:
-        return None, count
-    width = int(stats[largest, cv2.CC_STAT_WIDTH])
-    if not (frame_w * MIN_W_FRAC <= width <= frame_w * MAX_W_FRAC):
-        return None, count      # 테이프 폭이 아니다
-    return float(centroids[largest][0]), count
+        return None
+    idx = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    area = int(stats[idx, cv2.CC_STAT_AREA])
+    if area < min_area:
+        return None
+    return (
+        float(centroids[idx][0]), float(centroids[idx][1]),
+        int(stats[idx, cv2.CC_STAT_WIDTH]), int(stats[idx, cv2.CC_STAT_HEIGHT]), area,
+    )
 
 
-def _annotate(frame, roi_y0, roi_y1, center_x, near, far, mark, offset, contrast) -> np.ndarray:
+def _band_center(tape: np.ndarray, x0: int, x1: int, min_count: int) -> float | None:
+    """[x0,x1) 열구간에서 테이프 픽셀의 무게중심 y. 진행각 추정용."""
+    part = tape[:, x0:x1]
+    ys, _xs = np.nonzero(part)
+    if ys.size < min_count:
+        return None
+    return float(ys.mean())
+
+
+def _detect(frame: np.ndarray) -> dict:
+    h, w = frame.shape[:2]
+    hsv = cv2.cvtColor(cv2.GaussianBlur(frame, (7, 7), 0), cv2.COLOR_BGR2HSV).astype(np.int16)
+    H, S, V = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    target_y = float(TARGET_Y) if TARGET_Y else h / 2.0
+
+    # --- 주행 테이프: 무채색이면서 밝은 영역 ---
+    score = V - 2 * S
+    tape = ((score > TAPE_SCORE) * 255).astype(np.uint8)
+    tape = cv2.morphologyEx(tape, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+
+    rows = (tape > 0).sum(axis=1)
+    band_rows = np.nonzero(rows > w * BAND_ROW_FRAC)[0]
+    band_y = thickness = angle = None
+    found = False
+    if band_rows.size:
+        thickness = int(band_rows.max() - band_rows.min() + 1)
+        if h * MIN_BAND_FRAC <= thickness <= h * MAX_BAND_FRAC:
+            found = True
+            # 무게중심 — 띠 가장자리가 번져도 중심은 안정적이다.
+            band_y = float(np.average(band_rows, weights=rows[band_rows]))
+            # 좌/우 1/3의 띠 높이 차이 = 로봇 요(yaw) 오차
+            left = _band_center(tape, 0, w // 3, int(w * 0.02))
+            right = _band_center(tape, 2 * w // 3, w, int(w * 0.02))
+            if left is not None and right is not None:
+                angle = float(np.degrees(np.arctan2(right - left, 2 * w / 3)))
+
+    # --- 코스 끝(검은 테이프) ---
+    dark = (((V < DARK_V) & (S < DARK_S)) * 255).astype(np.uint8)
+    end_blob = _largest_blob(dark, DARK_MIN_AREA)
+    end_marker = None
+    # 띠를 못 찾은 프레임에서는 근접 조건을 걸 기준이 없으므로 그냥 통과시킨다.
+    if end_blob and band_y is not None and abs(end_blob[1] - band_y) > h * DARK_NEAR_BAND:
+        end_blob = None     # 띠에서 먼 어두운 덩어리 = 전선/그림자
+    if end_blob:
+        cx, cy, bw, bh, area = end_blob
+        end_marker = {
+            "x": round(cx, 1), "y": round(cy, 1), "w": bw, "h": bh, "area": area,
+            # 화면 어느 쪽에 있나 — 진행 방향 판단용(왼쪽 끝인지 오른쪽 끝인지)
+            "side": "left" if cx < w / 2 else "right",
+        }
+
+    # --- 스테이션(색 마스킹테이프) ---
+    color = (((S > COLOR_S) & (V > COLOR_V)) * 255).astype(np.uint8)
+    color_blob = _largest_blob(color, COLOR_MIN_AREA)
+    color_marker = None
+    if color_blob:
+        cx, cy, bw, bh, area = color_blob
+        mask = np.zeros((h, w), np.uint8)
+        cv2.circle(mask, (int(cx), int(cy)), max(6, min(bw, bh) // 3), 255, -1)
+        hue = float(np.median(H[(mask > 0) & (S > COLOR_S)])) if np.any((mask > 0) & (S > COLOR_S)) else 0.0
+        color_marker = {
+            "x": round(cx, 1), "y": round(cy, 1), "w": bw, "h": bh, "area": area,
+            "hue": round(hue, 1), "name": _hue_name(hue),
+        }
+
+    return {
+        "ts": time.time(),
+        "found": found,
+        "band_y": None if band_y is None else round(band_y, 1),
+        "thickness": thickness,
+        # +면 띠가 기준선보다 아래(카메라에 가까움). 부호↔전후 방향 대응은
+        # 장착 후 실측으로 확정한다(주행 제어를 붙일 때 LF_INVERT로 뒤집는다).
+        "offset_y_px": None if band_y is None else round(band_y - target_y, 1),
+        "offset_y_norm": None if band_y is None else round((band_y - target_y) / (h / 2.0), 3),
+        "angle_deg": None if angle is None else round(angle, 1),
+        "target_y": round(target_y, 1),
+        "end_marker": end_marker,
+        "color_marker": color_marker,
+        "width": w, "height": h,
+    }
+
+
+def _annotate(frame: np.ndarray, st: dict) -> np.ndarray:
     view = frame.copy()
     h, w = view.shape[:2]
-    cv2.rectangle(view, (0, roi_y0), (w - 1, roi_y1), (255, 200, 0), 2)
-    # 기준선(로봇 중심) — 라인을 여기에 맞추는 게 목표
-    cv2.line(view, (int(center_x), roi_y0), (int(center_x), roi_y1), (0, 255, 255), 2)
-    for cx, cy, color in (
-        (near, int(roi_y1 - (roi_y1 - roi_y0) * 0.15), (0, 255, 0)),
-        (far, int(roi_y0 + (roi_y1 - roi_y0) * 0.15), (0, 160, 255)),
-    ):
-        if cx is not None:
-            cv2.circle(view, (int(cx), cy), 10, color, -1)
-    if near is not None:
-        cv2.line(view, (int(center_x), roi_y1 - 4), (int(near), roi_y1 - 4), (0, 255, 0), 3)
-    label = f"offset {offset:+.0f}px" if offset is not None else "LINE LOST"
-    color = (0, 255, 0) if offset is not None else (0, 0, 255)
-    cv2.putText(view, label, (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
-    # 대비를 항상 표시 — 라인이 안 잡힐 때 "테이프가 흐린 건지 ROI가 빗나간
-    # 건지"를 화면만 보고 판단할 수 있다(임계값은 LF_MIN_CONTRAST).
-    cv2.putText(view, f"contrast {contrast:.0f}/{MIN_CONTRAST:.0f}", (12, h - 16),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 220, 0), 2)
-    if mark:
-        cv2.putText(view, "STOP MARK", (12, 74), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+    # 기준선(로봇이 정위치일 때 띠가 와야 할 높이)
+    ty = int(st["target_y"])
+    cv2.line(view, (0, ty), (w - 1, ty), (0, 255, 255), 2)
+    cv2.putText(view, "target", (w - 110, ty - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
+    if st["found"]:
+        by = int(st["band_y"])
+        cv2.line(view, (0, by), (w - 1, by), (0, 255, 0), 3)
+        cv2.line(view, (w // 2, ty), (w // 2, by), (0, 255, 0), 3)
+        txt = f"dy {st['offset_y_px']:+.0f}px"
+        if st["angle_deg"] is not None:
+            txt += f"  yaw {st['angle_deg']:+.1f}deg"
+        cv2.putText(view, txt, (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+    else:
+        cv2.putText(view, "TAPE LOST", (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+
+    em = st["end_marker"]
+    if em:
+        x, y = int(em["x"]), int(em["y"])
+        cv2.rectangle(view, (x - em["w"] // 2, y - em["h"] // 2),
+                      (x + em["w"] // 2, y + em["h"] // 2), (0, 0, 255), 3)
+        cv2.putText(view, f"END({em['side']})", (x - 60, y - em["h"] // 2 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+    cm = st["color_marker"]
+    if cm:
+        x, y = int(cm["x"]), int(cm["y"])
+        cv2.rectangle(view, (x - cm["w"] // 2, y - cm["h"] // 2),
+                      (x + cm["w"] // 2, y + cm["h"] // 2), (255, 0, 255), 3)
+        cv2.putText(view, f"STATION h{cm['hue']:.0f}", (x - 80, y - cm["h"] // 2 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
     return view
 
 
@@ -160,59 +267,14 @@ def main() -> None:
         if frame is None:
             time.sleep(0.2)
             continue
+        if frame.shape[:2] != last_shape:
+            last_shape = frame.shape[:2]
+            print(f"[line_follow] 프레임 {frame.shape[1]}x{frame.shape[0]}", flush=True)
 
-        h, w = frame.shape[:2]
-        if (h, w) != last_shape:
-            last_shape = (h, w)
-            print(f"[line_follow] 프레임 {w}x{h}", flush=True)
-        roi_y0, roi_y1 = int(h * ROI_TOP), int(h * ROI_BOT)
-        center_x = float(CENTER_X) if CENTER_X else w / 2.0
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        binary, contrast = _binarize(gray)
-        # 대비가 약하면 검출 자체를 포기한다 — 라인 없는 마루에서 Otsu가
-        # 나뭇결을 갈라 만든 유령 라인이 여기서 전부 걸린다.
-        if contrast < MIN_CONTRAST:
-            binary = np.zeros_like(binary)
-        roi = binary[roi_y0:roi_y1]
-        band = roi_y1 - roi_y0
-
-        # 가까운 밴드(즉각 조향) / 먼 밴드(선행 = 진행각 추정)
-        near_x, near_n = _row_center(binary, roi_y1 - int(band * 0.30), roi_y1, w)
-        far_x, _ = _row_center(binary, roi_y0, roi_y0 + int(band * 0.30), w)
-
-        offset = None if near_x is None else near_x - center_x
-        angle = None
-        if near_x is not None and far_x is not None:
-            # 화면 위쪽이 멀리 — 두 점을 이은 선의 기울기(도). +면 오른쪽으로 휘는 중.
-            dy = band * 0.70
-            angle = float(np.degrees(np.arctan2(far_x - near_x, dy)))
-
-        # 정지마크: 하단 밴드에서 한 행의 검은 폭이 화면 폭의 MARK_FRAC 이상.
-        # 주행 라인은 가늘어서 절대 이 폭이 안 나온다 — 가로 마크만 걸린다.
-        mark = False
-        if roi.size:
-            widest = int(roi.sum(axis=1).max() / 255)
-            mark = widest >= w * MARK_FRAC
-
-        status = {
-            "ts": time.time(),
-            "found": near_x is not None,
-            "offset_px": None if offset is None else round(offset, 1),
-            # -1..+1 정규화 — 조향 게인을 해상도와 무관하게 만든다
-            "offset_norm": None if offset is None else round(offset / (w / 2.0), 3),
-            "angle_deg": None if angle is None else round(angle, 1),
-            "mark": bool(mark),
-            "center_x": round(center_x, 1),
-            "pixels": near_n,
-            "width": w,
-            # 튜닝용 — 검출이 안 될 때 "테이프 대비가 부족한지"를 숫자로 본다.
-            "contrast": round(contrast, 1),
-        }
-        _atomic_write(STATUS, json.dumps(status).encode("utf-8"))
-
-        view = _annotate(frame, roi_y0, roi_y1, center_x, near_x, far_x, mark, offset, contrast)
-        ok, buf = cv2.imencode(".jpg", view, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+        st = _detect(frame)
+        _atomic_write(STATUS, json.dumps(st, ensure_ascii=False).encode("utf-8"))
+        ok, buf = cv2.imencode(".jpg", _annotate(frame, st),
+                               [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
         if ok:
             _atomic_write(VIEW, buf.tobytes())
 
