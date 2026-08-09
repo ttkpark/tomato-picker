@@ -333,6 +333,7 @@ _CONTROL_HTML = """<!doctype html>
     <span class="dim">축·부호(즉시 반영·재시작해도 유지):</span>
     <button class="small" onclick="cmd({action:'line_flip',what:'dy_axis'})">보정축 vx↔vy</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'dy_sign'})">거리 부호 ±</button>
+    <button class="small" onclick="cmd({action:'line_flip',what:'yaw_enable'})">회전 보정 켜기/끄기</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'yaw_sign'})">회전 부호 ±</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'travel_sign'})">진행 좌우 ±</button>
   </div>
@@ -533,7 +534,8 @@ _CONTROL_HTML = """<!doctype html>
     // 부호 검증용 — 정지 중에도 "지금이라면 이렇게 보낸다"를 보여준다.
     // 보정이 실리는 축을 **이름으로** 찍어 어느 쪽이 거리 보정인지 헷갈리지 않게.
     const corr = ln.dy_axis === 'vy' ? ln.would_vy : ln.would_vx;
-    bits.push('보정 ' + (ln.dy_axis || '?') + '=' + corr + ' w=' + ln.would_w
+    bits.push('보정 ' + (ln.dy_axis || '?') + '=' + corr
+              + ' · 회전 ' + (ln.yaw_gain ? 'w=' + ln.would_w : '꺼짐')
               + ' (진행축 ' + (ln.travel_axis || '?') + ')');
     el.textContent = bits.filter(Boolean).join('  ·  ');
     el.style.background = ln.mode !== 'idle'

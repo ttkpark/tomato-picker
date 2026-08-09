@@ -208,13 +208,30 @@ def _largest_blob(mask: np.ndarray, min_area: int):
     )
 
 
-def _band_center(tape: np.ndarray, x0: int, x1: int, min_count: int) -> float | None:
-    """[x0,x1) 열구간에서 테이프 픽셀의 무게중심 y. 진행각 추정용."""
-    part = tape[:, x0:x1]
-    ys, _xs = np.nonzero(part)
-    if ys.size < min_count:
+def _band_angle(tape: np.ndarray, r0: int, r1: int) -> float | None:
+    """띠의 기울기(도). 열마다 띠 중심 y를 구해 직선을 최소자승으로 맞춘다.
+
+    ⚠ 예전엔 화면을 좌/우 1/3으로 나눠 두 무게중심의 차이로 각을 냈는데,
+    ① 표본이 두 점뿐이라 잡음에 그대로 흔들리고 ② **띠 밖의 밝은 것**(흰 무대,
+    반사, 하얀 케이블)이 그 1/3 안에 들어오면 중심이 통째로 끌려갔다. 그 결과
+    각이 실제와 무관하게 튀어 회전 보정이 발산했다(2026-08-09 실기).
+
+    지금은 **검출된 띠 행 범위 안에서만** 열별 중심을 구하고, 유효한 열이 화면
+    폭의 절반을 넘을 때만 각을 낸다 — 표본이 수백 개라 훨씬 안정적이다.
+    """
+    band = tape[r0:r1]
+    if band.size == 0:
         return None
-    return float(ys.mean())
+    counts = (band > 0).sum(axis=0)
+    ys = np.arange(band.shape[0], dtype=np.float32)
+    # 열별 무게중심 y (픽셀이 충분한 열만)
+    valid = counts >= max(3, band.shape[0] // 6)
+    if valid.sum() < band.shape[1] * 0.5:
+        return None
+    centers = ((band > 0) * ys[:, None]).sum(axis=0)[valid] / counts[valid]
+    xs = np.nonzero(valid)[0].astype(np.float32)
+    slope = float(np.polyfit(xs, centers, 1)[0])
+    return float(np.degrees(np.arctan(slope)))
 
 
 def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
@@ -238,11 +255,11 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
             found = True
             # 무게중심 — 띠 가장자리가 번져도 중심은 안정적이다.
             band_y = float(np.average(band_rows, weights=rows[band_rows]))
-            # 좌/우 1/3의 띠 높이 차이 = 로봇 요(yaw) 오차
-            left = _band_center(tape, 0, w // 3, int(w * 0.02))
-            right = _band_center(tape, 2 * w // 3, w, int(w * 0.02))
-            if left is not None and right is not None:
-                angle = float(np.degrees(np.arctan2(right - left, 2 * w / 3)))
+            # 띠의 기울기 = 로봇 요(yaw) 오차. 띠 행 범위 안에서만 재서
+            # 화면의 다른 밝은 것에 끌려가지 않게 한다.
+            margin = max(4, thickness // 4)
+            angle = _band_angle(tape, max(0, int(band_rows.min()) - margin),
+                                min(h, int(band_rows.max()) + margin + 1))
 
     # --- 코스 끝(검은 테이프) ---
     dark = (((V < DARK_V) & (S < DARK_S)) * 255).astype(np.uint8)

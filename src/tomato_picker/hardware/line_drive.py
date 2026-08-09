@@ -52,11 +52,12 @@ from ..config import (
     LINE_TRAVEL_SIGN,
     LINE_TUNING_FILE,
     LINE_YAW_GAIN,
+    LINE_YAW_GAIN_ON,
     LINE_YAW_SIGN,
 )
 
 # 런타임에 뒤집을 수 있는 축·부호. 실기에서만 확정되는 값이라 파일로 뺀다.
-TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign")
+TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain")
 
 
 def _load_saved(path: str) -> dict:
@@ -101,6 +102,7 @@ class LineDriver:
             "dy_sign": float(LINE_DY_SIGN),
             "yaw_sign": float(LINE_YAW_SIGN),
             "travel_sign": float(LINE_TRAVEL_SIGN),
+            "yaw_gain": float(LINE_YAW_GAIN),
         }
         self._tune.update(_load_saved(LINE_TUNING_FILE))
         self._thread = threading.Thread(target=self._run, daemon=True, name="line-drive")
@@ -196,6 +198,7 @@ class LineDriver:
             "dy_sign": self._tune["dy_sign"],
             "yaw_sign": self._tune["yaw_sign"],
             "travel_sign": self._tune["travel_sign"],
+            "yaw_gain": self._tune["yaw_gain"],
         }
 
     @property
@@ -264,6 +267,9 @@ class LineDriver:
         with self._lock:
             if what == "dy_axis":
                 self._tune["dy_axis"] = "vx" if self._tune["dy_axis"] == "vy" else "vy"
+            elif what == "yaw_enable":
+                # 회전 보정 켜기/끄기 — 발산하면 즉시 끌 수 있어야 한다.
+                self._tune["yaw_gain"] = 0.0 if self._tune["yaw_gain"] else float(LINE_YAW_GAIN_ON)
             elif what in ("dy_sign", "yaw_sign", "travel_sign"):
                 self._tune[what] = -self._tune[what]
             else:
@@ -275,7 +281,8 @@ class LineDriver:
         except OSError as exc:
             return f"{what} 뒤집음(저장 실패: {exc})"
         return (f"보정축={snapshot['dy_axis']} dy부호={snapshot['dy_sign']:+.0f} "
-                f"yaw부호={snapshot['yaw_sign']:+.0f} 진행부호={snapshot['travel_sign']:+.0f}")
+                f"회전보정={'켜짐' if snapshot['yaw_gain'] else '꺼짐'}"
+                f"(부호{snapshot['yaw_sign']:+.0f}) 진행부호={snapshot['travel_sign']:+.0f}")
 
     def _command(self, line: dict, travel_dir: int, speed: int) -> tuple[int, int, int]:
         """(vx, vy, w) 지령을 만든다.
@@ -290,7 +297,7 @@ class LineDriver:
             corr = int(max(-LINE_MAX_CORRECTION, min(LINE_MAX_CORRECTION,
                                                      self._tune["dy_sign"] * LINE_DY_GAIN * dy)))
             w = int(max(-LINE_MAX_CORRECTION, min(LINE_MAX_CORRECTION,
-                                                  self._tune["yaw_sign"] * LINE_YAW_GAIN * yaw)))
+                                                  self._tune["yaw_sign"] * self._tune["yaw_gain"] * yaw)))
         travel = int(self._tune["travel_sign"] * travel_dir * speed)
         if self._tune["dy_axis"] == "vy":
             return travel, corr, w      # 보정=게걸음, 진행=전후
