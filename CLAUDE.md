@@ -43,7 +43,23 @@
   Bash 툴은 `-i /c/Users/parkg/.ssh/id_ed25519` 명시 필요(HOME 다름).
 - 장치: `/dev/ttyUSB0`=모터보드, `/dev/ttyACM0`=팔로버, 게임패드=USB/BT.
 
+## 바닥 카메라 · 라인 주행 (2026-08-09 추가)
+- **바닥 CSI 카메라 = Arducam RPi Cam v2.1(IMX219), CAM1**, 전면 우측 바퀴 앞. jetson-io로
+  "Camera IMX219 Dual" 오버레이 적용됨(L4T R39.2.0에 드라이버 내장).
+- **테이프는 진행방향과 나란한 가로 띠** — 흔한 "검은 세로선 조향"이 **아니다**.
+  띠의 세로위치=거리→`vy`(게걸음), 기울기=요→`w`, 화면 가로=진행→`vx`.
+- 파이프라인: [`deploy/line-cam.service`](deploy/line-cam.service)(gst→`/dev/shm/line_cam.jpg`) →
+  [`tools/line_follow.py`](tools/line_follow.py)(검출→`line_view.jpg`+`line_status`) →
+  [`hardware/line_drive.py`](src/tomato_picker/hardware/line_drive.py)(주행) → 대시보드.
+- **임계는 전부 프레임 상대값**(절대값은 색 캐스트에서 무너진다). 색 마커 구분은 기본
+  꺼짐(`LF_COLOR=1`로 켬 — 배경색 통제 후).
+- 화면: `/control`(운전) · `/settings`(영점·펄스·축부호·모터튜닝·팔 캘리브레이션).
+- **주행은 펄스(깔짝깔짝)** — 연속 저속은 정지마찰에서 미끄러진다. `ON==주기`면 연속.
+
 ## 알려진 함정
+- ⚠ **상세 교훈은 [`docs/개발노트-2026-08-09.md`](docs/개발노트-2026-08-09.md)** —
+  증상↔원인이 어긋났던 사례(소음=PWM주파수, 라인분실=색캐스트, yaw발산=각추정,
+  리더암 오구동=포트식별)와 진단 순서 치트시트.
 - **USB 접촉/전원 불안정**: 게임패드 `error -71`(케이블 손상), CH340 반복 disconnect. `controller_drive.py`는
   모터 시리얼 **자동재연결** 내장. 근본은 양품 케이블 + 안정 전원(전류제한 넉넉히).
 - **PS2X는 이 보드에서 `millis()`를 얼림**(timer0 간섭) → 주행 펌웨어에서 PS2 완전 배제, 안전은 HW워치독.
