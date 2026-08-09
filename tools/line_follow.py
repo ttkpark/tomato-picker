@@ -119,7 +119,11 @@ DARK_MIN_AREA = int(os.environ.get("LF_DARK_MIN_AREA", "4000"))
 # 주행이 엉뚱한 데서 멈춘다(2026-08-09 실측: 우하단 케이블을 END로 잡음).
 DARK_NEAR_BAND = float(os.environ.get("LF_DARK_NEAR_BAND", "0.30"))  # 화면 높이 대비
 
-# --- 스테이션 표식(색 마스킹테이프) ---
+# --- 스테이션 표식(색 마스킹테이프) — 기본 **꺼짐** ---
+# ⚠ 지금 바닥은 원목이고 조명 캐스트가 흔들려서 색상(hue)을 믿을 수 없다.
+# 검출을 캐스트에 강하게 만들어도 "무슨 색인지"는 조명에 따라 그대로 돌아간다.
+# 배경(도화지 등)을 통제해 색 조건이 고정되면 LF_COLOR=1로 켤 것.
+COLOR_ENABLED = os.environ.get("LF_COLOR", "0") not in ("0", "false", "no", "")
 # 상대값 + **어두운 건 제외**. 색 마스킹테이프는 밝고 진하지만, 검은 테이프는
 # 캐스트를 받으면 채도만 높고 어둡다 — 이 둘을 밝기로 갈라야 한다.
 COLOR_S_MARGIN = float(os.environ.get("LF_COLOR_S_MARGIN", "50"))  # 중앙값 대비
@@ -314,8 +318,10 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
 
     # --- 스테이션(색 마스킹테이프) --- 진한 색 + **어둡지 않을 것**
     color_thr = max(COLOR_S_MIN, med_s + COLOR_S_MARGIN)
-    color = (((S > color_thr) & ~dark_mask) * 255).astype(np.uint8)
-    color_blob = _largest_blob(color, COLOR_MIN_AREA)
+    color_blob = None
+    if COLOR_ENABLED:
+        color = (((S > color_thr) & ~dark_mask) * 255).astype(np.uint8)
+        color_blob = _largest_blob(color, COLOR_MIN_AREA)
     color_marker = None
     if color_blob:
         cx, cy, bw, bh, area = color_blob

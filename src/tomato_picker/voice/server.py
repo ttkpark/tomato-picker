@@ -771,6 +771,12 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
     if action == "line_jog":
         return True, line.jog(side, float(body.get("seconds", 0.25)), speed)
     if action == "line_goto_color":
+        # 색 구분은 기본 꺼짐(배경색을 통제하기 전까지 hue를 못 믿는다).
+        # 켜지 않은 상태에서 누르면 "왜 안 되는지"를 그대로 알려준다.
+        if not line.status().get("color_name") and not body.get("force"):
+            return False, ("색 구분이 꺼져 있습니다 — 배경색을 통제한 뒤 "
+                           "line-follow.service에 LF_COLOR=1을 넣고 재시작하세요. "
+                           "지금은 [시간이동]이나 [끝까지]를 쓰세요.")
         return True, line.goto_color(side, body.get("name") or None, speed)
     if action == "line_stop":
         line.cancel("사용자 정지")

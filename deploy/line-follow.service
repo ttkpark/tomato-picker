@@ -13,7 +13,9 @@ Environment=PYTHONUNBUFFERED=1
 # 로봇이 라인 정중앙일 때 검출되는 x(px). 카메라가 전면 우측 바퀴 앞이라
 # 화면 중앙이 아니다 — 실측 후 여기에 넣는다(미설정 시 화면 중앙 사용).
 # Environment=LF_CENTER_X=760
-# 조명·바닥 반사가 심하면 Otsu 대신 고정 임계로: Environment=LF_THRESH=90
+# 색(스테이션 마커) 구분은 기본 꺼짐 — 지금 바닥은 원목이고 조명 캐스트가 흔들려
+# 색상(hue)을 믿을 수 없다. 배경을 도화지 등으로 통제한 뒤 아래를 켤 것.
+# Environment=LF_COLOR=1
 ExecStart=/home/server/.venvs/vision/bin/python /home/server/tomato-picker/tools/line_follow.py
 Restart=always
 RestartSec=3
