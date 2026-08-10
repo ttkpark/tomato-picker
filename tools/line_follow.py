@@ -28,34 +28,45 @@ gst에 맡기고 여기서는 JPEG만 받아 처리한다. 지연은 한 프레�
   · 띠의 **세로 위치(y)** = 테이프까지의 거리 오차 → **vy**(게걸음)로 보정
   · 띠의 **기울기(angle)** = 로봇 요(yaw) 오차     → w(회전)로 보정
   · 화면 **가로(x)** = 진행 방향                    → **vx**(전후)로 이동
-  · 양끝 **검은 테이프** = 코스 끝(정지)
-  · 중간 **색 마스킹테이프** = 토마토 스테이션 표식
+  · **색 마스킹테이프** = 지점 표식. 흰 도화지 코스에서는 **양끝단 포함 4지점**을
+    전부 색으로 표시한다(배경이 통제돼 색이 믿을 만해졌기 때문).
+  · 검은 끝마커는 원목 코스(극성 light)에서만 쓴다 — 극성이 dark면 테이프 자체가
+    어두워서 구분이 안 되므로 검출하지 않는다.
 
 ⚠ 흔한 "검은 선을 따라간다" 구성이 **아니다.** 세로선 x-오프셋으로 조향하는
    코드로 착각하고 고치지 말 것. 축 대응은 hardware/line_drive.py가 확정한다.
 
 
-색 분리 — 절대값이 아니라 **프레임 자기 기준** (2026-08-09 실측)
+색 분리 — 절대값도, 극성도 고정하지 않는다 (2026-08-09 실측)
 -----------------------------------------------------------
-주행 테이프가 **밝은 회색**이고 바닥이 **밝은 원목**이라 밝기 차이는 겨우 18로
-약하다. 대신 테이프는 상대적으로 **무채색**, 마루는 **따뜻한 갈색(채도 높음)**이라
-`score = V - 2*S`로 보면 갈린다.
+코스가 두 번 바뀌었고 그때마다 전제가 깨졌다. 그래서 지금은 **아무것도 가정하지 않는다.**
 
-⚠ 그런데 이 값을 **절대 임계로 박으면 안 된다.** 카메라 AWB가 흔들려 화면 전체가
-보라빛으로 물든 순간(실기) 이렇게 무너졌다:
+  ① 원목 바닥 + 밝은 회색 테이프  → 테이프가 배경보다 **밝고 무채색**
+  ② 흰 도화지 + 어두운 테이프      → 테이프가 배경보다 **어두움**
+
+**극성은 자동 판별한다.** 두 가정으로 각각 마스크를 만들어보고, **가로 띠가 실제로
+만들어지는 쪽**(화면을 가로지르고 두께가 범위 안)을 채택한다. 설정으로 두면 코스를
+바꿀 때마다 틀린다.
+
+**임계는 Otsu**(2-모드 자동 분리)로 뽑는다. 백분위(상위 N%)를 쓰면 "테이프가 화면의
+몇 %인가"를 가정하게 되는데, 카메라 높이와 코스에 따라 그게 깨진다 — 도화지 코스에서
+띠가 화면의 21%라 "상위 8%" 임계가 띠 안쪽에 떨어져 검출이 통째로 실패했다.
+
+**절대 임계는 쓰지 않는다.** AWB가 흔들려 화면이 보라빛으로 물든 순간 이렇게 무너졌다:
 
                      score 중앙값   테이프   절대임계 90 통과
     중립 프레임            66        124        16.4%  → 정상
     보라 캐스트             7         58         0.0%  → 전멸(TAPE LOST)
 
-게다가 캐스트를 받으면 **검은 끝마커의 채도가 프레임에서 가장 높아져**(113 vs
-중앙값 66) 색 마커로 오인됐다. 그래서 지금은 전부 프레임 통계 기준으로 판단한다:
+게다가 캐스트를 받으면 **어두운 것의 채도가 프레임에서 가장 높아져**(113 vs 중앙값 66)
+색 마커로 오인됐다. 그래서 **어두운 것은 밝기로만** 가른다.
 
-    테이프 = score 상위 8% 이면서 중앙값보다 뚜렷이 높을 것(+22)
-    끝마커 = 밝기가 중앙값보다 40 이상 어두울 것 (채도는 안 본다)
-    스테이션 = 채도가 중앙값보다 50 이상 높고 **어둡지 않을 것**
+유령 검출은 임계가 아니라 **물리적 성질**로 막는다:
+    · 선택 영역이 배경보다 뚜렷할 것 (separation ≥ 22)
+    · 화면 폭의 35% 이상을 가로지르는 행이 있을 것
+    · 띠 두께가 화면 높이의 3~45%일 것
 
-밝기만 쓰면(더 예전의 Otsu 방식) 마루 나뭇결을 갈라 유령 라인을 만들어냈다.
+실측 참고값 (흰 도화지 코스): 배경 V=151 S=11 / 테이프 V=70 S=58 / 색마커 V=174 S=162
 """
 
 from __future__ import annotations
@@ -73,15 +84,8 @@ STATUS = os.environ.get("LF_STATUS", "/dev/shm/line_status")
 FPS = float(os.environ.get("LF_FPS", "15"))
 JPEG_QUALITY = int(os.environ.get("LF_JPEG_QUALITY", "70"))
 
-# --- 주행 테이프(무채색·밝음) ---
-# ⚠ 임계는 **절대값이 아니라 프레임 자기 기준**이다. 카메라 AWB가 흔들리면
-# 화면 전체에 색이 물드는데(2026-08-09 실기: 보라 캐스트), 그러면 흰 테이프도
-# 더 이상 "무채색"이 아니게 돼 절대 임계로는 통과 픽셀이 **0%**가 된다.
-#   중립 프레임: score 중앙값 66, 테이프 124   → 절대 90으로 검출 성공
-#   보라 캐스트: score 중앙값  7, 상위2% 58    → 절대 90으로 **전멸**
-# 반면 "프레임에서 가장 밝고 무채색인 상위 몇 %"는 두 조건 모두에서 테이프를
-# 정확히 짚는다. 그래서 백분위 + 중앙값 대비 여유폭으로 간다.
-TAPE_PCT = float(os.environ.get("LF_TAPE_PCT", "92"))      # 상위 8%
+# --- 주행 테이프 (극성 자동 · Otsu 임계) ---
+# 자세한 배경은 모듈 docstring의 "색 분리" 절 참고.
 TAPE_MARGIN = float(os.environ.get("LF_TAPE_MARGIN", "22"))  # 중앙값보다 이만큼은 높아야
 # 한 행이 "띠"로 인정되려면 화면 폭의 이 비율 이상이 테이프여야 한다.
 # 테이프는 화면을 가로지르므로 값이 크고, 얼룩·반사는 이 폭이 안 나온다.
@@ -119,10 +123,10 @@ DARK_MIN_AREA = int(os.environ.get("LF_DARK_MIN_AREA", "4000"))
 # 주행이 엉뚱한 데서 멈춘다(2026-08-09 실측: 우하단 케이블을 END로 잡음).
 DARK_NEAR_BAND = float(os.environ.get("LF_DARK_NEAR_BAND", "0.30"))  # 화면 높이 대비
 
-# --- 스테이션 표식(색 마스킹테이프) — 기본 **꺼짐** ---
-# ⚠ 지금 바닥은 원목이고 조명 캐스트가 흔들려서 색상(hue)을 믿을 수 없다.
-# 검출을 캐스트에 강하게 만들어도 "무슨 색인지"는 조명에 따라 그대로 돌아간다.
-# 배경(도화지 등)을 통제해 색 조건이 고정되면 LF_COLOR=1로 켤 것.
+# --- 지점 표식(색 마스킹테이프) ---
+# 배경이 통제되지 않으면(원목 + 조명 캐스트) 색상(hue)을 믿을 수 없어 기본 꺼짐이었다.
+# 흰 도화지 코스에서는 배경 S=11 / 색마커 S=162로 압도적으로 갈려 켤 만하다
+# → deploy/line-follow.service에 LF_COLOR=1.
 COLOR_ENABLED = os.environ.get("LF_COLOR", "0") not in ("0", "false", "no", "")
 # 상대값 + **어두운 건 제외**. 색 마스킹테이프는 밝고 진하지만, 검은 테이프는
 # 캐스트를 받으면 채도만 높고 어둡다 — 이 둘을 밝기로 갈라야 한다.
@@ -268,24 +272,51 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
     H, S, V = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
     target_y = _read_target_y(h / 2.0)
 
-    # --- 주행 테이프: 프레임에서 가장 밝고 무채색인 영역 ---
-    # 프레임 자기 통계를 기준으로 삼아 색 캐스트/조명 변화에 안 흔들리게 한다.
-    score = V - 2 * S
-    med_score = float(np.median(score))
+    # --- 주행 테이프: 극성 자동 판별 ---
+    # 코스 배경이 바뀌면 테이프 극성도 뒤집힌다(2026-08-09: 원목 위 밝은 회색
+    # 테이프 → 흰 도화지 위 **어두운** 테이프). 어느 쪽인지 설정으로 두면 바꿀 때마다
+    # 틀리므로, 두 가정을 다 세워보고 **가로 띠가 실제로 만들어지는 쪽**을 채택한다.
+    #   light: 배경보다 밝고 무채색 (V - 2S 가 큼)   — 원목 바닥 + 흰 테이프
+    #   dark : 배경보다 어두움     (중앙값 - V 가 큼) — 흰 도화지 + 검은 테이프
     med_v = float(np.median(V))
     med_s = float(np.median(S))
-    tape_thr = max(med_score + TAPE_MARGIN, float(np.percentile(score, TAPE_PCT)))
-    tape = ((score > tape_thr) * 255).astype(np.uint8)
-    tape = cv2.morphologyEx(tape, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
-    # 선택된 영역이 배경보다 실제로 뚜렷해야 한다 — 텅 빈 마루에서 상위 8%를
-    # 뽑으면 나뭇결이 잡히는데, 그건 중앙값과 거의 차이가 없어 여기서 걸린다.
-    sel = score[tape > 0]
-    separation = float(sel.mean() - med_score) if sel.size else 0.0
-    if separation < TAPE_MARGIN:
-        tape[:] = 0
+    scores = {"light": V - 2 * S, "dark": int(med_v) - V}
+    best = None
+    for polarity, score in scores.items():
+        med_score = float(np.median(score))
+        # 임계는 **Otsu**로 뽑는다 — 백분위(상위 N%)는 테이프가 화면에서 차지하는
+        # 비율을 가정하는데, 그 가정이 카메라 높이/코스에 따라 깨진다.
+        # (2026-08-09: 흰 도화지 코스에서 띠가 화면의 21%라 "상위 8%" 임계가
+        #  띠 안쪽에 떨어져 검출이 통째로 실패했다.) Otsu는 비율을 가정하지 않는다.
+        # 유령 검출은 아래 separation + 띠 기하 검사가 막는다.
+        otsu, _ = cv2.threshold(np.clip(score, 0, 255).astype(np.uint8), 0, 255,
+                                cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        thr = max(float(otsu), med_score + TAPE_MARGIN)
+        mask = ((score > thr) * 255).astype(np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+        sel = score[mask > 0]
+        sep = float(sel.mean() - med_score) if sel.size else 0.0
+        if sep < TAPE_MARGIN:
+            continue
+        # 가로로 화면을 가로지르는 띠가 실제로 만들어지는지 — 두께까지 맞아야 채택.
+        rows = (mask > 0).sum(axis=1)
+        band = np.nonzero(rows > w * BAND_ROW_FRAC)[0]
+        if not band.size:
+            continue
+        thick = int(band.max() - band.min() + 1)
+        if not (h * MIN_BAND_FRAC <= thick <= h * MAX_BAND_FRAC):
+            continue
+        if best is None or sep > best[0]:
+            best = (sep, polarity, mask, rows, band, thick, thr)
 
-    rows = (tape > 0).sum(axis=1)
-    band_rows = np.nonzero(rows > w * BAND_ROW_FRAC)[0]
+    if best is None:
+        tape = np.zeros((h, w), np.uint8)
+        separation, polarity, tape_thr = 0.0, None, 0.0
+        rows = np.zeros(h, dtype=int)
+        band_rows = np.array([], dtype=int)
+    else:
+        separation, polarity, tape, rows, band_rows, _thick, tape_thr = best
+
     band_y = thickness = angle = None
     found = False
     if band_rows.size:
@@ -300,39 +331,52 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
             angle = _band_angle(tape, max(0, int(band_rows.min()) - margin),
                                 min(h, int(band_rows.max()) + margin + 1))
 
-    # --- 코스 끝(검은 테이프) --- 밝기로만 가른다(위 DARK_MARGIN 주석 참고)
+    # --- 코스 끝(검은 테이프) ---
+    # ⚠ 극성이 dark면 **주행 테이프 자체가 어두우므로** 이 검출은 의미가 없다
+    #   (실제로 테이프를 통째로 "END"로 잡았다 — 2026-08-09 흰 도화지 코스).
+    #   그 구성에서는 양끝단도 색 마커로 표시하므로 아래 색 검출이 대신한다.
     dark_mask = V < (med_v - DARK_MARGIN)
-    dark = (dark_mask * 255).astype(np.uint8)
-    end_blob = _largest_blob(dark, DARK_MIN_AREA)
     end_marker = None
-    # 띠를 못 찾은 프레임에서는 근접 조건을 걸 기준이 없으므로 그냥 통과시킨다.
-    if end_blob and band_y is not None and abs(end_blob[1] - band_y) > h * DARK_NEAR_BAND:
-        end_blob = None     # 띠에서 먼 어두운 덩어리 = 전선/그림자
-    if end_blob:
-        cx, cy, bw, bh, area = end_blob
-        end_marker = {
-            "x": round(cx, 1), "y": round(cy, 1), "w": bw, "h": bh, "area": area,
-            # 화면 어느 쪽에 있나 — 진행 방향 판단용(왼쪽 끝인지 오른쪽 끝인지)
-            "side": "left" if cx < w / 2 else "right",
-        }
+    if polarity == "light":
+        end_blob = _largest_blob((dark_mask * 255).astype(np.uint8), DARK_MIN_AREA)
+        # 띠를 못 찾은 프레임에서는 근접 조건을 걸 기준이 없으므로 그냥 통과시킨다.
+        if end_blob and band_y is not None and abs(end_blob[1] - band_y) > h * DARK_NEAR_BAND:
+            end_blob = None     # 띠에서 먼 어두운 덩어리 = 전선/그림자
+        if end_blob:
+            cx, cy, bw, bh, area = end_blob
+            end_marker = {
+                "x": round(cx, 1), "y": round(cy, 1), "w": bw, "h": bh, "area": area,
+                "side": "left" if cx < w / 2 else "right",
+            }
 
-    # --- 스테이션(색 마스킹테이프) --- 진한 색 + **어둡지 않을 것**
+    # --- 지점 표식(색 마스킹테이프) ---
+    # 흰 도화지 배경에서는 채도가 압도적으로 갈린다(배경 S≈11, 테이프 58, 색마커 162).
+    # 한 화면에 여러 개가 보일 수 있으므로 **전부** 돌려주고, 화면 중앙에 가장
+    # 가까운 것을 대표(color_marker)로 삼는다 — 정지 판정이 그걸 기준으로 돈다.
     color_thr = max(COLOR_S_MIN, med_s + COLOR_S_MARGIN)
-    color_blob = None
+    markers: list[dict] = []
     if COLOR_ENABLED:
         color = (((S > color_thr) & ~dark_mask) * 255).astype(np.uint8)
-        color_blob = _largest_blob(color, COLOR_MIN_AREA)
-    color_marker = None
-    if color_blob:
-        cx, cy, bw, bh, area = color_blob
-        mask = np.zeros((h, w), np.uint8)
-        cv2.circle(mask, (int(cx), int(cy)), max(6, min(bw, bh) // 3), 255, -1)
-        hot = (mask > 0) & (S > color_thr)
-        hue = float(np.median(H[hot])) if np.any(hot) else 0.0
-        color_marker = {
-            "x": round(cx, 1), "y": round(cy, 1), "w": bw, "h": bh, "area": area,
-            "hue": round(hue, 1), "name": _hue_name(hue),
-        }
+        color = cv2.morphologyEx(color, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+        num, _lbl, stats, cents = cv2.connectedComponentsWithStats(color, 8)
+        for i in range(1, num):
+            area = int(stats[i, cv2.CC_STAT_AREA])
+            if area < COLOR_MIN_AREA:
+                continue
+            cx, cy = float(cents[i][0]), float(cents[i][1])
+            spot = np.zeros((h, w), np.uint8)
+            cv2.circle(spot, (int(cx), int(cy)),
+                       max(6, min(stats[i, cv2.CC_STAT_WIDTH],
+                                  stats[i, cv2.CC_STAT_HEIGHT]) // 3), 255, -1)
+            hot = (spot > 0) & (S > color_thr)
+            hue = float(np.median(H[hot])) if np.any(hot) else 0.0
+            markers.append({
+                "x": round(cx, 1), "y": round(cy, 1),
+                "w": int(stats[i, cv2.CC_STAT_WIDTH]), "h": int(stats[i, cv2.CC_STAT_HEIGHT]),
+                "area": area, "hue": round(hue, 1), "name": _hue_name(hue),
+            })
+        markers.sort(key=lambda m: m["x"])
+    color_marker = min(markers, key=lambda m: abs(m["x"] - w / 2)) if markers else None
 
     return {
         "ts": time.time(),
@@ -347,6 +391,8 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
         "target_y": round(target_y, 1),
         "end_marker": end_marker,
         "color_marker": color_marker,
+        "markers": markers,          # 화면에 보이는 지점 표식 전부(x 오름차순)
+        "polarity": polarity,        # 테이프가 배경보다 dark/light 중 어느 쪽인지
         "width": w, "height": h,
         # 시각 오도메트리 — 누적 이동(px)과 직전 증분. 절대 위치가 아니라
         # 증분 누적이므로 상위가 끝단 마커에서 원점을 다시 잡는다.
@@ -388,13 +434,18 @@ def _annotate(frame: np.ndarray, st: dict) -> np.ndarray:
         cv2.putText(view, f"END({em['side']})", (x - 60, y - em["h"] // 2 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
-    cm = st["color_marker"]
-    if cm:
+    # 지점 표식은 보이는 것 전부 그린다 — 대표(중앙에 가장 가까운 것)만 굵게.
+    rep = st["color_marker"]
+    for cm in st.get("markers") or []:
         x, y = int(cm["x"]), int(cm["y"])
+        main = rep is not None and abs(cm["x"] - rep["x"]) < 1e-6
         cv2.rectangle(view, (x - cm["w"] // 2, y - cm["h"] // 2),
-                      (x + cm["w"] // 2, y + cm["h"] // 2), (255, 0, 255), 3)
-        cv2.putText(view, f"STATION h{cm['hue']:.0f}", (x - 80, y - cm["h"] // 2 - 10),
+                      (x + cm["w"] // 2, y + cm["h"] // 2),
+                      (255, 0, 255), 4 if main else 2)
+        cv2.putText(view, f"{cm['name']} h{cm['hue']:.0f}", (x - 80, y - cm["h"] // 2 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
+    cv2.putText(view, f"pol={st.get('polarity')}", (12, h - 14),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 0), 2)
     return view
 
 

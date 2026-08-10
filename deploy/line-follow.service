@@ -15,7 +15,7 @@ Environment=PYTHONUNBUFFERED=1
 # Environment=LF_CENTER_X=760
 # 색(스테이션 마커) 구분은 기본 꺼짐 — 지금 바닥은 원목이고 조명 캐스트가 흔들려
 # 색상(hue)을 믿을 수 없다. 배경을 도화지 등으로 통제한 뒤 아래를 켤 것.
-# Environment=LF_COLOR=1
+Environment=LF_COLOR=1
 ExecStart=/home/server/.venvs/vision/bin/python /home/server/tomato-picker/tools/line_follow.py
 Restart=always
 RestartSec=3
