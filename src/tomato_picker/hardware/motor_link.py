@@ -50,8 +50,11 @@ class MotorLink:
     # 송신 주기. 펌웨어 소프트 데드맨(300ms)의 15배 여유 — 젯슨이 아무리 밀려도
     # 이 정도면 한 번은 통과한다. 115200baud에 ~20바이트라 대역폭 부담은 없다.
     SEND_INTERVAL_SEC = 0.02
-    # 정지 상태에서는 굳이 50Hz로 떠들 필요가 없다(링크 유지용 최소 주기).
+    # 아무도 지령을 안 주는 동안의 최소 주기(링크 유지용).
     IDLE_INTERVAL_SEC = 0.1
+    # 마지막 지령이 이 시간 안이면 "활발히 조작 중"으로 보고 빠른 주기를 유지한다.
+    # 펄스 주행은 OFF 구간에도 20ms마다 목표(0)를 갱신하므로 여기 걸린다.
+    ACTIVE_SEC = 1.0
     # 상위(브라우저/게임패드)가 이 시간 넘게 갱신을 안 하면 지령을 0으로 본다.
     # 펌웨어 데드맨과 이중 안전장치 — 브라우저 탭이 죽어도 로봇이 선다.
     STALE_SEC = 0.5
@@ -261,7 +264,14 @@ class MotorLink:
             moving = self._tick()
             self._drain_input()
             self._watch_heartbeat()
-            time.sleep(self.SEND_INTERVAL_SEC if moving else self.IDLE_INTERVAL_SEC)
+            # ⚠ "지금 굴러가는가"가 아니라 **"지령이 계속 들어오는가"**로 주기를 정한다.
+            # 예전엔 목표가 0이면 곧장 100ms로 늘어졌는데, 펄스 주행은 OFF 구간마다
+            # 목표가 0이 되므로 다음 ON이 최대 100ms 늦게 나갔다 — 펄스 길이가
+            # 들쭉날쭉해지고 "톡톡"이 뭉개졌다. 키보드는 속도가 0이 아니라 늘 20ms를
+            # 유지해서 멀쩡했다(2026-08-10). 상위가 활발히 지령을 갱신하는 동안에는
+            # 목표가 0이어도 빠른 주기를 유지한다.
+            active = moving or (time.monotonic() - self._target_ts) < self.ACTIVE_SEC
+            time.sleep(self.SEND_INTERVAL_SEC if active else self.IDLE_INTERVAL_SEC)
 
     def _watch_heartbeat(self) -> None:
         """말이 없어진 보드를 되살린다 — 포트 재개방 = Uno 리셋.
