@@ -134,11 +134,31 @@ COLOR_S_MARGIN = float(os.environ.get("LF_COLOR_S_MARGIN", "50"))  # 중앙값 �
 COLOR_S_MIN = float(os.environ.get("LF_COLOR_S_MIN", "80"))        # 절대 하한(무채색 장면 방지)
 COLOR_MIN_AREA = int(os.environ.get("LF_COLOR_MIN_AREA", "2500"))
 
-# OpenCV Hue는 0~179. 데모에서 헷갈리지 않게 한국어 이름으로 바꿔 보고한다.
+# --- 마커의 **역할** (색 이름이 아니라 이게 진짜 의미다) ---
+# 코스 구성: [주황]─[노랑]─[노랑]─[주황]
+#   주황 = 양끝 지점(끝점).  노랑 = 중간 지점.
+# ⚠ 색 이름으로 부르면 헷갈린다 — 주황 테이프가 OpenCV hue 6으로 잡혀 화면에
+#   "빨강 스테이션"으로 떴다(2026-08-10). 조명에 따라 hue는 몇씩 밀리므로
+#   **이름이 아니라 역할**을 보고해야 한다. 역할 판정은 여기 한 곳에서만 한다
+#   (상위 LineDriver는 이 결과를 그대로 쓴다 — 두 군데서 정하면 어긋난다).
+HUE_END = tuple(int(v) for v in os.environ.get("LF_HUE_END", "0,18").split(","))
+HUE_MID = tuple(int(v) for v in os.environ.get("LF_HUE_MID", "19,40").split(","))
+ROLE_LABELS = {"end": "끝점", "mid": "중간지점"}
+
+# OpenCV Hue는 0~179. 역할 밖의 색이 잡혔을 때 무엇이 보였는지 알려주는 보조 이름.
 HUE_NAMES = [
     (10, "빨강"), (22, "주황"), (33, "노랑"), (85, "초록"),
     (100, "청록"), (130, "파랑"), (160, "보라"), (170, "분홍"), (180, "빨강"),
 ]
+
+
+def _hue_role(hue: float) -> str | None:
+    """hue → 코스에서의 역할. 'end'(주황) | 'mid'(노랑) | None(정의 안 된 색)."""
+    if HUE_END[0] <= hue <= HUE_END[1]:
+        return "end"
+    if HUE_MID[0] <= hue <= HUE_MID[1]:
+        return "mid"
+    return None
 
 
 def _atomic_write(path: str, data: bytes) -> None:
@@ -378,10 +398,14 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
                                   stats[i, cv2.CC_STAT_HEIGHT]) // 3), 255, -1)
             hot = (spot > 0) & (S > color_thr)
             hue = float(np.median(H[hot])) if np.any(hot) else 0.0
+            role = _hue_role(hue)
             markers.append({
                 "x": round(cx, 1), "y": round(cy, 1),
                 "w": int(stats[i, cv2.CC_STAT_WIDTH]), "h": int(stats[i, cv2.CC_STAT_HEIGHT]),
-                "area": area, "hue": round(hue, 1), "name": _hue_name(hue),
+                "area": area, "hue": round(hue, 1),
+                "role": role,                       # 'end' | 'mid' | None
+                # 화면에 찍을 이름 — 역할이 있으면 역할로 부른다(색 이름은 헷갈린다)
+                "name": ROLE_LABELS.get(role) or f"미정의({_hue_name(hue)})",
             })
         markers.sort(key=lambda m: m["x"])
     color_marker = min(markers, key=lambda m: abs(m["x"] - w / 2)) if markers else None
@@ -450,7 +474,8 @@ def _annotate(frame: np.ndarray, st: dict) -> np.ndarray:
         cv2.rectangle(view, (x - cm["w"] // 2, y - cm["h"] // 2),
                       (x + cm["w"] // 2, y + cm["h"] // 2),
                       (255, 0, 255), 4 if main else 2)
-        cv2.putText(view, f"{cm['name']} h{cm['hue']:.0f}", (x - 80, y - cm["h"] // 2 - 10),
+        tag = {"end": "END", "mid": "MID"}.get(cm.get("role"), "?")
+        cv2.putText(view, f"{tag} h{cm['hue']:.0f}", (x - 60, y - cm["h"] // 2 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
     cv2.putText(view, f"pol={st.get('polarity')}", (12, h - 14),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 0), 2)

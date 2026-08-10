@@ -163,7 +163,8 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
       }} else {{
         parts.push('○ 테이프 없음');
       }}
-      if (ev.color_name) parts.push('🎨 ' + ev.color_name + ' 스테이션');
+      if (ev.marker_name) parts.push(
+        (ev.marker_role === 'end' ? '🚩 ' : ev.marker_role === 'mid' ? '📍 ' : '❔ ') + ev.marker_name);
       if (ev.end_side) parts.push('■ 코스 끝(' + (ev.end_side === 'left' ? '좌' : '우') + ')');
       lineEl.className = ev.end_side ? 'mark' : (ev.found ? 'ok' : 'lost');
       lineEl.textContent = parts.join('  ·  ');

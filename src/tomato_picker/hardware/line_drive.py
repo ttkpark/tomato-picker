@@ -184,7 +184,14 @@ class LineDriver:
     # ------------------------------------------------------------------
 
     def _marker_kind(self, marker: dict) -> str | None:
-        """마커 색으로 종류 판정. 'end'(주황) | 'mid'(노랑) | None(그 외)."""
+        """마커의 역할. 'end'(주황=양끝) | 'mid'(노랑=중간) | None.
+
+        판정은 **검출기(line_follow)가 이미 했다** — 여기서 다시 하면 두 곳의
+        hue 창이 어긋날 수 있다. 옛 상태 파일 호환용으로만 hue 폴백을 남긴다.
+        """
+        role = marker.get("role")
+        if role in ("end", "mid"):
+            return role
         hue = marker.get("hue")
         if hue is None:
             return None
@@ -306,6 +313,7 @@ class LineDriver:
             "end_side": (line.get("end_marker") or {}).get("side"),
             "end_x": (line.get("end_marker") or {}).get("x"),
             "color_name": (line.get("color_marker") or {}).get("name"),
+            "color_role": (line.get("color_marker") or {}).get("role"),
             "color_x": (line.get("color_marker") or {}).get("x"),
             "odom_conf": line.get("odom_conf"),
             "position_px": None if pos is None else round(pos, 1),

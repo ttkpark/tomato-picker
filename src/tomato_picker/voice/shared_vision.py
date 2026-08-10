@@ -70,7 +70,7 @@ class SharedFrameSource:
                 color = st.get("color_marker") or None
                 # 픽셀 지터로 도배되지 않게 10px 격자로 반올림해 변화를 판단한다.
                 key = (found, None if offset is None else round(offset / 10),
-                       bool(end), (color or {}).get("name"))
+                       bool(end), (color or {}).get("role"), (color or {}).get("name"))
                 now = time.monotonic()
                 if key != last_key or now - last_sent >= HEARTBEAT_SEC:
                     last_key, last_sent = key, now
@@ -79,7 +79,10 @@ class SharedFrameSource:
                         "found": found,
                         "offset_y_px": offset, "angle_deg": st.get("angle_deg"),
                         "end_side": (end or {}).get("side"),
-                        "color_name": (color or {}).get("name"),
+                        # 색 이름이 아니라 **역할**을 보낸다 — 주황 테이프가 hue 6이라
+                        # "빨강"으로 떠서 끝점인 걸 못 알아봤다(2026-08-10).
+                        "marker_role": (color or {}).get("role"),
+                        "marker_name": (color or {}).get("name"),
                     }, latest_only=True)
             time.sleep(self._poll)
 
