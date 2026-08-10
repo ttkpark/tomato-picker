@@ -235,6 +235,10 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
         return True, line.travel(side, float(body.get("seconds", 1.0)), speed)
     if action == "line_jog":
         return True, line.jog(side, float(body.get("seconds", 0.25)), speed)
+    if action == "line_station":
+        return True, line.goto_station(int(body.get("index", 0)), speed)
+    if action == "line_next":
+        return True, line.next_station(side, speed)
     if action == "line_goto_color":
         # 색 구분은 기본 꺼짐(배경색을 통제하기 전까지 hue를 못 믿는다).
         # 켜지 않은 상태에서 누르면 "왜 안 되는지"를 그대로 알려준다.

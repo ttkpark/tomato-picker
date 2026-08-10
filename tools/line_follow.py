@@ -149,15 +149,23 @@ def _atomic_write(path: str, data: bytes) -> None:
 
 
 def _read_frame() -> np.ndarray | None:
-    """원본 JPEG를 읽어 디코드. gst multifilesink는 원자적 교체가 아니라 쓰는
-    도중을 읽으면 찢어진 JPEG가 나온다 — 그 프레임은 조용히 건너뛴다."""
+    """원본 JPEG를 읽어 디코드. 찢어진 프레임은 건너뛴다.
+
+    ⚠ gst `multifilesink`는 같은 경로에 **비원자적으로** 덮어쓴다. 쓰는 도중에
+    읽으면 앞부분만 있는 JPEG가 나오는데, `cv2.imdecode`는 이걸 **실패로 알리지
+    않고** 나머지를 회색으로 채운 이미지를 돌려준다. 그래서 정지된 장면인데도
+    검출이 깜빡였다(2026-08-09: 같은 화면에서 found가 True/False를 오갔고,
+    오버레이 아래쪽이 뿌옇게 뭉개져 있었다 — 그게 잘린 프레임의 흔적).
+
+    JPEG는 반드시 EOI 마커(FFD9)로 끝나므로 그걸로 완결성을 확인한다.
+    """
     try:
         with open(SRC, "rb") as f:
             data = f.read()
     except OSError:
         return None
-    if not data:
-        return None
+    if len(data) < 4 or not data.rstrip(b"\x00").endswith(b"\xff\xd9"):
+        return None     # 아직 다 안 써졌다 — 다음 주기에 다시 읽는다
     return cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
 
 

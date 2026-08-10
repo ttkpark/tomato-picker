@@ -126,6 +126,11 @@ _CONTROL_BODY = """
     <button onclick="cmd({action:'line_goto_end',side:'right'})">오른쪽 끝까지 ▶▶</button>
   </div>
   <div class="row-flex" style="margin-bottom:0.5rem">
+    <span>지점:</span><span id="stationBtns"></span>
+    <button onclick="cmd({action:'line_next',side:'left'})">◀ 이전 지점</button>
+    <button onclick="cmd({action:'line_next',side:'right'})">다음 지점 ▶</button>
+  </div>
+  <div class="row-flex" style="margin-bottom:0.5rem">
     <button onclick="cmd({action:'line_jog',side:'left'})">◀ 톡</button>
     <button onclick="cmd({action:'line_jog',side:'right'})">톡 ▶</button>
     <span class="dim">한 번 누를 때마다 펄스 한 번 — 같은 걸음이 반복된다</span>
@@ -134,9 +139,6 @@ _CONTROL_BODY = """
     <button onclick="lineTravel('left')">◀ 시간이동</button>
     <input type="number" id="lineSecs" value="1.5" step="0.1" min="0.1" max="20" style="width:5rem">초
     <button onclick="lineTravel('right')">시간이동 ▶</button>
-    <span class="dim">|</span>
-    <button onclick="cmd({action:'line_goto_color',side:'left'})">◀ 색 마커까지</button>
-    <button onclick="cmd({action:'line_goto_color',side:'right'})">색 마커까지 ▶</button>
   </div>
 </div>
 
@@ -300,11 +302,31 @@ _CONTROL_JS = """
              : '변위 미기준 — 끝단을 한 번 지나가세요');
       if (ln.color_name) p.push('🎨 ' + ln.color_name);
       if (ln.end_side) p.push('■ 끝(' + (ln.end_side === 'left' ? '좌' : '우') + ')');
+      p.push(ln.station != null ? '📍 ' + ln.station_label
+                                : '📍 지점 미확인 — 주황 끝지점을 한 번 지나가세요');
+      const seen = (ln.markers || []).map(m => Math.round(m.hue));
+      if (seen.length) p.push('보이는 마커 hue ' + seen.join(','));
       p.push(ln.pulsing ? '펄스 ' + ln.pulse_on + 's/' + ln.pulse_period + 's' : '연속');
       el.textContent = p.filter(Boolean).join('  ·  ');
       el.style.background = ln.mode !== 'idle' ? 'color-mix(in srgb, #2ecc71 22%, Canvas)'
                           : (ln.found ? '' : 'color-mix(in srgb, #e74c3c 15%, Canvas)');
     }
+
+    // 지점 버튼 — 라벨은 서버가 준다(코스 구성이 바뀌면 여기 안 고쳐도 된다)
+    const sb = document.getElementById('stationBtns');
+    const labels = ln.station_labels || [];
+    if (sb && sb.dataset.n !== String(labels.length)) {
+      sb.dataset.n = String(labels.length);
+      sb.textContent = '';
+      labels.forEach((lab, i) => {
+        const b = document.createElement('button');
+        b.className = 'small'; b.textContent = i + '. ' + lab;
+        b.onclick = () => cmd({action:'line_station', index:i});
+        sb.append(b);
+      });
+    }
+    if (sb) for (let i = 0; i < sb.children.length; i++)
+      sb.children[i].className = 'small' + (ln.station === i ? ' on' : '');
 
     const bl = document.getElementById('btnLeader');
     bl.textContent = arm.leader_connected ? '리더암 연결 해제' : '리더암 연결';

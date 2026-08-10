@@ -42,12 +42,16 @@ from ..config import (
     LINE_DY_AXIS,
     LINE_DY_GAIN,
     LINE_DY_SIGN,
+    LINE_HUE_END,
+    LINE_HUE_MID,
     LINE_LOST_STOP_SEC,
+    LINE_MARK_CLEAR_FRAC,
     LINE_MAX_CORRECTION,
     LINE_MAX_DY_NORM,
     LINE_PULSE_ON,
     LINE_PULSE_PERIOD,
     LINE_SPEED,
+    LINE_STATION_LABELS,
     LINE_STATUS_PATH,
     LINE_TARGET_Y_FILE,
     LINE_TIMEOUT_SEC,
@@ -99,6 +103,12 @@ class LineDriver:
         self._line: dict = {}
         self._would: tuple[int, int, int] = (0, 0, 0)
         self._lost_since: float | None = None
+        # 지점(스테이션) 추적 — 주황을 지나야 인덱스가 확정된다(추측하지 않는다)
+        self._station: int | None = None
+        self._at_end = False
+        self._mark_armed = True          # 다음 마커 통과를 받을 준비가 됐나
+        self._last_marker: dict | None = None
+        self._last_dir = 0               # 마지막 진행 방향(+1 오른쪽 / -1 왼쪽)
         # 축·부호 — config 기본값 위에 현장에서 뒤집은 값을 얹는다.
         self._tune = {
             "dy_axis": LINE_DY_AXIS,
@@ -162,6 +172,82 @@ class LineDriver:
                 json.dump(snapshot, f, ensure_ascii=False, indent=2)
         except OSError as exc:
             self._detail = f"설정 저장 실패: {exc}"
+
+    # ------------------------------------------------------------------
+    # 지점(스테이션) 이동 — 주황=양끝(절대 기준), 노랑=중간(세어서 구분)
+    # ------------------------------------------------------------------
+
+    def _marker_kind(self, marker: dict) -> str | None:
+        """마커 색으로 종류 판정. 'end'(주황) | 'mid'(노랑) | None(그 외)."""
+        hue = marker.get("hue")
+        if hue is None:
+            return None
+        if LINE_HUE_END[0] <= hue <= LINE_HUE_END[1]:
+            return "end"
+        if LINE_HUE_MID[0] <= hue <= LINE_HUE_MID[1]:
+            return "mid"
+        return None
+
+    def _observe_markers(self, line: dict) -> None:
+        """마커가 화면 중앙을 지나가는 순간을 잡아 지점 인덱스를 갱신한다.
+
+        같은 마커를 두 번 세지 않으려고, 한 번 인정한 뒤에는 중앙에서 충분히
+        벗어나야(LINE_MARK_CLEAR_FRAC) 다음 통과를 받는다.
+        """
+        markers = line.get("markers") or []
+        width = line.get("width") or 1280
+        center = width / 2
+        near = [m for m in markers if abs(m["x"] - center) < width * self.MARK_TOL_FRAC]
+        if not near:
+            # 중앙에서 충분히 벗어났으면 다음 통과를 받을 준비를 한다.
+            if not markers or all(abs(m["x"] - center) > width * LINE_MARK_CLEAR_FRAC
+                                  for m in markers):
+                self._mark_armed = True
+            return
+        if not self._mark_armed:
+            return
+        self._mark_armed = False
+        marker = min(near, key=lambda m: abs(m["x"] - center))
+        kind = self._marker_kind(marker)
+        direction = self._last_dir
+        if kind == "end":
+            # 주황 = 절대 기준점. 어느 끝인지는 **진행 방향**이 알려준다
+            # (오른쪽으로 가다 만났으면 오른쪽 끝). 방향을 모르면 갱신하지 않는다.
+            if direction > 0:
+                self._station = len(LINE_STATION_LABELS) - 1
+            elif direction < 0:
+                self._station = 0
+            self._at_end = True
+        elif kind == "mid":
+            self._at_end = False
+            if self._station is not None and direction:
+                self._station = max(0, min(len(LINE_STATION_LABELS) - 1,
+                                           self._station + direction))
+        self._last_marker = {**marker, "kind": kind}
+
+    def goto_station(self, index: int, speed: int | None = None) -> str:
+        """번호로 지점 이동. 인덱스를 모르면 먼저 끝지점을 지나야 한다."""
+        if not 0 <= index < len(LINE_STATION_LABELS):
+            raise ValueError(f"지점 번호는 0~{len(LINE_STATION_LABELS) - 1}")
+        if self._station is None:
+            raise RuntimeError(
+                "지금 몇 번 지점인지 모릅니다 — 노랑(중간)은 서로 구분되지 않으니 "
+                "먼저 [◀ 왼쪽 끝까지] 또는 [오른쪽 끝까지 ▶]로 주황 끝지점을 한 번 "
+                "지나가면 그때부터 번호가 확정됩니다."
+            )
+        if self._station == index:
+            return f"이미 {LINE_STATION_LABELS[index]}에 있습니다"
+        side = "right" if index > self._station else "left"
+        self._start("station", {"side": side, "target": index, "speed": self._speed(speed)},
+                    f"{LINE_STATION_LABELS[index]}(으)로 이동")
+        return self._detail
+
+    def next_station(self, side: str, speed: int | None = None) -> str:
+        """색과 무관하게 **다음 마커**에서 정지 — 인덱스를 몰라도 쓸 수 있다."""
+        self._start("next_mark",
+                    {"side": side, "speed": self._speed(speed), "since": self._last_marker},
+                    f"{'왼쪽' if side == 'left' else '오른쪽'} 다음 지점까지")
+        return self._detail
 
     def goto_color(self, side: str, name: str | None = None, speed: int | None = None) -> str:
         """색 마커가 화면 중앙에 올 때까지 이동 후 정지(스테이션 정지)."""
@@ -231,6 +317,13 @@ class LineDriver:
             "yaw_sign": self._tune["yaw_sign"],
             "travel_sign": self._tune["travel_sign"],
             "yaw_gain": self._tune["yaw_gain"],
+            "station": self._station,
+            "station_label": (LINE_STATION_LABELS[self._station]
+                              if self._station is not None else None),
+            "station_labels": list(LINE_STATION_LABELS),
+            "at_end": self._at_end,
+            "markers": (self._line or {}).get("markers") or [],
+            "last_marker": self._last_marker,
             "speed": self._tune["speed"],
             "pulse_on": self._tune["pulse_on"],
             "pulse_period": self._tune["pulse_period"],
@@ -295,6 +388,10 @@ class LineDriver:
 
     def _start(self, mode: str, goal: dict, detail: str) -> None:
         self._preflight()
+        if goal.get("side") in ("left", "right"):
+            # 주황(끝)을 만났을 때 "어느 끝인지"는 진행 방향으로 판정한다 —
+            # 출발 즉시 만날 수도 있으니 루프가 돌기 전에 미리 정해 둔다.
+            self._last_dir = 1 if goal["side"] == "right" else -1
         with self._lock:
             self._mode = mode
             self._goal = goal
@@ -388,6 +485,22 @@ class LineDriver:
                 return f"{'왼쪽' if goal['side'] == 'left' else '오른쪽'} 끝 도착(변위 기준 갱신)"
             return None
 
+        if mode == "station":
+            # _observe_markers가 통과 때마다 인덱스를 갱신한다 — 목표에 닿으면 끝.
+            if self._station == goal["target"]:
+                return f"{LINE_STATION_LABELS[goal['target']]} 도착"
+            return None
+
+        if mode == "next_mark":
+            # 색과 무관하게 "마커 하나 지나면" 끝. 시작 시점의 통과 카운트와 비교.
+            if self._last_marker is not None and self._last_marker is not goal.get("since"):
+                kind = self._last_marker.get("kind")
+                name = {"end": "끝지점(주황)", "mid": "중간지점(노랑)"}.get(kind, "지점")
+                return f"{name} 도착" + (
+                    f" — {LINE_STATION_LABELS[self._station]}" if self._station is not None else ""
+                )
+            return None
+
         if mode == "goto_color":
             color = line.get("color_marker")
             if color and (goal.get("name") in (None, "", color.get("name"))):
@@ -406,6 +519,8 @@ class LineDriver:
 
             # 정지 중에도 보정값을 계산해 둔다(부호 검증용 — 진행분은 빼고 보정만)
             self._would = self._command(self._line, 0, 0)
+            # 마커 통과는 **주행 중이 아니어도** 센다(손으로 밀어도 인덱스가 따라온다)
+            self._observe_markers(self._line)
 
             # 끝단 마커는 **주행 중이 아니어도** 지나가면 기준을 잡는다.
             end = (self._line or {}).get("end_marker")
@@ -429,6 +544,7 @@ class LineDriver:
                 continue
 
             speed = goal.get("speed", LINE_SPEED)
+            self._last_dir = 1 if goal.get("side") == "right" else -1
             vx, vy, w = self._command(self._line, self._travel_dir(goal), speed)
             try:
                 self._base.hold(vx, vy, w)
