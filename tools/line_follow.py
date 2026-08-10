@@ -141,9 +141,13 @@ COLOR_MIN_AREA = int(os.environ.get("LF_COLOR_MIN_AREA", "2500"))
 #   "빨강 스테이션"으로 떴다(2026-08-10). 조명에 따라 hue는 몇씩 밀리므로
 #   **이름이 아니라 역할**을 보고해야 한다. 역할 판정은 여기 한 곳에서만 한다
 #   (상위 LineDriver는 이 결과를 그대로 쓴다 — 두 군데서 정하면 어긋난다).
+#   초록 = **경유 표식**. 지점이 아니다 — 지점 간격이 멀어 카메라가 아무 마커도
+#   못 보는 구간이 생기자 그걸 메우려고 중간에 붙였다(2026-08-10). 위치 추적을
+#   끊기지 않게 하는 게 목적이므로 **지점 번호를 바꾸면 안 된다**.
 HUE_END = tuple(int(v) for v in os.environ.get("LF_HUE_END", "0,18").split(","))
 HUE_MID = tuple(int(v) for v in os.environ.get("LF_HUE_MID", "19,40").split(","))
-ROLE_LABELS = {"end": "끝점", "mid": "중간지점"}
+HUE_WAY = tuple(int(v) for v in os.environ.get("LF_HUE_WAY", "41,90").split(","))
+ROLE_LABELS = {"end": "끝점", "mid": "중간지점", "way": "경유"}
 
 # OpenCV Hue는 0~179. 역할 밖의 색이 잡혔을 때 무엇이 보였는지 알려주는 보조 이름.
 HUE_NAMES = [
@@ -158,6 +162,8 @@ def _hue_role(hue: float) -> str | None:
         return "end"
     if HUE_MID[0] <= hue <= HUE_MID[1]:
         return "mid"
+    if HUE_WAY[0] <= hue <= HUE_WAY[1]:
+        return "way"
     return None
 
 
@@ -474,7 +480,7 @@ def _annotate(frame: np.ndarray, st: dict) -> np.ndarray:
         cv2.rectangle(view, (x - cm["w"] // 2, y - cm["h"] // 2),
                       (x + cm["w"] // 2, y + cm["h"] // 2),
                       (255, 0, 255), 4 if main else 2)
-        tag = {"end": "END", "mid": "MID"}.get(cm.get("role"), "?")
+        tag = {"end": "END", "mid": "MID", "way": "WAY"}.get(cm.get("role"), "?")
         cv2.putText(view, f"{tag} h{cm['hue']:.0f}", (x - 60, y - cm["h"] // 2 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
     cv2.putText(view, f"pol={st.get('polarity')}", (12, h - 14),

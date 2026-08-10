@@ -40,6 +40,9 @@ import time
 
 from ..config import (
     LINE_ALIGN_DIVERGE_LIMIT,
+    LINE_APPROACH_FRAC,
+    LINE_COARSE_ON,
+    LINE_COARSE_PERIOD,
     LINE_CORR_MIN,
     LINE_DY_AXIS,
     LINE_DY_DEADBAND,
@@ -116,6 +119,8 @@ class LineDriver:
         self._mark_armed = True          # 다음 마커 통과를 받을 준비가 됐나
         self._last_marker: dict | None = None
         self._last_dir = 0               # 마지막 진행 방향(+1 오른쪽 / -1 왼쪽)
+        self._between = False            # 경유(초록)를 지나 지점 사이에 있나
+        self._last_way: dict | None = None
         self._align_worst: float | None = None   # 정렬 중 최소 오차(발산 감지용)
         self._align_diverge = 0
         # 축·부호 — config 기본값 위에 현장에서 뒤집은 값을 얹는다.
@@ -204,8 +209,11 @@ class LineDriver:
         판정은 **검출기(line_follow)가 이미 했다** — 여기서 다시 하면 두 곳의
         hue 창이 어긋날 수 있다. 옛 상태 파일 호환용으로만 hue 폴백을 남긴다.
         """
+        # ⚠ 검출기가 준 역할은 **항상** 우선한다. 예전엔 end/mid만 받아들여서
+        #   'way'(초록 경유)가 폴백으로 넘어가 hue로 재판정됐고, 그 결과 초록이
+        #   끝점으로 잡혀 지점 번호가 어긋났다(2026-08-10 테스트에서 발견).
         role = marker.get("role")
-        if role in ("end", "mid"):
+        if role in ("end", "mid", "way"):
             return role
         hue = marker.get("hue")
         if hue is None:
@@ -238,6 +246,13 @@ class LineDriver:
         marker = min(near, key=lambda m: abs(m["x"] - center))
         kind = self._marker_kind(marker)
         direction = self._last_dir
+        if kind == "way":
+            # 초록 = 경유 표식. **지점 번호를 바꾸지 않는다** — 지점 사이가 멀어
+            # 카메라가 아무것도 못 보는 구간을 메우려고 붙인 것이라, 이걸 세면
+            # 지점 번호가 어긋난다. "지점 사이를 지나는 중"이라는 것만 기록한다.
+            self._between = True
+            self._last_way = marker
+            return
         if kind == "end":
             # 주황 = 절대 기준점. 어느 끝인지는 **진행 방향**이 알려준다
             # (오른쪽으로 가다 만났으면 오른쪽 끝). 방향을 모르면 갱신하지 않는다.
@@ -246,8 +261,10 @@ class LineDriver:
             elif direction < 0:
                 self._station = 0
             self._at_end = True
+            self._between = False
         elif kind == "mid":
             self._at_end = False
+            self._between = False
             if self._station is not None and direction:
                 self._station = max(0, min(len(LINE_STATION_LABELS) - 1,
                                            self._station + direction))
@@ -351,6 +368,8 @@ class LineDriver:
                               if self._station is not None else None),
             "station_labels": list(LINE_STATION_LABELS),
             "at_end": self._at_end,
+            "between": self._between,
+            "phase": "fine" if self._is_fine(self._mode) else "coarse",
             "markers": (self._line or {}).get("markers") or [],
             "last_marker": self._last_marker,
             "speed": self._tune["speed"],
@@ -395,11 +414,31 @@ class LineDriver:
         mag = max(LINE_CORR_MIN, min(LINE_MAX_CORRECTION, want))
         return int(mag if (sign * error) > 0 else -mag)
 
-    def _pulse_gate(self, goal: dict) -> bool:
+    def _is_fine(self, mode: str) -> bool:
+        """지금이 '정밀(톡톡)' 국면인가. 아니면 '접근(거의 연속)'.
+
+        사람이 키보드로 할 때처럼 — **먼 거리는 꾹 눌러 가고 목표 근처에서만 톡톡**.
+        전 구간을 톡톡으로 가면 정지 시간이 절반이라 답답하게 느리다.
+        정렬은 언제나 정밀이고, 이동 중엔 **지점 마커가 중앙 근처로 들어왔을 때**
+        정밀로 바꾼다(마커가 안 보이면 아직 먼 것이다).
+        """
+        if mode == "align":
+            return True
+        line = self._line or {}
+        width = line.get("width") or 1280
+        near = [m for m in (line.get("markers") or [])
+                if self._marker_kind(m) in ("end", "mid")
+                and abs(m["x"] - width / 2) < width * LINE_APPROACH_FRAC]
+        return bool(near)
+
+    def _pulse_gate(self, goal: dict, mode: str = "") -> bool:
         """지금이 펄스의 ON 구간인가. OFF 구간에는 **보정까지 전부 0**을 보내
         완전히 멈춘 상태에서 정착시킨 뒤 다시 측정한다."""
-        on = float(self._tune.get("pulse_on", LINE_PULSE_ON))
-        period = float(self._tune.get("pulse_period", LINE_PULSE_PERIOD))
+        if self._is_fine(mode):
+            on = float(self._tune.get("pulse_on", LINE_PULSE_ON))
+            period = float(self._tune.get("pulse_period", LINE_PULSE_PERIOD))
+        else:
+            on, period = LINE_COARSE_ON, LINE_COARSE_PERIOD
         if period <= on:
             return True
         return ((time.monotonic() - goal["started"]) % period) < on
@@ -430,13 +469,8 @@ class LineDriver:
         질질 끌리다 갑자기 미끄러지는 걸 막고, 한 번에 가는 거리가 일정해진다.
         ON == 주기면 항상 True가 되어 연속 주행과 같아진다(별도 모드가 아니다).
         """
-        on = float(self._tune.get("pulse_on", LINE_PULSE_ON))
-        period = float(self._tune.get("pulse_period", LINE_PULSE_PERIOD))
         base = 1 if goal.get("side") == "right" else -1
-        if period <= on:
-            return base
-        phase = (time.monotonic() - goal["started"]) % period
-        return base if phase < on else 0
+        return base if self._pulse_gate(goal, self._mode) else 0
 
     def _preflight(self) -> None:
         """출발 전 점검 — 여기서 막아야 "눌렀는데 바로 멈춘다"가 안 생긴다.
@@ -569,7 +603,7 @@ class LineDriver:
                 return (f"정렬 완료 — dy {line.get('offset_y_px'):.0f}px"
                         f" ∠{line.get('angle_deg') or 0:.1f}°")
             # 펄스 한 번이 끝날 때마다(OFF 구간 진입) 오차가 줄었는지 확인한다.
-            if not self._pulse_gate(goal):
+            if not self._pulse_gate(goal, mode):
                 if self._align_worst is None or err < self._align_worst - 0.02:
                     self._align_worst, self._align_diverge = err, 0
                 else:
@@ -587,7 +621,8 @@ class LineDriver:
             return None
 
         if mode == "next_mark":
-            # 색과 무관하게 "마커 하나 지나면" 끝. 시작 시점의 통과 카운트와 비교.
+            # **지점**(주황/노랑)에서만 멈춘다 — 초록 경유 표식은 지점이 아니므로
+            # 여기서 멈추면 지점 이동이 절반에서 끝나버린다.
             if self._last_marker is not None and self._last_marker is not goal.get("since"):
                 kind = self._last_marker.get("kind")
                 name = {"end": "끝지점(주황)", "mid": "중간지점(노랑)"}.get(kind, "지점")
@@ -642,7 +677,7 @@ class LineDriver:
             if goal.get("side") in ("left", "right"):
                 self._last_dir = 1 if goal["side"] == "right" else -1
             # OFF 구간엔 **보정까지 전부 0** — 완전히 멈춰 정착시킨 뒤 다시 잰다.
-            if self._pulse_gate(goal):
+            if self._pulse_gate(goal, mode):
                 travel = 0 if mode == "align" else self._travel_dir(goal)
                 vx, vy, w = self._command(self._line, travel, speed)
             else:
