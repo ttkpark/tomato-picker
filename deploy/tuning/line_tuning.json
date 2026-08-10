@@ -2,5 +2,9 @@
   "dy_axis": "vy",
   "dy_sign": -1.0,
   "yaw_sign": -1.0,
-  "travel_sign": 1.0
+  "travel_sign": 1.0,
+  "yaw_gain": 3.0,
+  "speed": 150.0,
+  "pulse_on": 0.08,
+  "pulse_period": 0.2
 }
