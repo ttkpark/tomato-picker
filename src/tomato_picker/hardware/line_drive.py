@@ -87,7 +87,10 @@ def _load_saved(path: str) -> dict:
 class LineDriver:
     """라인 유지 주행 + 끝단 기준 변위 추정. 명령은 전부 논블로킹."""
 
-    RATE = 0.05          # 20Hz 제어 주기
+    # 50Hz. 20Hz(50ms)였을 때는 짧은 펄스를 제대로 못 그렸다 — ON 0.08초를 넣어도
+    # 틱 경계에 걸려 0.05나 0.10초로 반올림되고, 어떤 주기에는 ON/OFF가 붙어
+    # "톡톡"이 "주우웅"으로 들렸다(2026-08-10). 펄스를 짧게 쓰려면 루프가 더 촘촘해야 한다.
+    RATE = 0.02
     MARK_TOL_FRAC = 0.12  # 마커가 화면 중앙 ±이 비율 안에 오면 "도착"
 
     def __init__(self, base, status_path: str = LINE_STATUS_PATH) -> None:
@@ -134,12 +137,24 @@ class LineDriver:
     # 명령
     # ------------------------------------------------------------------
 
+    def _end_marker_centered(self, line: dict) -> bool:
+        """끝점(주황) 마커가 지금 화면 중앙에 와 있나."""
+        width = line.get("width") or 1280
+        return any(
+            self._marker_kind(m) == "end" and abs(m["x"] - width / 2) < width * self.MARK_TOL_FRAC
+            for m in (line.get("markers") or [])
+        )
+
     def goto_end(self, side: str, speed: int | None = None) -> str:
-        """끝단 검은 테이프까지 라인을 유지하며 저속 주행 후 정지."""
+        """끝점(주황 마커)까지 라인을 유지하며 저속 주행 후 정지."""
         if side not in ("left", "right"):
             raise ValueError("side는 left/right")
+        # 이미 끝점 위면 출발하지 않는다 — 안 그러면 끝점을 지나쳐 반대편까지 밀고 간다.
+        if self._end_marker_centered(self._line):
+            self._latch_end(side)
+            return "이미 끝점에 있습니다 (변위 기준만 갱신)"
         self._start("goto_end", {"side": side, "speed": self._speed(speed)},
-                    f"{'왼쪽' if side == 'left' else '오른쪽'} 끝으로 이동")
+                    f"{'왼쪽' if side == 'left' else '오른쪽'} 끝점으로 이동")
         return self._detail
 
     def travel(self, side: str, seconds: float, speed: int | None = None) -> str:
@@ -535,8 +550,15 @@ class LineDriver:
             return None
 
         if mode == "goto_end":
-            end = line.get("end_marker")
-            if end and end.get("side") == goal["side"] and abs(end["x"] - width / 2) < tol:
+            # 끝점은 **주황 색 마커**다. 예전 코스(원목)에선 검은 테이프였고 그 검출은
+            # 극성이 dark면 꺼지므로, 그것만 보면 영영 목표를 못 만나 타임아웃까지
+            # 밀고 간다 — 실제로 "끝점인데 쭈욱 넘어간다"가 이것이었다(2026-08-10).
+            if self._end_marker_centered(line):
+                self._latch_end(goal["side"])
+                return f"{'왼쪽' if goal['side'] == 'left' else '오른쪽'} 끝점 도착(변위 기준 갱신)"
+            legacy = line.get("end_marker")   # 원목 코스(검은 테이프) 호환
+            if legacy and legacy.get("side") == goal["side"] \
+                    and abs(legacy["x"] - width / 2) < tol:
                 self._latch_end(goal["side"])
                 return f"{'왼쪽' if goal['side'] == 'left' else '오른쪽'} 끝 도착(변위 기준 갱신)"
             return None

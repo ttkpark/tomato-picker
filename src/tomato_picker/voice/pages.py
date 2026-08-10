@@ -455,16 +455,17 @@ _SETTINGS_BODY = """
   <label>펄스 속도 <input type="range" id="pSpeed" min="40" max="255" value="150"
     oninput="pSpeedOut.textContent=this.value"> <b id="pSpeedOut">150</b> / 255
     <span class="dim">정지마찰을 확실히 넘도록 빠르게</span></label>
-  <label>펄스 ON <input type="range" id="pOn" min="0.03" max="1" step="0.01" value="0.12"
+  <label>펄스 ON <input type="range" id="pOn" min="0.02" max="0.6" step="0.01" value="0.08"
     oninput="pOnOut.textContent=this.value"> <b id="pOnOut">0.12</b> 초
     <span class="dim">한 번에 가는 거리</span></label>
-  <label>펄스 주기 <input type="range" id="pPeriod" min="0.03" max="1.5" step="0.01" value="0.32"
+  <label>펄스 주기 <input type="range" id="pPeriod" min="0.04" max="1.0" step="0.01" value="0.20"
     oninput="pPeriodOut.textContent=this.value"> <b id="pPeriodOut">0.32</b> 초
     <span class="dim">ON과 같게 두면 <b>연속 주행</b>이 된다</span></label>
   <div class="row-flex">
     <button onclick="applyPulse()">적용</button>
-    <button class="small" onclick="preset(150,0.12,0.32)">깔짝깔짝(기본)</button>
-    <button class="small" onclick="preset(120,0.08,0.40)">더 잘게</button>
+    <button class="small" onclick="preset(150,0.08,0.20)">톡톡(기본)</button>
+    <button class="small" onclick="preset(150,0.05,0.16)">더 잘게</button>
+    <button class="small" onclick="preset(170,0.04,0.14)">아주 잘게</button>
     <button class="small" onclick="preset(90,0.30,0.30)">연속 저속</button>
     <span id="pNow" class="dim"></span>
   </div>
