@@ -133,7 +133,9 @@ _CONTROL_BODY = """
   <div class="row-flex" style="margin-bottom:0.5rem">
     <button onclick="cmd({action:'line_jog',side:'left'})">◀ 톡</button>
     <button onclick="cmd({action:'line_jog',side:'right'})">톡 ▶</button>
-    <span class="dim">한 번 누를 때마다 펄스 한 번 — 같은 걸음이 반복된다</span>
+    <span class="dim">|</span>
+    <button onclick="cmd({action:'line_align'})">🎯 정렬(톡톡)</button>
+    <span class="dim">제자리에서 톡톡 쳐가며 기준선·평행에 맞춘다</span>
   </div>
   <div class="row-flex">
     <button onclick="lineTravel('left')">◀ 시간이동</button>

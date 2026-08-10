@@ -39,7 +39,10 @@ import threading
 import time
 
 from ..config import (
+    LINE_ALIGN_DIVERGE_LIMIT,
+    LINE_CORR_MIN,
     LINE_DY_AXIS,
+    LINE_DY_DEADBAND,
     LINE_DY_GAIN,
     LINE_DY_SIGN,
     LINE_HUE_END,
@@ -57,6 +60,7 @@ from ..config import (
     LINE_TIMEOUT_SEC,
     LINE_TRAVEL_SIGN,
     LINE_TUNING_FILE,
+    LINE_YAW_DEADBAND,
     LINE_YAW_GAIN,
     LINE_YAW_GAIN_ON,
     LINE_YAW_SIGN,
@@ -109,6 +113,8 @@ class LineDriver:
         self._mark_armed = True          # 다음 마커 통과를 받을 준비가 됐나
         self._last_marker: dict | None = None
         self._last_dir = 0               # 마지막 진행 방향(+1 오른쪽 / -1 왼쪽)
+        self._align_worst: float | None = None   # 정렬 중 최소 오차(발산 감지용)
+        self._align_diverge = 0
         # 축·부호 — config 기본값 위에 현장에서 뒤집은 값을 얹는다.
         self._tune = {
             "dy_axis": LINE_DY_AXIS,
@@ -353,6 +359,47 @@ class LineDriver:
         base = self._tune.get("speed", LINE_SPEED) if speed is None else speed
         return int(max(30, min(255, float(base))))
 
+    def _corr_pulse(self, error: float, gain: float, sign: float, deadband: float) -> int:
+        """오차 하나를 **펄스 한 번 분량**의 지령으로 바꾼다 (이산 뱅뱅).
+
+        비례제어로 작은 값을 계속 흘리면 정지마찰을 못 넘어 아무 일도 안 일어난다.
+        그래서 데드밴드 밖이면 **반드시 움직이는 크기**(LINE_CORR_MIN 이상)로 주고,
+        안이면 0을 준다. 사람이 키를 톡 치고 결과를 보는 것과 같은 구조.
+        """
+        if error is None or abs(error) < deadband:
+            return 0
+        want = abs(sign * gain * error)
+        mag = max(LINE_CORR_MIN, min(LINE_MAX_CORRECTION, want))
+        return int(mag if (sign * error) > 0 else -mag)
+
+    def _pulse_gate(self, goal: dict) -> bool:
+        """지금이 펄스의 ON 구간인가. OFF 구간에는 **보정까지 전부 0**을 보내
+        완전히 멈춘 상태에서 정착시킨 뒤 다시 측정한다."""
+        on = float(self._tune.get("pulse_on", LINE_PULSE_ON))
+        period = float(self._tune.get("pulse_period", LINE_PULSE_PERIOD))
+        if period <= on:
+            return True
+        return ((time.monotonic() - goal["started"]) % period) < on
+
+    def align(self, speed: int | None = None) -> str:
+        """제자리에서 **톡톡** 쳐가며 기준선·평행에 맞춘다(진행 없음).
+
+        오차가 데드밴드 안에 들어올 때까지 펄스를 반복한다. 오차가 계속 커지면
+        보정 부호가 반대라는 뜻이므로 스스로 멈추고 그렇게 알려준다.
+        """
+        self._start("align", {"speed": self._speed(speed)}, "정렬 중 — 톡톡 쳐서 맞춥니다")
+        with self._lock:
+            self._align_worst = None
+            self._align_diverge = 0
+        return self._detail
+
+    def _align_error(self, line: dict) -> float:
+        """정렬 오차 하나로 합친 값(데드밴드 대비 비율의 최댓값). 1 미만이면 도착."""
+        dy = abs(line.get("offset_y_norm") or 0.0) / LINE_DY_DEADBAND
+        yaw = (abs(line.get("angle_deg") or 0.0) / LINE_YAW_DEADBAND
+               if self._tune.get("yaw_gain") else 0.0)
+        return max(dy, yaw)
+
     def _travel_dir(self, goal: dict) -> int:
         """지금 이 순간 진행분을 실을지 정한다 — **펄스 구동**.
 
@@ -436,12 +483,13 @@ class LineDriver:
         """
         corr = w = 0
         if line.get("found"):
-            dy = line.get("offset_y_norm") or 0.0
-            yaw = line.get("angle_deg") or 0.0
-            corr = int(max(-LINE_MAX_CORRECTION, min(LINE_MAX_CORRECTION,
-                                                     self._tune["dy_sign"] * LINE_DY_GAIN * dy)))
-            w = int(max(-LINE_MAX_CORRECTION, min(LINE_MAX_CORRECTION,
-                                                  self._tune["yaw_sign"] * self._tune["yaw_gain"] * yaw)))
+            # ★ 비례제어가 아니라 **펄스 뱅뱅**이다. 작은 값을 계속 흘리면 정지마찰을
+            #   못 넘어 아무 일도 안 일어난다 — 사람이 q/e를 톡 칠 때처럼 확실히
+            #   움직이는 크기로 짧게 주고, 멈춰서 정착시킨 뒤 다시 잰다.
+            corr = self._corr_pulse(line.get("offset_y_norm"), LINE_DY_GAIN,
+                                    self._tune["dy_sign"], LINE_DY_DEADBAND)
+            w = self._corr_pulse(line.get("angle_deg"), self._tune["yaw_gain"],
+                                 self._tune["yaw_sign"], LINE_YAW_DEADBAND)
         travel = int(self._tune["travel_sign"] * travel_dir * speed)
         if self._tune["dy_axis"] == "vy":
             return travel, corr, w      # 보정=게걸음, 진행=전후
@@ -483,6 +531,23 @@ class LineDriver:
             if end and end.get("side") == goal["side"] and abs(end["x"] - width / 2) < tol:
                 self._latch_end(goal["side"])
                 return f"{'왼쪽' if goal['side'] == 'left' else '오른쪽'} 끝 도착(변위 기준 갱신)"
+            return None
+
+        if mode == "align":
+            err = self._align_error(line)
+            if err <= 1.0:
+                return (f"정렬 완료 — dy {line.get('offset_y_px'):.0f}px"
+                        f" ∠{line.get('angle_deg') or 0:.1f}°")
+            # 펄스 한 번이 끝날 때마다(OFF 구간 진입) 오차가 줄었는지 확인한다.
+            if not self._pulse_gate(goal):
+                if self._align_worst is None or err < self._align_worst - 0.02:
+                    self._align_worst, self._align_diverge = err, 0
+                else:
+                    self._align_diverge += 1
+                    if self._align_diverge >= LINE_ALIGN_DIVERGE_LIMIT:
+                        return ("정렬 실패 — 톡 칠수록 오차가 오히려 커집니다. "
+                                "보정 부호가 반대일 수 있습니다: /settings에서 "
+                                "[거리 부호 ±] 또는 [회전 부호 ±]를 눌러보세요.")
             return None
 
         if mode == "station":
@@ -544,8 +609,14 @@ class LineDriver:
                 continue
 
             speed = goal.get("speed", LINE_SPEED)
-            self._last_dir = 1 if goal.get("side") == "right" else -1
-            vx, vy, w = self._command(self._line, self._travel_dir(goal), speed)
+            if goal.get("side") in ("left", "right"):
+                self._last_dir = 1 if goal["side"] == "right" else -1
+            # OFF 구간엔 **보정까지 전부 0** — 완전히 멈춰 정착시킨 뒤 다시 잰다.
+            if self._pulse_gate(goal):
+                travel = 0 if mode == "align" else self._travel_dir(goal)
+                vx, vy, w = self._command(self._line, travel, speed)
+            else:
+                vx = vy = w = 0
             try:
                 self._base.hold(vx, vy, w)
             except Exception as exc:  # noqa: BLE001 - 링크가 죽어도 루프는 살아야 함

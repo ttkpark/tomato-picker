@@ -235,6 +235,8 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
         return True, line.travel(side, float(body.get("seconds", 1.0)), speed)
     if action == "line_jog":
         return True, line.jog(side, float(body.get("seconds", 0.25)), speed)
+    if action == "line_align":
+        return True, line.align(speed)
     if action == "line_station":
         return True, line.goto_station(int(body.get("index", 0)), speed)
     if action == "line_next":
