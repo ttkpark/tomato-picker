@@ -205,7 +205,9 @@ _CONTROL_BODY = """
   <button onclick="drive(0,0,1)">↻ 우회전</button>
 </div>
 
-<h2>리더암 <span class="dim">— 자세 만들기</span></h2>
+<h2>리더암 <span class="dim">— 자세 만들기 · 팔이 안 움직이면 →</span>
+  <button class="small" onclick="cmd({action:'service_restart',name:'tomato-voice'})">🦾 팔 서비스 재시작</button>
+</h2>
 <div class="card">
   <div class="row-flex">
     <select id="leaderPort"><option value="">포트 자동선택</option></select>
@@ -495,6 +497,23 @@ def control_page(default_speed: int, frame_height: int) -> str:
 # ======================================================================
 
 _SETTINGS_BODY = """
+<h2>서비스 <span class="dim">— 안 움직일 때 여기서 되살린다 (ssh 불필요)</span></h2>
+<div class="card">
+  <div class="row-flex">
+    <button onclick="cmd({action:'service_restart',name:'tomato-voice'})">🦾 팔·음성·바퀴 재시작</button>
+    <button class="small" onclick="cmd({action:'service_restart',name:'line-follow'})">라인 검출 재시작</button>
+    <button class="small" onclick="cmd({action:'service_restart',name:'line-cam'})">바닥 카메라 재시작</button>
+    <button class="small" onclick="cmd({action:'service_restart',name:'tomato-vision'})">토마토 비전 재시작</button>
+    <button class="small" onclick="cmd({action:'service_status'})">상태 확인</button>
+  </div>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    <b>팔이 안 움직이면</b> [🦾 팔·음성·바퀴 재시작] — 팔·바퀴 연결은 tomato-voice가 들고
+    있어서 이게 곧 재연결입니다. 재시작하면 이 화면이 몇 초 끊겼다 돌아옵니다(새로고침 불필요).
+    게임패드(controller-drive)는 여기 없습니다 — tomato-voice와 모터 포트를 다투므로
+    둘 중 하나만 켜야 합니다.
+  </p>
+</div>
+
 <h2>라인 영점 <span class="dim">— 코스를 새로 깔 때마다</span></h2>
 <div class="card">
   <div id="lineState" style="margin-bottom:0.6rem">라인 상태 확인 중...</div>

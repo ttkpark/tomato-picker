@@ -7,6 +7,7 @@ PC 브라우저에서 http://<젯슨IP>:포트 로 접속하면 인식된 텍스
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -278,6 +279,11 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
     return False, f"알 수 없는 라인 명령: {action}"
 
 
+# 대시보드에서 재시작을 허용하는 서비스. ⚠ controller-drive는 뺐다 —
+# tomato-voice와 ttyUSB0을 다투므로(독점) 둘이 같이 뜨면 나중 쪽이 죽는다.
+_SERVICES = ("tomato-voice", "line-follow", "line-cam", "tomato-vision")
+
+
 def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool, str]:
     """수동 조작 명령 하나를 실행. (성공여부, 사람이 읽을 설명)을 돌려준다.
 
@@ -286,6 +292,31 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
     """
     action = body.get("action")
     try:
+        # --- 서비스 관리 (하드웨어 객체 불필요) ---
+        # 팔이 안 움직일 때(토크 Overload로 굳는 등) 현장에서 ssh 없이 되살리는
+        # 손잡이. 팔·바퀴 연결은 tomato-voice가 들고 있으므로 그걸 재시작하는 게
+        # 재연결이다. ⚠ 이름은 화이트리스트만 — 임의 명령 실행 통로가 되면 안 된다.
+        if action == "service_restart":
+            name = str(body.get("name", ""))
+            if name not in _SERVICES:
+                return False, f"허용되지 않은 서비스: {name}"
+            # 분리 실행 + 1초 지연: tomato-voice가 자기 자신을 재시작할 때
+            # HTTP 응답이 브라우저에 도착할 시간을 준다(systemd Restart=always라
+            # 죽어도 다시 올라온다). 젯슨은 passwordless sudo(-n = 프롬프트 금지).
+            subprocess.Popen(
+                ["sudo", "-n", "sh", "-c", f"sleep 1 && systemctl restart {name}"],
+                start_new_session=True,
+            )
+            note = (" — 화면이 몇 초 끊겼다 돌아옵니다" if name == "tomato-voice" else "")
+            return True, f"{name} 재시작 중...{note}"
+        if action == "service_status":
+            outs = []
+            for svc in _SERVICES:
+                r = subprocess.run(["systemctl", "is-active", svc],
+                                   capture_output=True, text=True, timeout=5)
+                outs.append(f"{svc}: {(r.stdout or r.stderr).strip() or '?'}")
+            return True, " · ".join(outs)
+
         handled = _handle_line_command(body, line)
         if handled is not None:
             return handled
