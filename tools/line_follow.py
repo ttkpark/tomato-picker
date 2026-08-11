@@ -90,6 +90,9 @@ TAPE_MARGIN = float(os.environ.get("LF_TAPE_MARGIN", "22"))  # 중앙값보다 �
 # 한 행이 "띠"로 인정되려면 화면 폭의 이 비율 이상이 테이프여야 한다.
 # 테이프는 화면을 가로지르므로 값이 크고, 얼룩·반사는 이 폭이 안 나온다.
 BAND_ROW_FRAC = float(os.environ.get("LF_BAND_ROW_FRAC", "0.35"))
+# 띠가 "이 열에 있다"고 볼 최소 세로 점유율(띠 두께 대비). 끝점에서 **어느 쪽으로
+# 코스가 이어지는지**를 판정할 때 쓴다 — 가장자리 번짐에 안 흔들리게 넉넉히.
+BAND_COL_FRAC = float(os.environ.get("LF_BAND_COL_FRAC", "0.40"))
 # 띠 두께 허용범위(화면 높이 대비). 너무 두꺼우면 밝은 바닥 전체를 잡은 것.
 MIN_BAND_FRAC = float(os.environ.get("LF_MIN_BAND_FRAC", "0.03"))
 MAX_BAND_FRAC = float(os.environ.get("LF_MAX_BAND_FRAC", "0.45"))
@@ -365,6 +368,19 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
             angle = _band_angle(tape, max(0, int(band_rows.min()) - margin),
                                 min(h, int(band_rows.max()) + margin + 1))
 
+    # --- 띠가 가로로 **어디까지 이어지는가** ---
+    # 끝점(주황)에 섰을 때 "어느 쪽 끝인가"를 이걸로 안다. 코스는 한쪽으로만
+    # 이어지므로, 테이프가 오른쪽에만 있으면 여기가 **왼쪽 끝**이다.
+    # 이건 절대 관측이라 진행 방향을 몰라도, 손으로 옮겼어도 항상 맞는다
+    # (예전엔 진행 방향으로 추측해서 반대로 찍히곤 했다 — 2026-08-11).
+    band_left_frac = band_right_frac = None
+    if found and band_rows.size:
+        strip = tape[int(band_rows.min()):int(band_rows.max()) + 1, :] > 0
+        cols = strip.mean(axis=0) >= BAND_COL_FRAC      # 열마다 띠가 있나
+        half = w // 2
+        band_left_frac = round(float(cols[:half].mean()), 3)
+        band_right_frac = round(float(cols[half:].mean()), 3)
+
     # --- 코스 끝(검은 테이프) ---
     # ⚠ 극성이 dark면 **주행 테이프 자체가 어두우므로** 이 검출은 의미가 없다
     #   (실제로 테이프를 통째로 "END"로 잡았다 — 2026-08-09 흰 도화지 코스).
@@ -426,6 +442,10 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
         "offset_y_px": None if band_y is None else round(band_y - target_y, 1),
         "offset_y_norm": None if band_y is None else round((band_y - target_y) / (h / 2.0), 3),
         "angle_deg": None if angle is None else round(angle, 1),
+        # 띠가 화면 좌/우 절반에서 차지하는 가로 비율. 끝점에서 어느 쪽 끝인지를
+        # 가른다 — 큰 쪽이 "코스가 계속되는 방향"이다.
+        "band_left_frac": band_left_frac,
+        "band_right_frac": band_right_frac,
         "target_y": round(target_y, 1),
         "end_marker": end_marker,
         "color_marker": color_marker,
@@ -460,6 +480,9 @@ def _annotate(frame: np.ndarray, st: dict) -> np.ndarray:
         txt = f"dy {st['offset_y_px']:+.0f}px"
         if st["angle_deg"] is not None:
             txt += f"  yaw {st['angle_deg']:+.1f}deg"
+        # 띠가 좌/우로 얼마나 이어지는지 — 끝점 판정의 근거를 눈으로 확인할 수 있게.
+        if st.get("band_left_frac") is not None:
+            txt += f"  tape L{st['band_left_frac']:.2f} R{st['band_right_frac']:.2f}"
         cv2.putText(view, txt, (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
     else:
         cv2.putText(view, "TAPE LOST", (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)

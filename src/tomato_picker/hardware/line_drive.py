@@ -50,6 +50,7 @@ from ..config import (
     LINE_DY_DEADBAND,
     LINE_DY_GAIN,
     LINE_DY_SIGN,
+    LINE_END_SIDE_MARGIN,
     LINE_HUE_END,
     LINE_HUE_MID,
     LINE_LOST_STOP_SEC,
@@ -282,6 +283,47 @@ class LineDriver:
         self._last_dir = 1 if delta * float(self._tune.get("odom_sign", 1.0)) > 0 else -1
         self._dir_source = "오도메트리(수동 이동)"
 
+    def _which_end(self, line: dict) -> str | None:
+        """끝점 위에 섰을 때 **어느 쪽 끝인가** — 테이프가 이어지는 방향으로 안다.
+
+        코스는 한쪽으로만 이어진다. 테이프가 오른쪽에만 있으면 여기가 왼쪽 끝이다.
+        진행 방향을 몰라도, 손으로 옮겼어도 항상 맞는 **절대 관측**이다.
+        (예전엔 _last_dir로 추측해서 반대로 찍혔다 — 2026-08-11 실사고.)
+
+        애매하면(양쪽 다 있거나 다 없거나) None. 모를 때는 추측하지 않는다.
+        """
+        left = line.get("band_left_frac")
+        right = line.get("band_right_frac")
+        if left is None or right is None:
+            return None            # 구 버전 검출기 — 판정 불가
+        if right - left > LINE_END_SIDE_MARGIN:
+            return "left"          # 오른쪽으로 이어진다 = 여기가 왼쪽 끝
+        if left - right > LINE_END_SIDE_MARGIN:
+            return "right"
+        return None
+
+    def _anchor_at_end(self, line: dict) -> None:
+        """끝점 위에 서 있으면 **가만히 있어도** 지점 번호를 확정한다.
+
+        주행 중이 아니어도 돈다 — 손으로 옮겨놨든, 번호가 어긋나 있든,
+        끝점에 서 있기만 하면 스스로 바로잡힌다.
+        """
+        if not self._end_marker_centered(line):
+            return
+        side = self._which_end(line)
+        if side is None:
+            return
+        index = 0 if side == "left" else len(LINE_STATION_LABELS) - 1
+        if self._station != index:
+            with self._lock:
+                self._station = index
+                self._at_end = True
+                self._between = False
+            print(f"  [line] 끝점 확인 — {LINE_STATION_LABELS[index]} "
+                  f"(테이프 L{line.get('band_left_frac')} R{line.get('band_right_frac')})")
+        if self._last_end != side:
+            self._latch_end(side)
+
     def set_station(self, index: int) -> str:
         """지금 있는 곳이 몇 번 지점인지 **사람이 직접 알려준다**.
 
@@ -295,7 +337,12 @@ class LineDriver:
             self._station = index
             self._at_end = index in (0, len(LINE_STATION_LABELS) - 1)
             self._between = False
-            self._mark_armed = True
+            # ⚠ mark_armed는 **False**여야 한다. True로 두면 지금 화면에 보이는
+            #   마커를 다음 틱에 _observe_markers가 곧바로 다시 세면서, 낡은
+            #   진행 방향으로 방금 지정한 번호를 덮어썼다 —
+            #   "[0으로 지정]을 눌러도 3으로 설정된다"의 정체(2026-08-11).
+            #   지금 보이는 마커는 이미 이 지정에 반영된 것이므로 다시 셀 이유가 없다.
+            self._mark_armed = False
         if self._at_end:
             # 끝점이면 변위 기준까지 같이 잡는다 — 절대 기준점이므로.
             self._latch_end("left" if index == 0 else "right")
@@ -331,9 +378,14 @@ class LineDriver:
             self._last_way = marker
             return
         if kind == "end":
-            # 주황 = 절대 기준점. 어느 끝인지는 **진행 방향**이 알려준다
-            # (오른쪽으로 가다 만났으면 오른쪽 끝). 방향을 모르면 갱신하지 않는다.
-            if direction > 0:
+            # 주황 = 절대 기준점. 어느 끝인지는 **테이프가 이어지는 방향**으로 안다
+            # — 진행 방향 추측보다 훨씬 믿을 만하다(수동 이동에도 맞는다).
+            # 판정이 안 되면 그때만 진행 방향으로 물러선다. 둘 다 모르면 갱신하지
+            # 않는다 — 틀린 번호를 넣느니 "미확인"으로 두는 게 낫다.
+            side = self._which_end(line)
+            if side is not None:
+                self._station = 0 if side == "left" else len(LINE_STATION_LABELS) - 1
+            elif direction > 0:
                 self._station = len(LINE_STATION_LABELS) - 1
             elif direction < 0:
                 self._station = 0
@@ -862,6 +914,8 @@ class LineDriver:
             else:
                 self._odom_prev = None   # 자동주행 중엔 명령이 방향의 근거다
             self._observe_markers(self._line)
+            # 끝점 위에 서 있기만 하면 번호가 스스로 확정된다(주행 중이 아니어도).
+            self._anchor_at_end(self._line)
 
             # 끝단 마커는 **주행 중이 아니어도** 지나가면 기준을 잡는다.
             end = (self._line or {}).get("end_marker")
