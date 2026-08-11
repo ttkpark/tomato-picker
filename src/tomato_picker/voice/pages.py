@@ -522,6 +522,14 @@ _SETTINGS_BODY = """
   <label>저속 주행 속도 <input type="range" id="pSmooth" min="30" max="255" value="105"
     oninput="pSmoothOut.textContent=this.value"> <b id="pSmoothOut">105</b> / 255
     <span class="dim">— 저속 연속 주행일 때 쓰는 속도</span>
+  <!-- 저속 연속 주행의 정지마찰 대책. vx만으로는 바퀴가 안 풀려서(파형은 평평한데
+       로봇은 제자리) 출발엔 세게 한 방, 주행 중엔 주기적으로 옆으로 톡 친다. -->
+  <label>출발 한 방 <input type="range" id="pKick" min="0" max="255" step="5" value="200"
+    oninput="pKickOut.textContent=this.value"> <b id="pKickOut">200</b> / 255
+    <span class="dim">— 출발 0.3초만 이 속도(정지마찰 깨기). 0이면 없음</span>
+  <label>주행 좌우 톡 <input type="range" id="pWiggle" min="0" max="255" step="5" value="130"
+    oninput="pWiggleOut.textContent=this.value"> <b id="pWiggleOut">130</b> / 255
+    <span class="dim">— 0.5초마다 0.1초씩 좌우로 톡(부호 교대라 제자리). 안 나가면 올리세요</span>
   <label>정렬 흔들기 <input type="range" id="pDither" min="0" max="255" step="5" value="150"
     oninput="pDitherOut.textContent=this.value"> <b id="pDitherOut">150</b> / 255
     <span class="dim">— 0이면 없음. 게걸음이 안 먹히면 올리세요(롤러 정지마찰)</span>
@@ -603,7 +611,9 @@ _SETTINGS_JS = """
          pulse_on: +document.getElementById('pOn').value,
          pulse_period: +document.getElementById('pPeriod').value,
          align_dither: +document.getElementById('pDither').value,
-         smooth_speed: +document.getElementById('pSmooth').value});
+         smooth_speed: +document.getElementById('pSmooth').value,
+         travel_kick: +document.getElementById('pKick').value,
+         travel_wiggle: +document.getElementById('pWiggle').value});
   }
   function preset(sp, on, per) {
     setRange('pSpeed', sp); setRange('pOn', on); setRange('pPeriod', per); applyPulse();
@@ -649,12 +659,16 @@ _SETTINGS_JS = """
       setRange('pOn', ln.pulse_on); setRange('pPeriod', ln.pulse_period);
       if (ln.align_dither != null) setRange('pDither', Math.round(ln.align_dither));
       if (ln.smooth_speed != null) setRange('pSmooth', Math.round(ln.smooth_speed));
+      if (ln.travel_kick != null) setRange('pKick', Math.round(ln.travel_kick));
+      if (ln.travel_wiggle != null) setRange('pWiggle', Math.round(ln.travel_wiggle));
     }
     document.getElementById('pNow').textContent = ln.speed == null ? '' :
       ('현재: 속도 ' + Math.round(ln.speed) + ' · '
        + (ln.pulsing ? '펄스 ' + ln.pulse_on + 's / ' + ln.pulse_period + 's' : '연속 주행')
        + '  ·  정렬 흔들기 ' + Math.round(ln.align_dither || 0)
        + '  ·  주행 ' + (ln.smooth ? '저속연속 ' + Math.round(ln.smooth_speed || 0)
+                                     + ' (출발 ' + Math.round(ln.travel_kick || 0)
+                                     + ' · 좌우톡 ' + Math.round(ln.travel_wiggle || 0) + ')'
                                    : '펄스(톡톡)'));
 
     const t = base.tuning;

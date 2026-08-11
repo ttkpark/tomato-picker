@@ -74,7 +74,12 @@ from ..config import (
     LINE_STRAFE_FIX_AT,
     LINE_TARGET_Y_FILE,
     LINE_TIMEOUT_SEC,
+    LINE_TRAVEL_KICK,
+    LINE_TRAVEL_KICK_SEC,
     LINE_TRAVEL_SIGN,
+    LINE_TRAVEL_WIGGLE,
+    LINE_TRAVEL_WIGGLE_ON,
+    LINE_TRAVEL_WIGGLE_PERIOD,
     LINE_TUNING_FILE,
     LINE_YAW_DEADBAND,
     LINE_YAW_GAIN,
@@ -85,7 +90,8 @@ from ..config import (
 # 런타임에 뒤집을 수 있는 축·부호. 실기에서만 확정되는 값이라 파일로 뺀다.
 TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain",
                "speed", "pulse_on", "pulse_period", "no_strafe", "odom_sign",
-               "align_dither", "smooth", "smooth_speed")
+               "align_dither", "smooth", "smooth_speed",
+               "travel_kick", "travel_wiggle")
 
 # 자동으로 정렬을 끼워 넣을 주행 모드. jog는 버튼 한 번 = 펄스 한 번이라
 # 중간에 정렬이 끼어들면 "톡 쳤는데 로봇이 혼자 움직인다"가 되므로 뺀다.
@@ -173,6 +179,9 @@ class LineDriver:
             # 주행 방식: 1=저속 연속(vy·w 비례보정), 0=펄스(톡톡).
             "smooth": 1.0 if LINE_DRIVE_SMOOTH else 0.0,
             "smooth_speed": float(LINE_SMOOTH_SPEED),
+            # 출발 한 방 + 주행 중 좌우 톡 — 정지마찰을 깨는 두 수단.
+            "travel_kick": float(LINE_TRAVEL_KICK),
+            "travel_wiggle": float(LINE_TRAVEL_WIGGLE),
         }
         self._tune.update(_load_saved(LINE_TUNING_FILE))
         self._thread = threading.Thread(target=self._run, daemon=True, name="line-drive")
@@ -219,7 +228,8 @@ class LineDriver:
     def set_params(self, **values) -> str:
         """속도·펄스 설정을 런타임에 바꾸고 파일에 남긴다(재시작해도 유지)."""
         limits = {"speed": (30, 255), "pulse_on": (0.02, 3.0), "pulse_period": (0.02, 3.0),
-                  "align_dither": (0, 255), "smooth_speed": (30, 255)}
+                  "align_dither": (0, 255), "smooth_speed": (30, 255),
+                  "travel_kick": (0, 255), "travel_wiggle": (0, 255)}
         with self._lock:
             for key, (lo, hi) in limits.items():
                 if values.get(key) is not None:
@@ -537,6 +547,8 @@ class LineDriver:
             "pulsing": self._tune["pulse_on"] < self._tune["pulse_period"] - 1e-6,
             "smooth": self.smooth,
             "smooth_speed": self._tune.get("smooth_speed", LINE_SMOOTH_SPEED),
+            "travel_kick": self._tune.get("travel_kick", LINE_TRAVEL_KICK),
+            "travel_wiggle": self._tune.get("travel_wiggle", LINE_TRAVEL_WIGGLE),
             "no_strafe": self.no_strafe,
             "align_dither": self._tune.get("align_dither", LINE_ALIGN_DITHER),
             "detours": self._detours,
@@ -775,6 +787,39 @@ class LineDriver:
             return 0
         return int(max(-LINE_SMOOTH_CORR_MAX,
                        min(LINE_SMOOTH_CORR_MAX, sign * gain * error)))
+
+    def _travel_kick(self, goal: dict, speed: int) -> int:
+        """출발 순간에는 세게 한 번 민다.
+
+        정지마찰이 운동마찰보다 크므로 **처음만** 크면 된다. 순항 속도(105)로
+        가만히 밀면 바퀴가 아예 안 돈다 — 파형은 평평한데 로봇은 제자리였다
+        (2026-08-11). 한 번 구르기 시작하면 낮은 듀티로도 계속 굴러간다.
+        """
+        kick = float(self._tune.get("travel_kick", LINE_TRAVEL_KICK))
+        if kick <= speed:
+            return speed
+        if time.monotonic() - goal.get("started", 0.0) < LINE_TRAVEL_KICK_SEC:
+            return int(kick)
+        return speed
+
+    def _travel_wiggle(self, goal: dict) -> int:
+        """주행 중 주기적으로 옆으로 톡 — 굴러가는 상태를 유지시킨다.
+
+        사용자가 찾아낸 방법 그대로다: "중간중간 좌우 이동을 잠깐 섞어주면
+        움직인다". 옆으로 치는 순간 바퀴가 풀린다.
+
+        정렬의 전후 흔들기와 **같은 원리, 반대 축**이다. 펄스마다 부호를
+        뒤집으므로 횡방향 변위는 서로 상쇄된다 — 라인에서 밀려나지 않는다.
+        """
+        amp = float(self._tune.get("travel_wiggle", LINE_TRAVEL_WIGGLE))
+        if amp <= 0:
+            return 0
+        t = time.monotonic() - goal.get("started", 0.0)
+        phase = t % LINE_TRAVEL_WIGGLE_PERIOD
+        if phase >= LINE_TRAVEL_WIGGLE_ON:
+            return 0                      # 톡 치는 순간이 아니다
+        n = int(t / LINE_TRAVEL_WIGGLE_PERIOD)
+        return int(amp) if n % 2 == 0 else -int(amp)
 
     def _align_dither(self, goal: dict) -> int:
         """정렬 펄스에 얹을 **전후 흔들기**. 펄스마다 부호가 뒤집힌다.
@@ -1070,7 +1115,20 @@ class LineDriver:
                 # 정렬은 제자리 동작이지만 **완전히 제자리면 롤러가 안 미끄러진다.**
                 # 전후로 살짝 흔들어 정지마찰을 깨준다(펄스마다 부호 반전 → 상쇄).
                 dither = self._align_dither(goal) if mode == "align" else 0
-                vx, vy, w = self._command(self._line, travel, speed, mode, dither)
+                # 저속 연속 주행은 반대 문제를 갖는다 — vx만으로는 바퀴가 안 풀린다.
+                # 출발엔 세게 한 방, 주행 중엔 주기적으로 옆으로 톡.
+                use = speed
+                wiggle = 0
+                if self.smooth and mode != "align":
+                    use = self._travel_kick(goal, speed)
+                    wiggle = self._travel_wiggle(goal)
+                vx, vy, w = self._command(self._line, travel, use, mode, dither)
+                if wiggle:
+                    # 좌우 톡은 **보정축**에 얹는다(진행축이 아니다).
+                    if self._tune["dy_axis"] == "vy":
+                        vy = max(-255, min(255, vy + wiggle))
+                    else:
+                        vx = max(-255, min(255, vx + wiggle))
             else:
                 vx = vy = w = 0
             try:

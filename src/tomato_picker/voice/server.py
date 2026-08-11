@@ -269,6 +269,8 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
             speed=body.get("speed"), pulse_on=body.get("pulse_on"),
             pulse_period=body.get("pulse_period"),
             align_dither=body.get("align_dither"),
+            travel_kick=body.get("travel_kick"),
+            travel_wiggle=body.get("travel_wiggle"),
         )
     return False, f"알 수 없는 라인 명령: {action}"
 
