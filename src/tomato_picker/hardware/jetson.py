@@ -134,6 +134,14 @@ class JetsonBase(MobileBase):
         """
         if not self._link.connected or self._link.generation == self._tuned_generation:
             return
+        # ⚠ 첫 하트비트를 기다리는 중이면 **여기서 밀지 않는다.** 밀 자격은
+        #   연결 콜백(_on_connect) 하나뿐이다. 두 경로가 각각 F/P/R을 보내면
+        #   보드가 한 loop 패스에서 delay(100)을 두 번 태우게 되는데, 그건
+        #   250ms 워치독에 아슬아슬하다 — 재부팅 → 튜닝 2회 → 다시 재부팅의
+        #   자기증폭 고리가 된다(2026-08-11: acks에 R이 두 번 찍혀 있었고
+        #   2분간 28회 재부팅했다). 부트로더 구간에 보낸 건 어차피 먹지도 않는다.
+        if self._link.pending_setup:
+            return
         self._push_tuning()
 
     def _push_tuning(self, link: MotorLink | None = None) -> None:

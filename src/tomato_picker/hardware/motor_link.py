@@ -74,6 +74,10 @@ class MotorLink:
     BOOT_MS_WINDOW = 10_000
     # 펌웨어가 부팅 때마다 뱉는 배너의 앞머리 — 리셋의 가장 빠른 증거.
     BOOT_BANNER = "mecanum_stable"
+    # v2.1이 배너 **직전**에 뱉는 리셋 원인 보고의 앞머리.
+    #   boot #12 warm cause=WDT last=I2C i2cerr=3 near=0 mcusr=0x0 r2=0xB2
+    # cause: WDT(워치독=loop 250ms 블로킹) / POWER(전원이 실제로 나감) / EXT|BOD
+    BOOT_REPORT = "boot #"
 
     def __init__(
         self,
@@ -104,6 +108,10 @@ class MotorLink:
         self._rx_ok = 0
         self._rx_bad = 0
         self._nak = 0
+        self._i2c_err = 0         # 보드의 I2C 타임아웃 횟수(TWI 버스가 물린 횟수)
+        self._wdt_near = 0        # 워치독이 물었다 살아난 횟수(=250ms 막힘, 근접사고)
+        self._boot_report: str | None = None   # 마지막 리셋 원인 보고 원문
+        self._boot_causes: dict[str, int] = {}  # 원인별 누적 — 이게 진단의 결론이다
         self._acks: list[str] = []   # 펌웨어 "ok ..." 확인 응답(최근 4개)
         self._pending_on_connect = False  # 첫 하트비트를 기다리는 중인가
         self._rx_buf = b""               # 줄 중간에서 끊긴 수신 조각
@@ -159,6 +167,11 @@ class MotorLink:
             "hb_resets": self._hb_resets,
             "board_resets": self._board_resets,
             "fw_ms": self._fw_ms,          # 보드 uptime — 0으로 되감기면 재부팅한 것
+            "i2c_err": self._i2c_err,      # I2C 버스가 물린 횟수(0이 아니면 노이즈)
+            "wdt_near": self._wdt_near,    # 250ms 막혔다 살아난 횟수
+            "boot_report": self._boot_report,
+            # 원인별 누적 — "USB 전원 멀쩡한데 왜 재부팅하나"의 최종 답이 여기 나온다.
+            "boot_causes": dict(self._boot_causes),
             "acks": list(self._acks),
             "error": self._last_error,
             "target": self._target,
@@ -295,6 +308,15 @@ class MotorLink:
         # 닫고 나면 _run이 RECONNECT_SEC 뒤에 다시 열고, 그때 DTR로 보드가 선다.
         self._shutdown_port()
 
+    @property
+    def pending_setup(self) -> bool:
+        """첫 하트비트(=보드가 준비됐다는 신호)를 아직 기다리는 중인가.
+
+        상위(JetsonBase)가 이걸 보고 **튜닝을 밀지 말지** 정한다. 두 경로가
+        각각 F/P/R을 보내면 보드가 delay(100)을 겹쳐 태워 워치독에 걸릴 수 있다.
+        """
+        return self._pending_on_connect
+
     def _note_board_restart(self, reason: str) -> None:
         """보드가 스스로 재부팅했다 — 설정이 전부 컴파일 기본값으로 날아갔다.
 
@@ -309,8 +331,15 @@ class MotorLink:
         self._rx_ok = 0
         self._rx_bad = 0
         self._pending_on_connect = self._on_connect is not None
+        # v2.1 펌웨어는 배너 **직전**에 원인을 뱉으므로, 배너로 재부팅을 알아챈
+        # 시점엔 이미 원인이 손에 있다. 로그 한 줄에 증상과 원인이 같이 남는다.
+        cause = _field(self._boot_report, "cause=") if self._boot_report else None
+        if cause:
+            self._boot_causes[cause] = self._boot_causes.get(cause, 0) + 1
+        where = _field(self._boot_report, "last=") if self._boot_report else None
+        detail = f", 원인={cause}" + (f" @{where}" if where and where != "idle" else "") if cause else ""
         self._last_error = (
-            f"보드 재부팅 감지({reason}) — 튜닝 재적용 #{self._board_resets}"
+            f"보드 재부팅 감지({reason}{detail}) — 튜닝 재적용 #{self._board_resets}"
         )
         print(f"  [base] {self._last_error}")
 
@@ -368,6 +397,10 @@ class MotorLink:
                         rx = _int_or(token[3:], None)
                     elif token.startswith("bad="):
                         bad = _int_or(token[4:], None)
+                    elif token.startswith("i2c="):     # v2.1
+                        self._i2c_err = _int_or(token[4:], self._i2c_err)
+                    elif token.startswith("wdt="):     # v2.1
+                        self._wdt_near = _int_or(token[4:], self._wdt_near)
                 # ★ 보드 재부팅 판정 — 우리가 안 시켰는데 uptime/수신카운터가 되감겼다.
                 #   포트는 멀쩡히 열려 있어 write 예외도, 재연결도 없다. 이걸 안 보면
                 #   보드는 컴파일 기본값(1500Hz·듀티2000·슬루6/12)으로 돌아가 있는데
@@ -389,6 +422,11 @@ class MotorLink:
                         self._on_connect(self)
                     except Exception as exc:  # noqa: BLE001 - 튜닝 실패가 링크를 죽이면 안 됨
                         self._last_error = f"on_connect: {exc}"
+            elif line.startswith(self.BOOT_REPORT):
+                # 배너보다 먼저 온다 — 여기서 받아두면 곧이어 올 배너 처리에서
+                # 원인까지 붙여 기록할 수 있다. (v2 펌웨어면 이 줄이 없고,
+                # boot_report는 None으로 남는다 — 옛 펌웨어와 호환.)
+                self._boot_report = line
             elif self.BOOT_BANNER in line and not self._pending_on_connect:
                 # 배너는 부팅마다 나온다. 연결 직후(=우리가 연 DTR 리셋) 배너는
                 # 이미 _pending_on_connect로 처리 중이므로 세지 않는다 —
@@ -407,6 +445,16 @@ class MotorLink:
 
 def _clamp(v: int) -> int:
     return max(-255, min(255, int(v)))
+
+
+def _field(line: str | None, key: str) -> str | None:
+    """공백으로 나뉜 `key=value` 토큰에서 value를 뽑는다. 없으면 None."""
+    if not line:
+        return None
+    for token in line.split():
+        if token.startswith(key):
+            return token[len(key):]
+    return None
 
 
 def _int_or(text: str, default: int | None) -> int | None:

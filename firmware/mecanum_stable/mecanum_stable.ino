@@ -27,10 +27,99 @@
 //   F <hz>            PWM 주파수 변경 (24~1526). 소음 튜닝용
 //   ?                 상태 1줄 출력
 // 응답: 처리 확인 "ok ...", 체크섬 오류 "nak crc", 1초 주기 "hb <ms> rx=<n> bad=<n> v=<vx,vy,w>"
+//
+// v2.1 — "USB 전원은 멀쩡한데 보드만 재부팅한다"를 규명하기 위한 계측 + 그 원인 차단.
+//   2026-08-11 실측: 2분 사이 보드가 28번 재부팅했는데 dmesg에 USB 이벤트가 **하나도**
+//   없었다(포트는 열린 채였고 hb_resets=0). 즉 리셋은 통신선이 아니라 AVR 자신에게서
+//   나왔다는 뜻인데, 워치독(=loop 블로킹)인지 브라운아웃(=전원)인지 알 방법이 없었다.
+//   이 둘은 정반대 처방이 필요하므로 먼저 **구분**할 수 있게 만든다.
+//
+//  (1) 리셋 원인 보고. MCUSR(WDRF/BORF/EXTRF/PORF)을 main()보다 먼저 도는 .init3에서
+//      낚아챈다 — 부트로더가 지워버리기 전에. optiboot가 r2에 남긴 사본도 같이 챙긴다.
+//  (2) SRAM 흔적(.noinit). SRAM은 리셋으로 안 지워지고 **전원이 실제로 끊겨야** 사라진다.
+//      magic이 살아 있으면 warm(전원 유지 · 칩만 리셋), 깨져 있으면 cold(전원이 나감).
+//      이 한 글자가 "USB 전원 들어와 있는데 왜?"에 그대로 답한다.
+//  (3) 죽기 직전 국면(last=). I2C 쓰는 중이었는지, F의 delay(100) 중이었는지를 남긴다.
+//      워치독이 물었다면 **어디서** 물렸는지가 곧 원인이다.
+//  (4) I2C 하드닝. AVR TWI는 버스가 물리면 endTransmission()에서 **타임아웃 없이 무한
+//      대기**한다(모터 스위칭 노이즈로 SDA가 눌리는 상황). 워치독이 물 1순위 후보라
+//      Wire 타임아웃을 걸어 행 대신 실패로 끝내고, 그 횟수를 하트비트로 보고한다.
+//      덤으로 100kHz→400kHz: applyCurrent()가 ~9.5ms→~2.4ms로 줄어 5ms 슬루 틱이
+//      비로소 제 주기를 찾는다(100kHz에선 틱보다 I2C가 길어 슬루가 절반 속도였다).
+//  (5) 명령마다 wdt_reset(). F 두 개가 한 loop 패스에 들어오면 delay(100)×2 = 200ms라
+//      250ms 워치독에 아슬아슬했다. 명령 단위로 워치독 예산을 새로 준다.
 #include <avr/wdt.h>
+#include <Wire.h>
 #include "FaBoPWM_PCA9685.h"
 
 FaBoPWM faboPWM;
+
+// ---------------- 리셋 원인 추적 (v2.1) ----------------
+#define BOOT_MAGIC 0xB07Eu
+
+// .noinit = 리셋으로 초기화되지 않는 SRAM 영역. 전원이 실제로 나가야 값이 깨진다.
+// ⚠ 전부 volatile이어야 한다. 이 값들을 읽는 쪽은 **다음 부팅** 또는 ISR이라,
+//   컴파일러 눈에는 "쓰기만 하고 아무도 안 읽는 변수"로 보인다. 실제로 v2.1 첫
+//   빌드에서 `lastPhase = PH_TEST; for(;;){}` 의 저장이 죽은 코드로 제거돼
+//   워치독 테스트가 last=test 대신 last=idle을 보고했다. 흔적을 남기는 코드는
+//   최적화 대상이 되면 안 된다.
+volatile uint16_t bootMagic  __attribute__((section(".noinit")));
+volatile uint16_t bootCount  __attribute__((section(".noinit")));
+volatile uint8_t  lastPhase  __attribute__((section(".noinit")));  // 지금 하고 있는 일
+volatile uint8_t  prevPhase  __attribute__((section(".noinit")));  // 리셋 직전에 하던 일
+volatile uint8_t  mcusrSave  __attribute__((section(".noinit")));
+volatile uint8_t  r2Save     __attribute__((section(".noinit")));
+volatile uint8_t  wdtHit     __attribute__((section(".noinit")));  // 워치독이 물었다는 자백
+volatile uint8_t  wdtPhase   __attribute__((section(".noinit")));  // 물릴 때 하던 일
+
+// ⚠ 2026-08-11 실측: 이 보드의 부트로더는 MCUSR을 **지우고 r2에 사본도 안 남긴다**
+//   (mcusr=0x0, r2=0xAF ← MCUSR이 쓰지도 않는 상위 비트가 켜진 잔여값).
+//   그래서 MCUSR만 믿으면 "WDT BOD EXT POR 전부"라는 무의미한 답이 나온다.
+//   → 워치독을 **인터럽트 우선 모드(WDIE|WDE)** 로 돌린다. 첫 타임아웃은 리셋이
+//     아니라 ISR을 부르고, 거기서 .noinit에 자백을 남긴 뒤 다음 주기에 진짜
+//     리셋된다. 부트로더가 뭘 지우든 상관없이 "워치독이었다"가 확정된다.
+#define WDT_MAGIC 0x5Au
+
+volatile uint8_t wdtNear = 0;   // ISR이 떴다가 **살아난** 횟수(=250ms 막혔다 복구)
+
+enum { PH_BOOT = 0, PH_IDLE, PH_RX, PH_I2C, PH_SETHZ, PH_STOP, PH_TEST };
+
+// 워치독을 인터럽트+리셋 모드로 무장. avr-libc의 wdt_enable()은 WDE만 켜므로
+// 레지스터를 직접 쓴다(WDCE 타이밍드 시퀀스 필수).
+void armWatchdog(){
+  cli();
+  wdt_reset();
+  MCUSR &= ~_BV(WDRF);
+  WDTCSR |= _BV(WDCE) | _BV(WDE);
+  WDTCSR = _BV(WDIE) | _BV(WDE) | _BV(WDP2);   // WDP2 = 250ms
+  sei();
+}
+
+// 첫 타임아웃(250ms)에 여기로 온다. WDIE는 자동으로 꺼지므로, 여기서 못 살아나면
+// 다음 250ms에 진짜 리셋이 난다 — 즉 완전 정지까지는 최대 500ms.
+// (모터 안전은 원래도 CPU가 살아 있어야 도는 데드맨이 맡으므로 실질 차이는 없고,
+//  대신 "왜 죽었는지"를 얻는다. 얻는 게 훨씬 크다.)
+ISR(WDT_vect){
+  wdtHit   = WDT_MAGIC;
+  wdtPhase = lastPhase;
+  wdtNear++;
+}
+
+// ★ main()보다 먼저 도는 .init3. 여기서 MCUSR을 읽어야 하는 이유:
+//   Uno 부트로더(optiboot)는 MCUSR을 읽고 **0으로 지운 뒤** 스케치로 넘어간다.
+//   setup()에서 읽으면 이미 늦어 항상 0이다. r2는 optiboot 6+ 가 지우기 전에
+//   남겨두는 사본이라 부트로더 버전에 따라 이쪽이 답을 갖고 있다.
+//   wdt_disable()도 여기서 — 워치독 리셋 후 WDT가 켜진 채로 남아 무한 리셋
+//   루프에 빠지는 고전적 함정을 막는다(구형 부트로더에서 실제로 일어난다).
+void earlyInit(void) __attribute__((naked, used, section(".init3")));
+void earlyInit(void) {
+  __asm__ __volatile__("mov %0, r2\n" : "=r"(r2Save));
+  mcusrSave = MCUSR;
+  MCUSR = 0;
+  wdt_disable();
+}
+
+uint16_t i2cErr = 0;    // Wire 타임아웃 횟수 = I2C 버스가 물린 횟수
 
 // PCA9685 채널 (모터 A/B/C/D 각 2채널)
 #define A1 0
@@ -95,6 +184,9 @@ void driveWheel(uint8_t w, int s){
 //  FL = vx - vy - w ; FR = vx + vy + w ; RL = vx + vy - w ; RR = vx - vy + w
 // 바퀴→채널: A=FR, B=FL, C=RR, D=RL
 void applyCurrent(){
+  // ★ 흔적을 먼저 남긴다. 여기서 리셋되면 다음 부팅이 last=I2C로 보고하고,
+  //   그게 곧 "TWI 버스가 물려 워치독이 물었다"는 증거다.
+  lastPhase = PH_I2C;
   int FL = curVx - curVy - curW;
   int FR = curVx + curVy + curW;
   int RL = curVx + curVy - curW;
@@ -103,10 +195,15 @@ void applyCurrent(){
   driveWheel(1, FL);  // B
   driveWheel(2, RR);  // C
   driveWheel(3, RL);  // D
+  // 타임아웃이 걸렸다면 위 8채널 중 일부는 안 써졌다 — 다음 틱이 다시 쓰므로
+  // 복구는 저절로 되고, 여기서는 **몇 번 물렸는지**만 센다(하트비트로 보고).
+  if(Wire.getWireTimeoutFlag()){ i2cErr++; Wire.clearWireTimeoutFlag(); }
+  lastPhase = PH_IDLE;
 }
 
 // 즉시 정지 — 슬루를 건너뛴다(비상/안전 경로).
 void hardStop(){
+  lastPhase = PH_STOP;
   tgtVx = tgtVy = tgtW = 0;
   curVx = curVy = curW = 0;
   testing = false;
@@ -159,7 +256,64 @@ int8_t verifyCrc(char* line){
   return (got == want) ? 1 : -1;
 }
 
+const __FlashStringHelper* phaseName(uint8_t p){
+  switch(p){
+    case PH_IDLE:  return F("idle");
+    case PH_RX:    return F("serial");
+    case PH_I2C:   return F("I2C");     // ← PCA9685 쓰는 중 = TWI 버스 행 의심
+    case PH_SETHZ: return F("setHz");   // ← F 명령의 delay(100)
+    case PH_STOP:  return F("stop");
+    case PH_TEST:  return F("test");
+    default:       return F("boot");
+  }
+}
+
+bool bootWarm = false;    // SRAM이 살아남았나 (= 전원이 유지된 채 칩만 리셋)
+bool bootByWdt = false;   // 워치독 ISR이 자백을 남겼나
+
+// 부팅 흔적을 확정한다 — setup에서 **딱 한 번**만.
+void latchBootInfo(){
+  bootWarm  = (bootMagic == BOOT_MAGIC);
+  bootByWdt = bootWarm && (wdtHit == WDT_MAGIC);
+  if(bootWarm){ prevPhase = bootByWdt ? wdtPhase : lastPhase; bootCount++; }
+  else        { prevPhase = PH_BOOT; bootCount = 1; }   // 콜드 = SRAM이 깨졌다
+  bootMagic = BOOT_MAGIC;
+  wdtHit = 0;               // 다음 부팅이 이 자백을 물려받지 않게 지운다
+  lastPhase = PH_BOOT;
+}
+
+// "왜 재부팅했나"를 한 줄로. 젯슨(motor_link)이 이 줄을 파싱해 대시보드에 띄운다.
+//
+// 판정 근거 — MCUSR이 아니라 **우리가 남긴 흔적**이다(이 부트로더는 MCUSR을 지운다):
+//   WDT    : 워치독 ISR이 자백을 남겼다 → loop가 250ms 넘게 막혔다. last=가 어디서인지.
+//   POWER  : SRAM이 깨졌다(cold) → 전원이 실제로 나갔다. USB/전원계 문제.
+//   EXT|BOD: warm인데 워치독은 아니다 → 리셋핀(DTR=젯슨이 포트를 연 것) 아니면
+//            브라운아웃. 젯슨은 자기가 포트를 열었는지 아니까 그쪽에서 갈린다.
+void printBootReport(){
+  Serial.print(F("boot #")); Serial.print(bootCount);
+  Serial.print(bootWarm ? F(" warm") : F(" cold"));
+  Serial.print(F(" cause="));
+  if(bootByWdt)       Serial.print(F("WDT"));
+  else if(!bootWarm)  Serial.print(F("POWER"));
+  else                Serial.print(F("EXT|BOD"));
+  Serial.print(F(" last=")); Serial.print(phaseName(prevPhase));
+  Serial.print(F(" i2cerr=")); Serial.print(i2cErr);
+  Serial.print(F(" near=")); Serial.print(wdtNear);
+  // 참고용 원시값. 이 보드에선 둘 다 못 믿지만(부트로더가 지움), 다른 보드로
+  // 옮겼을 때 유효하면 그때는 더 정확한 정보다. mcusr 상위 4비트는 항상 0이어야
+  // 하므로 그걸로 "믿을 수 있는 값인지"를 판별할 수 있다.
+  Serial.print(F(" mcusr=0x")); Serial.print(mcusrSave, HEX);
+  Serial.print(F(" r2=0x")); Serial.println(r2Save, HEX);
+}
+
 void handleLine(char* line){
+  // ★ 명령 하나마다 워치독 예산을 새로 준다. wdt_reset()은 loop() 맨 위에만
+  //   있었는데, 버퍼에 쌓인 명령은 **한 loop 패스 안에서 전부** 처리된다.
+  //   F가 두 개 들어오면 delay(100)×2 = 200ms라 250ms에 아슬아슬했고, 그 사이
+  //   V 몇 개가 더 끼면 넘긴다 — 재부팅→튜닝 재적용(F,P,R)→다시 재부팅의
+  //   자기증폭 고리가 여기서 시작됐을 수 있다(2026-08-11 acks에 R이 두 번 찍혔다).
+  wdt_reset();
+  lastPhase = PH_RX;
   int8_t crc = verifyCrc(line);
   if(crc < 0){
     rxBad++;
@@ -211,22 +365,55 @@ void handleLine(char* line){
     Serial.print(F("ok R ")); Serial.print(ACCEL); Serial.print(' '); Serial.println(DECEL);
   } else if(c=='F'){
     int hz=nextInt(p);
-    if(hz>=24 && hz<=1526){ faboPWM.set_hz(hz); applyCurrent(); }
+    if(hz>=24 && hz<=1526){
+      // set_hz는 라이브러리 안에서 delay(100)을 태운다(PCA9685 재시작 대기).
+      // 그 100ms가 워치독 예산을 통째로 먹으므로 앞뒤로 감아준다.
+      lastPhase = PH_SETHZ;
+      wdt_reset(); faboPWM.set_hz(hz); wdt_reset();
+      applyCurrent();
+    }
     Serial.print(F("ok F ")); Serial.println(hz);
+  } else if(c=='W'){
+    // 워치독 자가진단 — **일부러** loop를 멈춘다. 이 계측의 존재 이유가
+    // "워치독이 물었다"를 신뢰성 있게 보고하는 것인데, 그게 실제로 동작하는지
+    // 확인할 방법이 없으면 0이 나와도 그게 '안 물렸다'인지 '못 잡았다'인지 모른다.
+    // 안전: 먼저 바퀴를 세우고 멈춘다. 250ms 뒤 ISR이 자백을 남기고,
+    //      다시 250ms 뒤 리셋되어 boot 줄에 cause=WDT last=test로 나온다.
+    hardStop();
+    Serial.println(F("ok W (일부러 멈춥니다 — 워치독이 500ms 안에 살려야 정상)"));
+    Serial.flush();
+    lastPhase = PH_TEST;
+    for(;;) { }
   } else if(c=='?'){
     Serial.print(F("st cur=")); Serial.print(curVx); Serial.print(','); Serial.print(curVy);
     Serial.print(','); Serial.print(curW);
     Serial.print(F(" MAX_PWM=")); Serial.print(MAX_PWM);
     Serial.print(F(" slew=")); Serial.print(ACCEL); Serial.print('/'); Serial.print(DECEL);
     Serial.print(F(" strict=")); Serial.print(strictCrc);
+    Serial.print(F(" i2cerr=")); Serial.print(i2cErr);
     Serial.print(F(" POL=")); for(uint8_t i=0;i<4;i++){Serial.print(POL[i]);Serial.print(',');}
     Serial.println();
+    printBootReport();
   }
 }
 
 void setup(){
   wdt_disable();
+  latchBootInfo();          // .init3가 남긴 흔적을 확정 — 출력보다 먼저
   Serial.begin(115200);
+  // ★ I2C 하드닝. AVR TWI는 버스가 물리면(모터 스위칭 노이즈로 SDA가 눌리면)
+  //   endTransmission()에서 **타임아웃 없이 무한 대기**한다 → loop가 250ms를 넘겨
+  //   워치독이 문다. "USB는 멀쩡한데 보드만 재부팅"의 1순위 후보라 여기를 막는다.
+  //   (Wire.begin()은 FaBoPWM 생성자가 이미 불렀다 — 전역 객체라 setup보다 먼저 돈다.)
+  // ⚠ setWireTimeout/getWireTimeoutFlag는 arduino:avr **1.8.1+** 에만 있다.
+  //   흔히 쓰는 `#if defined(WIRE_HAS_TIMEOUT)` 가드는 이 코어(1.8.8)에 그 매크로가
+  //   없어서 **블록을 통째로 날려버린다** — 컴파일은 되는데 타임아웃이 안 걸린
+  //   펌웨어가 나온다. 그러니 가드 없이 직접 부른다(구형 코어면 컴파일 에러로
+  //   즉시 드러나는 편이 조용히 무력화되는 것보다 낫다).
+  Wire.setWireTimeout(3000, true);   // 3ms 넘으면 포기 + TWI 리셋
+  // 100kHz → 400kHz. applyCurrent()는 채널당 4트랜잭션 × 8채널이라 100kHz에서
+  // ~9.5ms가 걸렸다 — 슬루 틱(5ms)보다 길어서 램프가 사실상 절반 속도로 돌았다.
+  Wire.setClock(400000);
   if(faboPWM.begin()){
     Serial.println(F("Find PCA9685 OK"));
     faboPWM.init(0);              // 부팅 순간 채널 전부 0 — v1의 init(300)은 기동 시 미세 통전
@@ -236,12 +423,19 @@ void setup(){
   faboPWM.set_hz(PWM_HZ_DEFAULT); // ★ 50 → 1500Hz. 저주파 "우우웅" 제거
   hardStop();
   lastCmd = lastTick = millis();
-  Serial.println(F("mecanum_stable v2 ready. proto: V vx vy w | S | T i d | P n | L .. | R a d | F hz | ? (+*CRC)"));
-  wdt_enable(WDTO_250MS);   // HW 워치독 (행 자동복구)
+  // 배너보다 **먼저** 리셋 원인을 뱉는다 — 젯슨은 배너를 보고 "재부팅했다"고
+  // 판정하므로, 그 시점엔 원인 줄이 이미 도착해 있어야 함께 로그에 남는다.
+  printBootReport();
+  Serial.println(F("mecanum_stable v2.1 ready. proto: V vx vy w | S | T i d | P n | L .. | R a d | F hz | ? (+*CRC)"));
+  armWatchdog();   // HW 워치독 250ms — 인터럽트 우선(원인을 남기고 리셋)
 }
 
 void loop(){
   wdt_reset();
+  // ISR이 한 번 뜨면 WDIE가 자동으로 꺼진다(그 다음 타임아웃이 진짜 리셋).
+  // 여기까지 왔다는 건 막혔다가 **살아났다**는 뜻이므로, 다시 무장해 다음
+  // 사고도 잡는다. wdtNear가 늘어나는데 재부팅은 없다면 = 아슬아슬한 근접 사고.
+  if(!(WDTCSR & _BV(WDIE))) armWatchdog();
 
   // 시리얼 수신 (논블로킹)
   while(Serial.available()){
@@ -288,7 +482,13 @@ void loop(){
     Serial.print(F("hb ")); Serial.print(now);
     Serial.print(F(" rx=")); Serial.print(rxOk);
     Serial.print(F(" bad=")); Serial.print(rxBad);
+    // I2C가 물린 횟수. 0이 아니면 TWI 버스가 노이즈로 눌리고 있다는 직접 증거다
+    // (v2.1 전에는 이때 그냥 행에 걸려 워치독 리셋으로 끝났다).
+    Serial.print(F(" i2c=")); Serial.print(i2cErr);
+    Serial.print(F(" wdt=")); Serial.print(wdtNear);
     Serial.print(F(" v=")); Serial.print(curVx); Serial.print(',');
     Serial.print(curVy); Serial.print(','); Serial.println(curW);
   }
+
+  lastPhase = PH_IDLE;   // 한 바퀴를 무사히 돌았다 — 여기서 죽으면 last=idle
 }

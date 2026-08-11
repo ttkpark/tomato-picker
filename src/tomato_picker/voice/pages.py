@@ -722,10 +722,25 @@ _DIAG_JS = """
     h += card('거부(nak)', (s.nak || 0),
               (r.nak ? r.nak.toFixed(1) + '/s 증가 중' : '증가 없음'),
               s.nak ? (r.nak ? 'bad' : 'warn') : 'ok');
-    // board_resets는 /control 배지에 없다 — 여기가 유일하게 보이는 곳이다.
+    // ★ 재부팅 원인. v2.1 펌웨어가 배너 직전에 뱉는 boot 줄에서 왔다.
+    //    WDT   = 워치독 → loop가 250ms 막혔다(펌웨어/I2C 문제. 전원 아님)
+    //    POWER = SRAM이 깨졌다 → 전원이 실제로 나갔다(전원계 문제)
+    //    EXT|BOD = 리셋핀(DTR=우리가 포트를 연 것) 또는 브라운아웃
+    const causes = s.boot_causes || {};
+    const ckeys = Object.keys(causes);
+    const worst = causes.WDT ? 'bad' : (causes.POWER ? 'bad' : (s.board_resets ? 'warn' : 'ok'));
     h += card('보드 재부팅', (s.board_resets || 0),
-              s.board_resets ? '⚠ 전원 강하/워치독 의심' : '없음',
-              s.board_resets ? 'bad' : 'ok');
+              ckeys.length ? ckeys.map(k => k + ' ' + causes[k] + '회').join(' · ')
+                           : (s.board_resets ? '원인 미상(구 펌웨어)' : '없음'),
+              worst);
+    // I2C가 물린 횟수 = TWI 버스에 모터 노이즈가 타는 직접 증거.
+    h += card('I2C 버스 물림', (s.i2c_err || 0),
+              s.i2c_err ? '⚠ 모터 노이즈가 I2C에 탑니다' : '없음',
+              s.i2c_err ? 'warn' : 'ok');
+    // 워치독이 물었다가 살아난 횟수. 재부팅은 안 났지만 loop가 250ms 막혔다는 뜻.
+    h += card('loop 막힘(근접)', (s.wdt_near || 0),
+              s.wdt_near ? '⚠ 250ms 막혔다 복구됨' : '없음',
+              s.wdt_near ? 'warn' : 'ok');
     h += card('링크 복구', (s.hb_resets || 0),
               s.hb_resets ? '⚠ 하트비트 끊겨 재연결함' : '없음',
               s.hb_resets ? 'warn' : 'ok');
@@ -743,9 +758,15 @@ _DIAG_JS = """
     grid.innerHTML = h;
 
     const acks = document.getElementById('acks');
-    acks.textContent = (s.acks && s.acks.length)
+    const ackTxt = (s.acks && s.acks.length)
       ? '보드 확인 응답: ' + s.acks.join('  |  ')
       : '보드 확인 응답 없음 — 설정(F/P/R)이 아직 안 먹었을 수 있습니다';
+    // 마지막 리셋 원인 원문도 같이 — 판정이 어디서 나왔는지 눈으로 확인 가능하게.
+    // ⚠ 이 JS는 파이썬 삼중따옴표 문자열 안에 들어 있다. 그래서 여기 쓰는
+    //    역슬래시-n은 반드시 한 번 더 이스케이프해야 한다 — 안 그러면 파이썬이
+    //    진짜 개행으로 바꿔버려 JS 문자열 리터럴이 그 자리에서 깨진다.
+    acks.textContent = ackTxt + (s.boot_report ? '\\n마지막 부팅: ' + s.boot_report : '');
+    acks.style.whiteSpace = 'pre-wrap';
   }
 
   function renderPulses(d) {
