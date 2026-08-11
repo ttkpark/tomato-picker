@@ -558,26 +558,38 @@ class LineDriver:
         base = 1 if goal.get("side") == "right" else -1
         return base if self._pulse_gate(goal, self._mode) else 0
 
-    def _preflight(self) -> None:
+    def _preflight(self, mode: str = "") -> None:
         """출발 전 점검 — 여기서 막아야 "눌렀는데 바로 멈춘다"가 안 생긴다.
 
         기준선이 지금 위치와 너무 어긋나 있으면(코스를 새로 깔았거나 로봇을 옮긴
         뒤 기준을 다시 안 잡은 경우) 출발하자마자 안전정지에 걸린다. 그 상태를
         '실패'로 조용히 넘기지 말고, **무엇을 눌러야 하는지**까지 알려준다.
+
+        ⚠ 2026-08-11 실사고. 이 검사가 **정렬에도** 걸려 있었다. 그런데 정렬은
+        "벗어난 걸 되돌리는" 동작이다 — 크게 벗어났을 때 유일한 복구 수단이
+        바로 그 벗어남을 이유로 잠긴 것이다. dy=246px에서 주행도 정렬도 안 되어
+        사람이 로봇을 손으로 들어 옮겨야 했다. 테이프가 **보이기만 하면** 정렬은
+        언제나 시도할 수 있어야 한다(폭주 방지는 발산 감지가 따로 한다).
         """
         line = self._line or {}
         if not line.get("found"):
             raise RuntimeError("테이프가 안 보입니다 — 카메라가 띠를 보는지 확인하세요")
+        # 정렬은 언제나 시도할 수 있고, 정렬 우회가 가능한 모드도 막을 이유가 없다.
+        # 이 검사의 목적은 "눌렀는데 바로 멈춘다"를 없애는 것인데, 우회가 있으면
+        # 바로 멈추는 대신 **알아서 붙이고 출발**하기 때문이다. 사람에게 버튼을
+        # 두 번 누르게 하지 않는다.
+        if mode == "align" or (self.no_strafe and mode in DETOUR_MODES):
+            return
         dy = line.get("offset_y_norm")
         if dy is not None and abs(dy) > LINE_MAX_DY_NORM:
             raise RuntimeError(
                 f"기준선에서 너무 멀어 출발할 수 없습니다(dy={line.get('offset_y_px'):.0f}px). "
-                "지금 거리가 맞다면 [현재 위치를 기준선으로]를 누르고, "
-                "아니면 로봇을 기준 거리로 옮긴 뒤 다시 시도하세요."
+                "먼저 [🎯 정렬(톡톡)]로 붙인 뒤 다시 시도하세요. "
+                "지금 거리가 맞다면 [현재 위치를 기준선으로]를 누르세요."
             )
 
     def _start(self, mode: str, goal: dict, detail: str) -> None:
-        self._preflight()
+        self._preflight(mode)
         if goal.get("side") in ("left", "right"):
             # 주황(끝)을 만났을 때 "어느 끝인지"는 진행 방향으로 판정한다 —
             # 출발 즉시 만날 수도 있으니 루프가 돌기 전에 미리 정해 둔다.
@@ -861,7 +873,14 @@ class LineDriver:
                 time.sleep(self.RATE)
                 continue
 
-            stop_reason = self._safety_check(self._line, mode)
+            # 순서가 곧 정책이다:
+            #   ① 테이프 분실 → 무조건 정지(눈 감고 달리지 않는다)
+            #   ② 목표 도달 / 시간 초과
+            #   ③ **벗어났으면 정렬로 붙여본다** ← 정지보다 먼저 시도한다
+            #   ④ 그래도 안 되면(정렬 불가·횟수 소진) 그때 정지
+            # ③을 ④보다 먼저 두는 게 핵심이다. 예전엔 ④가 먼저라 크게 벗어나면
+            # 붙여볼 기회도 없이 멈췄고, 멈춘 뒤에는 정렬도 잠겨 있었다.
+            stop_reason = self._safety_lost(self._line)
             if stop_reason is None:
                 stop_reason = self._goal_reached(self._line, goal, mode)
             if stop_reason is None and time.monotonic() > self._deadline:
@@ -881,8 +900,15 @@ class LineDriver:
                 time.sleep(self.RATE)
                 continue
 
-            # 게걸음 금지 모드: 거리가 너무 벌어졌으면 주행을 접고 정렬하러 간다.
+            # 게걸음 금지 모드: 거리가 벌어졌으면 주행을 접고 정렬하러 간다.
             if self._maybe_detour(self._line, mode):
+                time.sleep(self.RATE)
+                continue
+
+            # 정렬로도 못 붙이는 상황(정렬 꺼짐·jog·횟수 소진)에서의 마지막 정지.
+            stop_reason = self._safety_dy(self._line, mode)
+            if stop_reason:
+                self.cancel(stop_reason)
                 time.sleep(self.RATE)
                 continue
 
@@ -904,8 +930,8 @@ class LineDriver:
                 self.cancel(f"주행 실패: {exc}")
             time.sleep(self.RATE)
 
-    def _safety_check(self, line: dict, mode: str) -> str | None:
-        """눈 감고 달리지 않기 — 테이프를 놓쳤거나 너무 벗어나면 정지."""
+    def _safety_lost(self, line: dict) -> str | None:
+        """눈 감고 달리지 않기 — 테이프를 놓치면 정지. 어떤 모드에서도 최우선."""
         now = time.monotonic()
         if not line.get("found"):
             if self._lost_since is None:
@@ -914,8 +940,23 @@ class LineDriver:
                 return "테이프를 놓쳐 정지 — 카메라가 띠를 보게 한 뒤 다시 시도"
             return None
         self._lost_since = None
+        return None
+
+    def _safety_dy(self, line: dict, mode: str) -> str | None:
+        """너무 벗어났을 때의 마지막 방어선.
+
+        ⚠ 정렬(align)은 **면제**다. 정렬은 벗어남을 되돌리는 동작이라 여기에
+        걸면 복구가 스스로 막힌다(2026-08-11 실사고). 정렬의 폭주 방지는
+        발산 감지 — 펄스를 쳐도 오차가 안 줄면 스스로 포기한다.
+
+        주행에서도 이 정지는 **정렬 우회를 먼저 시도한 뒤**에만 도달한다
+        (_run 순서 참고). 즉 "붙일 수 있으면 붙여보고, 그래도 안 되면 선다".
+        """
+        if mode == "align":
+            return None
         dy = abs(line.get("offset_y_norm") or 0.0)
         if dy > LINE_MAX_DY_NORM:
             return (f"기준선에서 너무 벗어나 정지(dy={line.get('offset_y_px')}px) — "
-                    "보정 부호(LINE_DY_SIGN)가 반대일 수 있습니다")
+                    "[🎯 정렬(톡톡)]로 붙인 뒤 다시 시도하세요. "
+                    "정렬해도 안 붙으면 보정 부호가 반대일 수 있습니다")
         return None
