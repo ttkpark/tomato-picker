@@ -302,9 +302,14 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
                 return False, f"허용되지 않은 서비스: {name}"
             # 분리 실행 + 1초 지연: tomato-voice가 자기 자신을 재시작할 때
             # HTTP 응답이 브라우저에 도착할 시간을 준다(systemd Restart=always라
-            # 죽어도 다시 올라온다). 젯슨은 passwordless sudo(-n = 프롬프트 금지).
+            # 죽어도 다시 올라온다).
+            # ⚠ sudo를 쓰면 안 된다 — 유닛의 CapabilityBoundingSet이 자식의 권한
+            #   상승을 전부 잘라 "unable to change to root gid"로 실패한다
+            #   (2026-08-12 실사고: 버튼이 조용히 아무것도 안 했다). 대신 polkit
+            #   규칙(deploy/50-tomato-services.rules)이 server 계정에 이 유닛들의
+            #   restart만 허용한다 — systemctl은 D-Bus 경유라 권한 상승이 필요 없다.
             subprocess.Popen(
-                ["sudo", "-n", "sh", "-c", f"sleep 1 && systemctl restart {name}"],
+                ["sh", "-c", f"sleep 1 && systemctl restart {name}"],
                 start_new_session=True,
             )
             note = (" — 화면이 몇 초 끊겼다 돌아옵니다" if name == "tomato-voice" else "")
