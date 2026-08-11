@@ -1100,6 +1100,8 @@ class LineDriver:
             return None
 
         if mode == "align_mark":
+            if not line.get("found"):
+                return None      # 분실 중엔 판정 유보 — 길어지면 _safety_lost가 세운다
             got = self._nearest_station_marker(line)
             if got is None:
                 return None      # 깜빡임일 수 있다 — 타임아웃(12s)이 안전망
@@ -1127,9 +1129,15 @@ class LineDriver:
             return None
 
         if mode == "align":
+            # ⚠ 테이프가 안 보이면 완료 선언 금지. _align_error는 None을 0으로
+            #   보므로, 분실 순간에 "오차 0 = 정렬 완료"가 되고 그 메시지의
+            #   f"{None:.0f}" 포맷이 **스레드를 죽였다**(2026-08-11 21:46 실사고
+            #   — 이후 모든 버튼이 영원히 무반응, 화면은 낡은 스냅샷 유지).
+            if not line.get("found"):
+                return None      # 분실이 길면 _safety_lost가 세운다
             err = self._align_error(line)
             if err <= 1.0:
-                return (f"정렬 완료 — dy {line.get('offset_y_px'):.0f}px"
+                return (f"정렬 완료 — dy {line.get('offset_y_px') or 0:.0f}px"
                         f" ∠{line.get('angle_deg') or 0:.1f}°")
             # ⚠ 2026-08-11 수정. 예전엔 "OFF 구간이면" 발산을 셌는데, 이 루프는
             #   50Hz라 OFF 한 번(0.12초)이 **6틱**이다. 정지 중엔 오차가 변할 리
@@ -1180,6 +1188,22 @@ class LineDriver:
 
     def _run(self) -> None:
         while True:
+            # ⚠ 이 스레드는 절대 죽으면 안 된다. 죽으면 라인 주행 전체가 침묵하는데
+            #   상태 API는 마지막 스냅샷을 계속 내보내서 **화면만 봐서는 모른다**
+            #   (2026-08-11: 포맷 예외 하나로 스레드가 죽고, 이후 40분간 "테이프
+            #   없음(낡은 사유)" 고정 + 버튼 전부 무반응). 예외는 정지+기록으로
+            #   바꾸고 루프는 계속 돈다 — linkmon 샘플러와 같은 원칙.
+            try:
+                self._tick_once()
+            except Exception as exc:  # noqa: BLE001 - 제어 스레드의 마지막 방벽
+                print(f"  [line] 루프 예외(복구됨): {exc!r}")
+                try:
+                    self.cancel(f"내부 오류로 정지: {exc}")
+                except Exception:  # noqa: BLE001
+                    pass
+                time.sleep(self.RATE)
+
+    def _tick_once(self) -> None:
             line = self._read_line()
             if line:
                 self._line = line
@@ -1212,7 +1236,7 @@ class LineDriver:
 
             if mode == "idle":
                 time.sleep(self.RATE)
-                continue
+                return
 
             # 순서가 곧 정책이다:
             #   ① 테이프 분실 → 무조건 정지(눈 감고 달리지 않는다)
@@ -1235,7 +1259,7 @@ class LineDriver:
                     and self._nearest_station_marker(self._line) is not None):
                 self._begin_arrive_align(reached)
                 time.sleep(self.RATE)
-                continue
+                return
 
             if stop_reason:
                 # 접어뒀던 주행이 있으면, 정렬이 **성공했을 때만** 이어서 재개한다.
@@ -1244,24 +1268,24 @@ class LineDriver:
                     if self._align_error(self._line) <= 1.0:
                         self._resume_travel()
                         time.sleep(self.RATE)
-                        continue
+                        return
                     self._resume = None
                     stop_reason = f"{stop_reason} — 주행 재개를 취소했습니다"
                 self.cancel(stop_reason)
                 time.sleep(self.RATE)
-                continue
+                return
 
             # 게걸음 금지 모드: 거리가 벌어졌으면 주행을 접고 정렬하러 간다.
             if self._maybe_detour(self._line, mode):
                 time.sleep(self.RATE)
-                continue
+                return
 
             # 정렬로도 못 붙이는 상황(정렬 꺼짐·jog·횟수 소진)에서의 마지막 정지.
             stop_reason = self._safety_dy(self._line, mode)
             if stop_reason:
                 self.cancel(stop_reason)
                 time.sleep(self.RATE)
-                continue
+                return
 
             speed = goal.get("speed", LINE_SPEED)
             if goal.get("side") in ("left", "right"):
