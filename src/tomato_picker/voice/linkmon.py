@@ -50,6 +50,9 @@ class LinkSampler:
     HISTORY_SEC = 20.0
     # 펄스 기록 개수. 화면엔 최근 16개만 쓰지만 통계용으로 더 들고 있는다.
     MAX_PULSES = 40
+    # "주행 중"으로 볼 시간창. MotorLink.ACTIVE_SEC와 같은 값이어야 기대
+    # 수신율 판정이 실제 송신 주기와 어긋나지 않는다.
+    ACTIVE_SEC = 1.0
 
     def __init__(self, get_base) -> None:
         # get_base: 지금의 base 객체를 돌려주는 콜러블. 서버가 하드웨어보다
@@ -157,6 +160,11 @@ class LinkSampler:
             lag_max, self._lag_max = self._lag_max, 0.0
         wave = [s for s in recent if s[0] > since]
         widths = [p["on_ms"] for p in pulses]
+        # ⚠ 기대 수신율은 **상태에 따라 다르다.** MotorLink는 아무도 지령을 안
+        # 주면 IDLE_INTERVAL_SEC(0.1s)로 늘어져 10/s만 보낸다 — 정지 중 10/s는
+        # 정상이다. 이걸 모르고 50/s와 비교하면 세워둔 로봇이 늘 "빨간불"로
+        # 보여서, 정작 주행 중의 진짜 지연을 못 알아본다.
+        driving = self._recently_driving(recent)
         return {
             "t": recent[-1][0] if recent else since,
             "clock": time.strftime("%H:%M:%S"),
@@ -172,8 +180,23 @@ class LinkSampler:
             } if widths else None),
             "sample_lag_ms": round(lag_max * 1000, 1),
             "sample_hz": self.SAMPLE_HZ,
-            "expect_rx": 50,   # MotorLink SEND_INTERVAL_SEC=0.02 → 초당 50프레임
+            "driving": driving,
+            # 주행 중 50/s(SEND_INTERVAL_SEC=0.02) · 정지 중 10/s(IDLE_INTERVAL_SEC=0.1)
+            "expect_rx": 50 if driving else 10,
         }
+
+    @classmethod
+    def _recently_driving(cls, recent: list) -> bool:
+        """최근 ACTIVE_SEC 안에 0이 아닌 지령이 있었나.
+
+        MotorLink가 빠른 주기를 유지하는 조건("상위가 활발히 지령을 갱신 중")의
+        근사다. 펄스 주행은 OFF 구간에 0을 보내지만 그 사이 ON이 있으므로 여기
+        걸린다 — MotorLink 쪽 판정과 결과가 같아진다.
+        """
+        if not recent:
+            return False
+        cutoff = recent[-1][0] - cls.ACTIVE_SEC
+        return any(s[0] >= cutoff and (s[1] or s[2] or s[3]) for s in recent)
 
     @classmethod
     def _rates(cls, recent: list) -> dict:

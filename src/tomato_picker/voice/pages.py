@@ -700,16 +700,18 @@ _DIAG_JS = """
     conn.style.background = ok ? 'color-mix(in srgb, #2ecc71 18%, Canvas)'
                                : 'color-mix(in srgb, #e74c3c 18%, Canvas)';
 
-    // ★ 이 화면에서 제일 중요한 숫자. MotorLink가 20ms마다 한 프레임씩
-    //    보내므로 보드의 rx 카운터는 초당 50씩 늘어야 한다. 그보다 낮으면
-    //    젯슨 송신 스레드가 밀린 것이고, 그게 곧 펄스가 들쭉날쭉한 이유다.
+    // ★ 이 화면에서 제일 중요한 숫자. 주행 중엔 20ms마다 보내므로 보드의 rx
+    //    카운터가 초당 50씩 늘어야 한다. 그보다 낮으면 젯슨 송신 스레드가 밀린
+    //    것이고, 그게 곧 펄스가 들쭉날쭉한 이유다.
+    //    ⚠ 정지 중 기대치는 10/s다(MotorLink가 IDLE_INTERVAL_SEC로 늘어진다).
+    //    이걸 구분 안 하면 세워둔 로봇이 늘 빨간불이라 경고가 무의미해진다.
     let h = '';
     if (r.rx == null) {
       h += card('수신율', '—', '데이터 모으는 중');
     } else {
-      const exp = d.expect_rx;
+      const exp = d.expect_rx, moving = d.driving;
       const cls = r.rx >= exp * 0.9 ? 'ok' : (r.rx >= exp * 0.6 ? 'warn' : 'bad');
-      const note = cls === 'ok' ? '정상'
+      const note = cls === 'ok' ? (moving ? '주행 중 · 정상' : '정지 중 · 정상')
                  : (cls === 'warn' ? '⚠ 젯슨 송신 지연' : '⚠ 심각 — 지연/단절');
       h += card('수신율 (보드 rx)', r.rx.toFixed(1) + '<small>/s</small>',
                 '기대 ' + exp + '/s · ' + note, cls);
