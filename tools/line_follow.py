@@ -89,7 +89,14 @@ JPEG_QUALITY = int(os.environ.get("LF_JPEG_QUALITY", "70"))
 TAPE_MARGIN = float(os.environ.get("LF_TAPE_MARGIN", "22"))  # 중앙값보다 이만큼은 높아야
 # 한 행이 "띠"로 인정되려면 화면 폭의 이 비율 이상이 테이프여야 한다.
 # 테이프는 화면을 가로지르므로 값이 크고, 얼룩·반사는 이 폭이 안 나온다.
-BAND_ROW_FRAC = float(os.environ.get("LF_BAND_ROW_FRAC", "0.35"))
+# ⚠ 0.35였다가 0.28로(2026-08-11). **코스 끝점에서는 테이프가 화면을 다
+#   가로지르지 못하는 게 구조적으로 정상**이다 — 왼쪽 끝이면 오른쪽으로만
+#   이어지니 화면의 1/3~1/2만 덮는다. 실측: 좌측 끝점 정위치에서 34%가 나와
+#   35% 임계에 1%p 차이로 "테이프 없음"이 됐고, 출발 전 점검이 모든 주행
+#   버튼을 거부했다("로봇이 안 움직여"). 코스 밖 이탈(우측 끝 너머 타일)은
+#   22%였으므로 0.28은 그 둘을 가른다. 유령 검출은 여전히 separation·두께
+#   검사가 막는다.
+BAND_ROW_FRAC = float(os.environ.get("LF_BAND_ROW_FRAC", "0.28"))
 # 띠가 "이 열에 있다"고 볼 최소 세로 점유율(띠 두께 대비). 끝점에서 **어느 쪽으로
 # 코스가 이어지는지**를 판정할 때 쓴다 — 가장자리 번짐에 안 흔들리게 넉넉히.
 BAND_COL_FRAC = float(os.environ.get("LF_BAND_COL_FRAC", "0.40"))
