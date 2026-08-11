@@ -40,6 +40,7 @@ import time
 
 from ..config import (
     LINE_ALIGN_DIVERGE_LIMIT,
+    LINE_ALIGN_TIMEOUT_SEC,
     LINE_APPROACH_FRAC,
     LINE_COARSE_ON,
     LINE_COARSE_PERIOD,
@@ -53,12 +54,15 @@ from ..config import (
     LINE_LOST_STOP_SEC,
     LINE_MARK_CLEAR_FRAC,
     LINE_MAX_CORRECTION,
+    LINE_MAX_DETOURS,
     LINE_MAX_DY_NORM,
+    LINE_NO_STRAFE,
     LINE_PULSE_ON,
     LINE_PULSE_PERIOD,
     LINE_SPEED,
     LINE_STATION_LABELS,
     LINE_STATUS_PATH,
+    LINE_STRAFE_FIX_AT,
     LINE_TARGET_Y_FILE,
     LINE_TIMEOUT_SEC,
     LINE_TRAVEL_SIGN,
@@ -71,7 +75,11 @@ from ..config import (
 
 # 런타임에 뒤집을 수 있는 축·부호. 실기에서만 확정되는 값이라 파일로 뺀다.
 TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain",
-               "speed", "pulse_on", "pulse_period")
+               "speed", "pulse_on", "pulse_period", "no_strafe", "odom_sign")
+
+# 자동으로 정렬을 끼워 넣을 주행 모드. jog는 버튼 한 번 = 펄스 한 번이라
+# 중간에 정렬이 끼어들면 "톡 쳤는데 로봇이 혼자 움직인다"가 되므로 뺀다.
+DETOUR_MODES = ("goto_end", "travel", "station", "next_mark", "goto_color")
 
 
 def _load_saved(path: str) -> dict:
@@ -95,6 +103,8 @@ class LineDriver:
     # "톡톡"이 "주우웅"으로 들렸다(2026-08-10). 펄스를 짧게 쓰려면 루프가 더 촘촘해야 한다.
     RATE = 0.02
     MARK_TOL_FRAC = 0.12  # 마커가 화면 중앙 ±이 비율 안에 오면 "도착"
+    # 방향 추정에 쓸 최소 변위(px). 이보다 작으면 잡음으로 보고 무시한다.
+    DIR_ODOM_MIN_PX = 12.0
 
     def __init__(self, base, status_path: str = LINE_STATUS_PATH) -> None:
         self._base = base
@@ -119,10 +129,18 @@ class LineDriver:
         self._mark_armed = True          # 다음 마커 통과를 받을 준비가 됐나
         self._last_marker: dict | None = None
         self._last_dir = 0               # 마지막 진행 방향(+1 오른쪽 / -1 왼쪽)
+        self._dir_source = "미확인"      # 그 방향을 어디서 알았나(명령/오도메트리)
+        self._odom_prev: float | None = None   # 방향 추정용 직전 오도메트리 표본
         self._between = False            # 경유(초록)를 지나 지점 사이에 있나
         self._last_way: dict | None = None
         self._align_worst: float | None = None   # 정렬 중 최소 오차(발산 감지용)
         self._align_diverge = 0
+        self._align_gate = True    # 직전 틱의 펄스 게이트(발산 판정을 경계에서만 하려고)
+        # 게걸음 금지 모드에서 "잠시 정렬하러 갔다 오는" 상태.
+        # _resume = (원래 모드, 원래 goal, 남은 제한시간) — 정렬이 끝나면 되돌린다.
+        self._resume: tuple[str, dict, float] | None = None
+        self._detour_started = 0.0
+        self._detours = 0
         # 축·부호 — config 기본값 위에 현장에서 뒤집은 값을 얹는다.
         self._tune = {
             "dy_axis": LINE_DY_AXIS,
@@ -133,6 +151,10 @@ class LineDriver:
             "speed": float(LINE_SPEED),
             "pulse_on": float(LINE_PULSE_ON),
             "pulse_period": float(LINE_PULSE_PERIOD),
+            # 게걸음 금지(1=금지). 주행은 전후+회전만 쓰고, 거리 오차는 정렬이 잡는다.
+            "no_strafe": 1.0 if LINE_NO_STRAFE else 0.0,
+            # 수동 이동 방향 판정 부호(오도메트리 +가 "오른쪽"인가).
+            "odom_sign": 1.0,
         }
         self._tune.update(_load_saved(LINE_TUNING_FILE))
         self._thread = threading.Thread(target=self._run, daemon=True, name="line-drive")
@@ -224,6 +246,54 @@ class LineDriver:
             return "mid"
         return None
 
+    def _track_direction(self, line: dict) -> None:
+        """**실제로 움직인 방향**으로 진행 방향을 갱신한다 (자동주행 중이 아닐 때).
+
+        ⚠ 2026-08-11 실사고. 예전엔 _last_dir을 명령의 side("left"/"right")로만
+        정했다. 그래서 수동 조작(키보드·게임패드·손으로 밀기)으로 옮기면 방향이
+        **직전 명령 값에 멈춰** 있었고, 그 상태로 끝점(주황)을 지나면 반대쪽
+        끝으로 기록됐다 — 오른쪽 끝에 서 있는데 화면은 "0. 좌측 끝"이라고 했다.
+        한 번 어긋나면 이후 지점 번호가 전부 반대로 밀린다.
+
+        바닥 카메라 시각 오도메트리는 **무엇이 밀었든** 실제 변위를 알려주므로
+        수동 이동에는 그쪽이 맞다. 자동주행 중에는 기존대로 명령을 믿는다
+        (그쪽이 의도를 알고, 오도메트리는 펄스 사이 잡음이 섞인다).
+
+        화면 x축이 로봇의 좌우 중 어디인지는 카메라 장착에 달렸으므로 부호는
+        런타임 토글(odom_sign)로 뒤집는다 — 코드에 박으면 매번 배포해야 한다.
+        """
+        odom = line.get("odom_x_px")
+        if odom is None:
+            return
+        if self._odom_prev is None:
+            self._odom_prev = odom
+            return
+        delta = odom - self._odom_prev
+        if abs(delta) < self.DIR_ODOM_MIN_PX:
+            return              # 아직 의미 있는 이동이 아니다 — 기준점을 유지
+        self._odom_prev = odom
+        self._last_dir = 1 if delta * float(self._tune.get("odom_sign", 1.0)) > 0 else -1
+        self._dir_source = "오도메트리(수동 이동)"
+
+    def set_station(self, index: int) -> str:
+        """지금 있는 곳이 몇 번 지점인지 **사람이 직접 알려준다**.
+
+        마커를 세는 방식은 진행 방향에 의존하는데, 손으로 옮기거나 방향 부호가
+        어긋나면 그 전제가 깨진다. 그때 번호를 되찾는 가장 확실한 길 —
+        부호가 맞든 틀리든 이건 항상 통한다(데모 중 탈출구).
+        """
+        if not 0 <= index < len(LINE_STATION_LABELS):
+            raise ValueError(f"지점 번호는 0~{len(LINE_STATION_LABELS) - 1}")
+        with self._lock:
+            self._station = index
+            self._at_end = index in (0, len(LINE_STATION_LABELS) - 1)
+            self._between = False
+            self._mark_armed = True
+        if self._at_end:
+            # 끝점이면 변위 기준까지 같이 잡는다 — 절대 기준점이므로.
+            self._latch_end("left" if index == 0 else "right")
+        return f"현재 위치를 '{LINE_STATION_LABELS[index]}'로 설정했습니다"
+
     def _observe_markers(self, line: dict) -> None:
         """마커가 화면 중앙을 지나가는 순간을 잡아 지점 인덱스를 갱신한다.
 
@@ -307,6 +377,8 @@ class LineDriver:
             self._mode = "idle"
             self._goal = {}
             self._detail = reason
+            # 정지는 정지다 — 접어둔 주행이 나중에 되살아나면 안 된다.
+            self._resume = None
         try:
             self._base.hold(0, 0, 0)
         except Exception:  # noqa: BLE001 - 정지 실패해도 데드맨이 세운다
@@ -376,6 +448,11 @@ class LineDriver:
             "pulse_on": self._tune["pulse_on"],
             "pulse_period": self._tune["pulse_period"],
             "pulsing": self._tune["pulse_on"] < self._tune["pulse_period"] - 1e-6,
+            "no_strafe": self.no_strafe,
+            "detours": self._detours,
+            "resuming": self._resume is not None,
+            "last_dir": self._last_dir,
+            "dir_source": self._dir_source,
         }
 
     @property
@@ -453,6 +530,7 @@ class LineDriver:
         with self._lock:
             self._align_worst = None
             self._align_diverge = 0
+            self._align_gate = True
         return self._detail
 
     def _align_error(self, line: dict) -> float:
@@ -503,6 +581,10 @@ class LineDriver:
             self._deadline = time.monotonic() + LINE_TIMEOUT_SEC
             self._detail = detail
             self._lost_since = None
+            # 새 명령이니 "정렬 다녀오기" 상태도 초기화 — 이전 명령의 우회가
+            # 남아 있으면 엉뚱한 주행으로 되돌아간다.
+            self._resume = None
+            self._detours = 0
 
     def _odom(self) -> float | None:
         return (self._line or {}).get("odom_x_px")
@@ -522,6 +604,12 @@ class LineDriver:
             elif what == "yaw_enable":
                 # 회전 보정 켜기/끄기 — 발산하면 즉시 끌 수 있어야 한다.
                 self._tune["yaw_gain"] = 0.0 if self._tune["yaw_gain"] else float(LINE_YAW_GAIN_ON)
+            elif what == "no_strafe":
+                self._tune["no_strafe"] = 0.0 if self.no_strafe else 1.0
+            elif what == "odom_sign":
+                # 수동 이동 시 "오른쪽으로 갔다"를 판정하는 부호. 화면 x축이
+                # 로봇의 어느 쪽인지는 카메라 장착에 달렸다 — 실물로만 확정된다.
+                self._tune["odom_sign"] = -float(self._tune.get("odom_sign", 1.0))
             elif what in ("dy_sign", "yaw_sign", "travel_sign"):
                 self._tune[what] = -self._tune[what]
             else:
@@ -530,27 +618,94 @@ class LineDriver:
         self._save_tuning(snapshot)
         return (f"보정축={snapshot['dy_axis']} dy부호={snapshot['dy_sign']:+.0f} "
                 f"회전보정={'켜짐' if snapshot['yaw_gain'] else '꺼짐'}"
-                f"(부호{snapshot['yaw_sign']:+.0f}) 진행부호={snapshot['travel_sign']:+.0f}")
+                f"(부호{snapshot['yaw_sign']:+.0f}) 진행부호={snapshot['travel_sign']:+.0f} "
+                f"게걸음={'금지(전후·회전만)' if snapshot.get('no_strafe') else '허용'}")
 
-    def _command(self, line: dict, travel_dir: int, speed: int) -> tuple[int, int, int]:
+    @property
+    def no_strafe(self) -> bool:
+        """게걸음(횡이동) 금지 모드인가."""
+        return bool(self._tune.get("no_strafe", 1.0))
+
+    def _command(self, line: dict, travel_dir: int, speed: int,
+                 mode: str = "align") -> tuple[int, int, int]:
         """(vx, vy, w) 지령을 만든다.
 
         테이프까지의 거리 오차는 **횡방향**이라 보정축(기본 vy)에 싣고, 진행은
         나머지 축에 싣는다. 둘은 항상 직교해야 하므로 한쪽이 정해지면 다른 쪽도 정해진다.
+
+        ⚠ mode의 기본값이 "align"인 이유: 이 함수는 상태표시용 `_would`를 만들 때도
+        불리는데, 거기서는 **거리 보정이 어느 방향으로 나갈지**를 보여주는 게 목적이라
+        (부호 검증) 게걸음 금지와 무관하게 항상 계산해야 한다.
         """
         corr = w = 0
         if line.get("found"):
             # ★ 비례제어가 아니라 **펄스 뱅뱅**이다. 작은 값을 계속 흘리면 정지마찰을
             #   못 넘어 아무 일도 안 일어난다 — 사람이 q/e를 톡 칠 때처럼 확실히
             #   움직이는 크기로 짧게 주고, 멈춰서 정착시킨 뒤 다시 잰다.
-            corr = self._corr_pulse(line.get("offset_y_norm"), LINE_DY_GAIN,
-                                    self._tune["dy_sign"], LINE_DY_DEADBAND)
+            # 게걸음 금지면 **주행 중에는** 거리 보정을 싣지 않는다. 메카넘 횡이동은
+            # 롤러를 옆으로 미끄러뜨리며 가는 것이라 힘이 많이 들고 슬립도 크다.
+            # 거리 오차는 _maybe_detour()가 정렬(톡톡)로 따로 잡는다.
+            if not (self.no_strafe and mode != "align"):
+                corr = self._corr_pulse(line.get("offset_y_norm"), LINE_DY_GAIN,
+                                        self._tune["dy_sign"], LINE_DY_DEADBAND)
             w = self._corr_pulse(line.get("angle_deg"), self._tune["yaw_gain"],
                                  self._tune["yaw_sign"], LINE_YAW_DEADBAND)
         travel = int(self._tune["travel_sign"] * travel_dir * speed)
         if self._tune["dy_axis"] == "vy":
             return travel, corr, w      # 보정=게걸음, 진행=전후
         return corr, travel, w          # 보정=전후,   진행=게걸음
+
+    # ------------------------------------------------------------------
+    # 게걸음 금지 모드의 "잠시 정렬하고 오기"
+    # ------------------------------------------------------------------
+
+    def _maybe_detour(self, line: dict, mode: str) -> bool:
+        """거리 오차가 커졌으면 주행을 접고 정렬로 전환. 전환했으면 True.
+
+        게걸음을 안 쓰기로 했으니 주행 중에는 거리 오차를 되돌릴 수단이 없다.
+        사람이 [정렬]을 누를 때까지 기다리면 데모가 멈추므로 스스로 다녀온다.
+        """
+        if not self.no_strafe or mode not in DETOUR_MODES:
+            return False
+        dy = line.get("offset_y_norm")
+        if dy is None or abs(dy) < LINE_STRAFE_FIX_AT:
+            return False
+        if self._detours >= LINE_MAX_DETOURS:
+            # 계속 벗어난다면 보정 부호나 코스 쪽 문제다 — 무한 왕복하지 않는다.
+            self.cancel(f"거리 보정을 {LINE_MAX_DETOURS}번 했는데도 계속 벗어납니다 — "
+                        "/settings에서 [거리 부호 ±]를 확인하세요")
+            return True
+        now = time.monotonic()
+        with self._lock:
+            self._resume = (mode, dict(self._goal), self._deadline - now)
+            self._detour_started = now
+            self._detours += 1
+            self._mode = "align"
+            self._goal = {"speed": self._goal.get("speed", LINE_SPEED), "started": now}
+            self._deadline = now + LINE_ALIGN_TIMEOUT_SEC
+            self._detail = f"거리 보정 중(톡톡) #{self._detours} — 끝나면 주행을 계속합니다"
+            self._align_worst = None
+            self._align_diverge = 0
+            self._align_gate = True
+        return True
+
+    def _resume_travel(self) -> None:
+        """정렬을 마쳤다 — 접어뒀던 주행을 이어서 재개."""
+        now = time.monotonic()
+        with self._lock:
+            if self._resume is None:
+                return
+            mode, goal, remain = self._resume
+            self._resume = None
+            # ⚠ 시간 기반 주행(travel/jog)은 **실제로 굴러간 시간**만 세야 한다.
+            #   정렬하느라 서 있던 시간이 이동 시간에 포함되면 "1.5초 이동"이
+            #   재개하자마자 끝나버린다. 펄스 위상도 같이 밀어줘야 톡톡이 안 끊긴다.
+            if "started" in goal:
+                goal["started"] += now - self._detour_started
+            self._mode = mode
+            self._goal = goal
+            self._deadline = now + max(1.0, remain)
+            self._detail = f"거리 보정 완료 (#{self._detours}) — 주행 재개"
 
     def _latch_end(self, side: str) -> None:
         """끝단 마커에 도착 — 절대 기준점으로 원점/스팬을 갱신한다.
@@ -602,16 +757,26 @@ class LineDriver:
             if err <= 1.0:
                 return (f"정렬 완료 — dy {line.get('offset_y_px'):.0f}px"
                         f" ∠{line.get('angle_deg') or 0:.1f}°")
-            # 펄스 한 번이 끝날 때마다(OFF 구간 진입) 오차가 줄었는지 확인한다.
-            if not self._pulse_gate(goal, mode):
+            # ⚠ 2026-08-11 수정. 예전엔 "OFF 구간이면" 발산을 셌는데, 이 루프는
+            #   50Hz라 OFF 한 번(0.12초)이 **6틱**이다. 정지 중엔 오차가 변할 리
+            #   없으니 3틱 만에 한도(3)를 채워 **첫 펄스도 끝나기 전에 항상
+            #   "정렬 실패, 부호가 반대일 수 있습니다"** 를 뱉었다. 멀쩡한 부호를
+            #   뒤집게 만드는 가짜 경고였다.
+            #   → 펄스 **경계에서 한 번만** 센다. 그것도 OFF→ON 전환 시점에:
+            #     그때가 직전 펄스의 결과를 카메라가 따라잡은 뒤라 가장 정확하다
+            #     (센싱 지연이 100~200ms라 OFF 진입 직후 값은 아직 옛날 것이다).
+            gate = self._pulse_gate(goal, mode)
+            edge = gate and not self._align_gate      # OFF → ON 전환
+            self._align_gate = gate
+            if edge:
                 if self._align_worst is None or err < self._align_worst - 0.02:
                     self._align_worst, self._align_diverge = err, 0
                 else:
                     self._align_diverge += 1
                     if self._align_diverge >= LINE_ALIGN_DIVERGE_LIMIT:
-                        return ("정렬 실패 — 톡 칠수록 오차가 오히려 커집니다. "
-                                "보정 부호가 반대일 수 있습니다: /settings에서 "
-                                "[거리 부호 ±] 또는 [회전 부호 ±]를 눌러보세요.")
+                        return (f"정렬 실패 — 펄스 {LINE_ALIGN_DIVERGE_LIMIT}번을 쳤는데 "
+                                "오차가 안 줄었습니다. 보정 부호가 반대일 수 있습니다: "
+                                "/settings에서 [거리 부호 ±] 또는 [회전 부호 ±]를 눌러보세요.")
             return None
 
         if mode == "station":
@@ -649,7 +814,13 @@ class LineDriver:
 
             # 정지 중에도 보정값을 계산해 둔다(부호 검증용 — 진행분은 빼고 보정만)
             self._would = self._command(self._line, 0, 0)
-            # 마커 통과는 **주행 중이 아니어도** 센다(손으로 밀어도 인덱스가 따라온다)
+            # 마커 통과는 **주행 중이 아니어도** 센다(손으로 밀어도 인덱스가 따라온다).
+            # ⚠ 순서 중요: 방향을 **먼저** 갱신해야 한다. 마커를 지나는 그 순간의
+            #   방향으로 "어느 끝인지"가 정해지므로, 옛 방향으로 세면 반대로 찍힌다.
+            if self._mode == "idle":
+                self._track_direction(self._line)
+            else:
+                self._odom_prev = None   # 자동주행 중엔 명령이 방향의 근거다
             self._observe_markers(self._line)
 
             # 끝단 마커는 **주행 중이 아니어도** 지나가면 기준을 잡는다.
@@ -669,7 +840,21 @@ class LineDriver:
                 stop_reason = "시간 초과 — 목표를 못 찾아 정지"
 
             if stop_reason:
+                # 접어뒀던 주행이 있으면, 정렬이 **성공했을 때만** 이어서 재개한다.
+                # 실패(발산)나 시간 초과인데도 재개하면 벗어난 채로 계속 달린다.
+                if mode == "align" and self._resume is not None:
+                    if self._align_error(self._line) <= 1.0:
+                        self._resume_travel()
+                        time.sleep(self.RATE)
+                        continue
+                    self._resume = None
+                    stop_reason = f"{stop_reason} — 주행 재개를 취소했습니다"
                 self.cancel(stop_reason)
+                time.sleep(self.RATE)
+                continue
+
+            # 게걸음 금지 모드: 거리가 너무 벌어졌으면 주행을 접고 정렬하러 간다.
+            if self._maybe_detour(self._line, mode):
                 time.sleep(self.RATE)
                 continue
 
@@ -679,7 +864,7 @@ class LineDriver:
             # OFF 구간엔 **보정까지 전부 0** — 완전히 멈춰 정착시킨 뒤 다시 잰다.
             if self._pulse_gate(goal, mode):
                 travel = 0 if mode == "align" else self._travel_dir(goal)
-                vx, vy, w = self._command(self._line, travel, speed)
+                vx, vy, w = self._command(self._line, travel, speed, mode)
             else:
                 vx = vy = w = 0
             try:

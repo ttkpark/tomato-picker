@@ -260,6 +260,10 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
         return True, line.set_target_y()
     if action == "line_flip":
         return True, line.flip(str(body.get("what", "dy_sign")))
+    if action == "line_set_station":
+        # "지금 여기가 N번 지점" — 마커 세기가 방향 부호에 의존해 어긋났을 때
+        # 번호를 되찾는 확실한 길. 부호가 맞든 틀리든 항상 통한다.
+        return True, line.set_station(int(body.get("index", 0)))
     if action == "line_params":
         return True, line.set_params(
             speed=body.get("speed"), pulse_on=body.get("pulse_on"),

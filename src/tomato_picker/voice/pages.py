@@ -164,6 +164,12 @@ _CONTROL_BODY = """
     <button onclick="cmd({action:'line_next',side:'left'})">◀ 이전 지점</button>
     <button onclick="cmd({action:'line_next',side:'right'})">다음 지점 ▶</button>
   </div>
+  <!-- 번호가 실제 위치와 어긋났을 때의 탈출구. 마커 세기는 진행 방향에
+       의존하는데, 손으로 옮기거나 방향 부호가 반대면 그 전제가 깨진다.
+       이건 부호와 무관하게 항상 통한다. -->
+  <div class="row-flex" style="margin-bottom:0.5rem">
+    <span class="dim">번호가 틀렸다면 → 지금 위치를:</span><span id="setStationBtns"></span>
+  </div>
   <div class="row-flex" style="margin-bottom:0.5rem">
     <button onclick="cmd({action:'line_jog',side:'left'})">◀ 톡</button>
     <button onclick="cmd({action:'line_jog',side:'right'})">톡 ▶</button>
@@ -363,6 +369,19 @@ _CONTROL_JS = """
         sb.append(b);
       });
     }
+    // "지금 위치를 N번으로 선언" 버튼 — 이동이 아니라 **번호 정정**이다.
+    const ssb = document.getElementById('setStationBtns');
+    if (ssb && ssb.dataset.n !== String(labels.length)) {
+      ssb.dataset.n = String(labels.length);
+      ssb.textContent = '';
+      labels.forEach((lab, i) => {
+        const b = document.createElement('button');
+        b.className = 'small'; b.textContent = i + '로 지정';
+        b.title = lab + ' — 이동하지 않고 번호만 바로잡습니다';
+        b.onclick = () => cmd({action:'line_set_station', index:i});
+        ssb.append(b);
+      });
+    }
     if (sb) for (let i = 0; i < sb.children.length; i++)
       sb.children[i].className = 'small' + (ln.station === i ? ' on' : '');
 
@@ -520,6 +539,8 @@ _SETTINGS_BODY = """
     <button class="small" onclick="cmd({action:'line_flip',what:'yaw_enable'})">회전 보정 켜기/끄기</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'yaw_sign'})">회전 부호 ±</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'travel_sign'})">진행 좌우 ±</button>
+    <button class="small" onclick="cmd({action:'line_flip',what:'no_strafe'})">게걸음 금지 켜기/끄기</button>
+    <button class="small" onclick="cmd({action:'line_flip',what:'odom_sign'})">수동이동 방향 ±</button>
   </div>
   <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
     로봇을 손으로 밀어 <b>테이프에서 멀어졌을 때</b> 위 "보정" 값이 <b>되돌아가는 방향</b>이면 맞습니다.
@@ -601,7 +622,10 @@ _SETTINGS_JS = """
       '보정축 ' + ln.dy_axis + '(부호 ' + ln.dy_sign + ')  ·  진행축 ' + ln.travel_axis
       + '(부호 ' + ln.travel_sign + ')  ·  회전 ' + (ln.yaw_gain ? '켜짐(부호 ' + ln.yaw_sign + ')' : '꺼짐')
       + '  ·  지금 보정 ' + (ln.dy_axis === 'vy' ? ln.would_vy : ln.would_vx)
-      + ' w=' + ln.would_w;
+      + ' w=' + ln.would_w
+      + '  ·  게걸음 ' + (ln.no_strafe ? '금지(전후·회전만, 벗어나면 정렬)' : '허용')
+      + '  ·  진행방향 ' + (ln.last_dir > 0 ? '오른쪽' : (ln.last_dir < 0 ? '왼쪽' : '미확인'))
+      + '(' + (ln.dir_source || '?') + ')';
 
     if (!pulseInit && ln.speed != null) {
       pulseInit = true;
