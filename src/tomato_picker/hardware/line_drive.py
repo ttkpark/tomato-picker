@@ -60,6 +60,7 @@ from ..config import (
     LINE_LOST_STOP_SEC,
     LINE_MARK_ALIGN_TOL_PX,
     LINE_MARK_CLEAR_FRAC,
+    LINE_MARK_REARM_MIN_PX,
     LINE_MARK_REARM_PX,
     LINE_MAX_CORRECTION,
     LINE_MAX_DETOURS,
@@ -152,6 +153,7 @@ class LineDriver:
         self._mark_armed = True          # 다음 마커 통과를 받을 준비가 됐나
         self._marked_odom: float | None = None   # 마지막으로 마커를 센 시점의 변위
         self._seek_odom0: float | None = None    # 지금 명령을 시작한 시점의 변위
+        self._kick_done = False    # 출발 킥이 끝났나(굴렀으면 재점화하지 않는다)
         self._wiggle_on = False    # 좌우 톡 엄격 교대용(직전 틱이 ON이었나)
         self._wiggle_n = 0         # 실제로 낸 좌우 톡 수 — 홀짝으로 부호를 정한다
         self._last_marker: dict | None = None
@@ -389,6 +391,14 @@ class LineDriver:
         같은 마커를 두 번 세지 않으려고, 한 번 인정한 뒤에는 중앙에서 충분히
         벗어나야(LINE_MARK_CLEAR_FRAC) 다음 통과를 받는다.
         """
+        # ⚠ 정렬 중에는 지점 번호를 **절대 바꾸지 않는다.** 정렬 펄스로 마커가
+        #   중앙 창(±154px)을 들락거릴 때마다 재무장→재계수되어, 제자리에서
+        #   1→2→3으로 번호가 올라갔다(2026-08-11 실사고). 정렬은 "제자리 유지"
+        #   동작이다 — 번호는 이동만이 바꾼다.
+        #   띠가 안 보일 때도 세지 않는다: 띠 근접 필터가 못 돌아서 코스 밖
+        #   색 덩어리가 걸러지지 않은 채 들어온다.
+        if self._mode in ("align", "align_mark") or not line.get("found"):
+            return
         markers = line.get("markers") or []
         width = line.get("width") or 1280
         center = width / 2
@@ -406,7 +416,12 @@ class LineDriver:
             # (오도메트리가 없을 때를 위한 보조 경로 — 넓은 간격에서는 이쪽이 먼저 선다.)
             if not markers or all(abs(m["x"] - center) > width * LINE_MARK_CLEAR_FRAC
                                   for m in markers):
-                self._mark_armed = True
+                # ⚠ 경계 통과만으로는 부족하다 — **실제로 움직였어야** 한다.
+                #   정렬 직후 정착 진동·검출 노이즈로 마커가 경계를 들락거리면
+                #   제자리에서 번호가 1→2→3으로 올라갔다(2026-08-11 실사고).
+                if (odom is None or self._marked_odom is None
+                        or abs(odom - self._marked_odom) >= LINE_MARK_REARM_MIN_PX):
+                    self._mark_armed = True
             return
         if not self._mark_armed:
             return
@@ -716,7 +731,9 @@ class LineDriver:
         _m, dx = got
         if abs(dx) <= LINE_MARK_ALIGN_TOL_PX:
             return 0, 0
-        mag = int(max(LINE_CORR_MIN, min(LINE_MAX_CORRECTION, 0.6 * abs(dx))))
+        # 상한을 150으로 죈다(LINE_MAX_CORRECTION=180은 여기엔 너무 세다) —
+        # 정렬 펄스는 "닿을 만큼만". 세면 반대편으로 넘어가 왕복이 된다.
+        mag = int(max(LINE_CORR_MIN, min(150, 0.6 * abs(dx))))
         return (1 if dx > 0 else -1), mag
 
     def _begin_arrive_align(self, reached: str) -> None:
@@ -812,6 +829,7 @@ class LineDriver:
             self._seek_odom0 = self._odom()
             self._wiggle_on = False
             self._wiggle_n = 0
+            self._kick_done = False
 
     def _odom(self) -> float | None:
         return (self._line or {}).get("odom_x_px")
@@ -882,11 +900,21 @@ class LineDriver:
         (2026-08-11). 한 번 구르기 시작하면 낮은 듀티로도 계속 굴러간다.
         """
         kick = float(self._tune.get("travel_kick", LINE_TRAVEL_KICK))
-        if kick <= speed:
+        if kick <= speed or self._kick_done:
             return speed
-        if time.monotonic() - goal.get("started", 0.0) < LINE_TRAVEL_KICK_SEC:
-            return int(kick)
-        return speed
+        if time.monotonic() - goal.get("started", 0.0) >= LINE_TRAVEL_KICK_SEC:
+            self._kick_done = True
+            return speed
+        # ⚠ 킥은 **정지마찰용이지 가속용이 아니다.** 0.3초를 꽉 채우면 지점
+        #   간격(≈375px)의 상당 부분을 킥 속도로 달려버려, 순항을 아무리 낮춰도
+        #   "여전히 너무 빠르다"가 된다(2026-08-11 실사용 — 저속 88/77로 내려도
+        #   체감이 안 변한 이유). 굴렀다는 증거(오도메트리 이동)가 보이는 즉시 끝낸다.
+        odom = self._odom()
+        if (odom is not None and self._seek_odom0 is not None
+                and abs(odom - self._seek_odom0) > 25):
+            self._kick_done = True
+            return speed
+        return int(kick)
 
     def _travel_wiggle(self, goal: dict) -> int:
         """주행 중 주기적으로 옆으로 톡 — 굴러가는 상태를 유지시킨다.
@@ -1081,6 +1109,21 @@ class LineDriver:
                 name = {"end": "끝점(주황)", "mid": "중간지점(노랑)"}.get(kind, "지점")
                 return (f"지점 정렬 완료 — {name} 중앙 ±{abs(dx):.0f}px · "
                         f"dy {line.get('offset_y_px') or 0:.0f}px")
+            # 펄스 경계마다 dx가 줄었는지 본다 — 한 펄스가 너무 커서 좌우로
+            # 왕복만 하면(요란) 12초 타임아웃까지 끌지 말고 지금 상태로 끝낸다.
+            gate = self._pulse_gate(goal, mode)
+            edge = gate and not self._align_gate
+            self._align_gate = gate
+            if edge:
+                metric = abs(dx)
+                if self._align_worst is None or metric < self._align_worst - 8:
+                    self._align_worst, self._align_diverge = metric, 0
+                else:
+                    self._align_diverge += 1
+                    if self._align_diverge >= LINE_ALIGN_DIVERGE_LIMIT + 2:
+                        return (f"지점 정렬 종료 — 마커 ±{abs(dx):.0f}px에서 더 못 "
+                                "줄였습니다(한 펄스가 그보다 큽니다). 이 정도면 "
+                                "지점 위입니다 — 더 맞추려면 [톡]을 쓰세요.")
             return None
 
         if mode == "align":
@@ -1232,18 +1275,23 @@ class LineDriver:
                 got = self._nearest_station_marker(self._line, ahead_dir=self._last_dir)
                 if got is not None:
                     width = (self._line or {}).get("width") or 1280
-                    zone = width * LINE_APPROACH_FRAC
+                    # 감속 시작 = 마커가 **보이는 순간**(반화면). 접근 창(30%)까지
+                    # 기다리면 이미 늦다 — 순항에서 하한까지 내려올 거리가 모자라다
+                    # ("테이프 보이는 순간 속도를 더 줄여서 미세 조정" — 사용자 제안).
+                    zone = width * 0.5
                     adx = abs(got[1])
                     if adx < zone:
                         speed = int(max(LINE_APPROACH_MIN, speed * adx / zone))
                         braking = True
             # OFF 구간엔 **보정까지 전부 0** — 완전히 멈춰 정착시킨 뒤 다시 잰다.
             if self._pulse_gate(goal, mode):
+                phase1 = False
                 if mode == "align":
                     travel, use = 0, speed
                 elif mode == "align_mark":
                     # 진행축 펄스가 마커의 dx를 향한다 — 지나쳤으면 되돌아온다.
                     travel, use = self._mark_pulse(self._line)
+                    phase1 = bool(travel)   # 1단계: 마커부터. 보정은 그 다음.
                 else:
                     travel, use = self._travel_dir(goal), speed
                 # 정렬은 제자리 동작이지만 **완전히 제자리면 롤러가 안 미끄러진다.**
@@ -1262,6 +1310,15 @@ class LineDriver:
                         use = self._travel_kick(goal, use)
                     wiggle = self._travel_wiggle(goal)
                 vx, vy, w = self._command(self._line, travel, use, mode, dither)
+                if mode == "align_mark" and phase1:
+                    # ★ 한 번에 한 축만. 진행 펄스에 dy/yaw 보정까지 얹으면
+                    #   대각선으로 왔다갔다해 "너무 요란하게" 보인다(실기 보고).
+                    #   마커를 먼저 중앙에 → 그 다음 dy/yaw(2단계, travel=0)로.
+                    if self._tune["dy_axis"] == "vy":
+                        vy = 0
+                    else:
+                        vx = 0
+                    w = 0
                 if wiggle:
                     # 좌우 톡은 **보정축**에 얹는다(진행축이 아니다).
                     if self._tune["dy_axis"] == "vy":
