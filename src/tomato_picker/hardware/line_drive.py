@@ -43,6 +43,7 @@ from ..config import (
     LINE_ALIGN_DIVERGE_LIMIT,
     LINE_ALIGN_TIMEOUT_SEC,
     LINE_APPROACH_FRAC,
+    LINE_COARSE_MAX_PX,
     LINE_COARSE_ON,
     LINE_COARSE_PERIOD,
     LINE_CORR_MIN,
@@ -55,6 +56,7 @@ from ..config import (
     LINE_HUE_MID,
     LINE_LOST_STOP_SEC,
     LINE_MARK_CLEAR_FRAC,
+    LINE_MARK_REARM_PX,
     LINE_MAX_CORRECTION,
     LINE_MAX_DETOURS,
     LINE_MAX_DY_NORM,
@@ -130,6 +132,8 @@ class LineDriver:
         self._station: int | None = None
         self._at_end = False
         self._mark_armed = True          # 다음 마커 통과를 받을 준비가 됐나
+        self._marked_odom: float | None = None   # 마지막으로 마커를 센 시점의 변위
+        self._seek_odom0: float | None = None    # 지금 명령을 시작한 시점의 변위
         self._last_marker: dict | None = None
         self._last_dir = 0               # 마지막 진행 방향(+1 오른쪽 / -1 왼쪽)
         self._dir_source = "미확인"      # 그 방향을 어디서 알았나(명령/오도메트리)
@@ -357,9 +361,18 @@ class LineDriver:
         markers = line.get("markers") or []
         width = line.get("width") or 1280
         center = width / 2
+        # ★ 재무장은 **움직인 거리**로 판단한다. 화면 안 마커 배치로 판단하던
+        #   예전 방식은 "지점 간격이 화면보다 넓다"를 가정했는데 실제는 반대라
+        #   (간격 375px vs 화면 1280px) 조건이 영영 성립하지 않았다 —
+        #   한 번 센 뒤로 다음 지점을 통째로 못 세고 끝까지 밀려갔다(2026-08-11).
+        odom = self._odom()
+        if not self._mark_armed and odom is not None and self._marked_odom is not None:
+            if abs(odom - self._marked_odom) >= LINE_MARK_REARM_PX:
+                self._mark_armed = True
         near = [m for m in markers if abs(m["x"] - center) < width * self.MARK_TOL_FRAC]
         if not near:
             # 중앙에서 충분히 벗어났으면 다음 통과를 받을 준비를 한다.
+            # (오도메트리가 없을 때를 위한 보조 경로 — 넓은 간격에서는 이쪽이 먼저 선다.)
             if not markers or all(abs(m["x"] - center) > width * LINE_MARK_CLEAR_FRAC
                                   for m in markers):
                 self._mark_armed = True
@@ -367,6 +380,7 @@ class LineDriver:
         if not self._mark_armed:
             return
         self._mark_armed = False
+        self._marked_odom = odom
         marker = min(near, key=lambda m: abs(m["x"] - center))
         kind = self._marker_kind(marker)
         direction = self._last_dir
@@ -561,6 +575,14 @@ class LineDriver:
         """
         if mode == "align":
             return True
+        # ★ 폭주 방지. "접근(길게)"는 88% 듀티라 사실상 연속 주행이다. 마커를
+        #   놓친 채 이 속도로 계속 가면 코스를 벗어난다(2026-08-11: 2번에서
+        #   1번을 못 세고 왼쪽 끝까지 밀려갔다). 한 지점 간격(≈375px)을 넘게
+        #   갔는데도 아직 도착을 못 했으면 뭔가 잘못된 것이므로 톡톡으로 내려온다.
+        odom = self._odom()
+        if odom is not None and self._seek_odom0 is not None:
+            if abs(odom - self._seek_odom0) >= LINE_COARSE_MAX_PX:
+                return True
         line = self._line or {}
         width = line.get("width") or 1280
         near = [m for m in (line.get("markers") or [])
@@ -657,6 +679,8 @@ class LineDriver:
             # 남아 있으면 엉뚱한 주행으로 되돌아간다.
             self._resume = None
             self._detours = 0
+            # 이 명령이 얼마나 굴러갔는지 재는 기준 — 접근(길게) 상한에 쓴다.
+            self._seek_odom0 = self._odom()
 
     def _odom(self) -> float | None:
         return (self._line or {}).get("odom_x_px")
