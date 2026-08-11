@@ -136,6 +136,17 @@ COLOR_ENABLED = os.environ.get("LF_COLOR", "0") not in ("0", "false", "no", "")
 COLOR_S_MARGIN = float(os.environ.get("LF_COLOR_S_MARGIN", "50"))  # 중앙값 대비
 COLOR_S_MIN = float(os.environ.get("LF_COLOR_S_MIN", "80"))        # 절대 하한(무채색 장면 방지)
 COLOR_MIN_AREA = int(os.environ.get("LF_COLOR_MIN_AREA", "2500"))
+# ⚠ 마커는 테이프 **바로 옆**에 붙어 있다 — 띠에서 세로로 이보다 먼 색 덩어리는
+# 코스 밖이다. 2026-08-11 실사고: 로봇이 코스 오른쪽 끝을 지나 마루 타일 위를
+# 보자 타일 무늬가 중간지점(h19~21) 5개 + 끝점(주황빛) 2개로 잡혔다. 가짜
+# 마커가 지점 세기를 무너뜨리고(번호 널뜀), 가짜 끝점이 변위 원점까지 다시
+# 잡아 오도메트리를 망쳤다(변위가 음수로 튀던 것). 띠 근접 조건이 이걸 끊는다
+# (검은 끝마커의 DARK_NEAR_BAND와 같은 원리).
+# ⚠ 고정 비율(화면의 30%)로 했더니 **진짜 끝점을 버렸다**(실측: 마커가 커서
+#   중심이 띠에서 220px, 한계 216px). 마커 크기에 따라 중심 거리는 얼마든지
+#   커지므로, "붙어 있다"를 그대로 수식으로 쓴다:
+#   |마커중심y - 띠중심y| ≤ 띠 절반두께 + 마커 절반높이 + 여유
+COLOR_NEAR_GAP = float(os.environ.get("LF_COLOR_NEAR_GAP", "80"))  # px: 허용 틈
 
 # --- 마커의 **역할** (색 이름이 아니라 이게 진짜 의미다) ---
 # 코스 구성: [주황]─[노랑]─[노랑]─[주황]
@@ -440,6 +451,14 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
                 "name": ROLE_LABELS.get(role) or f"미정의({_hue_name(hue)})",
             })
         markers.sort(key=lambda m: m["x"])
+    # 띠에서 세로로 먼 마커는 코스 밖(타일 등) — 버리되, 몇 개 버렸는지는 남긴다.
+    markers_dropped = 0
+    if band_y is not None and markers:
+        half_band = (thickness or 0) / 2
+        near_band = [m for m in markers
+                     if abs(m["y"] - band_y) <= half_band + m["h"] / 2 + COLOR_NEAR_GAP]
+        markers_dropped = len(markers) - len(near_band)
+        markers = near_band
     color_marker = min(markers, key=lambda m: abs(m["x"] - w / 2)) if markers else None
 
     return {
@@ -461,7 +480,8 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
         "target_y": round(target_y, 1),
         "end_marker": end_marker,
         "color_marker": color_marker,
-        "markers": markers,          # 화면에 보이는 지점 표식 전부(x 오름차순)
+        "markers": markers,          # 화면에 보이는 지점 표식 전부(x 오름차순, 띠 근접만)
+        "markers_dropped": markers_dropped,   # 띠에서 멀어 버린 색 덩어리 수(코스 밖 의심)
         "polarity": polarity,        # 테이프가 배경보다 dark/light 중 어느 쪽인지
         "width": w, "height": h,
         # 시각 오도메트리 — 누적 이동(px)과 직전 증분. 절대 위치가 아니라

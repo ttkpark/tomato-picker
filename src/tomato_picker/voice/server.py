@@ -260,6 +260,9 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
         return True, line.set_target_y()
     if action == "line_flip":
         return True, line.flip(str(body.get("what", "dy_sign")))
+    if action == "line_align_mark":
+        # 지점 정렬 — 마커(주황/노랑)를 화면 중앙에. 도착 후 자동으로도 돈다.
+        return True, line.align_mark(body.get("speed"))
     if action == "line_set_station":
         # "지금 여기가 N번 지점" — 마커 세기가 방향 부호에 의존해 어긋났을 때
         # 번호를 되찾는 확실한 길. 부호가 맞든 틀리든 항상 통한다.

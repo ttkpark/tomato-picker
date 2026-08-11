@@ -175,7 +175,8 @@ _CONTROL_BODY = """
     <button onclick="cmd({action:'line_jog',side:'right'})">톡 ▶</button>
     <span class="dim">|</span>
     <button onclick="cmd({action:'line_align'})">🎯 정렬(톡톡)</button>
-    <span class="dim">제자리에서 톡톡 쳐가며 기준선·평행에 맞춘다</span>
+    <button onclick="cmd({action:'line_align_mark'})">📍 지점 정렬</button>
+    <span class="dim">정렬=기준선·평행 · 지점 정렬=마커를 화면 중앙에(도착 시 자동)</span>
   </div>
   <div class="row-flex">
     <button onclick="lineTravel('left')">◀ 시간이동</button>
@@ -337,6 +338,8 @@ _CONTROL_JS = """
         const dy = Math.round(ln.offset_y_px);
         p.push('테이프 ' + (dy > 0 ? '아래 ' : '위 ') + Math.abs(dy) + 'px'
                + (ln.angle_deg == null ? '' : ' ∠' + ln.angle_deg + '°'));
+        if (ln.mark_dx != null) p.push('마커 중앙오차 ' + Math.round(ln.mark_dx) + 'px');
+        if (ln.markers_dropped) p.push('⚠ 코스밖 색덩어리 ' + ln.markers_dropped + '개 무시');
       } else p.push('⚠ 테이프 없음' + (ln.found_reason ? ' (' + ln.found_reason + ')' : ''));
       p.push(ln.position_px != null
              ? '변위 ' + Math.round(ln.position_px) + 'px'
