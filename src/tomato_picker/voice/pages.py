@@ -337,7 +337,7 @@ _CONTROL_JS = """
         const dy = Math.round(ln.offset_y_px);
         p.push('테이프 ' + (dy > 0 ? '아래 ' : '위 ') + Math.abs(dy) + 'px'
                + (ln.angle_deg == null ? '' : ' ∠' + ln.angle_deg + '°'));
-      } else p.push('⚠ 테이프 없음');
+      } else p.push('⚠ 테이프 없음' + (ln.found_reason ? ' (' + ln.found_reason + ')' : ''));
       p.push(ln.position_px != null
              ? '변위 ' + Math.round(ln.position_px) + 'px'
                + (ln.position_pct != null ? ' (' + ln.position_pct + '%)' : '')
@@ -629,7 +629,8 @@ _SETTINGS_JS = """
         + Math.abs(Math.round(ln.offset_y_px)) + 'px  ·  band_y=' + Math.round(ln.band_y)
         + (ln.angle_deg == null ? '' : '  ·  ∠' + ln.angle_deg + '°')
         + (ln.position_px != null ? '  ·  변위 ' + Math.round(ln.position_px) + 'px' : '');
-    } else el.textContent = '⚠ 테이프 없음 — 카메라가 띠를 보게 한 뒤 누르세요';
+    } else el.textContent = '⚠ 테이프 없음 — 카메라가 띠를 보게 한 뒤 누르세요'
+        + (ln.found_reason ? '  (' + ln.found_reason + ')' : '');
 
     document.getElementById('axisState').textContent =
       '보정축 ' + ln.dy_axis + '(부호 ' + ln.dy_sign + ')  ·  진행축 ' + ln.travel_axis

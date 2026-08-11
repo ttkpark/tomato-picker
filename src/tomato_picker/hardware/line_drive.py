@@ -133,6 +133,7 @@ class LineDriver:
         self._line: dict = {}
         self._would: tuple[int, int, int] = (0, 0, 0)
         self._lost_since: float | None = None
+        self._found_ts = 0.0   # 마지막으로 테이프가 **보였던** 시각(출발 판정 히스테리시스)
         # 지점(스테이션) 추적 — 주황을 지나야 인덱스가 확정된다(추측하지 않는다)
         self._station: int | None = None
         self._at_end = False
@@ -496,6 +497,7 @@ class LineDriver:
             "mode": self._mode,
             "detail": self._detail,
             "found": bool(line.get("found")),
+            "found_reason": line.get("found_reason"),
             "offset_y_px": line.get("offset_y_px"),
             "angle_deg": line.get("angle_deg"),
             "band_y": line.get("band_y"),
@@ -668,8 +670,17 @@ class LineDriver:
         언제나 시도할 수 있어야 한다(폭주 방지는 발산 감지가 따로 한다).
         """
         line = self._line or {}
-        if not line.get("found"):
-            raise RuntimeError("테이프가 안 보입니다 — 카메라가 띠를 보는지 확인하세요")
+        # ⚠ 순간적인 검출 실패로 버튼이 통째로 잠기면 안 된다(2026-08-11 실사고:
+        #   "테이프 없음이 뜨고 다음 지점을 눌러도 반응이 없다"). 검출은 프레임
+        #   단위로 깜빡일 수 있고 — 찢어진 JPEG, 코스 끝에서 띠가 화면 밖으로
+        #   나가는 순간 등 — 그때마다 조작이 막히면 사람이 손쓸 방법이 없다.
+        #   그래서 주행 중 정지 판정과 **같은 유예**(LINE_LOST_STOP_SEC)를 준다:
+        #   "그 시간 안에 보였으면 출발해도 된다". 진짜 안 보이면 아래에서 막힌다.
+        if not line.get("found") and time.monotonic() - self._found_ts > LINE_LOST_STOP_SEC:
+            raise RuntimeError(
+                "테이프가 안 보입니다 — 카메라가 띠를 보게 한 뒤 다시 눌러주세요. "
+                "완전히 벗어났으면 아래 [바퀴 수동]으로 띠 위까지 옮기세요."
+            )
         # 정렬은 언제나 시도할 수 있고, 정렬 우회가 가능한 모드도 막을 이유가 없다.
         # 이 검사의 목적은 "눌렀는데 바로 멈춘다"를 없애는 것인데, 우회가 있으면
         # 바로 멈추는 대신 **알아서 붙이고 출발**하기 때문이다. 사람에게 버튼을
@@ -980,6 +991,8 @@ class LineDriver:
             line = self._read_line()
             if line:
                 self._line = line
+                if line.get("found"):
+                    self._found_ts = time.monotonic()
             with self._lock:
                 mode, goal = self._mode, dict(self._goal)
 

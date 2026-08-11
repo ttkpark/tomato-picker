@@ -319,6 +319,9 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
     med_s = float(np.median(S))
     scores = {"light": V - 2 * S, "dark": int(med_v) - V}
     best = None
+    # 왜 못 찾았는지를 남긴다. "테이프 없음"만 보면 코스 끝이라 그런 건지, 색이
+    # 무너진 건지, 띠가 너무 두꺼운 건지 화면만 봐선 알 수 없다(2026-08-11).
+    reasons: list[str] = []
     for polarity, score in scores.items():
         med_score = float(np.median(score))
         # 임계는 **Otsu**로 뽑는다 — 백분위(상위 N%)는 테이프가 화면에서 차지하는
@@ -334,14 +337,21 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
         sel = score[mask > 0]
         sep = float(sel.mean() - med_score) if sel.size else 0.0
         if sep < TAPE_MARGIN:
+            reasons.append(f"{polarity}: 배경과 구분 안 됨(separation {sep:.0f}<{TAPE_MARGIN:.0f})")
             continue
         # 가로로 화면을 가로지르는 띠가 실제로 만들어지는지 — 두께까지 맞아야 채택.
         rows = (mask > 0).sum(axis=1)
         band = np.nonzero(rows > w * BAND_ROW_FRAC)[0]
         if not band.size:
+            # 가장 잘 채워진 행이 화면 폭의 몇 %인지 알려준다 — 코스 끝에서
+            # 띠가 화면 밖으로 나가면 이 값이 임계 아래로 떨어진다.
+            reasons.append(f"{polarity}: 띠가 화면을 안 가로지름"
+                           f"(최대 {100.0 * rows.max() / w:.0f}% < {100 * BAND_ROW_FRAC:.0f}%)")
             continue
         thick = int(band.max() - band.min() + 1)
         if not (h * MIN_BAND_FRAC <= thick <= h * MAX_BAND_FRAC):
+            reasons.append(f"{polarity}: 띠 두께 {100.0 * thick / h:.0f}%가 범위 밖"
+                           f"({100 * MIN_BAND_FRAC:.0f}~{100 * MAX_BAND_FRAC:.0f}%)")
             continue
         if best is None or sep > best[0]:
             best = (sep, polarity, mask, rows, band, thick, thr)
@@ -446,6 +456,8 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
         # 가른다 — 큰 쪽이 "코스가 계속되는 방향"이다.
         "band_left_frac": band_left_frac,
         "band_right_frac": band_right_frac,
+        # 못 찾았을 때 **왜**인지. 찾았으면 None.
+        "found_reason": None if found else (" · ".join(reasons) or "테이프 후보 없음"),
         "target_y": round(target_y, 1),
         "end_marker": end_marker,
         "color_marker": color_marker,
