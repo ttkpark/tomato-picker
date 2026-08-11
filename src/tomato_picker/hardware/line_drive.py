@@ -50,6 +50,7 @@ from ..config import (
     LINE_DY_AXIS,
     LINE_DY_DEADBAND,
     LINE_DY_GAIN,
+    LINE_DRIVE_SMOOTH,
     LINE_DY_SIGN,
     LINE_END_SIDE_MARGIN,
     LINE_HUE_END,
@@ -63,6 +64,10 @@ from ..config import (
     LINE_NO_STRAFE,
     LINE_PULSE_ON,
     LINE_PULSE_PERIOD,
+    LINE_SMOOTH_CORR_MAX,
+    LINE_SMOOTH_DY_GAIN,
+    LINE_SMOOTH_SPEED,
+    LINE_SMOOTH_YAW_GAIN,
     LINE_SPEED,
     LINE_STATION_LABELS,
     LINE_STATUS_PATH,
@@ -80,7 +85,7 @@ from ..config import (
 # 런타임에 뒤집을 수 있는 축·부호. 실기에서만 확정되는 값이라 파일로 뺀다.
 TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain",
                "speed", "pulse_on", "pulse_period", "no_strafe", "odom_sign",
-               "align_dither")
+               "align_dither", "smooth", "smooth_speed")
 
 # 자동으로 정렬을 끼워 넣을 주행 모드. jog는 버튼 한 번 = 펄스 한 번이라
 # 중간에 정렬이 끼어들면 "톡 쳤는데 로봇이 혼자 움직인다"가 되므로 뺀다.
@@ -164,6 +169,9 @@ class LineDriver:
             "odom_sign": 1.0,
             # 정렬 펄스에 얹는 전후 흔들기 세기(0=없음). 롤러 정지마찰을 깨려고.
             "align_dither": float(LINE_ALIGN_DITHER),
+            # 주행 방식: 1=저속 연속(vy·w 비례보정), 0=펄스(톡톡).
+            "smooth": 1.0 if LINE_DRIVE_SMOOTH else 0.0,
+            "smooth_speed": float(LINE_SMOOTH_SPEED),
         }
         self._tune.update(_load_saved(LINE_TUNING_FILE))
         self._thread = threading.Thread(target=self._run, daemon=True, name="line-drive")
@@ -210,7 +218,7 @@ class LineDriver:
     def set_params(self, **values) -> str:
         """속도·펄스 설정을 런타임에 바꾸고 파일에 남긴다(재시작해도 유지)."""
         limits = {"speed": (30, 255), "pulse_on": (0.02, 3.0), "pulse_period": (0.02, 3.0),
-                  "align_dither": (0, 255)}
+                  "align_dither": (0, 255), "smooth_speed": (30, 255)}
         with self._lock:
             for key, (lo, hi) in limits.items():
                 if values.get(key) is not None:
@@ -223,6 +231,10 @@ class LineDriver:
         mode = ("연속 주행" if snapshot["pulse_period"] <= snapshot["pulse_on"]
                 else f"펄스 {snapshot['pulse_on']:.2f}s / {snapshot['pulse_period']:.2f}s 주기")
         dither = snapshot.get("align_dither", 0)
+        if snapshot.get("smooth"):
+            return (f"저속 연속 주행 {snapshot.get('smooth_speed', 0):.0f} · "
+                    f"정렬 흔들기 {dither:.0f}"
+                    + f" · (펄스로 바꾸면 속도 {snapshot['speed']:.0f} · {mode})")
         return (f"속도 {snapshot['speed']:.0f} · {mode} · "
                 f"정렬 흔들기 {dither:.0f}" + (" (없음)" if dither <= 0 else ""))
 
@@ -521,6 +533,8 @@ class LineDriver:
             "pulse_on": self._tune["pulse_on"],
             "pulse_period": self._tune["pulse_period"],
             "pulsing": self._tune["pulse_on"] < self._tune["pulse_period"] - 1e-6,
+            "smooth": self.smooth,
+            "smooth_speed": self._tune.get("smooth_speed", LINE_SMOOTH_SPEED),
             "no_strafe": self.no_strafe,
             "align_dither": self._tune.get("align_dither", LINE_ALIGN_DITHER),
             "detours": self._detours,
@@ -549,8 +563,12 @@ class LineDriver:
     # ------------------------------------------------------------------
 
     def _speed(self, speed: int | None) -> int:
-        base = self._tune.get("speed", LINE_SPEED) if speed is None else speed
-        return int(max(30, min(255, float(base))))
+        if speed is not None:
+            return int(max(30, min(255, float(speed))))
+        # 저속 연속 주행은 펄스보다 느린 값을 쓴다 — 펄스는 순간적으로 세게 밀어
+        # 정지마찰을 넘겨야 하지만, 연속 주행은 계속 굴러가므로 그럴 필요가 없다.
+        key = "smooth_speed" if self.smooth else "speed"
+        return int(max(30, min(255, float(self._tune.get(key, LINE_SPEED)))))
 
     def _corr_pulse(self, error: float, gain: float, sign: float, deadband: float) -> int:
         """오차 하나를 **펄스 한 번 분량**의 지령으로 바꾼다 (이산 뱅뱅).
@@ -593,6 +611,10 @@ class LineDriver:
     def _pulse_gate(self, goal: dict, mode: str = "") -> bool:
         """지금이 펄스의 ON 구간인가. OFF 구간에는 **보정까지 전부 0**을 보내
         완전히 멈춘 상태에서 정착시킨 뒤 다시 측정한다."""
+        # 저속 연속 주행에서는 게이팅 자체가 없다 — 계속 굴러가면서 보정한다.
+        # (정렬은 제자리 동작이라 여전히 톡톡이다. 안 구르면 롤러가 안 미끄러진다.)
+        if self.smooth and mode != "align":
+            return True
         if self._is_fine(mode):
             on = float(self._tune.get("pulse_on", LINE_PULSE_ON))
             period = float(self._tune.get("pulse_period", LINE_PULSE_PERIOD))
@@ -700,6 +722,8 @@ class LineDriver:
             elif what == "yaw_enable":
                 # 회전 보정 켜기/끄기 — 발산하면 즉시 끌 수 있어야 한다.
                 self._tune["yaw_gain"] = 0.0 if self._tune["yaw_gain"] else float(LINE_YAW_GAIN_ON)
+            elif what == "smooth":
+                self._tune["smooth"] = 0.0 if self.smooth else 1.0
             elif what == "no_strafe":
                 self._tune["no_strafe"] = 0.0 if self.no_strafe else 1.0
             elif what == "odom_sign":
@@ -715,12 +739,31 @@ class LineDriver:
         return (f"보정축={snapshot['dy_axis']} dy부호={snapshot['dy_sign']:+.0f} "
                 f"회전보정={'켜짐' if snapshot['yaw_gain'] else '꺼짐'}"
                 f"(부호{snapshot['yaw_sign']:+.0f}) 진행부호={snapshot['travel_sign']:+.0f} "
-                f"게걸음={'금지(전후·회전만)' if snapshot.get('no_strafe') else '허용'}")
+                f"게걸음={'금지(전후·회전만)' if snapshot.get('no_strafe') else '허용'} "
+                f"주행={'저속연속(vy·w 비례보정)' if snapshot.get('smooth') else '펄스(톡톡)'}")
 
     @property
     def no_strafe(self) -> bool:
-        """게걸음(횡이동) 금지 모드인가."""
+        """게걸음(횡이동) 금지 모드인가. (저속 연속 주행에서는 의미 없음 — 아래 참고)"""
         return bool(self._tune.get("no_strafe", 1.0))
+
+    @property
+    def smooth(self) -> bool:
+        """주행 방식이 '저속 연속'인가. 아니면 '펄스(톡톡)'."""
+        return bool(self._tune.get("smooth", 1.0))
+
+    def _corr_smooth(self, error, gain: float, sign: float, deadband: float) -> int:
+        """굴러가는 중의 보정 — **비례제어**.
+
+        멈춰 있을 때는 작은 값이 정지마찰을 못 넘어 뱅뱅(펄스)이 필요했다.
+        하지만 바퀴가 이미 구르는 중이면 롤러가 미끄러질 수 있어 작은 값도
+        그대로 먹는다 — 사람이 키를 눌러 몰 때 줄을 잘 따라가는 이유가 이것이다.
+        그래서 여기서는 바닥값(LINE_CORR_MIN) 없이 오차에 비례해 부드럽게 준다.
+        """
+        if error is None or abs(error) < deadband:
+            return 0
+        return int(max(-LINE_SMOOTH_CORR_MAX,
+                       min(LINE_SMOOTH_CORR_MAX, sign * gain * error)))
 
     def _align_dither(self, goal: dict) -> int:
         """정렬 펄스에 얹을 **전후 흔들기**. 펄스마다 부호가 뒤집힌다.
@@ -752,18 +795,29 @@ class LineDriver:
         (부호 검증) 게걸음 금지와 무관하게 항상 계산해야 한다.
         """
         corr = w = 0
+        driving = mode != "align"
         if line.get("found"):
-            # ★ 비례제어가 아니라 **펄스 뱅뱅**이다. 작은 값을 계속 흘리면 정지마찰을
-            #   못 넘어 아무 일도 안 일어난다 — 사람이 q/e를 톡 칠 때처럼 확실히
-            #   움직이는 크기로 짧게 주고, 멈춰서 정착시킨 뒤 다시 잰다.
-            # 게걸음 금지면 **주행 중에는** 거리 보정을 싣지 않는다. 메카넘 횡이동은
-            # 롤러를 옆으로 미끄러뜨리며 가는 것이라 힘이 많이 들고 슬립도 크다.
-            # 거리 오차는 _maybe_detour()가 정렬(톡톡)로 따로 잡는다.
-            if not (self.no_strafe and mode != "align"):
-                corr = self._corr_pulse(line.get("offset_y_norm"), LINE_DY_GAIN,
-                                        self._tune["dy_sign"], LINE_DY_DEADBAND)
-            w = self._corr_pulse(line.get("angle_deg"), self._tune["yaw_gain"],
-                                 self._tune["yaw_sign"], LINE_YAW_DEADBAND)
+            if self.smooth and driving:
+                # ★ 저속 연속 주행 — 바퀴가 구르는 중이라 롤러 정지마찰이 이미
+                #   깨져 있다. 그래서 vy·w를 **비례제어**로 부드럽게 계속 준다
+                #   (사람이 키를 눌러 몰 때와 같은 방식). 게걸음 금지는 여기서
+                #   의미가 없다 — 어차피 전진하면서 옆으로 미는 것이라 정지
+                #   상태의 순수 횡이동처럼 힘이 들지 않는다.
+                corr = self._corr_smooth(line.get("offset_y_norm"), LINE_SMOOTH_DY_GAIN,
+                                         self._tune["dy_sign"], LINE_DY_DEADBAND)
+                if self._tune["yaw_gain"]:
+                    w = self._corr_smooth(line.get("angle_deg"), LINE_SMOOTH_YAW_GAIN,
+                                          self._tune["yaw_sign"], LINE_YAW_DEADBAND)
+            else:
+                # ★ 펄스(톡톡) — 멈춰 있는 상태에서 쓰는 방식. 작은 값을 계속
+                #   흘리면 정지마찰을 못 넘어 아무 일도 안 일어나므로, 확실히
+                #   움직이는 크기로 짧게 주고 멈춰서 정착시킨 뒤 다시 잰다.
+                #   게걸음 금지면 주행 중에는 거리 보정을 빼고, 그건 정렬이 잡는다.
+                if not (self.no_strafe and driving):
+                    corr = self._corr_pulse(line.get("offset_y_norm"), LINE_DY_GAIN,
+                                            self._tune["dy_sign"], LINE_DY_DEADBAND)
+                w = self._corr_pulse(line.get("angle_deg"), self._tune["yaw_gain"],
+                                     self._tune["yaw_sign"], LINE_YAW_DEADBAND)
         # 흔들기는 진행축에 그대로 얹는다(부호 뒤집기는 호출자가 이미 했다).
         travel = int(self._tune["travel_sign"] * travel_dir * speed) + dither
         travel = max(-255, min(255, travel))
@@ -781,7 +835,8 @@ class LineDriver:
         게걸음을 안 쓰기로 했으니 주행 중에는 거리 오차를 되돌릴 수단이 없다.
         사람이 [정렬]을 누를 때까지 기다리면 데모가 멈추므로 스스로 다녀온다.
         """
-        if not self.no_strafe or mode not in DETOUR_MODES:
+        # 저속 연속 주행은 vy 보정을 계속 넣으므로 우회할 이유가 없다.
+        if self.smooth or not self.no_strafe or mode not in DETOUR_MODES:
             return False
         dy = line.get("offset_y_norm")
         if dy is None or abs(dy) < LINE_STRAFE_FIX_AT:
@@ -929,7 +984,10 @@ class LineDriver:
                 mode, goal = self._mode, dict(self._goal)
 
             # 정지 중에도 보정값을 계산해 둔다(부호 검증용 — 진행분은 빼고 보정만)
-            self._would = self._command(self._line, 0, 0)
+            # 지금 방식이 실제로 낼 보정값을 보여준다(부호 검증 + 크기 감각).
+            # 펄스 방식일 때는 "align"으로 계산해야 게걸음 금지에 가려지지 않는다.
+            self._would = self._command(self._line, 0, 0,
+                                        "travel" if self.smooth else "align")
             # 마커 통과는 **주행 중이 아니어도** 센다(손으로 밀어도 인덱스가 따라온다).
             # ⚠ 순서 중요: 방향을 **먼저** 갱신해야 한다. 마커를 지나는 그 순간의
             #   방향으로 "어느 끝인지"가 정해지므로, 옛 방향으로 세면 반대로 찍힌다.

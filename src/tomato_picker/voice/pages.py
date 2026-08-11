@@ -517,6 +517,11 @@ _SETTINGS_BODY = """
     oninput="pPeriodOut.textContent=this.value"> <b id="pPeriodOut">0.32</b> 초
   <!-- 메카넘 롤러는 정지 상태에서 옆으로 안 미끄러진다. 바퀴가 굴러야 횡방향
        정지마찰이 깨지므로, 정렬 펄스마다 전후로 살짝 흔들어준다(부호 반전 → 상쇄). -->
+  <!-- 저속 연속 주행 속도. 펄스와 값이 다르다 — 펄스는 순간적으로 세게 밀어
+       정지마찰을 넘겨야 하지만, 연속 주행은 계속 굴러가므로 낮아도 된다. -->
+  <label>저속 주행 속도 <input type="range" id="pSmooth" min="30" max="255" value="105"
+    oninput="pSmoothOut.textContent=this.value"> <b id="pSmoothOut">105</b> / 255
+    <span class="dim">— 저속 연속 주행일 때 쓰는 속도</span>
   <label>정렬 흔들기 <input type="range" id="pDither" min="0" max="255" step="5" value="150"
     oninput="pDitherOut.textContent=this.value"> <b id="pDitherOut">150</b> / 255
     <span class="dim">— 0이면 없음. 게걸음이 안 먹히면 올리세요(롤러 정지마찰)</span>
@@ -544,6 +549,7 @@ _SETTINGS_BODY = """
     <button class="small" onclick="cmd({action:'line_flip',what:'yaw_enable'})">회전 보정 켜기/끄기</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'yaw_sign'})">회전 부호 ±</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'travel_sign'})">진행 좌우 ±</button>
+    <button class="small" onclick="cmd({action:'line_flip',what:'smooth'})">주행 방식: 저속연속 ↔ 톡톡</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'no_strafe'})">게걸음 금지 켜기/끄기</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'odom_sign'})">수동이동 방향 ±</button>
   </div>
@@ -596,7 +602,8 @@ _SETTINGS_JS = """
          speed: +document.getElementById('pSpeed').value,
          pulse_on: +document.getElementById('pOn').value,
          pulse_period: +document.getElementById('pPeriod').value,
-         align_dither: +document.getElementById('pDither').value});
+         align_dither: +document.getElementById('pDither').value,
+         smooth_speed: +document.getElementById('pSmooth').value});
   }
   function preset(sp, on, per) {
     setRange('pSpeed', sp); setRange('pOn', on); setRange('pPeriod', per); applyPulse();
@@ -629,7 +636,9 @@ _SETTINGS_JS = """
       + '(부호 ' + ln.travel_sign + ')  ·  회전 ' + (ln.yaw_gain ? '켜짐(부호 ' + ln.yaw_sign + ')' : '꺼짐')
       + '  ·  지금 보정 ' + (ln.dy_axis === 'vy' ? ln.would_vy : ln.would_vx)
       + ' w=' + ln.would_w
-      + '  ·  게걸음 ' + (ln.no_strafe ? '금지(전후·회전만, 벗어나면 정렬)' : '허용')
+      + '  ·  주행 ' + (ln.smooth ? '저속연속(vy·w 비례보정)' : '펄스(톡톡)')
+      + '  ·  게걸음 ' + (ln.smooth ? '보정에 사용'
+                                    : (ln.no_strafe ? '금지(벗어나면 정렬)' : '허용'))
       + '  ·  진행방향 ' + (ln.last_dir > 0 ? '오른쪽' : (ln.last_dir < 0 ? '왼쪽' : '미확인'))
       + '(' + (ln.dir_source || '?') + ')';
 
@@ -638,11 +647,14 @@ _SETTINGS_JS = """
       setRange('pSpeed', Math.round(ln.speed));
       setRange('pOn', ln.pulse_on); setRange('pPeriod', ln.pulse_period);
       if (ln.align_dither != null) setRange('pDither', Math.round(ln.align_dither));
+      if (ln.smooth_speed != null) setRange('pSmooth', Math.round(ln.smooth_speed));
     }
     document.getElementById('pNow').textContent = ln.speed == null ? '' :
       ('현재: 속도 ' + Math.round(ln.speed) + ' · '
        + (ln.pulsing ? '펄스 ' + ln.pulse_on + 's / ' + ln.pulse_period + 's' : '연속 주행')
-       + '  ·  정렬 흔들기 ' + Math.round(ln.align_dither || 0));
+       + '  ·  정렬 흔들기 ' + Math.round(ln.align_dither || 0)
+       + '  ·  주행 ' + (ln.smooth ? '저속연속 ' + Math.round(ln.smooth_speed || 0)
+                                   : '펄스(톡톡)'));
 
     const t = base.tuning;
     if (t) {
