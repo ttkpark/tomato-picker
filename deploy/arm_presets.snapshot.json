@@ -1,71 +1,75 @@
 {
   "1": {
-    "shoulder_pan.pos": 96.92307692307692,
-    "shoulder_lift.pos": -7.6923076923076925,
-    "elbow_flex.pos": -62.32967032967033,
-    "wrist_flex.pos": 78.46153846153847,
-    "wrist_roll.pos": 84.26373626373626,
-    "gripper.pos": 66.6006600660066
+    "shoulder_pan.pos": 102.72527472527473,
+    "shoulder_lift.pos": -27.032967032967033,
+    "elbow_flex.pos": -43.78021978021978,
+    "wrist_flex.pos": 82.94505494505495,
+    "wrist_roll.pos": 91.38461538461539,
+    "gripper.pos": 57.491749174917494
   },
   "2": {
-    "shoulder_pan.pos": 96.65934065934066,
-    "shoulder_lift.pos": -2.32967032967033,
-    "elbow_flex.pos": -56.967032967032964,
-    "wrist_flex.pos": 58.32967032967033,
-    "wrist_roll.pos": 84.26373626373626,
-    "gripper.pos": 48.052805280528055
+    "shoulder_pan.pos": 97.89010989010988,
+    "shoulder_lift.pos": -19.64835164835165,
+    "elbow_flex.pos": -43.86813186813187,
+    "wrist_flex.pos": 72.57142857142857,
+    "wrist_roll.pos": 88.04395604395604,
+    "gripper.pos": 57.689768976897696
   },
   "3": {
-    "shoulder_pan.pos": 96.74725274725274,
-    "shoulder_lift.pos": -102.46153846153847,
-    "elbow_flex.pos": 29.0989010989011,
-    "wrist_flex.pos": 82.50549450549451,
-    "wrist_roll.pos": 84.26373626373626,
-    "gripper.pos": 47.98679867986799
+    "shoulder_pan.pos": 97.89010989010988,
+    "shoulder_lift.pos": -19.64835164835165,
+    "elbow_flex.pos": -41.934065934065934,
+    "wrist_flex.pos": 68.79120879120879,
+    "wrist_roll.pos": 88.04395604395604,
+    "gripper.pos": 50.95709570957096
   },
   "4": {
-    "shoulder_pan.pos": 93.14285714285714,
-    "shoulder_lift.pos": -101.93406593406593,
-    "elbow_flex.pos": 33.23076923076923,
-    "wrist_flex.pos": 93.67032967032966,
-    "wrist_roll.pos": 85.75824175824175,
-    "gripper.pos": 46.07260726072607
+    "shoulder_pan.pos": 100.17582417582418,
+    "shoulder_lift.pos": -78.98901098901099,
+    "elbow_flex.pos": 59.42857142857143,
+    "wrist_flex.pos": 35.91208791208791,
+    "wrist_roll.pos": 90.32967032967034,
+    "gripper.pos": 54.45544554455446
   },
   "__meta__": {
     "version": 2,
     "names": {
       "0": "대기",
-      "5": "3층 잡기준비",
-      "6": "3층잡기",
-      "7": "잡기대기",
+      "5": "1층준비",
+      "6": "1층 잡기",
+      "7": "잡아서 땡기기",
       "9": "놓기",
-      "8": "놓을준비"
+      "8": "놓을준비",
+      "1": "2층 사전준비",
+      "2": "2층준비",
+      "4": "1층 사전준비",
+      "3": "2층 잡기"
     },
     "anchors": {}
   },
   "6": {
-    "shoulder_pan.pos": 17.36263736263736,
-    "shoulder_lift.pos": 25.186813186813186,
-    "elbow_flex.pos": -29.714285714285715,
-    "wrist_flex.pos": 100.87912087912088,
-    "wrist_roll.pos": 82.85714285714286,
-    "gripper.pos": 87.06270627062706
+    "shoulder_pan.pos": 101.23076923076923,
+    "shoulder_lift.pos": -71.6043956043956,
+    "elbow_flex.pos": 66.54945054945055,
+    "wrist_flex.pos": 10.153846153846153,
+    "wrist_roll.pos": 92.43956043956044,
+    "gripper.pos": 33.53135313531353
   },
   "5": {
-    "shoulder_pan.pos": 8.571428571428571,
-    "shoulder_lift.pos": 25.186813186813186,
-    "elbow_flex.pos": -29.274725274725274,
-    "wrist_flex.pos": 100.87912087912088,
-    "wrist_roll.pos": 89.01098901098901,
-    "gripper.pos": 46.006600660066006
+    "shoulder_pan.pos": 100.96703296703296,
+    "shoulder_lift.pos": -71.51648351648352,
+    "elbow_flex.pos": 65.58241758241758,
+    "wrist_flex.pos": 10.153846153846153,
+    "wrist_roll.pos": 89.62637362637362,
+    "gripper.pos": 54.65346534653466
   },
   "7": {
-    "shoulder_pan.pos": -2.769230769230769,
-    "shoulder_lift.pos": 3.912087912087912,
-    "elbow_flex.pos": -16.439560439560438,
-    "wrist_flex.pos": 87.6923076923077,
-    "wrist_roll.pos": 72.13186813186813,
-    "gripper.pos": 50.2970297029703
+    "shoulder_pan.pos": 101.23076923076923,
+    "shoulder_lift.pos": -102.63736263736264,
+    "elbow_flex.pos": 28.043956043956044,
+    "wrist_flex.pos": 91.03296703296704,
+    "wrist_roll.pos": 92.43956043956044,
+    "gripper.pos": 33.53135313531353
   },
   "8": {
     "shoulder_pan.pos": 3.7362637362637363,

@@ -4,7 +4,14 @@
   "yaw_sign": -1.0,
   "travel_sign": 1.0,
   "yaw_gain": 3.0,
-  "speed": 150.0,
+  "speed": 112.0,
   "pulse_on": 0.08,
-  "pulse_period": 0.2
+  "pulse_period": 0.2,
+  "no_strafe": 1.0,
+  "odom_sign": 1.0,
+  "align_dither": 130.0,
+  "smooth": 1.0,
+  "smooth_speed": 105.0,
+  "travel_kick": 155.0,
+  "travel_wiggle": 120.0
 }
