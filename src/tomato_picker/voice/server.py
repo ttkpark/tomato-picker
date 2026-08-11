@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from ..config import BASE_DRIVE_SPEED, CAMERA_HEIGHT
 from . import pages
+from .linkmon import LinkSampler
 from .log_hub import LogHub
 
 
@@ -395,7 +396,7 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
 
 
 def _make_handler(
-    log_hub: LogHub, vision=None, hardware: dict | None = None, floor=None
+    log_hub: LogHub, vision=None, hardware: dict | None = None, floor=None, sampler=None
 ) -> type[BaseHTTPRequestHandler]:
     # hardware는 {"arm": ..., "base": ...} 형태의 **가변** 딕셔너리다. 서버를
     # 하드웨어보다 먼저 띄우는 게 원칙이라(voice_mode 참고) 핸들러 생성 시점엔
@@ -421,8 +422,9 @@ def _make_handler(
                 self._write_json(_status_payload(hw.get("arm"), hw.get("base"), hw.get("line")))
                 return
 
-            if self.path in ("/control", "/settings"):
+            if self.path in ("/control", "/settings", "/diag"):
                 html = (pages.settings_page() if self.path == "/settings"
+                        else pages.diag_page() if self.path == "/diag"
                         else pages.control_page(BASE_DRIVE_SPEED, CAMERA_HEIGHT))
                 body = html.encode("utf-8")
                 self.send_response(200)
@@ -439,6 +441,30 @@ def _make_handler(
             if self.path == "/video2":
                 # 바닥 카메라(CSI) — line-cam.service가 /dev/shm에 쓰는 프레임.
                 self._stream_mjpeg(floor)
+                return
+
+            if self.path == "/diag-events":
+                # 링크 계측 스트림. /status(1초 폴링)로는 80ms 펄스가 통째로
+                # 사라지므로, 서버가 100Hz로 뜬 파형을 0.1초마다 묶어 밀어준다.
+                # since를 들고 있어서 브라우저가 잠깐 멈췄다 와도 구간이 안 빈다.
+                if sampler is None:
+                    self.send_response(503)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.end_headers()
+                since = -1.0
+                try:
+                    while True:
+                        payload = sampler.snapshot(since)
+                        since = payload["t"]
+                        self._write_event(payload)
+                        time.sleep(0.1)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass   # 탭을 닫았다 — 정상 종료
                 return
 
             if self.path == "/events":
@@ -545,8 +571,12 @@ def start_log_server(
     hardware는 {"arm":..., "base":...} 가변 딕셔너리 — 서버를 먼저 띄우고
     나중에 채워도 /control과 POST /cmd가 그때부터 동작한다.
     """
+    # 링크 계측 샘플러(/diag). 같은 가변 딕셔너리를 들여다보게 해서, 바퀴가
+    # 나중에 붙어도(또는 재연결돼도) 알아서 따라간다.
+    hw = hardware if hardware is not None else {}
+    sampler = LinkSampler(lambda: hw.get("base"))
     server = ThreadingHTTPServer(
-        ("0.0.0.0", port), _make_handler(log_hub, vision, hardware, floor)
+        ("0.0.0.0", port), _make_handler(log_hub, vision, hw, floor, sampler)
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

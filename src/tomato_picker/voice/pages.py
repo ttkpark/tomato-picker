@@ -6,6 +6,8 @@ server.py에서 분리한 이유 — 조작 화면이 커지면서 한 파일 �
   /control   운전 화면 — 데모 중에 실제로 누르는 것만
   /settings  시스템 설정 — 영점/축·부호/모터 튜닝/팔 캘리브레이션처럼
              "한 번 잡아두고 잘 안 건드리는" 것
+  /diag      링크 실시간 계측 — 지령 파형·펄스폭·수신율. 1초 폴링으로는
+             80ms 펄스가 안 보여서 이 화면만 SSE(10Hz 푸시)로 따로 뺐다.
 
 f-string을 안 쓴다(브레이스 이스케이프 지옥). 치환 자리표시자는 __NAME__ 형식.
 """
@@ -58,6 +60,29 @@ _CSS = """
          background: color-mix(in srgb, #3498db 35%, Canvas); }
   #mode { font-weight: 700; }
   #link, #lineState, #calState, #tNow { font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+  /* /diag 계측 화면 — 숫자가 1초에 10번 바뀌므로 tabular-nums가 필수다.
+     아니면 자릿수가 바뀔 때마다 폭이 흔들려 읽을 수가 없다. */
+  .mgrid { display: grid; gap: 0.5rem; margin-bottom: 0.6rem;
+           grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); max-width: 1000px; }
+  .m { border-radius: 10px; padding: 0.5rem 0.7rem; font-variant-numeric: tabular-nums;
+       background: color-mix(in srgb, CanvasText 6%, Canvas);
+       border: 1px solid color-mix(in srgb, CanvasText 12%, Canvas); }
+  .m .lbl { font-size: 0.75rem; opacity: 0.65; }
+  .m .val { font-size: 1.35rem; font-weight: 700; line-height: 1.25; }
+  .m .sub { font-size: 0.75rem; opacity: 0.6; min-height: 1.1em; }
+  .m.ok  { background: color-mix(in srgb, #2ecc71 16%, Canvas); }
+  .m.warn{ background: color-mix(in srgb, #f1c40f 22%, Canvas); }
+  .m.bad { background: color-mix(in srgb, #e74c3c 22%, Canvas); }
+  #wave { width: 100%; max-width: 1000px; height: 190px; border-radius: 10px;
+          background: color-mix(in srgb, CanvasText 6%, Canvas); }
+  #pulses { font-variant-numeric: tabular-nums; font-size: 0.85rem; line-height: 1.7;
+            max-width: 1000px; }
+  .pw { display: inline-block; min-width: 3.6em; text-align: right; padding: 0 0.35rem;
+        margin: 0 0.15rem 0.15rem 0; border-radius: 5px;
+        background: color-mix(in srgb, CanvasText 10%, Canvas); }
+  .legend span { margin-right: 0.9rem; font-size: 0.8rem; }
+  .sw { display: inline-block; width: 0.75rem; height: 0.75rem; border-radius: 3px;
+        vertical-align: -1px; margin-right: 0.25rem; }
   #out { margin-top: 1rem; padding: 0.6rem 0.8rem; border-radius: 8px; min-height: 1.2em;
          background: color-mix(in srgb, CanvasText 6%, Canvas); font-size: 0.9rem;
          white-space: pre-wrap; }
@@ -92,18 +117,27 @@ _NAV = """
   <a href="/">📊 대시보드</a>
   <a href="/control" class="__C__">🎮 수동 조작</a>
   <a href="/settings" class="__S__">⚙ 시스템 설정</a>
+  <a href="/diag" class="__D__">🔌 링크 계측</a>
 </nav>
 """
 
 
-def _shell(title: str, body: str, script: str, here: str) -> str:
+def _shell(title: str, body: str, script: str, here: str, common: bool = True) -> str:
+    """페이지 껍데기.
+
+    common=False면 1초 /status 폴링(_COMMON_JS)을 빼고 페이지 스크립트만 넣는다.
+    /diag는 SSE로 10Hz를 받으므로 폴링을 겹치면 낭비이고, 그 폴링 자체가
+    이 화면이 재려는 젯슨 부하에 섞여 들어간다(관측이 대상을 흔든다).
+    """
     nav = _NAV.replace("__C__", "here" if here == "control" else "") \
-              .replace("__S__", "here" if here == "settings" else "")
+              .replace("__S__", "here" if here == "settings" else "") \
+              .replace("__D__", "here" if here == "diag" else "")
+    boot = f"{_COMMON_JS}{script}\nrefresh();" if common else script
     return ("<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\">\n"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
             f"<title>{title}</title>\n<style>{_CSS}</style></head>\n<body>\n"
             f"<h1>{title}</h1>\n{nav}\n{body}\n<div id=\"out\">명령 대기 중</div>\n"
-            f"<script>{_COMMON_JS}{script}\nrefresh();</script>\n</body></html>")
+            f"<script>{boot}</script>\n</body></html>")
 
 
 # ======================================================================
@@ -607,3 +641,213 @@ _SETTINGS_JS = """
 
 def settings_page() -> str:
     return _shell("토마토피커 — 시스템 설정", _SETTINGS_BODY, _SETTINGS_JS, "settings")
+
+
+# ======================================================================
+# /diag — 링크 실시간 계측 (SSE 10Hz)
+# ======================================================================
+#
+# 이 화면만 폴링이 아니라 SSE인 이유: 1초 폴링으로는 80ms 펄스가 통째로
+# 사라진다. 서버(linkmon.LinkSampler)가 100Hz로 뜬 파형을 0.1초마다 묶어
+# 밀어준다 — 브라우저가 느려도 파형에 구멍이 나지 않는다.
+
+_DIAG_BODY = """
+<div class="card" id="conn">스트림 연결 중...</div>
+<div class="mgrid" id="grid"></div>
+<div class="card dim" id="acks"></div>
+
+<h2>지령 파형 <span class="dim">— 젯슨이 내보내는 목표 속도 (최근 10초)</span></h2>
+<div class="legend">
+  <span><i class="sw" style="background:#2ecc71"></i>vx 전후</span>
+  <span><i class="sw" style="background:#3498db"></i>vy 게걸음</span>
+  <span><i class="sw" style="background:#e67e22"></i>w 회전</span>
+</div>
+<canvas id="wave"></canvas>
+
+<h2>펄스 폭 <span class="dim">— 한 번의 "톡"이 실제로 몇 ms 나갔나</span></h2>
+<div id="pulses">아직 펄스 없음 — 주행을 시작하면 여기 찍힙니다</div>
+"""
+
+_DIAG_JS = """
+  const conn = document.getElementById('conn');
+  const grid = document.getElementById('grid');
+  const cv = document.getElementById('wave');
+  const SPAN = 10.0;                 // 파형 표시 구간(초)
+  let wave = [];
+
+  document.getElementById('out').textContent =
+    '읽기 전용 화면입니다 — 조작은 [수동 조작], 튜닝은 [시스템 설정]에서.';
+
+  function card(lbl, val, sub, cls) {
+    return '<div class="m ' + (cls || '') + '"><div class="lbl">' + lbl + '</div>'
+         + '<div class="val">' + val + '</div>'
+         + '<div class="sub">' + (sub || '') + '</div></div>';
+  }
+  function upt(ms) {
+    if (ms === null || ms === undefined) return '—';
+    const t = Math.floor(ms / 1000);
+    return Math.floor(t / 60) + '분 ' + ('0' + (t % 60)).slice(-2) + '초';
+  }
+
+  function renderCards(d) {
+    const s = d.stats || {}, r = d.rates || {};
+    const ok = s.connected;
+    conn.textContent = (ok ? '● 링크 정상' : '○ 링크 끊김')
+      + '  ·  ' + (s.port || '포트 없음')
+      + (s.hb_age == null ? '' : '  ·  하트비트 ' + s.hb_age.toFixed(2) + 's 전')
+      + '  ·  ' + d.clock + '  ·  ' + d.sample_hz + 'Hz 샘플링'
+      + (s.error ? '   ⚠ ' + s.error : '');
+    conn.style.background = ok ? 'color-mix(in srgb, #2ecc71 18%, Canvas)'
+                               : 'color-mix(in srgb, #e74c3c 18%, Canvas)';
+
+    // ★ 이 화면에서 제일 중요한 숫자. MotorLink가 20ms마다 한 프레임씩
+    //    보내므로 보드의 rx 카운터는 초당 50씩 늘어야 한다. 그보다 낮으면
+    //    젯슨 송신 스레드가 밀린 것이고, 그게 곧 펄스가 들쭉날쭉한 이유다.
+    let h = '';
+    if (r.rx == null) {
+      h += card('수신율', '—', '데이터 모으는 중');
+    } else {
+      const exp = d.expect_rx;
+      const cls = r.rx >= exp * 0.9 ? 'ok' : (r.rx >= exp * 0.6 ? 'warn' : 'bad');
+      const note = cls === 'ok' ? '정상'
+                 : (cls === 'warn' ? '⚠ 젯슨 송신 지연' : '⚠ 심각 — 지연/단절');
+      h += card('수신율 (보드 rx)', r.rx.toFixed(1) + '<small>/s</small>',
+                '기대 ' + exp + '/s · ' + note, cls);
+    }
+    h += card('깨진 프레임', (s.fw_bad || 0),
+              (r.bad ? r.bad.toFixed(1) + '/s 증가 중' : '증가 없음'),
+              s.fw_bad ? (r.bad ? 'bad' : 'warn') : 'ok');
+    h += card('거부(nak)', (s.nak || 0),
+              (r.nak ? r.nak.toFixed(1) + '/s 증가 중' : '증가 없음'),
+              s.nak ? (r.nak ? 'bad' : 'warn') : 'ok');
+    // board_resets는 /control 배지에 없다 — 여기가 유일하게 보이는 곳이다.
+    h += card('보드 재부팅', (s.board_resets || 0),
+              s.board_resets ? '⚠ 전원 강하/워치독 의심' : '없음',
+              s.board_resets ? 'bad' : 'ok');
+    h += card('링크 복구', (s.hb_resets || 0),
+              s.hb_resets ? '⚠ 하트비트 끊겨 재연결함' : '없음',
+              s.hb_resets ? 'warn' : 'ok');
+    h += card('보드 uptime', upt(s.fw_ms), '되감기면 재부팅한 것');
+    // 샘플러가 100Hz 스케줄에서 밀린 정도 = MotorLink의 20ms 틱이 밀리는 것과
+    // 같은 원인(GIL·CPU 부하)을 본다. 20ms를 넘으면 지령 간격이 이미 깨진다.
+    h += card('젯슨 지연', d.sample_lag_ms.toFixed(1) + '<small>ms</small>',
+              d.sample_lag_ms > 20 ? '⚠ 지령 간격이 흔들립니다' : '샘플러 스케줄 밀림(최대)',
+              d.sample_lag_ms > 20 ? 'bad' : (d.sample_lag_ms > 8 ? 'warn' : 'ok'));
+    const tg = s.target || [0, 0, 0];
+    h += card('현재 지령', tg[0] + ' / ' + tg[1] + ' / ' + tg[2], 'vx / vy / w');
+    const t = s.tuning;
+    if (t) h += card('보드 튜닝(요청)', t.hz + '<small>Hz</small>',
+                     '듀티 ' + t.max_pwm + ' · 슬루 ' + t.accel + '/' + t.decel);
+    grid.innerHTML = h;
+
+    const acks = document.getElementById('acks');
+    acks.textContent = (s.acks && s.acks.length)
+      ? '보드 확인 응답: ' + s.acks.join('  |  ')
+      : '보드 확인 응답 없음 — 설정(F/P/R)이 아직 안 먹었을 수 있습니다';
+  }
+
+  function renderPulses(d) {
+    const el = document.getElementById('pulses');
+    const ps = d.pulses || [], st = d.pulse_stat;
+    if (!ps.length) { el.textContent = '아직 펄스 없음 — 주행을 시작하면 여기 찍힙니다'; return; }
+    let h = '<div>최근 ON 폭(ms): ';
+    for (const p of ps) h += '<span class="pw">' + p.on_ms.toFixed(0) + '</span>';
+    h += '</div>';
+    if (st) {
+      // ★ 여기가 "톡톡이 매번 다르다"의 정량. 편차가 크면 펄스 길이가
+      //    양자화(LineDriver 20ms + MotorLink 20ms)에 먹히고 있는 것이다.
+      const spread = st.max - st.min;
+      const pct = st.avg ? Math.round(100 * spread / st.avg) : 0;
+      h += '<div>최소 <b>' + st.min.toFixed(0) + '</b> · 평균 <b>' + st.avg.toFixed(0)
+         + '</b> · 최대 <b>' + st.max.toFixed(0) + '</b> ms  →  편차 <b>'
+         + spread.toFixed(0) + 'ms (±' + pct + '%)</b>'
+         + (pct > 40 ? '  ⚠ 한 걸음의 크기가 매번 다릅니다' : '  · 고름') + '</div>';
+    }
+    const withGap = ps.filter(p => p.gap_ms != null);
+    if (withGap.length) {
+      const gaps = withGap.map(p => p.gap_ms);
+      const per = withGap.map(p => p.gap_ms + p.on_ms);
+      const mn = a => Math.min.apply(null, a).toFixed(0);
+      const mx = a => Math.max.apply(null, a).toFixed(0);
+      h += '<div class="dim">쉼(OFF) ' + mn(gaps) + '~' + mx(gaps) + 'ms · 주기 '
+         + mn(per) + '~' + mx(per) + 'ms · 펄스 중 최대지령 '
+         + Math.max.apply(null, ps.map(p => p.peak)) + '</div>';
+    }
+    h += '<div class="dim">※ <b>젯슨이 내보낸 지령</b> 기준입니다(보드가 실제 인가한 '
+       + '속도가 아님). 샘플링 ' + d.sample_hz + 'Hz라 ±'
+       + Math.round(1000 / d.sample_hz) + 'ms 양자화가 섞여 있습니다.</div>';
+    el.innerHTML = h;
+  }
+
+  function draw() {
+    const dpr = window.devicePixelRatio || 1;
+    const W = cv.clientWidth, H = cv.clientHeight;
+    if (!W || !H) return;
+    if (cv.width !== Math.round(W * dpr)) {
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    }
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    if (!wave.length) return;
+    const tEnd = wave[wave.length - 1][0], tStart = tEnd - SPAN;
+    const mid = H / 2, scale = (H / 2 - 10) / 255;
+    g.strokeStyle = 'rgba(128,128,128,0.35)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, mid); g.lineTo(W, mid); g.stroke();
+    g.setLineDash([3, 4]);
+    for (const v of [255, 128, -128, -255]) {
+      const y = mid - v * scale;
+      g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+    }
+    for (let k = Math.ceil(tStart); k < tEnd; k++) {       // 1초 눈금
+      const x = (k - tStart) / SPAN * W;
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+    }
+    g.setLineDash([]);
+    // 계단(step)으로 그린다 — 지령은 다음 갱신까지 유지되는 값이라
+    // 직선으로 이으면 없던 램프가 생겨 펄스가 실제보다 부드러워 보인다.
+    const cols = ['#2ecc71', '#3498db', '#e67e22'];
+    for (let i = 0; i < 3; i++) {
+      g.strokeStyle = cols[i]; g.lineWidth = 1.8;
+      g.beginPath();
+      let px = null, py = null;
+      for (const s of wave) {
+        if (s[0] < tStart) continue;
+        const x = (s[0] - tStart) / SPAN * W, y = mid - s[1 + i] * scale;
+        if (px === null) { g.moveTo(x, y); } else { g.lineTo(x, py); g.lineTo(x, y); }
+        px = x; py = y;
+      }
+      g.stroke();
+    }
+    g.fillStyle = 'rgba(128,128,128,0.9)'; g.font = '11px sans-serif';
+    g.fillText('+255', 4, mid - 255 * scale + 11);
+    g.fillText('0', 4, mid - 4);
+    g.fillText('-255', 4, mid + 255 * scale - 4);
+  }
+
+  function apply(d) {
+    if (d.wave && d.wave.length) {
+      for (const s of d.wave) wave.push(s);
+      // 표시 구간보다 1초 넉넉히만 들고 있는다(브라우저 메모리 무한증가 방지).
+      const cut = wave[wave.length - 1][0] - SPAN - 1;
+      while (wave.length && wave[0][0] < cut) wave.shift();
+    }
+    renderCards(d); renderPulses(d); draw();
+  }
+
+  // EventSource는 끊기면 브라우저가 알아서 재연결한다 — 젯슨을 재시작해도
+  // 탭을 새로고침할 필요가 없다(데모 중에 이게 크다).
+  const es = new EventSource('/diag-events');
+  es.onmessage = (e) => { try { apply(JSON.parse(e.data)); } catch (err) { /* 다음 프레임 */ } };
+  es.onerror = () => {
+    conn.textContent = '○ 스트림 끊김 — 재연결 중...';
+    conn.style.background = 'color-mix(in srgb, #e74c3c 18%, Canvas)';
+  };
+  window.addEventListener('resize', draw);
+"""
+
+
+def diag_page() -> str:
+    # common=False: 1초 /status 폴링을 끈다. SSE와 겹치면 낭비이고,
+    # 그 폴링 부하가 이 화면이 재려는 "젯슨 지연"에 섞여 들어간다.
+    return _shell("토마토피커 — 링크 실시간 계측", _DIAG_BODY, _DIAG_JS, "diag", common=False)
