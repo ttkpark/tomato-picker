@@ -515,6 +515,11 @@ _SETTINGS_BODY = """
     <span class="dim">한 번에 가는 거리</span></label>
   <label>펄스 주기 <input type="range" id="pPeriod" min="0.04" max="1.0" step="0.01" value="0.20"
     oninput="pPeriodOut.textContent=this.value"> <b id="pPeriodOut">0.32</b> 초
+  <!-- 메카넘 롤러는 정지 상태에서 옆으로 안 미끄러진다. 바퀴가 굴러야 횡방향
+       정지마찰이 깨지므로, 정렬 펄스마다 전후로 살짝 흔들어준다(부호 반전 → 상쇄). -->
+  <label>정렬 흔들기 <input type="range" id="pDither" min="0" max="255" step="5" value="150"
+    oninput="pDitherOut.textContent=this.value"> <b id="pDitherOut">150</b> / 255
+    <span class="dim">— 0이면 없음. 게걸음이 안 먹히면 올리세요(롤러 정지마찰)</span>
     <span class="dim">ON과 같게 두면 <b>연속 주행</b>이 된다</span></label>
   <div class="row-flex">
     <button onclick="applyPulse()">적용</button>
@@ -590,7 +595,8 @@ _SETTINGS_JS = """
     cmd({action:'line_params',
          speed: +document.getElementById('pSpeed').value,
          pulse_on: +document.getElementById('pOn').value,
-         pulse_period: +document.getElementById('pPeriod').value});
+         pulse_period: +document.getElementById('pPeriod').value,
+         align_dither: +document.getElementById('pDither').value});
   }
   function preset(sp, on, per) {
     setRange('pSpeed', sp); setRange('pOn', on); setRange('pPeriod', per); applyPulse();
@@ -631,10 +637,12 @@ _SETTINGS_JS = """
       pulseInit = true;
       setRange('pSpeed', Math.round(ln.speed));
       setRange('pOn', ln.pulse_on); setRange('pPeriod', ln.pulse_period);
+      if (ln.align_dither != null) setRange('pDither', Math.round(ln.align_dither));
     }
     document.getElementById('pNow').textContent = ln.speed == null ? '' :
       ('현재: 속도 ' + Math.round(ln.speed) + ' · '
-       + (ln.pulsing ? '펄스 ' + ln.pulse_on + 's / ' + ln.pulse_period + 's' : '연속 주행'));
+       + (ln.pulsing ? '펄스 ' + ln.pulse_on + 's / ' + ln.pulse_period + 's' : '연속 주행')
+       + '  ·  정렬 흔들기 ' + Math.round(ln.align_dither || 0));
 
     const t = base.tuning;
     if (t) {

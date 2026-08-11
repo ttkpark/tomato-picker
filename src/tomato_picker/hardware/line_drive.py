@@ -39,6 +39,7 @@ import threading
 import time
 
 from ..config import (
+    LINE_ALIGN_DITHER,
     LINE_ALIGN_DIVERGE_LIMIT,
     LINE_ALIGN_TIMEOUT_SEC,
     LINE_APPROACH_FRAC,
@@ -75,7 +76,8 @@ from ..config import (
 
 # 런타임에 뒤집을 수 있는 축·부호. 실기에서만 확정되는 값이라 파일로 뺀다.
 TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain",
-               "speed", "pulse_on", "pulse_period", "no_strafe", "odom_sign")
+               "speed", "pulse_on", "pulse_period", "no_strafe", "odom_sign",
+               "align_dither")
 
 # 자동으로 정렬을 끼워 넣을 주행 모드. jog는 버튼 한 번 = 펄스 한 번이라
 # 중간에 정렬이 끼어들면 "톡 쳤는데 로봇이 혼자 움직인다"가 되므로 뺀다.
@@ -155,6 +157,8 @@ class LineDriver:
             "no_strafe": 1.0 if LINE_NO_STRAFE else 0.0,
             # 수동 이동 방향 판정 부호(오도메트리 +가 "오른쪽"인가).
             "odom_sign": 1.0,
+            # 정렬 펄스에 얹는 전후 흔들기 세기(0=없음). 롤러 정지마찰을 깨려고.
+            "align_dither": float(LINE_ALIGN_DITHER),
         }
         self._tune.update(_load_saved(LINE_TUNING_FILE))
         self._thread = threading.Thread(target=self._run, daemon=True, name="line-drive")
@@ -200,7 +204,8 @@ class LineDriver:
 
     def set_params(self, **values) -> str:
         """속도·펄스 설정을 런타임에 바꾸고 파일에 남긴다(재시작해도 유지)."""
-        limits = {"speed": (30, 255), "pulse_on": (0.02, 3.0), "pulse_period": (0.02, 3.0)}
+        limits = {"speed": (30, 255), "pulse_on": (0.02, 3.0), "pulse_period": (0.02, 3.0),
+                  "align_dither": (0, 255)}
         with self._lock:
             for key, (lo, hi) in limits.items():
                 if values.get(key) is not None:
@@ -212,7 +217,9 @@ class LineDriver:
         self._save_tuning(snapshot)
         mode = ("연속 주행" if snapshot["pulse_period"] <= snapshot["pulse_on"]
                 else f"펄스 {snapshot['pulse_on']:.2f}s / {snapshot['pulse_period']:.2f}s 주기")
-        return f"속도 {snapshot['speed']:.0f} · {mode}"
+        dither = snapshot.get("align_dither", 0)
+        return (f"속도 {snapshot['speed']:.0f} · {mode} · "
+                f"정렬 흔들기 {dither:.0f}" + (" (없음)" if dither <= 0 else ""))
 
     def _save_tuning(self, snapshot: dict) -> None:
         try:
@@ -449,6 +456,7 @@ class LineDriver:
             "pulse_period": self._tune["pulse_period"],
             "pulsing": self._tune["pulse_on"] < self._tune["pulse_period"] - 1e-6,
             "no_strafe": self.no_strafe,
+            "align_dither": self._tune.get("align_dither", LINE_ALIGN_DITHER),
             "detours": self._detours,
             "resuming": self._resume is not None,
             "last_dir": self._last_dir,
@@ -626,8 +634,26 @@ class LineDriver:
         """게걸음(횡이동) 금지 모드인가."""
         return bool(self._tune.get("no_strafe", 1.0))
 
+    def _align_dither(self, goal: dict) -> int:
+        """정렬 펄스에 얹을 **전후 흔들기**. 펄스마다 부호가 뒤집힌다.
+
+        ⚠ 2026-08-11 실기: 게걸음 지령을 줘도 로봇이 **안 움직인다**. 메카넘의
+        횡이동은 롤러가 옆으로 굴러야 생기는데, 정지 상태에서는 롤러의 정지마찰이
+        그걸 막는다. 바퀴가 이미 굴러가고 있으면 마찰이 깨져 옆으로 밀린다
+        (사용자 관찰: "살짝 전진 후진하면서 하면 좌우로 조금은 움직여지더라").
+
+        펄스마다 앞·뒤를 번갈아 주므로 전후 변위는 서로 상쇄된다 — 정렬하는
+        동안 진행 방향 위치가 밀려나지 않는다(끝나는 시점에 한 펄스분만 남는다).
+        """
+        amp = float(self._tune.get("align_dither", LINE_ALIGN_DITHER))
+        if amp <= 0:
+            return 0
+        period = max(1e-3, float(self._tune.get("pulse_period", LINE_PULSE_PERIOD)))
+        n = int((time.monotonic() - goal.get("started", 0.0)) / period)
+        return int(amp) if n % 2 == 0 else -int(amp)
+
     def _command(self, line: dict, travel_dir: int, speed: int,
-                 mode: str = "align") -> tuple[int, int, int]:
+                 mode: str = "align", dither: int = 0) -> tuple[int, int, int]:
         """(vx, vy, w) 지령을 만든다.
 
         테이프까지의 거리 오차는 **횡방향**이라 보정축(기본 vy)에 싣고, 진행은
@@ -650,7 +676,9 @@ class LineDriver:
                                         self._tune["dy_sign"], LINE_DY_DEADBAND)
             w = self._corr_pulse(line.get("angle_deg"), self._tune["yaw_gain"],
                                  self._tune["yaw_sign"], LINE_YAW_DEADBAND)
-        travel = int(self._tune["travel_sign"] * travel_dir * speed)
+        # 흔들기는 진행축에 그대로 얹는다(부호 뒤집기는 호출자가 이미 했다).
+        travel = int(self._tune["travel_sign"] * travel_dir * speed) + dither
+        travel = max(-255, min(255, travel))
         if self._tune["dy_axis"] == "vy":
             return travel, corr, w      # 보정=게걸음, 진행=전후
         return corr, travel, w          # 보정=전후,   진행=게걸음
@@ -864,7 +892,10 @@ class LineDriver:
             # OFF 구간엔 **보정까지 전부 0** — 완전히 멈춰 정착시킨 뒤 다시 잰다.
             if self._pulse_gate(goal, mode):
                 travel = 0 if mode == "align" else self._travel_dir(goal)
-                vx, vy, w = self._command(self._line, travel, speed, mode)
+                # 정렬은 제자리 동작이지만 **완전히 제자리면 롤러가 안 미끄러진다.**
+                # 전후로 살짝 흔들어 정지마찰을 깨준다(펄스마다 부호 반전 → 상쇄).
+                dither = self._align_dither(goal) if mode == "align" else 0
+                vx, vy, w = self._command(self._line, travel, speed, mode, dither)
             else:
                 vx = vy = w = 0
             try:
