@@ -35,6 +35,7 @@ from ..config import (
 from .base import RobotArm
 from .ports import list_arm_ports, resolve_arm_port, resolve_leader_port
 from .presets import PresetStore
+from .servo_probe import require_live_bus
 
 
 def _pose_only(observation: dict) -> dict[str, float]:
@@ -94,6 +95,11 @@ class LerobotArm(RobotArm):
             follower_serial=ARM_FOLLOWER_SERIAL,
             leader_serial=ARM_LEADER_SERIAL,
         )
+        # ★ 넘기기 전에 버스가 살아 있는지 0.25초만 물어본다. USB는 12V가 없어도
+        #   열거되므로 포트가 보인다고 서보가 있는 게 아니다 — 그대로 lerobot에
+        #   넘기면 응답을 기다리며 무한 블로킹되고, 이게 시작 순서의 첫 단계라
+        #   서비스 전체가 선다(2026-08-12 실사고). 전원 문제는 전원 문제라고 말한다.
+        require_live_bus(port)
         follower = SOFollower(SOFollowerRobotConfig(port=port, id=self._arm_id))
         follower.connect(calibrate=False)
         follower.bus.disable_torque()

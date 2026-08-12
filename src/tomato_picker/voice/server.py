@@ -18,7 +18,7 @@ from .linkmon import LinkSampler
 from .log_hub import LogHub
 
 
-def _status_payload(arm, base, line=None) -> dict:
+def _status_payload(arm, base, line=None, seq=None) -> dict:
     """조작 화면이 폴링하는 상태. 어떤 조회가 실패해도 페이지는 떠야 하므로
     항목마다 개별로 감싸고, 없는 장비는 None으로 내려보낸다."""
     def _safe(fn, fallback):
@@ -42,7 +42,12 @@ def _status_payload(arm, base, line=None) -> dict:
         if line is not None
         else {"mode": "off", "error": "라인 주행 비활성"}
     )
-    return {"arm": arm_status, "base": base_status, "line": line_status}
+    seq_status = (
+        _safe(seq.status, {"sequences": {}})
+        if seq is not None
+        else {"sequences": {}, "error": "시퀀스 비활성"}
+    )
+    return {"arm": arm_status, "base": base_status, "line": line_status, "seq": seq_status}
 
 # 하드웨어가 하나도 없어도 대시보드는 떠야 한다(부스 데모에서 화면이 검은 것보다
 # "장비 미연결"이라고 떠 있는 게 낫다). 그래서 이 모듈의 어떤 것도 하드웨어
@@ -132,8 +137,12 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
     hwEl.textContent = '';
     for (const [name, state] of Object.entries(items || {{}})) {{
       const el = document.createElement('span');
-      el.className = state === 'ok' ? 'ok' : 'down';
-      el.textContent = (state === 'ok' ? '● ' : '○ ') + name;
+      // 세 상태: ok(●) / 진행 중(◌ — 대기·연결 중) / down(○).
+      // 진행 중을 down과 같이 빨갛게 칠하면 "고장"으로 오해된다.
+      const busy = (state === '연결 중' || state === '대기' || state === '확인 중');
+      el.className = state === 'ok' ? 'ok' : (busy ? '' : 'down');
+      el.textContent = (state === 'ok' ? '● ' : (busy ? '◌ ' : '○ ')) + name
+                     + (busy ? ' (' + state + ')' : '');
       hwEl.append(el);
     }}
   }}
@@ -283,6 +292,10 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
 # tomato-voice와 ttyUSB0을 다투므로(독점) 둘이 같이 뜨면 나중 쪽이 죽는다.
 _SERVICES = ("tomato-voice", "line-follow", "line-cam", "tomato-vision")
 
+# 시퀀스 러너 핸들. _handle_command는 인자가 이미 많아 여기 담아 쓴다
+# (핸들러 생성 시 hardware 딕셔너리에서 꺼내 넣는다).
+_SEQ: dict = {}
+
 
 def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool, str]:
     """수동 조작 명령 하나를 실행. (성공여부, 사람이 읽을 설명)을 돌려준다.
@@ -321,6 +334,17 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
                                    capture_output=True, text=True, timeout=5)
                 outs.append(f"{svc}: {(r.stdout or r.stderr).strip() or '?'}")
             return True, " · ".join(outs)
+
+        # --- 시퀀스 (팔 + 지점 이동 혼합 대본) ---
+        if action in ("seq_start", "seq_stop", "seq_save"):
+            seq = _SEQ.get("runner")
+            if seq is None:
+                return False, "시퀀스 러너가 없습니다"
+            if action == "seq_start":
+                return True, seq.start(str(body.get("key", "A")))
+            if action == "seq_stop":
+                return True, seq.stop()
+            return True, seq.set_sequence(str(body.get("key", "A")), str(body.get("text", "")))
 
         handled = _handle_line_command(body, line)
         if handled is not None:
@@ -448,6 +472,7 @@ def _make_handler(
     # 하드웨어보다 먼저 띄우는 게 원칙이라(voice_mode 참고) 핸들러 생성 시점엔
     # 아직 팔·바퀴가 없다 — 요청이 올 때마다 이 딕셔너리를 다시 읽는다.
     hw = hardware if hardware is not None else {}
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args) -> None:  # noqa: A002 - stdlib 시그니처
             pass  # 콘솔에 접속 로그 안 찍음(음성 인식 로그와 섞이면 지저분함)
@@ -465,7 +490,8 @@ def _make_handler(
             if self.path == "/status":
                 # 조작 화면이 1초마다 폴링하는 상태 스냅샷. 하드웨어가 없거나
                 # 상태 조회가 실패해도 화면은 떠 있어야 하므로 전부 감싼다.
-                self._write_json(_status_payload(hw.get("arm"), hw.get("base"), hw.get("line")))
+                self._write_json(_status_payload(hw.get("arm"), hw.get("base"),
+                                                 hw.get("line"), hw.get("seq")))
                 return
 
             if self.path in ("/control", "/settings", "/diag"):
@@ -540,6 +566,8 @@ def _make_handler(
                 self.send_response(404)
                 self.end_headers()
                 return
+            # 러너는 서버보다 늦게 만들어진다 — 요청 시점에 최신 핸들을 집는다.
+            _SEQ["runner"] = hw.get("seq")
             length = int(self.headers.get("Content-Length") or 0)
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")

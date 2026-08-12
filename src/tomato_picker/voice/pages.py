@@ -205,6 +205,26 @@ _CONTROL_BODY = """
   <button onclick="drive(0,0,1)">↻ 우회전</button>
 </div>
 
+<h2>시퀀스 <span class="dim">— 팔 프리셋 + 지점 이동을 섞은 대본</span></h2>
+<div class="card">
+  <div id="seqState" style="margin-bottom:0.6rem">시퀀스 상태 확인 중...</div>
+  <div class="row-flex" style="margin-bottom:0.5rem">
+    <button onclick="cmd({action:'seq_start',key:'A'})">▶ 시퀀스 A</button>
+    <button onclick="cmd({action:'seq_start',key:'B'})">▶ 시퀀스 B</button>
+    <button class="stop" onclick="cmd({action:'seq_stop'})">■ 시퀀스 정지</button>
+  </div>
+  <label>A <input type="text" id="seqA" style="width:min(420px,80vw)">
+    <button class="small" onclick="saveSeq('A')">저장</button></label>
+  <label>B <input type="text" id="seqB" style="width:min(420px,80vw)">
+    <button class="small" onclick="saveSeq('B')">저장</button></label>
+  <p class="dim" style="margin:0.4rem 0 0; font-size:0.85rem">
+    <b>숫자</b>=팔 프리셋 · <b>m숫자</b>=지점 이동 · <b>w초</b>=대기 &nbsp;
+    예) <code>m0 1 2 3 7 m3 8 9 0</code> = 지점0으로 → 2층 따기 → 지점3(바구니) → 놓기 → 대기.
+    지점 이동은 <b>도착할 때까지 기다렸다가</b> 다음 단계로 갑니다(주행 중 팔이 움직이지 않게).
+    이동이 실패하면 거기서 멈춥니다 — 엉뚱한 위치에서 팔을 뻗지 않도록.
+  </p>
+</div>
+
 <h2>리더암 <span class="dim">— 자세 만들기 · 팔이 안 움직이면 →</span>
   <button class="small" onclick="cmd({action:'service_restart',name:'tomato-voice'})">🦾 팔 서비스 재시작</button>
 </h2>
@@ -312,6 +332,11 @@ _CONTROL_JS = """
     if (state && state.arm && state.arm.leader_connected) cmd({action:'leader_disconnect'});
     else cmd({action:'leader_connect', port: document.getElementById('leaderPort').value || null});
   }
+  let seqInit = false;
+  function saveSeq(key) {
+    cmd({action:'seq_save', key: key,
+         text: document.getElementById('seq' + key).value});
+  }
   function toggleMirror() {
     cmd({action:'mirror', on: !(state && state.arm && state.arm.mirroring)});
   }
@@ -331,6 +356,33 @@ _CONTROL_JS = """
     link.textContent = bits.join('  ·  ');
     link.style.background = ok ? 'color-mix(in srgb, #2ecc71 18%, Canvas)'
                                : 'color-mix(in srgb, #e74c3c 18%, Canvas)';
+
+    // 시퀀스 — 실행 중이면 진행 단계를, 아니면 대본 설명을 보여준다.
+    const sq = state.seq || {};
+    const se = document.getElementById('seqState');
+    if (se) {
+      const defs = sq.sequences || {};
+      if (!seqInit && Object.keys(defs).length) {
+        seqInit = true;
+        for (const k of ['A','B']) {
+          const inp = document.getElementById('seq' + k);
+          if (inp && defs[k]) inp.value = defs[k].text || '';
+        }
+      }
+      if (sq.running) {
+        se.textContent = '▶ 시퀀스 ' + sq.running + ' 실행 중 — '
+                       + (sq.step || 0) + '/' + (sq.total || 0) + ' · ' + (sq.detail || '');
+        se.style.background = 'color-mix(in srgb, #2ecc71 20%, Canvas)';
+      } else {
+        const parts = [];
+        for (const k of ['A','B']) {
+          if (defs[k]) parts.push(k + ': ' + (defs[k].error ? '⚠ ' + defs[k].error : defs[k].desc));
+        }
+        se.textContent = (sq.detail && sq.detail !== '대기' ? '지난 실행: ' + sq.detail + '  ·  ' : '')
+                       + parts.join('   |   ');
+        se.style.background = '';
+      }
+    }
 
     const el = document.getElementById('lineState');
     if (!ln || ln.mode === 'off') { el.textContent = ln.error || '라인 주행 비활성'; }

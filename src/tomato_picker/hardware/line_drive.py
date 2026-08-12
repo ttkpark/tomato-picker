@@ -58,9 +58,15 @@ from ..config import (
     LINE_HUE_END,
     LINE_HUE_MID,
     LINE_LOST_STOP_SEC,
+    LINE_MARK_ALIGN_TIMEOUT_SEC,
     LINE_MARK_ALIGN_TOL_PX,
+    LINE_MARK_BREAK_CROSS,
+    LINE_MARK_BREAK_MAG,
+    LINE_MARK_BREAK_SEC,
     LINE_MARK_CLEAR_FRAC,
     LINE_MARK_REARM_MIN_PX,
+    LINE_MARK_SETTLE_SEC,
+    LINE_MARK_STALL_LIMIT,
     LINE_MARK_REARM_PX,
     LINE_MAX_CORRECTION,
     LINE_MAX_DETOURS,
@@ -165,6 +171,14 @@ class LineDriver:
         self._align_worst: float | None = None   # 정렬 중 최소 오차(발산 감지용)
         self._align_diverge = 0
         self._align_gate = True    # 직전 틱의 펄스 게이트(발산 판정을 경계에서만 하려고)
+        # 지점 정렬의 "굳음 감지 → 큰 충격" 상태
+        self._mark_best: float | None = None   # 지금까지 가장 좋았던 오차
+        self._mark_stall = 0                   # 연속으로 못 줄인 펄스 수
+        self._mark_break_until = 0.0           # 이 시각까지는 충격 구간
+        self._mark_break_axis = "travel"       # 어느 축이 막혔나
+        self._mark_breaks = 0                  # 흔들어 푼 횟수(진단용)
+        self._mark_settle_until = 0.0          # 정착(완전 정지) 대기 종료 시각
+        self._mark_verifies = 0                # 정착 후 다시 잰 횟수(진단용)
         # 게걸음 금지 모드에서 "잠시 정렬하러 갔다 오는" 상태.
         # _resume = (원래 모드, 원래 goal, 남은 제한시간) — 정렬이 끝나면 되돌린다.
         self._resume: tuple[str, dict, float] | None = None
@@ -656,6 +670,10 @@ class LineDriver:
         # (정렬은 제자리 동작이라 여전히 톡톡이다. 안 구르면 롤러가 안 미끄러진다.)
         if self.smooth and mode not in ("align", "align_mark"):
             return True
+        # 정착 대기 중에는 **아무 지령도 내지 않는다** — 완전히 서야 관성이 죽고,
+        # 그래야 그 다음 측정이 진짜 최종 위치다.
+        if mode == "align_mark" and time.monotonic() < self._mark_settle_until:
+            return False
         if self._is_fine(mode):
             on = float(self._tune.get("pulse_on", LINE_PULSE_ON))
             period = float(self._tune.get("pulse_period", LINE_PULSE_PERIOD))
@@ -711,13 +729,23 @@ class LineDriver:
                 "곳까지 이동한 뒤 다시 누르세요")
         self._start("align_mark", {"speed": self._speed(speed)},
                     "지점 정렬 — 마커를 화면 중앙에")
+        self._reset_mark_align()
+        return self._detail
+
+    def _reset_mark_align(self) -> None:
+        """지점 정렬을 처음부터 다시 시작하는 상태로."""
         with self._lock:
             self._align_worst = None
             self._align_diverge = 0
             self._align_gate = True
-            # 지점 정렬은 짧아야 한다 — 25초 표준 타임아웃은 여기엔 너무 길다.
-            self._deadline = time.monotonic() + LINE_ALIGN_TIMEOUT_SEC
-        return self._detail
+            self._mark_best = None
+            self._mark_stall = 0
+            self._mark_break_until = 0.0
+            self._mark_breaks = 0
+            self._mark_settle_until = 0.0
+            self._mark_verifies = 0
+            # "될 때까지" 하되 영원히는 아니다 — 넉넉한 상한을 준다.
+            self._deadline = time.monotonic() + LINE_MARK_ALIGN_TIMEOUT_SEC
 
     def _mark_pulse(self, line: dict) -> tuple[int, int]:
         """지점 정렬의 진행축 펄스: (방향, 크기). 중앙이면 (0, 0).
@@ -731,9 +759,14 @@ class LineDriver:
         _m, dx = got
         if abs(dx) <= LINE_MARK_ALIGN_TOL_PX:
             return 0, 0
-        # 상한을 150으로 죈다(LINE_MAX_CORRECTION=180은 여기엔 너무 세다) —
-        # 정렬 펄스는 "닿을 만큼만". 세면 반대편으로 넘어가 왕복이 된다.
-        mag = int(max(LINE_CORR_MIN, min(150, 0.6 * abs(dx))))
+        # 충격 구간이면 정지마찰을 확실히 넘는 크기로. 평소엔 상한 150으로 죈다
+        # (LINE_MAX_CORRECTION=180은 여기엔 너무 세다 — 반대편으로 넘어가 왕복이 된다).
+        if (time.monotonic() < self._mark_break_until
+                and self._mark_break_axis == "travel"):
+            # 굳음 해제 구간 — 크기는 톡톡 그대로다. 푸는 건 직각 흔들기가 한다.
+            mag = LINE_MARK_BREAK_MAG
+        else:
+            mag = int(max(LINE_CORR_MIN, min(150, 0.6 * abs(dx))))
         return (1 if dx > 0 else -1), mag
 
     def _begin_arrive_align(self, reached: str) -> None:
@@ -746,11 +779,8 @@ class LineDriver:
         with self._lock:
             self._mode = "align_mark"
             self._goal = {"speed": self._speed(None), "started": now}
-            self._deadline = now + LINE_ALIGN_TIMEOUT_SEC
             self._detail = f"{reached} — 지점 정렬(톡톡)로 마무리"
-            self._align_worst = None
-            self._align_diverge = 0
-            self._align_gate = True
+        self._reset_mark_align()   # deadline도 여기서 넉넉하게 다시 잡는다
 
     def _align_error(self, line: dict) -> float:
         """정렬 오차 하나로 합친 값(데드밴드 대비 비율의 최댓값). 1 미만이면 도착."""
@@ -1106,26 +1136,67 @@ class LineDriver:
             if got is None:
                 return None      # 깜빡임일 수 있다 — 타임아웃(12s)이 안전망
             marker, dx = got
-            if abs(dx) <= LINE_MARK_ALIGN_TOL_PX and self._align_error(line) <= 1.0:
+            centered = abs(dx) <= LINE_MARK_ALIGN_TOL_PX
+            level = self._align_error(line)          # dy·yaw 오차(데드밴드 배수)
+            now = time.monotonic()
+
+            # ★ 한 프레임의 "중앙"을 믿지 않는다. 조건을 만족하면 먼저 **완전히
+            #   세우고** LINE_MARK_SETTLE_SEC만큼 기다린 뒤 **다시 잰다** —
+            #   관성으로 더 나아가 결국 어긋나던 문제(2026-08-12 보고)의 처방이다.
+            #   재서 벗어나 있으면 정렬을 이어간다(정렬이 "또 실행"되는 셈).
+            if self._mark_settle_until:
+                if now < self._mark_settle_until:
+                    return None          # 정착 대기 중 — 지령은 _pulse_gate가 0으로
+                self._mark_settle_until = 0.0
+                self._mark_verifies += 1
+                if not (centered and level <= 1.0):
+                    # 관성으로 밀렸다 — 기준을 새로 잡고 계속 맞춘다.
+                    self._mark_best, self._mark_stall = None, 0
+                    self._detail = (f"정착 후 재측정 — {abs(dx):.0f}px 밀림, "
+                                    f"다시 맞춥니다 (#{self._mark_verifies})")
+                    return None
                 kind = self._marker_kind(marker)
                 name = {"end": "끝점(주황)", "mid": "중간지점(노랑)"}.get(kind, "지점")
+                extra = f" · 흔들어 풀기 {self._mark_breaks}회" if self._mark_breaks else ""
+                extra += f" · 정착확인 {self._mark_verifies}회"
                 return (f"지점 정렬 완료 — {name} 중앙 ±{abs(dx):.0f}px · "
-                        f"dy {line.get('offset_y_px') or 0:.0f}px")
-            # 펄스 경계마다 dx가 줄었는지 본다 — 한 펄스가 너무 커서 좌우로
-            # 왕복만 하면(요란) 12초 타임아웃까지 끌지 말고 지금 상태로 끝낸다.
+                        f"dy {line.get('offset_y_px') or 0:.0f}px{extra}")
+
+            if centered and level <= 1.0:
+                # 조건은 맞았다 — 그러나 지금은 굴러가는 중일 수 있다. 세우고 본다.
+                self._mark_settle_until = now + LINE_MARK_SETTLE_SEC
+                self._detail = f"정착 대기 {LINE_MARK_SETTLE_SEC:.1f}초 — 관성이 죽길 기다립니다"
+                return None
+
+            # ★ 여기서 **포기하지 않는다.** 예전엔 오차가 몇 번 안 줄면 끝냈고,
+            #   그래서 사람이 [지점 정렬]을 3번 이상 눌러야 했다(2026-08-12 보고).
+            #   못 줄이는 이유는 대개 "갈 수 없어서"가 아니라 **정지마찰에 걸려서**다.
+            #   그러면 떼어내면 된다 — 굳음이 이어지면 큰 충격을 넣고 계속한다.
             gate = self._pulse_gate(goal, mode)
             edge = gate and not self._align_gate
             self._align_gate = gate
-            if edge:
-                metric = abs(dx)
-                if self._align_worst is None or metric < self._align_worst - 8:
-                    self._align_worst, self._align_diverge = metric, 0
+            if edge and time.monotonic() >= self._mark_break_until:
+                # 지금 막힌 축이 어디인가 — 마커가 안 맞으면 진행축, 맞았으면 보정축.
+                axis = "travel" if not centered else "corr"
+                metric = abs(dx) if not centered else level
+                # 축이 바뀌면(1단계 끝) 기준을 새로 잡는다 — 단위가 다르다.
+                if axis != self._mark_break_axis:
+                    self._mark_break_axis, self._mark_best, self._mark_stall = axis, None, 0
+                improved = self._mark_best is None or metric < self._mark_best - (
+                    8.0 if axis == "travel" else 0.05)
+                if improved:
+                    self._mark_best, self._mark_stall = metric, 0
                 else:
-                    self._align_diverge += 1
-                    if self._align_diverge >= LINE_ALIGN_DIVERGE_LIMIT + 2:
-                        return (f"지점 정렬 종료 — 마커 ±{abs(dx):.0f}px에서 더 못 "
-                                "줄였습니다(한 펄스가 그보다 큽니다). 이 정도면 "
-                                "지점 위입니다 — 더 맞추려면 [톡]을 쓰세요.")
+                    self._mark_stall += 1
+                    if self._mark_stall >= LINE_MARK_STALL_LIMIT:
+                        self._mark_break_until = time.monotonic() + LINE_MARK_BREAK_SEC
+                        self._mark_breaks += 1
+                        self._mark_stall = 0
+                        self._mark_best = None    # 충격 뒤엔 다시 재본다
+                        self._detail = (
+                            f"지점 정렬 — {'마커가' if axis == 'travel' else '기준선이'} "
+                            f"굳어 흔들어 풀기 #{self._mark_breaks}")
+                        print(f"  [line] 지점정렬 굳음({axis}) — 흔들어 풀기 #{self._mark_breaks}")
             return None
 
         if mode == "align":
@@ -1334,7 +1405,31 @@ class LineDriver:
                         use = self._travel_kick(goal, use)
                     wiggle = self._travel_wiggle(goal)
                 vx, vy, w = self._command(self._line, travel, use, mode, dither)
-                if mode == "align_mark" and phase1:
+                if mode == "align_mark" and time.monotonic() < self._mark_break_until                         and self._mark_break_axis == "corr":
+                    # ★ 보정축(기준선 거리)이 굳었다 — 그 축을 최대로 밀면서
+                    #   **직각축을 크게 흔든다.** 구르는 바퀴라야 옆으로 미끄러진다
+                    #   (정렬 dither·주행 wiggle과 같은 원리, 여기선 크기를 키운 것).
+                    strong = LINE_MARK_BREAK_MAG
+                    cross = LINE_MARK_BREAK_CROSS if int(time.monotonic() * 6) % 2 else -LINE_MARK_BREAK_CROSS
+                    corr_now = vy if self._tune["dy_axis"] == "vy" else vx
+                    signed = strong if corr_now >= 0 else -strong
+                    if self._tune["dy_axis"] == "vy":
+                        vy, vx = signed, cross
+                    else:
+                        vx, vy = signed, cross
+                    w = 0
+                elif (mode == "align_mark" and phase1
+                      and time.monotonic() < self._mark_break_until):
+                    # 진행축이 굳었다 — 크기는 그대로 두고 **직각축을 흔들어**
+                    #   바퀴를 굴린다. 구르기 시작하면 같은 톡톡으로도 나간다.
+                    cross = (LINE_MARK_BREAK_CROSS if int(time.monotonic() * 6) % 2
+                             else -LINE_MARK_BREAK_CROSS)
+                    if self._tune["dy_axis"] == "vy":
+                        vy = cross
+                    else:
+                        vx = cross
+                    w = 0
+                elif mode == "align_mark" and phase1:
                     # ★ 한 번에 한 축만. 진행 펄스에 dy/yaw 보정까지 얹으면
                     #   대각선으로 왔다갔다해 "너무 요란하게" 보인다(실기 보고).
                     #   마커를 먼저 중앙에 → 그 다음 dy/yaw(2단계, travel=0)로.
