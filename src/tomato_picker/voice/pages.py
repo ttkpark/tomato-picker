@@ -216,9 +216,17 @@ _CONTROL_BODY = """
       자동 모드</label>
     <span id="harvestAuto" class="dim"></span>
   </div>
+  <div class="row-flex" style="margin-top:0.4rem">
+    <button class="small" onclick="cmd({action:'harvest_relearn'})">🔄 무대 다시 배우기</button>
+    <span id="harvestScene" class="dim"></span>
+  </div>
   <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
-    나무는 <b>화면 x</b>로 가릅니다(무대 카메라가 고정이라 x가 곧 나무). 높이는 y 하나로
-    2층/1층. 순서는 <b>가까운 나무부터</b> — 지금 지점의 열매를 다 따고 다음 나무로 옮깁니다.
+    <b>고정 좌표를 쓰지 않습니다.</b> 열매들의 x를 <b>간격</b>으로 묶어 나무를 찾고, 세 그루가
+    다 보이는 순간에 각 나무의 x 중심을 배웁니다 — 무대나 카메라가 움직여도 따라옵니다.
+    한 그루를 다 따서 두 묶음만 남아도 배운 값에 맞춰 붙이므로 <b>남은 나무가 왼쪽으로
+    밀려 내려가지 않습니다</b>. 높이는 같은 나무 안에서 <b>서로 비교</b>합니다(절대 y 경계
+    없음). 한 개만 남았을 때만 배워 둔 그 나무의 경계를 씁니다.
+    순서는 <b>가까운 나무부터</b> — 지금 지점의 열매를 다 따고 다음 나무로 옮깁니다.
     <br>한 개를 딸 때마다 화면을 <b>다시 읽습니다</b> — 처음 목록을 붙들고 돌면 이미 딴 것을
     또 따러 갑니다.
     <br><b>자동 모드</b>는 평소엔 대기하다가 토마토가 잠깐 이상 계속 보이면 시작하고, 다 따면
@@ -386,6 +394,7 @@ _CONTROL_JS = """
     const box = document.getElementById('hAuto');
     if (box && !hAutoInit) { hAutoInit = true; box.checked = !!h.auto; }
     document.getElementById('harvestAuto').textContent = h.auto_note || '';
+    document.getElementById('harvestScene').textContent = h.scene || '';
   }
 
   function render() {

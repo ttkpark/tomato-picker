@@ -434,7 +434,8 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
             return True, " · ".join(outs)
 
         # --- 자동 수확 ---
-        if action in ("harvest_start", "harvest_stop", "harvest_auto"):
+        if action in ("harvest_start", "harvest_stop", "harvest_auto",
+                      "harvest_relearn"):
             harvest = _SEQ.get("harvest")
             if harvest is None:
                 return False, "수확 러너가 없습니다"
@@ -442,6 +443,8 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
                 return True, harvest.start("모두 따기")
             if action == "harvest_stop":
                 return True, harvest.stop()
+            if action == "harvest_relearn":
+                return True, harvest.relearn()
             return True, harvest.set_auto(bool(body.get("on")))
 
         # --- 음성 명령어 사전 (하드웨어 불필요) ---

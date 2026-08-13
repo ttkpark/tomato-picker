@@ -5,14 +5,24 @@
 읽어주는 층이 없었을 뿐이다. 여기가 그 층이다 — 좌표 목록을 받아 표로 만들고,
 지금 위치에서 가장 가까운 것부터 딸 순서를 짠다.
 
-**판단 규칙**
+**고정 숫자를 쓰지 않는다.** 처음엔 화면 x를 정해진 경계로 갈랐는데, 그러면
+무대나 카메라가 조금만 움직여도 나무 배정이 통째로 어긋난다. 지금은 **보이는
+것에서 배운다**:
 
-· 나무 = 화면 x 경계로 가른다. 무대 카메라가 바닥에 고정이라 x가 곧 나무다.
-  (검출된 것을 x로 정렬해 순서대로 배정하면, 한 그루가 안 잡힌 순간 나머지가
-   통째로 밀려 엉뚱한 나무로 간다. 경계는 고정이라 그런 일이 없다.)
-· 높이 = y 하나로 2층/1층. 위가 화면에서 더 작은 y다.
+· 나무 = 열매들의 x를 **간격으로 묶는다**(군집). 같은 나무의 열매는 x가 붙어
+  있고 나무 사이는 훌쩍 벌어지므로, 절대 위치가 아니라 **상대 간격**으로 갈린다.
+  무대가 통째로 옮겨가도 간격 구조는 그대로라 그대로 먹는다.
+· 묶음 → 지점 배정 = 세 그루가 다 보이는 순간(모호하지 않은 순간)에 각 나무의
+  x 중심을 **배워 둔다**. 한 그루에 열매가 없어 두 묶음만 보일 때는 배워 둔
+  중심에 가장 가까운 것으로 붙인다 — 그래서 왼쪽 나무를 다 따버려도 남은 두
+  그루가 지점0·1로 밀려 내려가지 않는다.
+· 높이 = 같은 나무 안에서 **서로 비교한다**. 위/아래는 원래 상대적인 말이라
+  절대 y 경계가 필요 없다. 한 개만 남았을 때만 배워 둔 그 나무의 경계를 쓴다.
 · 순서 = **가까운 나무부터**. 지금 서 있는 지점의 열매를 먼저 다 따고, 그 다음
   가장 가까운 나무로 옮긴다. 주행이 가장 적다. 한 나무 안에서는 위 → 아래.
+
+배운 값은 화면에 그대로 보여주고, 무대를 옮겼으면 [무대 다시 배우기]로 지운다.
+아무것도 못 배운 상태에서는 config의 초기 추정값으로 버틴다(그 사실도 표시).
 
 **여기서 하드웨어를 만지지 않는다.** 순수하게 좌표 → 계획이라 하드웨어 없이
 그대로 시험할 수 있다. 실행은 HarvestRunner가 시퀀스 러너에 태워서 한다.
@@ -28,7 +38,9 @@ from dataclasses import dataclass
 
 from .config import (
     HARVEST_ARM_SEC,
+    HARVEST_LEARN_EMA,
     HARVEST_MERGE_PX,
+    HARVEST_MIN_TREE_GAP_PX,
     HARVEST_REARM_EMPTY_SEC,
     HARVEST_TREE_NAMES,
     HARVEST_TREE_STATIONS,
@@ -56,35 +68,189 @@ class Fruit:
         return f"{HARVEST_TREE_NAMES[self.tree]} {floor}"
 
 
-def _tree_of(x: float) -> int:
+def _cluster_x(xs: list[float]) -> list[list[int]]:
+    """x를 **간격**으로 묶는다 — 절대 위치를 쓰지 않는다.
+
+    같은 나무의 열매는 x가 붙어 있고 나무 사이는 훌쩍 벌어진다. 그래서 가장 큰
+    틈에 비례한 문턱으로 자르면 무대가 어디로 옮겨가도 같은 구조가 나온다.
+    문턱에 하한(HARVEST_MIN_TREE_GAP_PX)을 두는 이유: 한 그루에만 열매가 있으면
+    "가장 큰 틈"도 몇 px라, 비례만 쓰면 같은 나무를 둘로 쪼갠다.
+    """
+    order_ = sorted(range(len(xs)), key=lambda i: xs[i])
+    if not order_:
+        return []
+    gaps = [xs[order_[i + 1]] - xs[order_[i]] for i in range(len(order_) - 1)]
+    thr = max(HARVEST_MIN_TREE_GAP_PX, 0.4 * max(gaps, default=0.0))
+    groups, cur = [], [order_[0]]
+    for i, gap in enumerate(gaps):
+        if gap > thr:
+            groups.append(cur)
+            cur = []
+        cur.append(order_[i + 1])
+    groups.append(cur)
+    return groups
+
+
+@dataclass
+class SceneModel:
+    """무대에 대해 **배운 것**. 고정 상수 대신 이걸 쓴다.
+
+    tree_x    나무별 x 중심(왼→오른). 지점 인덱스와 같은 순서다.
+    y_split   나무별 위/아래 경계. 그 나무에서 위·아래를 둘 다 본 적이 있어야 생긴다.
+    """
+
+    tree_x: list[float] | None = None
+    y_split: list[float | None] | None = None
+    learned: int = 0
+
+    def note(self) -> str:
+        if self.tree_x is None:
+            return (f"무대 학습 전 — 초기 추정값 사용(경계 {HARVEST_TREE_X_BOUNDS}). "
+                    "나무 세 그루가 한 화면에 다 보이면 그때 배웁니다")
+        xs = ", ".join(f"{x:.0f}" for x in self.tree_x)
+        ys = ", ".join("—" if y is None else f"{y:.0f}" for y in (self.y_split or []))
+        return f"학습됨 {self.learned}회 · 나무 x=[{xs}] · 위아래 경계 y=[{ys}]"
+
+    def reset(self) -> str:
+        self.tree_x, self.y_split, self.learned = None, None, 0
+        return "무대 학습을 지웠습니다 — 세 그루가 다 보이면 다시 배웁니다"
+
+    # --- 배우기 ---
+
+    def _blend(self, old, new):
+        return new if old is None else old * (1 - HARVEST_LEARN_EMA) + new * HARVEST_LEARN_EMA
+
+    def learn_trees(self, centers: list[float]) -> None:
+        """세 그루가 다 보이는 **모호하지 않은** 순간에만 부른다.
+
+        평소엔 천천히 따라간다(EMA) — 한 프레임의 좌표 흔들림에 배운 값이
+        휘둘리면 안 되므로. 하지만 **무대를 통째로 옮긴 것은 흔들림이 아니다.**
+        모두가 같은 방향으로 크게 밀렸으면 그대로 갈아끼운다 — 안 그러면 몇 번
+        더 볼 때까지 배운 값이 뒤처진 채로 남아 애매한 화면에서 오배정이 난다.
+        """
+        if self.tree_x is None or len(self.tree_x) != len(centers):
+            self.tree_x = list(centers)
+            self.y_split = [None] * len(centers)
+        else:
+            shift = sum(abs(o - n) for o, n in zip(self.tree_x, centers)) / len(centers)
+            spacing = min((abs(a - b) for a, b in zip(centers, centers[1:])), default=1e9)
+            if shift > 0.5 * spacing:      # 무대가 옮겨졌다 — 천천히 갈 이유가 없다
+                self.tree_x = list(centers)
+            else:
+                self.tree_x = [self._blend(o, n) for o, n in zip(self.tree_x, centers)]
+        self.learned += 1
+
+    def learn_split(self, tree: int, split: float) -> None:
+        if self.y_split is None or tree >= len(self.y_split):
+            return
+        self.y_split[tree] = self._blend(self.y_split[tree], split)
+
+    # --- 쓰기 ---
+
+    def assign(self, centers: list[float]) -> list[int] | None:
+        """묶음들의 x 중심 → 나무 번호. 못 정하면 None.
+
+        ⚠ "각자 가장 가까운 나무"로 붙이면 안 된다. 무대가 옮겨가 배운 값이 조금
+        뒤처진 상태에서는 **두 묶음이 같은 나무를 고르거나 순서가 뒤집힌다**
+        (실측: 남은 두 그루가 둘 다 오른쪽 나무로 붙었다). 나무도 묶음도 왼→오른
+        순서가 정해져 있으므로, **순서를 지키는 조합 중 오차 합이 가장 작은 것**을
+        고른다(작은 DP). 그러면 배운 값이 통째로 밀려 있어도 상대 배치로 맞춘다.
+        """
+        if self.tree_x is None or not centers or len(centers) > len(self.tree_x):
+            return None
+        n, k = len(self.tree_x), len(centers)
+        INF = float("inf")
+        # best[j][i] = 묶음 j까지를, 나무 i를 마지막으로 써서 붙였을 때의 최소 오차합
+        best = [[INF] * n for _ in range(k)]
+        back = [[-1] * n for _ in range(k)]
+        for i in range(n):
+            best[0][i] = abs(self.tree_x[i] - centers[0])
+        for j in range(1, k):
+            for i in range(j, n):
+                for prev in range(j - 1, i):
+                    cand = best[j - 1][prev]
+                    if cand + abs(self.tree_x[i] - centers[j]) < best[j][i]:
+                        best[j][i] = cand + abs(self.tree_x[i] - centers[j])
+                        back[j][i] = prev
+        end = min(range(n), key=lambda i: best[k - 1][i])
+        if best[k - 1][end] == INF:
+            return None
+        out = [end]
+        for j in range(k - 1, 0, -1):
+            end = back[j][end]
+            out.append(end)
+        return list(reversed(out))
+
+    def split_of(self, tree: int) -> float:
+        """그 나무의 위/아래 경계. 못 배웠으면 다른 나무들의 평균, 그것도 없으면 초기값."""
+        known = [y for y in (self.y_split or []) if y is not None]
+        if self.y_split and tree < len(self.y_split) and self.y_split[tree] is not None:
+            return float(self.y_split[tree])
+        if known:
+            return sum(known) / len(known)
+        return float(HARVEST_UPPER_MAX_Y)
+
+
+def _fallback_tree(x: float) -> int:
+    """아무것도 못 배웠을 때의 초기 추정 — 예전 고정 경계."""
     for i, bound in enumerate(HARVEST_TREE_X_BOUNDS):
         if x < bound:
             return i
     return len(HARVEST_TREE_X_BOUNDS)
 
 
-def classify(positions) -> list[Fruit]:
+def classify(positions, model: SceneModel | None = None) -> list[Fruit]:
     """[[x,y], …] → 나무·높이가 붙은 열매 목록(나무 순, 위 먼저).
 
-    좌표가 프레임마다 몇 px씩 흔들려 같은 열매가 둘로 세어지는 일이 있어,
-    같은 칸(나무×높이) 안에서 아주 가까운 것은 하나로 합친다.
+    model을 주면 **배운 값**으로 붙이고, 모호하지 않은 화면이면 그 자리에서
+    배운다. 안 주면 초기 추정값만 쓴다(순수 함수로 시험할 때).
     """
-    fruits: list[Fruit] = []
+    pts: list[tuple[int, int]] = []
     for pos in positions or []:
         try:
             x, y = int(pos[0]), int(pos[1])
         except (TypeError, ValueError, IndexError):
             continue          # 이상한 항목 하나가 계획 전체를 죽이면 안 된다
-        tree = _tree_of(x)
-        if tree >= len(HARVEST_TREE_STATIONS):
-            continue          # 무대 밖(코스에 없는 나무) — 셈에서 뺀다
-        height = "upper" if y < HARVEST_UPPER_MAX_Y else "lower"
-        if any(f.tree == tree and f.height == height
-               and abs(f.x - x) < HARVEST_MERGE_PX and abs(f.y - y) < HARVEST_MERGE_PX
-               for f in fruits):
-            continue
-        fruits.append(Fruit(x, y, tree, height))
-    # 나무 왼→오른, 같은 나무 안에서는 위 먼저.
+        if not any(abs(px - x) < HARVEST_MERGE_PX and abs(py - y) < HARVEST_MERGE_PX
+                   for px, py in pts):
+            pts.append((x, y))   # 좌표 지터로 같은 열매가 둘로 세어지는 것 방지
+    if not pts:
+        return []
+
+    n_trees = len(HARVEST_TREE_STATIONS)
+    groups = _cluster_x([p[0] for p in pts])
+    centers = [sum(pts[i][0] for i in g) / len(g) for g in groups]
+
+    if model is not None and len(groups) == n_trees:
+        # 세 그루가 다 보인다 = 모호하지 않다. 이때만 배운다.
+        model.learn_trees(centers)
+        trees = list(range(n_trees))
+    elif model is not None and (got := model.assign(centers)) is not None:
+        trees = got
+    else:
+        # 못 배웠고 묶음도 모자란다 — 초기 추정 경계로 버틴다(그 사실은 note()에).
+        trees = [_fallback_tree(c) for c in centers]
+
+    fruits: list[Fruit] = []
+    for gi, g in enumerate(groups):
+        tree = trees[gi]
+        if not 0 <= tree < n_trees:
+            continue          # 무대 밖 덩어리 — 셈에서 뺀다
+        ys = sorted((pts[i][1], pts[i][0]) for i in g)
+        if len(ys) >= 2:
+            # 같은 나무 안에서는 **서로 비교**한다 — 절대 경계가 필요 없다.
+            # 가장 큰 y 틈에서 자른다(보통 2개라 그냥 위/아래).
+            gaps = [(ys[k + 1][0] - ys[k][0], k) for k in range(len(ys) - 1)]
+            _, cut = max(gaps)
+            split = (ys[cut][0] + ys[cut + 1][0]) / 2
+            if model is not None:
+                model.learn_split(tree, split)
+            for k, (y, x) in enumerate(ys):
+                fruits.append(Fruit(x, y, tree, "upper" if k <= cut else "lower"))
+        else:
+            y, x = ys[0]
+            split = model.split_of(tree) if model is not None else float(HARVEST_UPPER_MAX_Y)
+            fruits.append(Fruit(x, y, tree, "upper" if y < split else "lower"))
     return sorted(fruits, key=lambda f: (f.tree, 0 if f.height == "upper" else 1))
 
 
@@ -154,6 +320,8 @@ class HarvestRunner:
         self._detail = "대기"
         self._done = 0
         self._auto = _AutoState()
+        # 무대 모형은 러너가 들고 있다 — 관측할 때마다 조금씩 배운다.
+        self._scene = SceneModel()
         threading.Thread(target=self._auto_loop, daemon=True, name="harvest-auto").start()
 
     # ---------------- 관찰 ----------------
@@ -177,7 +345,7 @@ class HarvestRunner:
 
     def plan(self) -> dict:
         """지금 보이는 것으로 세운 계획. 대시보드가 1초마다 이걸 그린다."""
-        fruits = classify(self._positions())
+        fruits = classify(self._positions(), self._scene)
         at = self._station()
         queue = order(fruits, at)
         with self._lock:
@@ -193,6 +361,7 @@ class HarvestRunner:
             "next": describe_next(queue[0] if queue else None, at),
             "running": running, "detail": detail, "picked": done,
             "auto": auto_on, "auto_note": auto_note,
+            "scene": self._scene.note(),
         }
 
     # ---------------- 실행 ----------------
@@ -229,6 +398,11 @@ class HarvestRunner:
                 pass
         return "수확 정지 요청 — 진행 중인 동작이 끝나면 멈춥니다"
 
+    def relearn(self) -> str:
+        """무대를 옮겼을 때 — 배운 걸 지우고 다음 화면부터 다시 배운다."""
+        with self._lock:
+            return self._scene.reset()
+
     def set_auto(self, on: bool) -> str:
         with self._lock:
             self._auto.on = bool(on)
@@ -258,7 +432,7 @@ class HarvestRunner:
             while not self._stop.is_set():
                 # 매번 **다시 본다** — 하나 따고 나면 화면이 바뀐다. 처음 목록을
                 # 붙들고 돌면 이미 딴 것을 또 따러 간다.
-                queue = order(classify(self._positions()), self._station())
+                queue = order(classify(self._positions(), self._scene), self._station())
                 if not queue:
                     self._say(f"{why} 완료 — {self._done}개 땄습니다")
                     return
@@ -326,7 +500,7 @@ class HarvestRunner:
             if not on or running:
                 continue
             now = time.monotonic()
-            n = len(classify(self._positions()))
+            n = len(classify(self._positions(), self._scene))
             with self._lock:
                 st = self._auto
                 if n:
@@ -360,7 +534,9 @@ if __name__ == "__main__":   # 디버깅: 좌표를 주면 표와 계획을 찍�
 
     pos = [[int(v) for v in a.split(",")] for a in sys.argv[1:]] or [
         [247, 347], [718, 324], [248, 234], [461, 224], [729, 217], [473, 344]]
-    got = classify(pos)
+    scene = SceneModel()
+    got = classify(pos, scene)
+    print(f"  무대: {scene.note()}")
     for row in table(got):
         print(f"  {row['name']:<16} 위={row['upper']}  아래={row['lower']}"
               f"  → 지점{row['station']}")
