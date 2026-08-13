@@ -94,7 +94,9 @@ from ..config import (
     LINE_TRAVEL_WIGGLE_ON,
     LINE_TRAVEL_WIGGLE_PERIOD,
     LINE_TUNING_FILE,
+    LINE_STOP_EACH_STATION,
     LINE_WIGGLE_SIGN,
+    LINE_WIGGLE_YAW,
     LINE_YAW_DEADBAND,
     LINE_YAW_GAIN,
     LINE_YAW_GAIN_ON,
@@ -105,7 +107,8 @@ from ..config import (
 TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain",
                "speed", "pulse_on", "pulse_period", "no_strafe", "odom_sign",
                "align_dither", "smooth", "smooth_speed",
-               "travel_kick", "travel_wiggle", "wiggle_sign",
+               "travel_kick", "travel_wiggle", "wiggle_sign", "wiggle_yaw",
+               "stop_each",
                # 정렬 "완료" 목표 범위 — 현장에서 코스를 새로 깔 때마다 달라진다.
                "align_tol_x", "align_dy_below", "align_dy_above", "align_yaw_tol",
                # 게걸음 크기. corr_min=정렬(펄스) 전용 바닥값,
@@ -169,6 +172,8 @@ class LineDriver:
         self._marked_odom: float | None = None   # 마지막으로 마커를 센 시점의 변위
         self._seek_odom0: float | None = None    # 지금 명령을 시작한 시점의 변위
         self._kick_done = False    # 출발 킥이 끝났나(굴렀으면 재점화하지 않는다)
+        # 한 칸씩 가는 중이면 **최종** 목적지. 매 도착마다 다음 칸을 이어 시작한다.
+        self._chain_target: int | None = None
         self._wiggle_on = False    # 좌우 톡 엄격 교대용(직전 틱이 ON이었나)
         self._wiggle_n = 0         # 실제로 낸 좌우 톡 수 — 홀짝으로 부호를 정한다
         self._last_marker: dict | None = None
@@ -216,6 +221,10 @@ class LineDriver:
             "travel_kick": float(LINE_TRAVEL_KICK),
             # 옆으로 흔들 때 **첫 반 주기**가 향하는 쪽(±1). 나무를 피한다.
             "wiggle_sign": float(LINE_WIGGLE_SIGN),
+            # 흔들 때 같이 낼 회전 크기(0이면 회전 없이 게걸음만).
+            "wiggle_yaw": float(LINE_WIGGLE_YAW),
+            # 두 칸 이상 이동할 때 중간 지점을 다 들르나.
+            "stop_each": 1.0 if LINE_STOP_EACH_STATION else 0.0,
             "travel_wiggle": float(LINE_TRAVEL_WIGGLE),
             # 정렬을 **끝낼** 목표 범위. 주행 보정 데드밴드와 다른 값이다
             # (그건 "보정을 낼지", 이건 "그만해도 되는지"). y는 위아래가 다르다.
@@ -278,6 +287,7 @@ class LineDriver:
         limits = {"speed": (30, 255), "pulse_on": (0.02, 3.0), "pulse_period": (0.02, 3.0),
                   "align_dither": (0, 255), "smooth_speed": (30, 255),
                   "travel_kick": (0, 255), "travel_wiggle": (0, 255),
+                  "wiggle_yaw": (0, 255),
                   # 정렬 완료 범위. 하한을 5px/0.5°로 둔다 — 0으로 두면 영원히
                   # 못 끝내는 정렬이 되고, 그건 설정으로 만들 수 있으면 안 된다.
                   "align_tol_x": (5, 400), "align_dy_below": (5, 400),
@@ -529,10 +539,35 @@ class LineDriver:
             )
         if self._station == index:
             return f"이미 {LINE_STATION_LABELS[index]}에 있습니다"
-        side = "right" if index > self._station else "left"
-        self._start("station", {"side": side, "target": index, "speed": self._speed(speed)},
-                    f"{LINE_STATION_LABELS[index]}(으)로 이동")
+        # 두 칸 이상이면 **한 칸씩** 간다(토글). 칸마다 마커에 정렬하고 출발하므로
+        # 오차가 쌓이지 않고, 중간에 어긋나도 거기서 드러난다. 끄면 한 번에 간다.
+        if self._tune.get("stop_each", 1.0) and abs(index - self._station) >= 2:
+            self._start_leg(index, speed)
+        else:
+            side = "right" if index > self._station else "left"
+            self._start("station", {"side": side, "target": index, "speed": self._speed(speed)},
+                        f"{LINE_STATION_LABELS[index]}(으)로 이동")
         return self._detail
+
+    def _start_leg(self, final: int, speed: int | None = None) -> bool:
+        """최종 목적지 final을 향해 **한 칸**만 간다. 더 갈 칸이 없으면 False.
+
+        _start가 _chain_target을 지우므로(새 명령이면 연쇄도 끝나야 한다) 여기서
+        **다시 건다** — 순서가 중요하다.
+        """
+        if self._station is None or self._station == final:
+            return False
+        step = 1 if final > self._station else -1
+        leg = self._station + step
+        left = abs(final - self._station)
+        self._start("station",
+                    {"side": "right" if step > 0 else "left", "target": leg,
+                     "speed": self._speed(speed)},
+                    f"{LINE_STATION_LABELS[final]}(으)로 — {LINE_STATION_LABELS[leg]} 경유"
+                    f" ({left}칸 남음)")
+        with self._lock:
+            self._chain_target = final
+        return True
 
     def next_station(self, side: str, speed: int | None = None) -> str:
         """색과 무관하게 **다음 마커**에서 정지 — 인덱스를 몰라도 쓸 수 있다."""
@@ -554,8 +589,9 @@ class LineDriver:
             self._mode = "idle"
             self._goal = {}
             self._detail = reason
-            # 정지는 정지다 — 접어둔 주행이 나중에 되살아나면 안 된다.
+            # 정지는 정지다 — 접어둔 주행도, 남은 칸도 되살아나면 안 된다.
             self._resume = None
+            self._chain_target = None
         try:
             self._base.hold(0, 0, 0)
         except Exception:  # noqa: BLE001 - 정지 실패해도 데드맨이 세운다
@@ -635,6 +671,9 @@ class LineDriver:
             "travel_kick": self._tune.get("travel_kick", LINE_TRAVEL_KICK),
             "travel_wiggle": self._tune.get("travel_wiggle", LINE_TRAVEL_WIGGLE),
             "wiggle_sign": self._tune.get("wiggle_sign", LINE_WIGGLE_SIGN),
+            "wiggle_yaw": self._tune.get("wiggle_yaw", LINE_WIGGLE_YAW),
+            "stop_each": bool(self._tune.get("stop_each", 1.0)),
+            "chain_target": self._chain_target,
             "no_strafe": self.no_strafe,
             "align_dither": self._tune.get("align_dither", LINE_ALIGN_DITHER),
             # 정렬 완료 목표 범위(px·도) — 대시보드 슬라이더가 이 값으로 채워진다.
@@ -927,6 +966,9 @@ class LineDriver:
             # 남아 있으면 엉뚱한 주행으로 되돌아간다.
             self._resume = None
             self._detours = 0
+            # 새 명령이 들어왔으면 한 칸씩 가던 연쇄도 끝이다. 이어달리기를
+            # 계속할 _start_leg만 이 뒤에서 다시 건다.
+            self._chain_target = None
             # 이 명령이 얼마나 굴러갔는지 재는 기준 — 접근(길게) 상한에 쓴다.
             self._seek_odom0 = self._odom()
             self._wiggle_on = False
@@ -959,6 +1001,9 @@ class LineDriver:
                 # 수동 이동 시 "오른쪽으로 갔다"를 판정하는 부호. 화면 x축이
                 # 로봇의 어느 쪽인지는 카메라 장착에 달렸다 — 실물로만 확정된다.
                 self._tune["odom_sign"] = -float(self._tune.get("odom_sign", 1.0))
+            elif what == "stop_each":
+                # 두 칸 이상 이동할 때 중간 지점을 다 들를지.
+                self._tune["stop_each"] = 0.0 if self._tune.get("stop_each", 1.0) else 1.0
             elif what == "wiggle_sign":
                 # 지그재그가 **어느 쪽부터** 나가는가. 나무에 부딪히면 뒤집는다.
                 self._tune["wiggle_sign"] = -float(
@@ -974,7 +1019,8 @@ class LineDriver:
                 f"(부호{snapshot['yaw_sign']:+.0f}) 진행부호={snapshot['travel_sign']:+.0f} "
                 f"게걸음={'금지(전후·회전만)' if snapshot.get('no_strafe') else '허용'} "
                 f"주행={'저속연속(vy·w 비례보정)' if snapshot.get('smooth') else '펄스(톡톡)'} "
-                f"흔들기 시작쪽={snapshot.get('wiggle_sign', 1.0):+.0f}")
+                f"흔들기 시작쪽={snapshot.get('wiggle_sign', 1.0):+.0f} "
+                f"중간지점={'모두 들름' if snapshot.get('stop_each', 1.0) else '건너뜀'}")
 
     @property
     def no_strafe(self) -> bool:
@@ -1029,7 +1075,22 @@ class LineDriver:
             return speed
         return int(kick)
 
-    def _travel_wiggle(self, goal: dict) -> int:
+    def _shake(self, step: float, amp: float) -> tuple[int, int]:
+        """한 번의 흔들기가 낼 (게걸음, 회전). step은 ±1(교대 부호), amp는 게걸음 크기.
+
+        **회전을 같이 쓰는 이유.** 게걸음은 메카넘 롤러가 옆으로 굴러야 생기는데,
+        그게 바로 정지마찰에 가장 잘 걸리는 축이다. 반면 회전은 **네 바퀴가 모두
+        제 축으로 도는** 동작이라 훨씬 쉽게 풀린다 — 먼저 풀린 바퀴가 구르기
+        시작하면 게걸음도 따라 먹는다(2026-08-13 현장 요청).
+
+        부호가 교대하므로 순회전은 상쇄된다 — 제자리에서 자세만 흔들릴 뿐
+        방향이 누적해서 틀어지지 않는다. 게걸음의 상쇄와 같은 원리다.
+        """
+        first = float(self._tune.get("wiggle_sign", LINE_WIGGLE_SIGN))
+        yaw = float(self._tune.get("wiggle_yaw", LINE_WIGGLE_YAW))
+        return int(first * step * amp), int(first * step * yaw)
+
+    def _travel_wiggle(self, goal: dict) -> tuple[int, int]:
         """주행 중 주기적으로 옆으로 톡 — 굴러가는 상태를 유지시킨다.
 
         사용자가 찾아낸 방법 그대로다: "중간중간 좌우 이동을 잠깐 섞어주면
@@ -1039,8 +1100,8 @@ class LineDriver:
         뒤집으므로 횡방향 변위는 서로 상쇄된다 — 라인에서 밀려나지 않는다.
         """
         amp = float(self._tune.get("travel_wiggle", LINE_TRAVEL_WIGGLE))
-        if amp <= 0:
-            return 0
+        if amp <= 0 and float(self._tune.get("wiggle_yaw", LINE_WIGGLE_YAW)) <= 0:
+            return 0, 0
         t = time.monotonic() - goal.get("started", 0.0)
         on = (t % LINE_TRAVEL_WIGGLE_PERIOD) < LINE_TRAVEL_WIGGLE_ON
         # ⚠ 부호를 벽시계(주기 번호)로 정하면 틱이 밀리거나 감속으로 주기를
@@ -1051,15 +1112,14 @@ class LineDriver:
             self._wiggle_n += 1
         self._wiggle_on = on
         if not on:
-            return 0
+            return 0, 0
         # ⚠ 교대라 결국 상쇄되지만 **첫 반 주기는 한쪽으로 나간다** — 그쪽이 토마토
         #   나무면 매번 부딪힌다(2026-08-13 현장). 첫 펄스(_wiggle_n==1) 방향을
         #   wiggle_sign으로 정하고, 그 뒤로 교대한다.
-        first = float(self._tune.get("wiggle_sign", LINE_WIGGLE_SIGN))
         step = 1.0 if self._wiggle_n % 2 == 1 else -1.0
-        return int(first * step * amp)
+        return self._shake(step, amp)
 
-    def _cross_shake(self) -> int:
+    def _cross_shake(self) -> tuple[int, int]:
         """굳음 해제용 **직각 흔들기**. 첫 반 주기는 wiggle_sign 쪽으로 나간다.
 
         예전엔 부호를 벽시계로 정했다(`int(monotonic() * 6) % 2`). 교대는 됐지만
@@ -1070,8 +1130,7 @@ class LineDriver:
         """
         elapsed = max(0.0, LINE_MARK_BREAK_SEC - (self._mark_break_until - time.monotonic()))
         step = 1.0 if int(elapsed * 6) % 2 == 0 else -1.0
-        first = float(self._tune.get("wiggle_sign", LINE_WIGGLE_SIGN))
-        return int(first * step * LINE_MARK_BREAK_CROSS)
+        return self._shake(step, LINE_MARK_BREAK_CROSS)
 
     def _align_dither(self, goal: dict) -> int:
         """정렬 펄스에 얹을 **전후 흔들기**. 펄스마다 부호가 뒤집힌다.
@@ -1159,6 +1218,17 @@ class LineDriver:
             self.cancel(f"거리 보정을 {LINE_MAX_DETOURS}번 했는데도 계속 벗어납니다 — "
                         "/settings에서 [거리 부호 ±]를 확인하세요")
             return True
+        return self._fold_to_align(mode, "거리 보정 중(톡톡)")
+
+    def _fold_to_align(self, mode: str, why: str) -> bool:
+        """주행을 접어두고 **정렬(톡톡)**로 전환한다. 전환했으면 True.
+
+        정렬이 성공하면 _resume_travel이 접어둔 주행을 그대로 이어간다(실패면
+        재개하지 않는다 — 어긋난 채로 달리면 안 되므로). 우회 횟수를 다 썼거나
+        우회할 수 없는 모드면 False를 돌려주고, 부르는 쪽이 멈춘다.
+        """
+        if mode not in DETOUR_MODES or self._detours >= LINE_MAX_DETOURS:
+            return False
         now = time.monotonic()
         with self._lock:
             self._resume = (mode, dict(self._goal), self._deadline - now)
@@ -1167,11 +1237,38 @@ class LineDriver:
             self._mode = "align"
             self._goal = {"speed": self._goal.get("speed", LINE_SPEED), "started": now}
             self._deadline = now + LINE_ALIGN_TIMEOUT_SEC
-            self._detail = f"거리 보정 중(톡톡) #{self._detours} — 끝나면 주행을 계속합니다"
+            self._detail = f"{why} #{self._detours} — 끝나면 주행을 계속합니다"
             self._align_worst = None
             self._align_diverge = 0
             self._align_gate = True
         return True
+
+    #: 이 말이 들어간 사유는 "도착"이 아니다 — 연쇄를 이어가면 안 된다.
+    #  (시퀀스 러너가 실패를 가려내는 낱말과 같은 목록이다 — 판단이 갈리면 안 된다.)
+    FAIL_WORDS = ("정지", "실패", "초과", "취소", "중단")
+
+    def _chain_continue(self, mode: str, reason: str) -> bool:
+        """한 칸 도착했으니 다음 칸을 이어서 시작한다. 이어갔으면 True.
+
+        **중간 지점에서는 정렬 전에** 불린다(정렬을 건너뛰고 곧장 다음 칸으로 —
+        칸마다 정렬하면 너무 느리다). 최종 목적지에서만 도착 정렬이 돌고, 그 뒤
+        여기 오면 남은 칸이 없어 그대로 멈춘다.
+
+        실패로 끝났으면 이어가지 않는다: 어긋난 채로 계속 달리면 그 오차를
+        그대로 안고 다음 칸까지 간다.
+        """
+        if self._chain_target is None or mode not in ("station", "align_mark"):
+            return False
+        if any(bad in reason for bad in self.FAIL_WORDS):
+            with self._lock:
+                self._chain_target = None
+            return False
+        final = self._chain_target
+        if self._station is None or self._station == final:
+            with self._lock:
+                self._chain_target = None
+            return False
+        return self._start_leg(final)
 
     def _resume_travel(self) -> None:
         """정렬을 마쳤다 — 접어뒀던 주행을 이어서 재개."""
@@ -1431,6 +1528,16 @@ class LineDriver:
             if stop_reason is None and time.monotonic() > self._deadline:
                 stop_reason = "시간 초과 — 목표를 못 찾아 정지"
 
+            # 한 칸씩 가는 중 **중간** 지점이면 정렬을 건너뛰고 곧장 다음 칸으로.
+            # 칸마다 정렬하면 한 번에 수 초씩 붙어 전체가 너무 느려진다(현장 요청) —
+            # 정렬은 **최종 목적지에서 한 번**이면 된다. 중간은 마커를 지났다는
+            # 사실만 있으면 되고, 그건 정렬 없이도 _observe_markers가 센다.
+            if (reached and self._chain_target is not None
+                    and self._station != self._chain_target):
+                if self._chain_continue(mode, reached):
+                    time.sleep(self.RATE)
+                    return
+
             # 지점 도착이면 멈추지 않고 **지점 정렬(마커 중앙)**로 이어간다.
             # 안전정지·타임아웃(reached가 아님)은 그대로 선다 — 도착만 이어간다.
             if (reached and LINE_ARRIVE_ALIGN and mode in ARRIVE_ALIGN_MODES
@@ -1449,6 +1556,11 @@ class LineDriver:
                         return
                     self._resume = None
                     stop_reason = f"{stop_reason} — 주행 재개를 취소했습니다"
+                # 한 칸씩 가는 중이면 **여기서 다음 칸을 시작한다.** cancel로 가면
+                # mode가 idle이 되고, 그걸 시퀀스 러너가 "도착"으로 읽어 팔이 나간다.
+                if self._chain_continue(mode, stop_reason):
+                    time.sleep(self.RATE)
+                    return
                 self.cancel(stop_reason)
                 time.sleep(self.RATE)
                 return
@@ -1458,10 +1570,20 @@ class LineDriver:
                 time.sleep(self.RATE)
                 return
 
-            # 정렬로도 못 붙이는 상황(정렬 꺼짐·jog·횟수 소진)에서의 마지막 정지.
+            # 너무 벗어났다 — 예전엔 여기서 멈추고 사람에게 "[정렬(톡톡)]을 누른 뒤
+            # 다시 시도하세요"라고 떠넘겼다. 그 정렬을 **스스로 한다**(현장 요청):
+            # 주행을 접고 톡톡으로 붙인 뒤 이어서 간다. 횟수를 다 썼을 때만 선다.
             stop_reason = self._safety_dy(self._line, mode)
             if stop_reason:
-                self.cancel(stop_reason)
+                if self._fold_to_align(mode, f"{stop_reason} → 스스로 정렬(톡톡)"):
+                    time.sleep(self.RATE)
+                    return
+                # 여기 왔으면 스스로 붙이기를 다 해본 뒤다 — 사람에게 남길 말은
+                # "정렬을 눌러라"가 아니라 "왜 안 붙는지 보라"여야 한다.
+                self.cancel(
+                    f"{stop_reason} — 스스로 정렬을 {self._detours}번 해봤지만 "
+                    "못 붙였습니다. 보정 부호가 반대이거나(/settings [거리 부호 ±]) "
+                    "기준선이 잘못 잡혔을 수 있습니다([현재 위치를 기준선으로])")
                 time.sleep(self.RATE)
                 return
 
@@ -1505,7 +1627,7 @@ class LineDriver:
                           else 0)
                 # 저속 연속 주행은 반대 문제를 갖는다 — vx만으로는 바퀴가 안 풀린다.
                 # 출발엔 세게 한 방, 주행 중엔 주기적으로 옆으로 톡.
-                wiggle = 0
+                wiggle = wiggle_w = 0
                 if self.smooth and mode not in ("align", "align_mark"):
                     # ⚠ 예전엔 `if not braking:`으로 감속 중 킥을 막았다. 그 전제가
                     #   "감속 중이면 이미 구른다"였는데 **이 코스에선 거짓이다.**
@@ -1518,31 +1640,32 @@ class LineDriver:
                     #   순간(=실제로 굴렀다는 증거) 스스로 끝나고, 한 명령에 한 번만
                     #   난다. 즉 "구르는 중에 감속을 이기는" 상황은 원래 생기지 않는다.
                     use = self._travel_kick(goal, use)
-                    wiggle = self._travel_wiggle(goal)
+                    wiggle, wiggle_w = self._travel_wiggle(goal)
                 vx, vy, w = self._command(self._line, travel, use, mode, dither)
                 if mode == "align_mark" and time.monotonic() < self._mark_break_until                         and self._mark_break_axis == "corr":
                     # ★ 보정축(기준선 거리)이 굳었다 — 그 축을 최대로 밀면서
                     #   **직각축을 크게 흔든다.** 구르는 바퀴라야 옆으로 미끄러진다
                     #   (정렬 dither·주행 wiggle과 같은 원리, 여기선 크기를 키운 것).
                     strong = LINE_MARK_BREAK_MAG
-                    cross = self._cross_shake()
+                    cross, cross_w = self._cross_shake()
                     corr_now = vy if self._tune["dy_axis"] == "vy" else vx
                     signed = strong if corr_now >= 0 else -strong
                     if self._tune["dy_axis"] == "vy":
                         vy, vx = signed, cross
                     else:
                         vx, vy = signed, cross
-                    w = 0
+                    # 회전도 함께 흔든다 — 네 바퀴가 다 돌아 정지마찰이 가장 잘 풀린다.
+                    w = cross_w
                 elif (mode == "align_mark" and phase1
                       and time.monotonic() < self._mark_break_until):
                     # 진행축이 굳었다 — 크기는 그대로 두고 **직각축을 흔들어**
                     #   바퀴를 굴린다. 구르기 시작하면 같은 톡톡으로도 나간다.
-                    cross = self._cross_shake()
+                    cross, cross_w = self._cross_shake()
                     if self._tune["dy_axis"] == "vy":
                         vy = cross
                     else:
                         vx = cross
-                    w = 0
+                    w = cross_w
                 elif mode == "align_mark" and phase1:
                     # ★ 한 번에 한 축만. 진행 펄스에 dy/yaw 보정까지 얹으면
                     #   대각선으로 왔다갔다해 "너무 요란하게" 보인다(실기 보고).
@@ -1558,6 +1681,9 @@ class LineDriver:
                         vy = max(-255, min(255, vy + wiggle))
                     else:
                         vx = max(-255, min(255, vx + wiggle))
+                if wiggle_w:
+                    # 회전 흔들기도 같이 — 부호가 교대라 순회전은 상쇄된다.
+                    w = max(-255, min(255, w + wiggle_w))
             else:
                 vx = vy = w = 0
             try:
@@ -1592,7 +1718,9 @@ class LineDriver:
             return None
         dy = abs(line.get("offset_y_norm") or 0.0)
         if dy > LINE_MAX_DY_NORM:
-            return (f"기준선에서 너무 벗어나 정지(dy={line.get('offset_y_px')}px) — "
-                    "[🎯 정렬(톡톡)]로 붙인 뒤 다시 시도하세요. "
-                    "정렬해도 안 붙으면 보정 부호가 반대일 수 있습니다")
+            # ⚠ 여기서는 **사실만** 돌려준다. 이 사유는 두 곳에 쓰인다:
+            #   ① 스스로 정렬로 접어들 때의 설명  ② 끝내 못 붙여 멈출 때의 사유.
+            #   ②의 해설("몇 번 해봤지만…")을 여기에 넣으면 ①에도 따라붙어,
+            #   붙이는 중인데 "못 붙였습니다"라고 뜬다(실측으로 확인).
+            return f"기준선에서 너무 벗어남(dy={line.get('offset_y_px')}px)"
         return None

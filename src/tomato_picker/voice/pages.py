@@ -664,6 +664,11 @@ _SETTINGS_BODY = """
   <label>주행 좌우 톡 <input type="range" id="pWiggle" min="0" max="255" step="5" value="130"
     oninput="pWiggleOut.textContent=this.value"> <b id="pWiggleOut">130</b> / 255
     <span class="dim">— 0.5초마다 0.1초씩 좌우로 톡(부호 교대라 제자리). 안 나가면 올리세요</span>
+  <!-- 게걸음은 롤러가 옆으로 굴러야 생겨 가장 잘 걸리는 축이다. 회전은 네 바퀴가
+       모두 제 축으로 도는 동작이라 정지마찰이 훨씬 쉽게 풀린다 — 같이 쓴다. -->
+  <label>흔들 때 회전 <input type="range" id="pWigYaw" min="0" max="255" step="5" value="60"
+    oninput="pWigYawOut.textContent=this.value"> <b id="pWigYawOut">60</b> / 255
+    <span class="dim">— 옆으로 톡 칠 때 같이 낼 회전(부호 교대라 제자리). 0이면 게걸음만</span>
   <label>정렬 흔들기 <input type="range" id="pDither" min="0" max="255" step="5" value="150"
     oninput="pDitherOut.textContent=this.value"> <b id="pDitherOut">150</b> / 255
     <span class="dim">— <b>진행축</b> 흔들기(게걸음 아님). 0이면 없음. 옆으로 안 먹히면 올리세요</span>
@@ -717,6 +722,8 @@ _SETTINGS_BODY = """
          교대라 결국 제자리지만 첫 반 주기는 한쪽으로 나가므로, 그쪽이 토마토
          나무면 매번 부딪힌다. 어느 부호가 안전한지는 실기로만 안다. -->
     <button class="small" onclick="cmd({action:'line_flip',what:'wiggle_sign'})">흔들기 시작쪽 ±</button>
+    <!-- 두 칸 이상 이동할 때 중간 지점을 다 들를지. 중간에서는 정렬을 건너뛴다. -->
+    <button class="small" onclick="cmd({action:'line_flip',what:'stop_each'})">중간지점 들르기 켜기/끄기</button>
   </div>
   <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
     로봇을 손으로 밀어 <b>테이프에서 멀어졌을 때</b> 위 "보정" 값이 <b>되돌아가는 방향</b>이면 맞습니다.
@@ -736,8 +743,12 @@ _SETTINGS_BODY = """
   <label>y 허용 — 테이프 <b>위</b> <input type="range" id="rDyAbove" min="5" max="200" step="5" value="20"
     oninput="rDyAboveOut.textContent=this.value"> <b id="rDyAboveOut">20</b> px
     <span class="dim">— 위로 벗어나면 시야 밖이라 좁게 두는 쪽</span></label>
-  <label>회전 허용 <input type="range" id="rYaw" min="0.5" max="20" step="0.5" value="2"
-    oninput="rYawOut.textContent=this.value"> ±<b id="rYawOut">2</b> °
+  <!-- ⚠ 너무 좁게 잡으면 **끝나지 않는다** — 각도는 바닥 띠에서 추정하는 값이라
+       프레임마다 흔들리고, 제자리 회전은 롤러 정지마찰 때문에 잘게 못 준다.
+       수렴 못 하면 타임아웃으로 끝나는데 그때는 각도가 얼마든 상관없이 멈춘다.
+       닿을 수 있는 값을 두는 편이 각도를 **더** 잘 보장한다. -->
+  <label>회전 허용 <input type="range" id="rYaw" min="0.5" max="20" step="0.5" value="10"
+    oninput="rYawOut.textContent=this.value"> ±<b id="rYawOut">10</b> °
     <span class="dim">⚠ x·y가 다 맞아도 이게 좁으면 정렬이 안 끝난다</span></label>
   <div class="row-flex"><button onclick="applyRange()">적용</button>
     <button class="small" onclick="rpreset(50,50,20,2)">기본(50 / 50·20 / 2°)</button>
@@ -882,6 +893,7 @@ _SETTINGS_JS = """
          smooth_speed: +document.getElementById('pSmooth').value,
          travel_kick: +document.getElementById('pKick').value,
          travel_wiggle: +document.getElementById('pWiggle').value,
+         wiggle_yaw: +document.getElementById('pWigYaw').value,
          corr_min: +document.getElementById('pCorrMin').value,
          corr_max: +document.getElementById('pCorrMax').value,
          smooth_dy_gain: +document.getElementById('pSmoothGain').value});
@@ -940,7 +952,10 @@ _SETTINGS_JS = """
                                     : (ln.no_strafe ? '금지(벗어나면 정렬)' : '허용'))
       + '  ·  진행방향 ' + (ln.last_dir > 0 ? '오른쪽' : (ln.last_dir < 0 ? '왼쪽' : '미확인'))
       + '(' + (ln.dir_source || '?') + ')'
-      + '  ·  흔들기 시작쪽 ' + (ln.wiggle_sign > 0 ? '+' : '−');
+      + '  ·  흔들기 시작쪽 ' + (ln.wiggle_sign > 0 ? '+' : '−')
+      + '(회전 ' + Math.round(ln.wiggle_yaw || 0) + ')'
+      + '  ·  중간지점 ' + (ln.stop_each ? '모두 들름' : '건너뜀')
+      + (ln.chain_target != null ? ' → 최종 ' + ln.chain_target + '번' : '');
 
     if (!pulseInit && ln.speed != null) {
       pulseInit = true;
@@ -950,6 +965,7 @@ _SETTINGS_JS = """
       if (ln.smooth_speed != null) setRange('pSmooth', Math.round(ln.smooth_speed));
       if (ln.travel_kick != null) setRange('pKick', Math.round(ln.travel_kick));
       if (ln.travel_wiggle != null) setRange('pWiggle', Math.round(ln.travel_wiggle));
+      if (ln.wiggle_yaw != null) setRange('pWigYaw', Math.round(ln.wiggle_yaw));
       if (ln.corr_min != null) setRange('pCorrMin', Math.round(ln.corr_min));
       if (ln.corr_max != null) setRange('pCorrMax', Math.round(ln.corr_max));
       if (ln.smooth_dy_gain != null) setRange('pSmoothGain', Math.round(ln.smooth_dy_gain));

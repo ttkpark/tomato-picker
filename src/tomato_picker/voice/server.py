@@ -97,7 +97,14 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
   #panes {{ flex: 1 1 auto; min-height: 0; display: flex; gap: 1rem; }}
   /* 넓은 화면: 좌우로 나눈다(영상 왼쪽, 로그 오른쪽). 좁은 화면 규칙은 이 파일
      **맨 아래** @media에 있다 — 같은 특이도면 뒤에 온 규칙이 이기므로 순서가 곧 의미다. */
-  #media {{ flex: 0 1 720px; min-height: 0; overflow-y: auto; }}
+  /* ⚠ min-width가 **둘 다** 필요하다(2026-08-13 "영상이 90px로 쭈그러든다").
+     flex 아이템의 기본값은 min-width:auto — 즉 **자기 최소 내용폭 아래로는 안 줄어든다**.
+     로그에 인식 실패 줄("아, 아, 아, …" 수십 개)이 뜨면 #log의 최소폭이 화면만큼
+     커지고, 줄어들 수 있는 건 #media뿐이라 영상칸이 혼자 다 뒤집어썼다.
+       · #log에 min-width:0  → 로그도 줄어들 수 있게(원인 제거)
+       · #media에 min-width  → 그래도 영상은 이 아래로는 안 내려가게(안전망)
+     basis 720은 "이 정도 폭을 원한다"일 뿐 하한이 아니다 — 하한은 min-width가 만든다. */
+  #media {{ flex: 0 1 720px; min-width: 380px; min-height: 0; overflow-y: auto; }}
   h1 {{ font-size: 1.1rem; opacity: 0.8; margin: 0 0 0.5rem; }}
   #count {{ font-size: 1.6rem; font-weight: 700; padding: 0.5rem 0.9rem; border-radius: 10px;
            background: color-mix(in srgb, #2ecc71 22%, Canvas); margin-bottom: 0.4rem;
@@ -124,9 +131,15 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
              background: color-mix(in srgb, CanvasText 8%, Canvas); }}
   #hw span.ok {{ background: color-mix(in srgb, #2ecc71 25%, Canvas); }}
   #hw span.down {{ background: color-mix(in srgb, #e74c3c 25%, Canvas); }}
-  #log {{ flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  /* basis를 **0**으로 두는 게 핵심이다. auto면 basis가 곧 내용 크기라, 긴 로그 한 줄이
+     "나는 이만큼 필요하다"고 주장하며 영상칸을 하한(380px)까지 밀어냈다. 0이면 로그는
+     **남는 자리만** 쓰므로 영상칸이 원하는 720px를 그대로 가져간다(2026-08-13 실측). */
+  #log {{ flex: 1 1 0; min-width: 0; min-height: 0; overflow-y: auto;
           display: flex; flex-direction: column; gap: 0.4rem; }}
+  /* 긴 한 덩어리(인식 실패 원문 등)가 칸을 밀어내지 못하게 — 어디서든 줄바꿈.
+     min-width:0과 짝이다: 저건 "줄어들어도 된다", 이건 "줄어들 수 있다". */
   .row {{ display: flex; gap: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 8px;
+         min-width: 0; overflow-wrap: anywhere;
          background: color-mix(in srgb, CanvasText 6%, Canvas); font-size: 0.95rem; }}
   .row.intent {{ background: color-mix(in srgb, #2ecc71 25%, Canvas); font-weight: 600; }}
   .row.count {{ background: color-mix(in srgb, #e74c3c 20%, Canvas); font-weight: 600; }}
@@ -346,6 +359,7 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
             smooth_speed=body.get("smooth_speed"),
             travel_kick=body.get("travel_kick"),
             travel_wiggle=body.get("travel_wiggle"),
+            wiggle_yaw=body.get("wiggle_yaw"),
             # 정렬 완료 목표 범위(px·도).
             align_tol_x=body.get("align_tol_x"),
             align_dy_below=body.get("align_dy_below"),
@@ -354,6 +368,7 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
             # 정렬 펄스 크기(게걸음) — 속도 슬라이더가 안 닿는 축.
             corr_min=body.get("corr_min"),
             corr_max=body.get("corr_max"),
+            smooth_dy_gain=body.get("smooth_dy_gain"),
         )
     return False, f"알 수 없는 라인 명령: {action}"
 
