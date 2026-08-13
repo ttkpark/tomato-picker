@@ -670,13 +670,22 @@ _SETTINGS_BODY = """
   <!-- ⚠ 게걸음 크기는 속도 슬라이더와 **무관**하다. 정렬 중 옆으로 미는 값은
        _corr_pulse가 이 하한~상한 사이에서 정하며, 진행축 speed는 안 곱해진다.
        "속도를 0으로 해도 게걸음이 크다"(2026-08-13 현장)의 답이 여기다. -->
-  <label>게걸음 크기 — 최소 <input type="range" id="pCorrMin" min="30" max="255" step="5" value="130"
+  <!-- ⚠ 게걸음이 나가는 길은 **둘**이다. 상한만 공통이고 나머지는 서로 다르다.
+         정렬(제자리) = _corr_pulse : corr_min ~ corr_max 사이의 펄스
+         주행(저속연속) = _corr_smooth : dy × smooth_dy_gain, corr_max에서 잘림
+       예전엔 아래 두 슬라이더가 펄스 경로만 건드려서, 저속연속으로 주행 중일 때는
+       아무리 내려도 변화가 없었다(2026-08-13 현장 보고). -->
+  <label>게걸음 최소 <span class="dim">(정렬 전용)</span> <input type="range" id="pCorrMin" min="30" max="255" step="5" value="130"
     oninput="pCorrMinOut.textContent=this.value"> <b id="pCorrMinOut">130</b> / 255
-    <span class="dim">— 정렬 중 옆으로 한 번 미는 크기의 <b>하한</b>. 선을 크게 이탈하면 여기를 내리세요
-    (너무 내리면 정지마찰을 못 넘어 아예 안 움직입니다)</span>
-  <label>게걸음 크기 — 최대 <input type="range" id="pCorrMax" min="30" max="255" step="5" value="180"
+    <span class="dim">— <b>제자리 정렬</b>에서 옆으로 한 번 미는 크기의 하한.
+    너무 내리면 정지마찰을 못 넘어 아예 안 움직입니다</span>
+  <label>게걸음 최대 <span class="dim">(정렬·주행 공통)</span> <input type="range" id="pCorrMax" min="30" max="255" step="5" value="180"
     oninput="pCorrMaxOut.textContent=this.value"> <b id="pCorrMaxOut">180</b> / 255
-    <span class="dim">— 오차가 클 때의 상한. 한 걸음 거리 = 크기 × 펄스 ON이라 ON을 줄여도 됩니다</span>
+    <span class="dim">— 두 경로 모두의 상한. 한 걸음 거리 = 크기 × 펄스 ON</span>
+  <label>주행 중 게걸음 세기 <input type="range" id="pSmoothGain" min="20" max="600" step="10" value="300"
+    oninput="pSmoothGainOut.textContent=this.value"> <b id="pSmoothGainOut">300</b>
+    <span class="dim">— <b>저속 연속 주행</b>에서 dy 오차에 곱하는 이득(비례제어).
+    300이면 62px 벗어났을 때 게걸음 52가 나갑니다. <b>주행 중 좌우로 크게 흔들리면 여기를 내리세요</b></span>
     <span class="dim">ON과 같게 두면 <b>연속 주행</b>이 된다</span></label>
   <div class="row-flex">
     <button onclick="applyPulse()">적용</button>
@@ -704,6 +713,10 @@ _SETTINGS_BODY = """
     <button class="small" onclick="cmd({action:'line_flip',what:'smooth'})">주행 방식: 저속연속 ↔ 톡톡</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'no_strafe'})">게걸음 금지 켜기/끄기</button>
     <button class="small" onclick="cmd({action:'line_flip',what:'odom_sign'})">수동이동 방향 ±</button>
+    <!-- 지그재그(주행 좌우 톡 · 굳음 해제 직각 흔들기)가 **어느 쪽부터** 나가는가.
+         교대라 결국 제자리지만 첫 반 주기는 한쪽으로 나가므로, 그쪽이 토마토
+         나무면 매번 부딪힌다. 어느 부호가 안전한지는 실기로만 안다. -->
+    <button class="small" onclick="cmd({action:'line_flip',what:'wiggle_sign'})">흔들기 시작쪽 ±</button>
   </div>
   <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
     로봇을 손으로 밀어 <b>테이프에서 멀어졌을 때</b> 위 "보정" 값이 <b>되돌아가는 방향</b>이면 맞습니다.
@@ -870,7 +883,8 @@ _SETTINGS_JS = """
          travel_kick: +document.getElementById('pKick').value,
          travel_wiggle: +document.getElementById('pWiggle').value,
          corr_min: +document.getElementById('pCorrMin').value,
-         corr_max: +document.getElementById('pCorrMax').value});
+         corr_max: +document.getElementById('pCorrMax').value,
+         smooth_dy_gain: +document.getElementById('pSmoothGain').value});
   }
   function preset(sp, on, per) {
     setRange('pSpeed', sp); setRange('pOn', on); setRange('pPeriod', per); applyPulse();
@@ -925,7 +939,8 @@ _SETTINGS_JS = """
       + '  ·  게걸음 ' + (ln.smooth ? '보정에 사용'
                                     : (ln.no_strafe ? '금지(벗어나면 정렬)' : '허용'))
       + '  ·  진행방향 ' + (ln.last_dir > 0 ? '오른쪽' : (ln.last_dir < 0 ? '왼쪽' : '미확인'))
-      + '(' + (ln.dir_source || '?') + ')';
+      + '(' + (ln.dir_source || '?') + ')'
+      + '  ·  흔들기 시작쪽 ' + (ln.wiggle_sign > 0 ? '+' : '−');
 
     if (!pulseInit && ln.speed != null) {
       pulseInit = true;
@@ -937,12 +952,18 @@ _SETTINGS_JS = """
       if (ln.travel_wiggle != null) setRange('pWiggle', Math.round(ln.travel_wiggle));
       if (ln.corr_min != null) setRange('pCorrMin', Math.round(ln.corr_min));
       if (ln.corr_max != null) setRange('pCorrMax', Math.round(ln.corr_max));
+      if (ln.smooth_dy_gain != null) setRange('pSmoothGain', Math.round(ln.smooth_dy_gain));
     }
     document.getElementById('pNow').textContent = ln.speed == null ? '' :
       ('현재: 속도 ' + Math.round(ln.speed) + ' · '
        + (ln.pulsing ? '펄스 ' + ln.pulse_on + 's / ' + ln.pulse_period + 's' : '연속 주행')
        + '  ·  정렬 흔들기(진행축) ' + Math.round(ln.align_dither || 0)
-       + '  ·  게걸음 ' + Math.round(ln.corr_min || 0) + '~' + Math.round(ln.corr_max || 0)
+       + '  ·  게걸음 ' + (ln.smooth
+            ? '주행이득 ' + Math.round(ln.smooth_dy_gain || 0)
+              + ' (상한 ' + Math.round(ln.corr_max || 0) + ') · 정렬 '
+              + Math.round(ln.corr_min || 0) + '~' + Math.round(ln.corr_max || 0)
+            : Math.round(ln.corr_min || 0) + '~' + Math.round(ln.corr_max || 0))
+       + '  ·  지금 게걸음 ' + (ln.dy_axis === 'vy' ? ln.would_vy : ln.would_vx)
        + '  ·  주행 ' + (ln.smooth ? '저속연속 ' + Math.round(ln.smooth_speed || 0)
                                      + ' (출발 ' + Math.round(ln.travel_kick || 0)
                                      + ' · 좌우톡 ' + Math.round(ln.travel_wiggle || 0) + ')'

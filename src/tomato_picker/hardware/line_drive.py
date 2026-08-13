@@ -94,6 +94,7 @@ from ..config import (
     LINE_TRAVEL_WIGGLE_ON,
     LINE_TRAVEL_WIGGLE_PERIOD,
     LINE_TUNING_FILE,
+    LINE_WIGGLE_SIGN,
     LINE_YAW_DEADBAND,
     LINE_YAW_GAIN,
     LINE_YAW_GAIN_ON,
@@ -104,9 +105,12 @@ from ..config import (
 TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain",
                "speed", "pulse_on", "pulse_period", "no_strafe", "odom_sign",
                "align_dither", "smooth", "smooth_speed",
-               "travel_kick", "travel_wiggle",
+               "travel_kick", "travel_wiggle", "wiggle_sign",
                # 정렬 "완료" 목표 범위 — 현장에서 코스를 새로 깔 때마다 달라진다.
-               "align_tol_x", "align_dy_below", "align_dy_above", "align_yaw_tol")
+               "align_tol_x", "align_dy_below", "align_dy_above", "align_yaw_tol",
+               # 게걸음 크기. corr_min=정렬(펄스) 전용 바닥값,
+               # corr_max=정렬·주행 공통 상한, smooth_dy_gain=주행 중 비례이득.
+               "corr_min", "corr_max", "smooth_dy_gain")
 
 # 자동으로 정렬을 끼워 넣을 주행 모드. jog는 버튼 한 번 = 펄스 한 번이라
 # 중간에 정렬이 끼어들면 "톡 쳤는데 로봇이 혼자 움직인다"가 되므로 뺀다.
@@ -210,6 +214,8 @@ class LineDriver:
             "smooth_speed": float(LINE_SMOOTH_SPEED),
             # 출발 한 방 + 주행 중 좌우 톡 — 정지마찰을 깨는 두 수단.
             "travel_kick": float(LINE_TRAVEL_KICK),
+            # 옆으로 흔들 때 **첫 반 주기**가 향하는 쪽(±1). 나무를 피한다.
+            "wiggle_sign": float(LINE_WIGGLE_SIGN),
             "travel_wiggle": float(LINE_TRAVEL_WIGGLE),
             # 정렬을 **끝낼** 목표 범위. 주행 보정 데드밴드와 다른 값이다
             # (그건 "보정을 낼지", 이건 "그만해도 되는지"). y는 위아래가 다르다.
@@ -217,6 +223,13 @@ class LineDriver:
             "align_dy_below": float(LINE_ALIGN_DY_BELOW_PX),
             "align_dy_above": float(LINE_ALIGN_DY_ABOVE_PX),
             "align_yaw_tol": float(LINE_ALIGN_YAW_TOL),
+            # 정렬 펄스 한 번의 크기. ⚠ 속도 슬라이더는 **진행축에만** 곱해진다 —
+            # 게걸음(보정)이 큰 건 여기 때문이지 속도 때문이 아니다.
+            "corr_min": float(LINE_CORR_MIN),
+            "corr_max": float(LINE_MAX_CORRECTION),
+            # 저속 연속 주행(smooth)에서 dy 오차 → vy로 바꾸는 비례이득.
+            # 상한은 corr_max를 함께 쓴다 — 게걸음은 한 개념이어야 한다.
+            "smooth_dy_gain": float(LINE_SMOOTH_DY_GAIN),
         }
         self._tune.update(_load_saved(LINE_TUNING_FILE))
         self._thread = threading.Thread(target=self._run, daemon=True, name="line-drive")
@@ -268,7 +281,11 @@ class LineDriver:
                   # 정렬 완료 범위. 하한을 5px/0.5°로 둔다 — 0으로 두면 영원히
                   # 못 끝내는 정렬이 되고, 그건 설정으로 만들 수 있으면 안 된다.
                   "align_tol_x": (5, 400), "align_dy_below": (5, 400),
-                  "align_dy_above": (5, 400), "align_yaw_tol": (0.5, 45.0)}
+                  "align_dy_above": (5, 400), "align_yaw_tol": (0.5, 45.0),
+                  # 정렬 펄스 크기(게걸음·회전). 30 밑은 정지마찰을 못 넘어
+                  # "지령은 나가는데 안 움직인다"가 된다 — 거기서 막는다.
+                  "corr_min": (30, 255), "corr_max": (30, 255),
+                  "smooth_dy_gain": (20, 600)}
         with self._lock:
             for key, (lo, hi) in limits.items():
                 if values.get(key) is not None:
@@ -276,6 +293,10 @@ class LineDriver:
             # 주기가 ON보다 짧으면 의미가 없다 — 연속 주행으로 해석한다.
             if self._tune["pulse_period"] < self._tune["pulse_on"]:
                 self._tune["pulse_period"] = self._tune["pulse_on"]
+            # 상한이 하한보다 작으면 하한만 남는다(= 크기 고정). 뒤집힌 채로
+            # 두면 슬라이더가 서로를 무시하는 것처럼 보인다.
+            if self._tune["corr_max"] < self._tune["corr_min"]:
+                self._tune["corr_max"] = self._tune["corr_min"]
             snapshot = dict(self._tune)
         self._save_tuning(snapshot)
         mode = ("연속 주행" if snapshot["pulse_period"] <= snapshot["pulse_on"]
@@ -283,7 +304,9 @@ class LineDriver:
         dither = snapshot.get("align_dither", 0)
         # 정렬 목표 범위도 같이 돌려준다 — 슬라이더를 만졌는데 어디에도 안 보이면
         # "먹었나?" 를 확인할 길이 없다.
-        rng = (f" · 정렬범위 x±{snapshot.get('align_tol_x', 0):.0f}px"
+        rng = (f" · 게걸음 정렬{snapshot.get('corr_min', 0):.0f}~{snapshot.get('corr_max', 0):.0f}"
+               f"/주행이득{snapshot.get('smooth_dy_gain', 0):.0f}"
+               f" · 정렬범위 x±{snapshot.get('align_tol_x', 0):.0f}px"
                f" · y 아래{snapshot.get('align_dy_below', 0):.0f}"
                f"/위{snapshot.get('align_dy_above', 0):.0f}px"
                f" · 회전 ±{snapshot.get('align_yaw_tol', 0):.1f}°")
@@ -611,6 +634,7 @@ class LineDriver:
             "smooth_speed": self._tune.get("smooth_speed", LINE_SMOOTH_SPEED),
             "travel_kick": self._tune.get("travel_kick", LINE_TRAVEL_KICK),
             "travel_wiggle": self._tune.get("travel_wiggle", LINE_TRAVEL_WIGGLE),
+            "wiggle_sign": self._tune.get("wiggle_sign", LINE_WIGGLE_SIGN),
             "no_strafe": self.no_strafe,
             "align_dither": self._tune.get("align_dither", LINE_ALIGN_DITHER),
             # 정렬 완료 목표 범위(px·도) — 대시보드 슬라이더가 이 값으로 채워진다.
@@ -618,6 +642,9 @@ class LineDriver:
             "align_dy_below": self._tune.get("align_dy_below", LINE_ALIGN_DY_BELOW_PX),
             "align_dy_above": self._tune.get("align_dy_above", LINE_ALIGN_DY_ABOVE_PX),
             "align_yaw_tol": self._tune.get("align_yaw_tol", LINE_ALIGN_YAW_TOL),
+            "corr_min": self._tune.get("corr_min", LINE_CORR_MIN),
+            "corr_max": self._tune.get("corr_max", LINE_MAX_CORRECTION),
+            "smooth_dy_gain": self._tune.get("smooth_dy_gain", LINE_SMOOTH_DY_GAIN),
             "detours": self._detours,
             "resuming": self._resume is not None,
             "last_dir": self._last_dir,
@@ -661,7 +688,11 @@ class LineDriver:
         if error is None or abs(error) < deadband:
             return 0
         want = abs(sign * gain * error)
-        mag = max(LINE_CORR_MIN, min(LINE_MAX_CORRECTION, want))
+        # 크기는 /settings에서 조절한다. 하한은 "정지마찰을 넘는 최소",
+        # 상한은 "한 걸음이 목표를 지나치지 않는 최대" — 둘 사이를 오차가 채운다.
+        lo = float(self._tune.get("corr_min", LINE_CORR_MIN))
+        hi = max(lo, float(self._tune.get("corr_max", LINE_MAX_CORRECTION)))
+        mag = max(lo, min(hi, want))
         return int(mag if (sign * error) > 0 else -mag)
 
     def _is_fine(self, mode: str) -> bool:
@@ -792,7 +823,9 @@ class LineDriver:
             # 굳음 해제 구간 — 크기는 톡톡 그대로다. 푸는 건 직각 흔들기가 한다.
             mag = LINE_MARK_BREAK_MAG
         else:
-            mag = int(max(LINE_CORR_MIN, min(150, 0.6 * abs(dx))))
+            # 하한은 게걸음과 같은 슬라이더를 따른다(둘 다 "한 번 톡 치는 크기").
+            floor = float(self._tune.get("corr_min", LINE_CORR_MIN))
+            mag = int(max(floor, min(max(floor, 150), 0.6 * abs(dx))))
         return (1 if dx > 0 else -1), mag
 
     def _begin_arrive_align(self, reached: str) -> None:
@@ -926,6 +959,10 @@ class LineDriver:
                 # 수동 이동 시 "오른쪽으로 갔다"를 판정하는 부호. 화면 x축이
                 # 로봇의 어느 쪽인지는 카메라 장착에 달렸다 — 실물로만 확정된다.
                 self._tune["odom_sign"] = -float(self._tune.get("odom_sign", 1.0))
+            elif what == "wiggle_sign":
+                # 지그재그가 **어느 쪽부터** 나가는가. 나무에 부딪히면 뒤집는다.
+                self._tune["wiggle_sign"] = -float(
+                    self._tune.get("wiggle_sign", LINE_WIGGLE_SIGN))
             elif what in ("dy_sign", "yaw_sign", "travel_sign"):
                 self._tune[what] = -self._tune[what]
             else:
@@ -936,7 +973,8 @@ class LineDriver:
                 f"회전보정={'켜짐' if snapshot['yaw_gain'] else '꺼짐'}"
                 f"(부호{snapshot['yaw_sign']:+.0f}) 진행부호={snapshot['travel_sign']:+.0f} "
                 f"게걸음={'금지(전후·회전만)' if snapshot.get('no_strafe') else '허용'} "
-                f"주행={'저속연속(vy·w 비례보정)' if snapshot.get('smooth') else '펄스(톡톡)'}")
+                f"주행={'저속연속(vy·w 비례보정)' if snapshot.get('smooth') else '펄스(톡톡)'} "
+                f"흔들기 시작쪽={snapshot.get('wiggle_sign', 1.0):+.0f}")
 
     @property
     def no_strafe(self) -> bool:
@@ -948,18 +986,24 @@ class LineDriver:
         """주행 방식이 '저속 연속'인가. 아니면 '펄스(톡톡)'."""
         return bool(self._tune.get("smooth", 1.0))
 
-    def _corr_smooth(self, error, gain: float, sign: float, deadband: float) -> int:
+    def _corr_smooth(self, error, gain: float, sign: float, deadband: float,
+                     cap: float | None = None) -> int:
         """굴러가는 중의 보정 — **비례제어**.
 
         멈춰 있을 때는 작은 값이 정지마찰을 못 넘어 뱅뱅(펄스)이 필요했다.
         하지만 바퀴가 이미 구르는 중이면 롤러가 미끄러질 수 있어 작은 값도
         그대로 먹는다 — 사람이 키를 눌러 몰 때 줄을 잘 따라가는 이유가 이것이다.
-        그래서 여기서는 바닥값(LINE_CORR_MIN) 없이 오차에 비례해 부드럽게 준다.
+        그래서 여기서는 바닥값(corr_min) 없이 오차에 비례해 부드럽게 준다.
+
+        ⚠ 2026-08-13: cap을 인자로 받는다. 예전엔 LINE_SMOOTH_CORR_MAX 고정이라
+        **대시보드에서 게걸음을 줄여도 주행 중에는 아무 변화가 없었다** — 슬라이더가
+        _corr_pulse만 건드렸기 때문이다(현장 보고: "게걸음을 설정해도 전혀 안 변한다").
+        게걸음은 둘 중 어느 경로로 나가든 하나의 개념이어야 한다.
         """
         if error is None or abs(error) < deadband:
             return 0
-        return int(max(-LINE_SMOOTH_CORR_MAX,
-                       min(LINE_SMOOTH_CORR_MAX, sign * gain * error)))
+        hi = float(LINE_SMOOTH_CORR_MAX if cap is None else cap)
+        return int(max(-hi, min(hi, sign * gain * error)))
 
     def _travel_kick(self, goal: dict, speed: int) -> int:
         """출발 순간에는 세게 한 번 민다.
@@ -1008,7 +1052,26 @@ class LineDriver:
         self._wiggle_on = on
         if not on:
             return 0
-        return int(amp) if self._wiggle_n % 2 == 0 else -int(amp)
+        # ⚠ 교대라 결국 상쇄되지만 **첫 반 주기는 한쪽으로 나간다** — 그쪽이 토마토
+        #   나무면 매번 부딪힌다(2026-08-13 현장). 첫 펄스(_wiggle_n==1) 방향을
+        #   wiggle_sign으로 정하고, 그 뒤로 교대한다.
+        first = float(self._tune.get("wiggle_sign", LINE_WIGGLE_SIGN))
+        step = 1.0 if self._wiggle_n % 2 == 1 else -1.0
+        return int(first * step * amp)
+
+    def _cross_shake(self) -> int:
+        """굳음 해제용 **직각 흔들기**. 첫 반 주기는 wiggle_sign 쪽으로 나간다.
+
+        예전엔 부호를 벽시계로 정했다(`int(monotonic() * 6) % 2`). 교대는 됐지만
+        **흔들기가 시작되는 순간의 부호가 매번 달랐다** — 운이 나쁘면 토마토 나무
+        쪽으로 먼저 밀고 부딪혔다(2026-08-13 현장). 흔들기가 시작된 시점을
+        _mark_break_until에서 역산해 기준으로 삼으면 항상 같은 쪽부터 나간다
+        (새 상태를 들고 다닐 필요가 없다).
+        """
+        elapsed = max(0.0, LINE_MARK_BREAK_SEC - (self._mark_break_until - time.monotonic()))
+        step = 1.0 if int(elapsed * 6) % 2 == 0 else -1.0
+        first = float(self._tune.get("wiggle_sign", LINE_WIGGLE_SIGN))
+        return int(first * step * LINE_MARK_BREAK_CROSS)
 
     def _align_dither(self, goal: dict) -> int:
         """정렬 펄스에 얹을 **전후 흔들기**. 펄스마다 부호가 뒤집힌다.
@@ -1048,8 +1111,13 @@ class LineDriver:
                 #   (사람이 키를 눌러 몰 때와 같은 방식). 게걸음 금지는 여기서
                 #   의미가 없다 — 어차피 전진하면서 옆으로 미는 것이라 정지
                 #   상태의 순수 횡이동처럼 힘이 들지 않는다.
-                corr = self._corr_smooth(line.get("offset_y_norm"), LINE_SMOOTH_DY_GAIN,
-                                         self._tune["dy_sign"], LINE_DY_DEADBAND)
+                # 게걸음(vy)의 세기·상한은 대시보드가 정한다. 회전(w)은 아래에서
+                # 예전 상한을 그대로 쓴다 — "게걸음 최대"는 게걸음만 뜻해야 한다.
+                corr = self._corr_smooth(line.get("offset_y_norm"),
+                                         float(self._tune.get("smooth_dy_gain",
+                                                              LINE_SMOOTH_DY_GAIN)),
+                                         self._tune["dy_sign"], LINE_DY_DEADBAND,
+                                         cap=self._tune.get("corr_max", LINE_MAX_CORRECTION))
                 if self._tune["yaw_gain"]:
                     w = self._corr_smooth(line.get("angle_deg"), LINE_SMOOTH_YAW_GAIN,
                                           self._tune["yaw_sign"], LINE_YAW_DEADBAND)
@@ -1457,7 +1525,7 @@ class LineDriver:
                     #   **직각축을 크게 흔든다.** 구르는 바퀴라야 옆으로 미끄러진다
                     #   (정렬 dither·주행 wiggle과 같은 원리, 여기선 크기를 키운 것).
                     strong = LINE_MARK_BREAK_MAG
-                    cross = LINE_MARK_BREAK_CROSS if int(time.monotonic() * 6) % 2 else -LINE_MARK_BREAK_CROSS
+                    cross = self._cross_shake()
                     corr_now = vy if self._tune["dy_axis"] == "vy" else vx
                     signed = strong if corr_now >= 0 else -strong
                     if self._tune["dy_axis"] == "vy":
@@ -1469,8 +1537,7 @@ class LineDriver:
                       and time.monotonic() < self._mark_break_until):
                     # 진행축이 굳었다 — 크기는 그대로 두고 **직각축을 흔들어**
                     #   바퀴를 굴린다. 구르기 시작하면 같은 톡톡으로도 나간다.
-                    cross = (LINE_MARK_BREAK_CROSS if int(time.monotonic() * 6) % 2
-                             else -LINE_MARK_BREAK_CROSS)
+                    cross = self._cross_shake()
                     if self._tune["dy_axis"] == "vy":
                         vy = cross
                     else:
