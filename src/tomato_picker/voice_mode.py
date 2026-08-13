@@ -13,6 +13,7 @@ systemd가 3초마다 재시작만 반복해 화면 자체가 안 떴다(2026-08
 
 from __future__ import annotations
 
+import itertools
 import threading
 import time
 
@@ -21,8 +22,7 @@ from .config import (
     FLOOR_CAM_JPEG,
     FLOOR_LINE_STATUS,
     FLOOR_VIEW_JPEG,
-    TOMATO_APPROACH_SECONDS,
-    TOMATO_RETREAT_SECONDS,
+    LINE_STATION_LABELS,
     USE_FLOOR_CAM,
     USE_REAL_ARM,
     USE_REAL_BASE,
@@ -32,10 +32,12 @@ from .config import (
     VISION_SHM_STATUS,
     VOICE_LOG_HTTP_PORT,
     VOICE_LOG_HTTP_REDIRECT_PORT,
+    VOICE_PICK_SEQUENCE_KEYS,
 )
 from .hardware.base import MobileBase, RobotArm
 from .hardware.mock import MockArm, MockBase
 from .voice.controller import VoiceController
+from .voice.intents import Intent
 from .voice.log_hub import LogHub
 from .voice.server import start_log_server, start_redirect_server
 from .voice.shared_vision import SharedFrameSource
@@ -248,24 +250,51 @@ def run_voice() -> None:
 
     # 인텐트 처리는 항상 hardware 딕셔너리에서 **지금** 핸들을 꺼낸다 —
     # 재연결로 객체가 교체돼도 옛 객체를 붙들고 있지 않게.
-    def on_intent(intent: str) -> None:
+    def say(text: str) -> None:
+        print(f"[voice] {text}")
+        log_hub.publish({"ts": _now(), "kind": "status", "text": text})
+
+    def on_intent(intent: Intent) -> None:
+        """인텐트 하나를 실행한다. 이 함수는 인텐트 워커 스레드에서 **직렬로** 불린다.
+
+        주행이 걸린 명령(지점 이동·수확)은 전부 SequenceRunner에 태운다 —
+        도착까지 기다리기, 정지 버튼, 진행 표시를 다시 만들지 않고 얻고,
+        "수확 도는 중에 음성으로 이동"이 러너의 잠금 하나로 막힌다.
+        """
         arm = hardware["arm"]
         base = hardware["base"]
-        if intent == "arm_move":
-            print("[voice] '팔 움직여' 인식 → 데모 동작 재생")
+        seq = hardware["seq"]
+        line = hardware["line"]
+
+        if intent.name == "arm_move":
+            say("'팔 움직여' 인식 → 데모 동작 재생")
             arm.demo_move()
-        elif intent == "drive_forward":
-            print(f"[voice] '앞으로 가' 인식 → {BASE_DRIVE_FORWARD_SECONDS:.1f}초 전진")
+        elif intent.name == "drive_forward":
+            say(f"'앞으로 가' 인식 → {BASE_DRIVE_FORWARD_SECONDS:.1f}초 전진")
             base.drive_forward(BASE_DRIVE_FORWARD_SECONDS)
-        elif intent == "tomato_pick":
-            print("[voice] '토마토' 인식 → 전진→프리셋→후진 시퀀스 시작")
-            log_hub.publish({"ts": _now(), "kind": "status", "text": f"토마토: {TOMATO_APPROACH_SECONDS:.1f}초 전진"})
-            base.drive_forward(TOMATO_APPROACH_SECONDS)
-            log_hub.publish({"ts": _now(), "kind": "status", "text": "토마토: 프리셋 재생"})
-            arm.demo_move()
-            log_hub.publish({"ts": _now(), "kind": "status", "text": f"토마토: {TOMATO_RETREAT_SECONDS:.1f}초 후진 복귀"})
-            base.drive_backward(TOMATO_RETREAT_SECONDS)
-            log_hub.publish({"ts": _now(), "kind": "status", "text": "토마토: 시퀀스 완료"})
+        elif intent.name == "station_move":
+            index = int(intent.slots["station"])
+            if line is None:
+                say("지점 이동 불가 — 라인 주행이 비활성입니다(바닥 카메라 확인)")
+                return
+            say(f"{intent.label} → {LINE_STATION_LABELS[index]}")
+            say(seq.run_text(intent.label, f"m{index}"))
+        elif intent.name == "tomato_pick":
+            key = VOICE_PICK_SEQUENCE_KEYS[intent.slots["height"]]
+            if line is not None:
+                say(f"{intent.label} → 시퀀스 '{key}'")
+                say(seq.start(key))
+                return
+            # 라인 주행이 없으면 바구니까지 못 간다. 그렇다고 통째로 포기하지 않고
+            # **첫 지점 이동 앞까지만** 돌린다 — 따서 들고 있는 데까지는 보여준다.
+            # (m을 빼고 뒤까지 다 돌리면 허공에 놓기 동작을 해 토마토를 흘린다.)
+            text = seq.status()["sequences"].get(key, {}).get("text") or ""
+            head = list(itertools.takewhile(lambda t: not t.lower().startswith("m"), text.split()))
+            if not head:
+                say(f"{intent.label} 불가 — 라인 주행이 비활성이고 '{key}' 대본에 팔 동작이 없습니다")
+                return
+            say(f"{intent.label} — 라인 주행이 없어 바구니 이동은 건너뛰고 따기까지만 합니다")
+            say(seq.run_text(intent.label, " ".join(head)))
 
     def on_mic_state(state: str) -> None:
         hw["마이크"] = state

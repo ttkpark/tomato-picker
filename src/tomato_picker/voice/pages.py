@@ -208,15 +208,13 @@ _CONTROL_BODY = """
 <h2>시퀀스 <span class="dim">— 팔 프리셋 + 지점 이동을 섞은 대본</span></h2>
 <div class="card">
   <div id="seqState" style="margin-bottom:0.6rem">시퀀스 상태 확인 중...</div>
+  <!-- 실행 버튼과 편집칸은 **서버가 주는 키로** 만든다 — 대본이 늘어도 여기 안 고친다
+       (음성 "위/아래 토마토"가 쓰는 '위'·'아래' 대본이 이렇게 자동으로 나온다) -->
   <div class="row-flex" style="margin-bottom:0.5rem">
-    <button onclick="cmd({action:'seq_start',key:'A'})">▶ 시퀀스 A</button>
-    <button onclick="cmd({action:'seq_start',key:'B'})">▶ 시퀀스 B</button>
+    <span id="seqRunBtns"></span>
     <button class="stop" onclick="cmd({action:'seq_stop'})">■ 시퀀스 정지</button>
   </div>
-  <label>A <input type="text" id="seqA" style="width:min(420px,80vw)">
-    <button class="small" onclick="saveSeq('A')">저장</button></label>
-  <label>B <input type="text" id="seqB" style="width:min(420px,80vw)">
-    <button class="small" onclick="saveSeq('B')">저장</button></label>
+  <div id="seqEditRows"></div>
   <p class="dim" style="margin:0.4rem 0 0; font-size:0.85rem">
     <b>숫자</b>=팔 프리셋 · <b>m숫자</b>=지점 이동 · <b>w초</b>=대기 &nbsp;
     예) <code>m0 1 2 3 7 m3 8 9 0</code> = 지점0으로 → 2층 따기 → 지점3(바구니) → 놓기 → 대기.
@@ -332,10 +330,13 @@ _CONTROL_JS = """
     if (state && state.arm && state.arm.leader_connected) cmd({action:'leader_disconnect'});
     else cmd({action:'leader_connect', port: document.getElementById('leaderPort').value || null});
   }
-  let seqInit = false;
+  // 대본 편집칸을 키로 찾는다 — 키가 한글("위")이라 DOM id에 이어 붙이지 않고
+  // 여기에 담아 둔다.
+  const seqInputs = {};
+  let seqKeys = '';
   function saveSeq(key) {
-    cmd({action:'seq_save', key: key,
-         text: document.getElementById('seq' + key).value});
+    const inp = seqInputs[key];
+    if (inp) cmd({action:'seq_save', key: key, text: inp.value});
   }
   function toggleMirror() {
     cmd({action:'mirror', on: !(state && state.arm && state.arm.mirroring)});
@@ -362,11 +363,31 @@ _CONTROL_JS = """
     const se = document.getElementById('seqState');
     if (se) {
       const defs = sq.sequences || {};
-      if (!seqInit && Object.keys(defs).length) {
-        seqInit = true;
-        for (const k of ['A','B']) {
-          const inp = document.getElementById('seq' + k);
-          if (inp && defs[k]) inp.value = defs[k].text || '';
+      const keys = Object.keys(defs);
+      // 대본 목록이 바뀌었을 때만 다시 그린다 — 매 틱마다 새로 만들면 타이핑 중인
+      // 편집칸이 초기화된다.
+      if (keys.length && keys.join('\\u0000') !== seqKeys) {
+        seqKeys = keys.join('\\u0000');
+        const runs = document.getElementById('seqRunBtns');
+        const rows = document.getElementById('seqEditRows');
+        runs.textContent = ''; rows.textContent = '';
+        for (const k of keys) {
+          const b = document.createElement('button');
+          b.textContent = '▶ ' + k;
+          b.onclick = () => cmd({action:'seq_start', key:k});
+          runs.append(b);
+
+          const lab = document.createElement('label');
+          lab.append(k + ' ');
+          const inp = document.createElement('input');
+          inp.type = 'text'; inp.style.width = 'min(420px,80vw)';
+          inp.value = defs[k].text || '';
+          seqInputs[k] = inp;
+          const save = document.createElement('button');
+          save.className = 'small'; save.textContent = '저장';
+          save.onclick = () => saveSeq(k);
+          lab.append(inp, ' ', save);
+          rows.append(lab);
         }
       }
       if (sq.running) {
@@ -375,8 +396,8 @@ _CONTROL_JS = """
         se.style.background = 'color-mix(in srgb, #2ecc71 20%, Canvas)';
       } else {
         const parts = [];
-        for (const k of ['A','B']) {
-          if (defs[k]) parts.push(k + ': ' + (defs[k].error ? '⚠ ' + defs[k].error : defs[k].desc));
+        for (const k of keys) {
+          parts.push(k + ': ' + (defs[k].error ? '⚠ ' + defs[k].error : defs[k].desc));
         }
         se.textContent = (sq.detail && sq.detail !== '대기' ? '지난 실행: ' + sq.detail + '  ·  ' : '')
                        + parts.join('   |   ');

@@ -135,20 +135,35 @@ class SequenceRunner:
 
     def start(self, key: str) -> str:
         with self._lock:
-            if self._running:
-                raise RuntimeError(f"이미 '{self._running}' 실행 중입니다 — 먼저 정지하세요")
             text = self._seqs.get(str(key))
         if text is None:
             raise KeyError(f"시퀀스 {key}가 없습니다")
+        return self._launch(str(key), text)
+
+    def run_text(self, label: str, text: str) -> str:
+        """저장된 시퀀스가 아닌 **즉석 대본**을 돌린다.
+
+        음성 "2번 이동"이 쓴다 — 지점 이동 하나짜리 대본("m1")을 러너에 태우면
+        도착까지 기다리기·정지 버튼·진행 표시를 전부 공짜로 얻고, 수확 시퀀스가
+        도는 중에 음성으로 주행이 끼어드는 것도 같은 잠금으로 막힌다.
+        """
+        return self._launch(label, text)
+
+    def _launch(self, label: str, text: str) -> str:
+        # 검증이 먼저다 — 대본이 잘못됐으면 러너를 점유하지 않고 그대로 실패한다.
         steps = parse(text)
-        self._stop.clear()
         with self._lock:
-            self._running, self._step, self._total = str(key), 0, len(steps)
+            # 점유 확인과 점유를 같은 잠금 안에서 한다. 예전엔 둘이 나뉘어 있어
+            # 동시에 들어온 두 요청이 모두 통과할 수 있었다(음성+버튼이 겹치면 실제로 난다).
+            if self._running:
+                raise RuntimeError(f"이미 '{self._running}' 실행 중입니다 — 먼저 정지하세요")
+            self._running, self._step, self._total = label, 0, len(steps)
             self._detail = "시작"
-        self._thread = threading.Thread(target=self._run, args=(str(key), steps),
-                                        daemon=True, name=f"seq-{key}")
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, args=(label, steps),
+                                        daemon=True, name=f"seq-{label}")
         self._thread.start()
-        return f"시퀀스 {key} 실행: {describe(steps)}"
+        return f"시퀀스 {label} 실행: {describe(steps)}"
 
     def stop(self, reason: str = "사용자 정지") -> str:
         """플래그만 세운다 — 진행 중인 한 단계는 끝나고 그 다음에서 멈춘다.

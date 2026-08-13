@@ -17,7 +17,7 @@ import wave
 from collections.abc import Callable
 
 from ..config import MIC_SAMPLE_RATE
-from .intents import match_intent
+from .intents import Intent, match_intent
 from .log_hub import LogHub
 from .mic_stream import MicStream, MicStreamError
 from .stt import WhisperSTT
@@ -57,14 +57,14 @@ class VoiceController:
     def __init__(
         self,
         log_hub: LogHub,
-        on_intent: Callable[[str], None] | None = None,
+        on_intent: Callable[[Intent], None] | None = None,
         on_mic_state: Callable[[str], None] | None = None,
     ) -> None:
         self._log_hub = log_hub
         self._on_intent = on_intent
         # 대시보드 상단 장비 배지용 — 마이크가 붙었나/끊겼나를 'ok'/'down'으로 알린다.
         self._on_mic_state = on_mic_state
-        self._intent_queue: queue.Queue[str] = queue.Queue()
+        self._intent_queue: queue.Queue[Intent] = queue.Queue()
 
     def _mic_state(self, state: str) -> None:
         if self._on_mic_state:
@@ -130,7 +130,7 @@ class VoiceController:
 
                 intent = match_intent(text)
                 kind = "intent" if intent else "heard"
-                label = f"{text}" + (f"  → 인텐트: {intent}" if intent else "")
+                label = f"{text}" + (f"  → {intent.label}" if intent else "")
                 self._log_hub.publish({"ts": _now(), "kind": kind, "text": label})
 
                 if intent and self._on_intent:
@@ -146,4 +146,5 @@ class VoiceController:
             try:
                 self._on_intent(intent)
             except Exception as exc:  # noqa: BLE001 - 워커가 죽으면 이후 명령이 전부 무시됨
-                self._log_hub.publish({"ts": _now(), "kind": "error", "text": f"'{intent}' 처리 중 오류: {exc}"})
+                self._log_hub.publish({"ts": _now(), "kind": "error",
+                                       "text": f"'{intent.label}' 처리 중 오류: {exc}"})
