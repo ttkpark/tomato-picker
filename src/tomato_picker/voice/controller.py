@@ -22,6 +22,7 @@ from .log_hub import LogHub
 from .mic_stream import MicStream, MicStreamError
 from .stt import WhisperSTT
 from .vad import SpeechSegmenter
+from .wake import GATE
 
 RECONNECT_BACKOFF_SEC = 2.0
 # 인식 실패한 발화를 귀로 확인할 수 있게 /dev/shm에 최근 것만 돌려가며 남긴다
@@ -90,6 +91,10 @@ class VoiceController:
             # 하드웨어 명령은 겹치지 않는다.
             threading.Thread(target=self._intent_worker, daemon=True).start()
 
+        # 지금 듣고 있는지를 화면 배지로 계속 알린다. 창은 **시간이 지나 조용히**
+        # 닫히므로(닫힘을 알리는 발화가 없다) 별도 감시 스레드가 필요하다.
+        threading.Thread(target=self._wake_publisher, daemon=True).start()
+
         segmenter = SpeechSegmenter()
         while True:
             try:
@@ -129,14 +134,48 @@ class VoiceController:
                     continue
 
                 intent = match_intent(text)
-                kind = "intent" if intent else "heard"
-                label = f"{text}" + (f"  → {intent.label}" if intent else "")
+                # 호출어가 들리면 창을 연다. 같은 발화 안에 명령이 같이 있어도
+                # ("안녕 아래 토마토 따줘") 이 순서 덕분에 바로 실행된다.
+                called = GATE.heard(text)
+                if called:
+                    GATE.open()
+                armed = GATE.allows()
+
+                if intent and not armed:
+                    # 알아듣긴 했는데 부르지 않은 경우 — **무엇이 빠졌는지** 말해준다.
+                    # 그냥 무시하면 사용자는 "명령이 안 먹는다"고만 느낀다.
+                    kind = "heard"
+                    label = f"{text}  → {intent.label} · 대기 중 — 먼저 {GATE.call_hint()} 부르세요"
+                elif intent:
+                    kind, label = "intent", f"{text}  → {intent.label}"
+                elif called:
+                    kind = "status"
+                    label = f"{text}  → 네, 듣고 있습니다 ({GATE.status()['window_sec']:.0f}초)"
+                else:
+                    kind, label = "heard", text
                 self._log_hub.publish({"ts": _now(), "kind": kind, "text": label})
 
-                if intent and self._on_intent:
+                if intent and armed and self._on_intent:
+                    GATE.touch()   # 연속 조작 중에 다시 부르지 않게 창을 연장
                     self._intent_queue.put(intent)
         finally:
             mic.close()
+
+    def _wake_publisher(self) -> None:
+        """호출어 배지를 발행한다. latest_only라 로그를 도배하지 않고 배지만 갈아끼운다.
+
+        남은 시간을 1초마다 갱신하되, 내용이 그대로면 보내지 않는다(브라우저가
+        같은 문자열을 다시 그리게 할 이유가 없다).
+        """
+        last = None
+        while True:
+            badge = GATE.badge()
+            if badge != last:
+                last = badge
+                self._log_hub.publish(
+                    {"ts": _now(), "kind": "wake", "text": badge,
+                     "open": GATE.allows()}, latest_only=True)
+            time.sleep(1.0)
 
     def _intent_worker(self) -> None:
         """인텐트를 큐에서 하나씩 꺼내 순차 실행 — 하드웨어 명령이 겹치지 않게."""

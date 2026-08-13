@@ -17,6 +17,7 @@ from . import pages
 from .intents import match_intent
 from .linkmon import LinkSampler
 from .log_hub import LogHub
+from .wake import GATE as WAKE
 from .words import STORE as WORDS
 
 
@@ -50,7 +51,8 @@ def _status_payload(arm, base, line=None, seq=None) -> dict:
         else {"sequences": {}, "error": "시퀀스 비활성"}
     )
     # _safe의 폴백은 dict여야 한다(에러를 병합해 돌려주므로) — 목록은 감싸서 넘긴다.
-    voice_status = _safe(lambda: {"items": WORDS.catalog()}, {"items": []})
+    voice_status = _safe(lambda: {"items": WORDS.catalog(), "wake": WAKE.status()},
+                         {"items": [], "wake": {}})
     return {"arm": arm_status, "base": base_status, "line": line_status, "seq": seq_status,
             "voice": voice_status}
 
@@ -81,17 +83,28 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
   :root {{ color-scheme: light dark; }}
   html, body {{ height: 100%; }}
   body {{ font-family: -apple-system, "Malgun Gothic", sans-serif; margin: 0; padding: 1rem;
-         box-sizing: border-box; height: 100vh; display: flex; flex-direction: column;
+         box-sizing: border-box; height: 100vh; height: 100dvh;
+         display: flex; flex-direction: column; gap: 0.5rem;
          background: Canvas; color: CanvasText; }}
-  /* 상단(영상·개수)은 고정, 로그만 아래에서 스크롤 */
+  /* --- 영상과 로그는 **둘 다 늘 보여야 한다** ---
+     예전엔 제목·배지·개수·영상·바닥영상이 전부 한 덩어리(#top)에 있고 그 덩어리가
+     flex:0 0 auto(축소 불가)였다. 카메라(50vh) + 바닥카메라(높이 상한 없음)를 더하면
+     화면보다 커져서 #log가 0px로 밀려났다 — "카메라가 뜨면 채팅이 안 보인다"의 정체.
+     창이 가려지면 MJPEG이 멈춰 <img> 높이가 0이 되니 그제서야 로그가 나타났다.
+     이제 얇은 머리(#top)만 고정이고, 영상과 로그는 각자 줄어드는 두 칸(#panes)이다.
+     좁은 화면에서는 위아래로 쌓되 **최소 지분**을 보장하고, 넓으면 좌우로 나눈다. */
   #top {{ flex: 0 0 auto; }}
+  #panes {{ flex: 1 1 auto; min-height: 0; display: flex; gap: 1rem; }}
+  /* 넓은 화면: 좌우로 나눈다(영상 왼쪽, 로그 오른쪽). 좁은 화면 규칙은 이 파일
+     **맨 아래** @media에 있다 — 같은 특이도면 뒤에 온 규칙이 이기므로 순서가 곧 의미다. */
+  #media {{ flex: 0 1 720px; min-height: 0; overflow-y: auto; }}
   h1 {{ font-size: 1.1rem; opacity: 0.8; margin: 0 0 0.5rem; }}
   #count {{ font-size: 1.6rem; font-weight: 700; padding: 0.5rem 0.9rem; border-radius: 10px;
            background: color-mix(in srgb, #2ecc71 22%, Canvas); margin-bottom: 0.4rem;
            display: inline-block; }}
   #positions {{ font-size: 0.95rem; opacity: 0.8; margin-bottom: 0.75rem;
                font-variant-numeric: tabular-nums; }}
-  #cam {{ width: 100%; max-width: 720px; max-height: 50vh; object-fit: contain;
+  #cam {{ width: 100%; max-width: 720px; max-height: 46vh; object-fit: contain;
           border-radius: 10px; display: block; margin-bottom: 0.5rem; background: #000; }}
   #floorlabel {{ font-size: 0.85rem; opacity: 0.7; margin: 0.25rem 0 0.2rem; }}
   #line {{ padding: 0.1rem 0.5rem; border-radius: 999px; font-variant-numeric: tabular-nums;
@@ -99,8 +112,10 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
   #line.ok {{ background: color-mix(in srgb, #2ecc71 30%, Canvas); }}
   #line.lost {{ background: color-mix(in srgb, #e74c3c 28%, Canvas); }}
   #line.mark {{ background: color-mix(in srgb, #f39c12 40%, Canvas); font-weight: 700; }}
-  #floorcam {{ width: 100%; max-width: 400px; border-radius: 10px; display: block;
-              margin-bottom: 0.5rem; background: #000; }}
+  /* ⚠ 높이 상한이 **반드시** 있어야 한다. 없던 시절 400px 폭 4:3 영상이 300px를
+     차지해 카메라와 합쳐 화면을 넘겼다(위 #panes 주석 참고). */
+  #floorcam {{ width: 100%; max-width: 400px; max-height: 26vh; object-fit: contain;
+              border-radius: 10px; display: block; margin-bottom: 0.5rem; background: #000; }}
   #novideo {{ opacity: 0.7; margin-bottom: 0.75rem; padding: 1.5rem; text-align: center;
              border: 1px dashed color-mix(in srgb, CanvasText 30%, Canvas); border-radius: 10px;
              max-width: 720px; }}
@@ -118,18 +133,48 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
   .row.heard {{ opacity: 0.55; font-style: italic; }}
   .row.error {{ background: color-mix(in srgb, #e74c3c 25%, Canvas); }}
   .ts {{ opacity: 0.55; white-space: nowrap; font-variant-numeric: tabular-nums; }}
-  #status {{ font-size: 0.85rem; opacity: 0.6; margin-bottom: 0.75rem; }}
+  #status {{ font-size: 0.85rem; opacity: 0.6; margin: 0.25rem 0 0; }}
+  /* 호출어 배지 — 지금 명령을 받는 상태인지 한눈에. */
+  #wake {{ font-size: 1rem; font-weight: 700; padding: 0.3rem 0.8rem; border-radius: 999px;
+          display: inline-block; margin-bottom: 0.5rem;
+          background: color-mix(in srgb, CanvasText 10%, Canvas); }}
+  #wake.on {{ background: color-mix(in srgb, #2ecc71 30%, Canvas); }}
+
+  /* ===== 좁은 화면(휴대폰·작은 창): 위아래로 쌓되 로그 몫을 먼저 떼어 둔다 =====
+     ⚠ 이 블록은 반드시 **위 기본 규칙들 뒤**에 있어야 한다. 앞에 뒀더니 같은
+     특이도의 기본 #cam/#floorcam 규칙이 이겨서 아무 효과가 없었다(2026-08-13).
+     ⚠ 지분은 %가 아니라 **grow 비율 + basis 0**으로 준다. 퍼센트 flex-basis는
+     부모 높이가 확정일 때만 뜻이 있는데 이 중첩에선 아니라, 영상칸이 88px까지
+     쪼그라들었다. basis 0이면 확정이라 55:45가 그대로 나온다. */
+  @media (max-width: 899px) {{
+    #panes {{ flex-direction: column; }}
+    #media {{ flex: 55 1 0; min-height: 0; overflow-y: auto; }}
+    #log {{ flex: 45 1 0; min-height: 0; }}
+    /* 이미지는 칸 안에서 줄어들 수 있어야 한다 — 안 그러면 칸 밖으로 삐져나가
+       "카메라가 잘려 보인다". object-fit:contain이라 비율은 유지된다. */
+    #cam {{ max-height: 34vh; }}
+    #floorcam {{ max-height: 14vh; }}
+    /* 머리글이 두 줄로 늘어나 본문을 잡아먹으므로 조금 눌러 둔다. */
+    h1 {{ font-size: 1rem; margin-bottom: 0.35rem; }}
+    #count {{ font-size: 1.3rem; padding: 0.35rem 0.7rem; }}
+    #positions {{ font-size: 0.85rem; margin-bottom: 0.4rem; }}
+  }}
 </style></head>
 <body>
 <div id="top">
 <h1>토마토피커 — 실시간 대시보드 &nbsp;<a href="/control">🎮 수동 조작</a>&nbsp;<a href="/settings">⚙ 시스템 설정</a></h1>
 <div id="hw"><span>장비 상태 확인 중...</span></div>
+<div id="wake">🎤 음성 상태 확인 중...</div>
 <div id="count">🍅 공중 토마토: —</div>
 <div id="positions">위치: —</div>
-{video_block}
-<div id="status">연결 중...</div>
 </div>
-<div id="log"></div>
+<div id="panes">
+  <div id="media">
+{video_block}
+    <div id="status">연결 중...</div>
+  </div>
+  <div id="log"></div>
+</div>
 <script>
   const log = document.getElementById('log');
   const status = document.getElementById('status');
@@ -164,8 +209,15 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
     while (log.children.length > 200) log.removeChild(log.lastChild);
   }}
   const lineEl = document.getElementById('line');
+  const wakeEl = document.getElementById('wake');
   function onEvent(ev) {{
     if (ev.kind === 'hw') {{ renderHw(ev.items); return; }}
+    // 호출어 상태 — 배지만 갈아끼우고 로그로는 안 쌓는다(1초마다 오므로).
+    if (ev.kind === 'wake') {{
+      wakeEl.textContent = ev.text;
+      wakeEl.className = ev.open ? 'on' : '';
+      return;
+    }}
     // 바닥 카메라 라인 검출 — 배지만 갈아끼우고 로그로는 안 쌓는다.
     if (ev.kind === 'line') {{
       if (!lineEl) return;
@@ -299,6 +351,9 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
             align_dy_below=body.get("align_dy_below"),
             align_dy_above=body.get("align_dy_above"),
             align_yaw_tol=body.get("align_yaw_tol"),
+            # 정렬 펄스 크기(게걸음) — 속도 슬라이더가 안 닿는 축.
+            corr_min=body.get("corr_min"),
+            corr_max=body.get("corr_max"),
         )
     return False, f"알 수 없는 라인 명령: {action}"
 
@@ -357,6 +412,10 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
         if action == "voice_words_reset":
             key = body.get("key")
             return True, WORDS.reset(None if key in (None, "", "all") else str(key))
+        if action == "voice_wake":
+            return True, WAKE.configure(
+                enabled=body.get("enabled"),
+                window_sec=body.get("window_sec"))
         if action == "voice_test":
             # 말하지 않고 문장을 넣어 어떤 명령으로 읽히는지 본다 — 낱말을 고친 뒤
             # 마이크에 대고 시험하려면 사람이 계속 말해야 하고, 그러면 로봇이 움직인다.
@@ -414,8 +473,10 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
             t = base.tune(
                 hz=body.get("hz"), max_pwm=body.get("max_pwm"),
                 accel=body.get("accel"), decel=body.get("decel"),
+                speed_scale=body.get("speed_scale"),
             )
-            return True, (f"튜닝 적용: {t['hz']}Hz · 듀티상한 {t['max_pwm']}/4095"
+            return True, (f"튜닝 적용: 전체 속도 {t['speed_scale']}% · {t['hz']}Hz"
+                          f" · 듀티상한 {t['max_pwm']}/4095"
                           f" · 가속 {t['accel']}/감속 {t['decel']}")
         if arm is None:
             # 아래 명령은 전부 팔이 필요하다 — 한 곳에서 걸러낸다.

@@ -570,6 +570,25 @@ def control_page(default_speed: int, frame_height: int) -> str:
 # ======================================================================
 
 _SETTINGS_BODY = """
+<h2>호출어 <span class="dim">— 부른 뒤에만 명령을 받는다</span></h2>
+<div class="card">
+  <div id="wakeState" style="margin-bottom:0.6rem">호출어 상태 확인 중...</div>
+  <div class="row-flex">
+    <label><input type="checkbox" id="wOn" onchange="applyWake()"> 호출어 사용</label>
+    <label>대기 시간 <input type="number" id="wSec" min="3" max="300" step="1"
+      style="width:5rem"> 초 <button class="small" onclick="applyWake()">적용</button></label>
+  </div>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    마이크는 늘 켜져 있고 부스에는 사람이 말합니다. 낱말을 아무리 잘 골라도 옆 대화가
+    언젠가는 명령으로 읽히는데, 그때 <b>실제로 바퀴가 구릅니다</b>. 부른 뒤에만 받게 하면
+    그 사고가 구조적으로 막힙니다.
+    <br>한 번에 말해도 됩니다 — <code>안녕 아래 토마토 따줘</code>. 명령을 하나 받을 때마다
+    대기 시간이 다시 채워지므로 연속 조작 중에 매번 부를 필요는 없습니다.
+    <br>호출어가 자꾸 안 걸리면 아래 [호출어] 칸에 실제로 들린 말을 넣거나, 여기서 꺼서
+    예전처럼 항상 듣게 하세요(끈 상태도 대시보드 배지에 표시됩니다).
+  </p>
+</div>
+
 <h2>음성 명령어 <span class="dim">— 안 걸리는 말은 여기에 추가한다</span></h2>
 <div class="card">
   <div class="row-flex" style="margin-bottom:0.6rem">
@@ -647,7 +666,17 @@ _SETTINGS_BODY = """
     <span class="dim">— 0.5초마다 0.1초씩 좌우로 톡(부호 교대라 제자리). 안 나가면 올리세요</span>
   <label>정렬 흔들기 <input type="range" id="pDither" min="0" max="255" step="5" value="150"
     oninput="pDitherOut.textContent=this.value"> <b id="pDitherOut">150</b> / 255
-    <span class="dim">— 0이면 없음. 게걸음이 안 먹히면 올리세요(롤러 정지마찰)</span>
+    <span class="dim">— <b>진행축</b> 흔들기(게걸음 아님). 0이면 없음. 옆으로 안 먹히면 올리세요</span>
+  <!-- ⚠ 게걸음 크기는 속도 슬라이더와 **무관**하다. 정렬 중 옆으로 미는 값은
+       _corr_pulse가 이 하한~상한 사이에서 정하며, 진행축 speed는 안 곱해진다.
+       "속도를 0으로 해도 게걸음이 크다"(2026-08-13 현장)의 답이 여기다. -->
+  <label>게걸음 크기 — 최소 <input type="range" id="pCorrMin" min="30" max="255" step="5" value="130"
+    oninput="pCorrMinOut.textContent=this.value"> <b id="pCorrMinOut">130</b> / 255
+    <span class="dim">— 정렬 중 옆으로 한 번 미는 크기의 <b>하한</b>. 선을 크게 이탈하면 여기를 내리세요
+    (너무 내리면 정지마찰을 못 넘어 아예 안 움직입니다)</span>
+  <label>게걸음 크기 — 최대 <input type="range" id="pCorrMax" min="30" max="255" step="5" value="180"
+    oninput="pCorrMaxOut.textContent=this.value"> <b id="pCorrMaxOut">180</b> / 255
+    <span class="dim">— 오차가 클 때의 상한. 한 걸음 거리 = 크기 × 펄스 ON이라 ON을 줄여도 됩니다</span>
     <span class="dim">ON과 같게 두면 <b>연속 주행</b>이 된다</span></label>
   <div class="row-flex">
     <button onclick="applyPulse()">적용</button>
@@ -710,6 +739,18 @@ _SETTINGS_BODY = """
 
 <h2>모터 튜닝 <span class="dim">— 소음 ↔ 속도</span></h2>
 <div class="card">
+  <!-- 전체 속도 배율. V 지령의 유일한 길목(MotorLink.set_velocity)에 곱해지므로
+       라인 주행·수동 조작·음성·시퀀스가 **전부** 같은 비율로 느려진다. 개별
+       속도 슬라이더를 하나씩 만지지 않아도 되게 만든 지표다. -->
+  <label><b>전체 속도</b> <input type="range" id="tScale" min="20" max="150" step="5" value="100"
+    oninput="tScaleOut.textContent=this.value"> <b id="tScaleOut">100</b> %
+    <span class="dim">— <b>모든 움직임</b>(라인 주행·수동·음성·시퀀스)에 한 번에 곱해집니다.
+    100 = 지금 설정 그대로. ⚠ 너무 낮추면 정지마찰을 못 넘어 아예 안 움직입니다(하한 20%)</span></label>
+  <div class="row-flex" style="margin-bottom:0.5rem">
+    <button class="small" onclick="spreset(60)">60% 느리게</button>
+    <button class="small" onclick="spreset(80)">80%</button>
+    <button class="small" onclick="spreset(100)">100% 기본</button>
+  </div>
   <div class="row-flex" style="margin-bottom:0.5rem">
     <button class="small" onclick="tpreset(50,2000)">🔊 50Hz "우우웅"(힘 최대)</button>
     <button class="small" onclick="tpreset(400,2400)">400Hz</button>
@@ -751,6 +792,29 @@ _SETTINGS_JS = """
   // 칸은 서버가 주는 목록으로 만든다(코드에 항목을 또 적지 않게). 타이핑 중에
   // 폴링이 값을 덮어쓰면 안 되므로 **한 번만** 그리고, 그 뒤로는 '고침' 표시만 갱신한다.
   const vInputs = {};
+  let wakeInit = false;
+  function applyWake() {
+    cmd({action:'voice_wake', enabled: document.getElementById('wOn').checked,
+         window_sec: +document.getElementById('wSec').value});
+  }
+  function renderWake(w) {
+    const el = document.getElementById('wakeState');
+    if (!el || !w || w.enabled === undefined) return;
+    // 칸은 **한 번만** 채운다 — 1초 폴링이 매번 덮으면 값을 고칠 수가 없다.
+    if (!wakeInit) {
+      wakeInit = true;
+      document.getElementById('wOn').checked = !!w.enabled;
+      document.getElementById('wSec').value = Math.round(w.window_sec);
+    }
+    const ws = (w.wake_words || []).join(', ') || '(비어 있음 — 부를 수가 없습니다)';
+    el.textContent = !w.enabled
+      ? '🎤 항상 듣는 중 (호출어 꺼짐) — 부르지 않아도 명령이 바로 실행됩니다'
+      : (w.remaining_sec > 0
+          ? '🎤 듣는 중 — ' + Math.round(w.remaining_sec) + '초 남음  ·  호출어: ' + ws
+          : '💤 대기 중 — 호출어: ' + ws);
+    el.style.background = (!w.enabled || w.remaining_sec > 0)
+      ? 'color-mix(in srgb, #2ecc71 20%, Canvas)' : '';
+  }
   function testVoice() {
     const t = document.getElementById('vTest').value.trim();
     if (t) cmd({action:'voice_test', text:t});
@@ -804,7 +868,9 @@ _SETTINGS_JS = """
          align_dither: +document.getElementById('pDither').value,
          smooth_speed: +document.getElementById('pSmooth').value,
          travel_kick: +document.getElementById('pKick').value,
-         travel_wiggle: +document.getElementById('pWiggle').value});
+         travel_wiggle: +document.getElementById('pWiggle').value,
+         corr_min: +document.getElementById('pCorrMin').value,
+         corr_max: +document.getElementById('pCorrMax').value});
   }
   function preset(sp, on, per) {
     setRange('pSpeed', sp); setRange('pOn', on); setRange('pPeriod', per); applyPulse();
@@ -829,14 +895,17 @@ _SETTINGS_JS = """
   function applyTune() {
     cmd({action:'base_tune', hz: +document.getElementById('tHz').value,
          max_pwm: +document.getElementById('tPwm').value,
-         accel: +document.getElementById('tAcc').value});
+         accel: +document.getElementById('tAcc').value,
+         speed_scale: +document.getElementById('tScale').value});
   }
   function tpreset(hz, pwm) { setRange('tHz', hz); setRange('tPwm', pwm); applyTune(); }
+  function spreset(pct) { setRange('tScale', pct); applyTune(); }
 
   function render() {
     if (!state) return;
     const arm = state.arm || {}, base = state.base || {}, ln = state.line || {};
     renderVoice((state.voice || {}).items);
+    renderWake((state.voice || {}).wake);
 
     const el = document.getElementById('lineState');
     if (ln.found) {
@@ -866,11 +935,14 @@ _SETTINGS_JS = """
       if (ln.smooth_speed != null) setRange('pSmooth', Math.round(ln.smooth_speed));
       if (ln.travel_kick != null) setRange('pKick', Math.round(ln.travel_kick));
       if (ln.travel_wiggle != null) setRange('pWiggle', Math.round(ln.travel_wiggle));
+      if (ln.corr_min != null) setRange('pCorrMin', Math.round(ln.corr_min));
+      if (ln.corr_max != null) setRange('pCorrMax', Math.round(ln.corr_max));
     }
     document.getElementById('pNow').textContent = ln.speed == null ? '' :
       ('현재: 속도 ' + Math.round(ln.speed) + ' · '
        + (ln.pulsing ? '펄스 ' + ln.pulse_on + 's / ' + ln.pulse_period + 's' : '연속 주행')
-       + '  ·  정렬 흔들기 ' + Math.round(ln.align_dither || 0)
+       + '  ·  정렬 흔들기(진행축) ' + Math.round(ln.align_dither || 0)
+       + '  ·  게걸음 ' + Math.round(ln.corr_min || 0) + '~' + Math.round(ln.corr_max || 0)
        + '  ·  주행 ' + (ln.smooth ? '저속연속 ' + Math.round(ln.smooth_speed || 0)
                                      + ' (출발 ' + Math.round(ln.travel_kick || 0)
                                      + ' · 좌우톡 ' + Math.round(ln.travel_wiggle || 0) + ')'
@@ -893,11 +965,13 @@ _SETTINGS_JS = """
     const t = base.tuning;
     if (t) {
       document.getElementById('tNow').textContent =
-        '요청값 ' + t.hz + 'Hz · 듀티 ' + t.max_pwm + ' · 가속 ' + t.accel
+        '전체 속도 ' + (t.speed_scale == null ? '?' : t.speed_scale) + '% · '
+        + '요청값 ' + t.hz + 'Hz · 듀티 ' + t.max_pwm + ' · 가속 ' + t.accel
         + (base.acks && base.acks.length ? '   ← 보드 확인: ' + base.acks.join(' | ') : '   ← 보드 확인 없음');
       if (!tuneInit) {
         tuneInit = true;
         setRange('tHz', t.hz); setRange('tPwm', t.max_pwm); setRange('tAcc', t.accel);
+        if (t.speed_scale != null) setRange('tScale', t.speed_scale);
       }
     }
 

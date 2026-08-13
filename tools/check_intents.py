@@ -108,6 +108,37 @@ def _describe(text: str) -> str:
     return got.label + (f"  {got.slots}" if got.slots else "")
 
 
+# 호출어는 인텐트가 아니라 **게이트**라 따로 본다. (발화, 호출어인가)
+WAKE_CASES: list[tuple[str, bool]] = [
+    ("안녕", True),
+    ("안녕하세요", True),
+    ("안녕 아래 토마토 따줘", True),      # 한 발화에 호출 + 명령
+    ("안뇽", True),                      # 받침 중화
+    ("로봇아", True),
+    ("아래 토마토 따줘", False),
+    ("2번으로 이동해", False),
+    ("오늘 날씨 좋네요", False),
+    ("반갑습니다", False),
+]
+
+
+def _check_wake() -> list[str]:
+    """호출어 판정만 따로. 게이트는 켬/끔 상태와 무관하게 낱말만 본다."""
+    from tomato_picker.voice.wake import WakeGate
+
+    gate = WakeGate(path=None) if not LIVE else __import__(
+        "tomato_picker.voice.wake", fromlist=["GATE"]).GATE
+    fails = []
+    for text, want in WAKE_CASES:
+        got = gate.heard(text)
+        ok = got == want
+        print(f"{'OK  ' if ok else 'FAIL'} [호출어] {text!r:<24} → "
+              f"{'호출' if got else '호출 아님'}")
+        if not ok:
+            fails.append(f"  FAIL [호출어] {text!r}: 기대={want} 실제={got}")
+    return fails
+
+
 def main() -> int:
     sentences = [a for a in sys.argv[1:] if not a.startswith("--")]
     if sentences:                             # 한 문장만 즉석 확인
@@ -126,11 +157,15 @@ def main() -> int:
         if not ok:
             fails.append((text, want_name, want_slots, got))
 
-    print(f"\n{len(CASES) - len(fails)}/{len(CASES)} 통과")
-    for text, want_name, want_slots, got in fails:
-        print(f"  FAIL {text!r}: 기대={want_name}{want_slots} "
-              f"실제={got.name if got else None}{got.slots if got else ''}")
-    return 1 if fails else 0
+    lines = [f"  FAIL {text!r}: 기대={want_name}{want_slots} "
+             f"실제={got.name if got else None}{got.slots if got else ''}"
+             for text, want_name, want_slots, got in fails]
+    lines += _check_wake()
+    total = len(CASES) + len(WAKE_CASES)
+    print(f"\n{total - len(lines)}/{total} 통과")
+    for line in lines:
+        print(line)
+    return 1 if lines else 0
 
 
 if __name__ == "__main__":
