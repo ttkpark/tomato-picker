@@ -41,7 +41,10 @@ import time
 from ..config import (
     LINE_ALIGN_DITHER,
     LINE_ALIGN_DIVERGE_LIMIT,
+    LINE_ALIGN_DY_ABOVE_PX,
+    LINE_ALIGN_DY_BELOW_PX,
     LINE_ALIGN_TIMEOUT_SEC,
+    LINE_ALIGN_YAW_TOL,
     LINE_APPROACH_FRAC,
     LINE_APPROACH_MIN,
     LINE_ARRIVE_ALIGN,
@@ -101,7 +104,9 @@ from ..config import (
 TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain",
                "speed", "pulse_on", "pulse_period", "no_strafe", "odom_sign",
                "align_dither", "smooth", "smooth_speed",
-               "travel_kick", "travel_wiggle")
+               "travel_kick", "travel_wiggle",
+               # 정렬 "완료" 목표 범위 — 현장에서 코스를 새로 깔 때마다 달라진다.
+               "align_tol_x", "align_dy_below", "align_dy_above", "align_yaw_tol")
 
 # 자동으로 정렬을 끼워 넣을 주행 모드. jog는 버튼 한 번 = 펄스 한 번이라
 # 중간에 정렬이 끼어들면 "톡 쳤는데 로봇이 혼자 움직인다"가 되므로 뺀다.
@@ -206,6 +211,12 @@ class LineDriver:
             # 출발 한 방 + 주행 중 좌우 톡 — 정지마찰을 깨는 두 수단.
             "travel_kick": float(LINE_TRAVEL_KICK),
             "travel_wiggle": float(LINE_TRAVEL_WIGGLE),
+            # 정렬을 **끝낼** 목표 범위. 주행 보정 데드밴드와 다른 값이다
+            # (그건 "보정을 낼지", 이건 "그만해도 되는지"). y는 위아래가 다르다.
+            "align_tol_x": float(LINE_MARK_ALIGN_TOL_PX),
+            "align_dy_below": float(LINE_ALIGN_DY_BELOW_PX),
+            "align_dy_above": float(LINE_ALIGN_DY_ABOVE_PX),
+            "align_yaw_tol": float(LINE_ALIGN_YAW_TOL),
         }
         self._tune.update(_load_saved(LINE_TUNING_FILE))
         self._thread = threading.Thread(target=self._run, daemon=True, name="line-drive")
@@ -253,7 +264,11 @@ class LineDriver:
         """속도·펄스 설정을 런타임에 바꾸고 파일에 남긴다(재시작해도 유지)."""
         limits = {"speed": (30, 255), "pulse_on": (0.02, 3.0), "pulse_period": (0.02, 3.0),
                   "align_dither": (0, 255), "smooth_speed": (30, 255),
-                  "travel_kick": (0, 255), "travel_wiggle": (0, 255)}
+                  "travel_kick": (0, 255), "travel_wiggle": (0, 255),
+                  # 정렬 완료 범위. 하한을 5px/0.5°로 둔다 — 0으로 두면 영원히
+                  # 못 끝내는 정렬이 되고, 그건 설정으로 만들 수 있으면 안 된다.
+                  "align_tol_x": (5, 400), "align_dy_below": (5, 400),
+                  "align_dy_above": (5, 400), "align_yaw_tol": (0.5, 45.0)}
         with self._lock:
             for key, (lo, hi) in limits.items():
                 if values.get(key) is not None:
@@ -266,12 +281,18 @@ class LineDriver:
         mode = ("연속 주행" if snapshot["pulse_period"] <= snapshot["pulse_on"]
                 else f"펄스 {snapshot['pulse_on']:.2f}s / {snapshot['pulse_period']:.2f}s 주기")
         dither = snapshot.get("align_dither", 0)
+        # 정렬 목표 범위도 같이 돌려준다 — 슬라이더를 만졌는데 어디에도 안 보이면
+        # "먹었나?" 를 확인할 길이 없다.
+        rng = (f" · 정렬범위 x±{snapshot.get('align_tol_x', 0):.0f}px"
+               f" · y 아래{snapshot.get('align_dy_below', 0):.0f}"
+               f"/위{snapshot.get('align_dy_above', 0):.0f}px"
+               f" · 회전 ±{snapshot.get('align_yaw_tol', 0):.1f}°")
         if snapshot.get("smooth"):
             return (f"저속 연속 주행 {snapshot.get('smooth_speed', 0):.0f} · "
-                    f"정렬 흔들기 {dither:.0f}"
+                    f"정렬 흔들기 {dither:.0f}" + rng
                     + f" · (펄스로 바꾸면 속도 {snapshot['speed']:.0f} · {mode})")
         return (f"속도 {snapshot['speed']:.0f} · {mode} · "
-                f"정렬 흔들기 {dither:.0f}" + (" (없음)" if dither <= 0 else ""))
+                f"정렬 흔들기 {dither:.0f}" + (" (없음)" if dither <= 0 else "") + rng)
 
     def _save_tuning(self, snapshot: dict) -> None:
         try:
@@ -592,6 +613,11 @@ class LineDriver:
             "travel_wiggle": self._tune.get("travel_wiggle", LINE_TRAVEL_WIGGLE),
             "no_strafe": self.no_strafe,
             "align_dither": self._tune.get("align_dither", LINE_ALIGN_DITHER),
+            # 정렬 완료 목표 범위(px·도) — 대시보드 슬라이더가 이 값으로 채워진다.
+            "align_tol_x": self._tune.get("align_tol_x", LINE_MARK_ALIGN_TOL_PX),
+            "align_dy_below": self._tune.get("align_dy_below", LINE_ALIGN_DY_BELOW_PX),
+            "align_dy_above": self._tune.get("align_dy_above", LINE_ALIGN_DY_ABOVE_PX),
+            "align_yaw_tol": self._tune.get("align_yaw_tol", LINE_ALIGN_YAW_TOL),
             "detours": self._detours,
             "resuming": self._resume is not None,
             "last_dir": self._last_dir,
@@ -757,7 +783,7 @@ class LineDriver:
         if got is None:
             return 0, 0
         _m, dx = got
-        if abs(dx) <= LINE_MARK_ALIGN_TOL_PX:
+        if abs(dx) <= self._tune.get("align_tol_x", LINE_MARK_ALIGN_TOL_PX):
             return 0, 0
         # 충격 구간이면 정지마찰을 확실히 넘는 크기로. 평소엔 상한 150으로 죈다
         # (LINE_MAX_CORRECTION=180은 여기엔 너무 세다 — 반대편으로 넘어가 왕복이 된다).
@@ -783,9 +809,22 @@ class LineDriver:
         self._reset_mark_align()   # deadline도 여기서 넉넉하게 다시 잡는다
 
     def _align_error(self, line: dict) -> float:
-        """정렬 오차 하나로 합친 값(데드밴드 대비 비율의 최댓값). 1 미만이면 도착."""
-        dy = abs(line.get("offset_y_norm") or 0.0) / LINE_DY_DEADBAND
-        yaw = (abs(line.get("angle_deg") or 0.0) / LINE_YAW_DEADBAND
+        """정렬 오차 하나로 합친 값(허용 범위 대비 비율의 최댓값). 1 이하면 도착.
+
+        ⚠ y는 **목표 범위를 px로 직접** 잰다(2026-08-13 요청). 주행 보정
+        데드밴드(LINE_DY_DEADBAND)는 "보정을 낼지"의 기준이지 "끝낼지"의
+        기준이 아니다 — 그걸 완료 판정에 쓰면 정착 후 재측정에서 조금만
+        밀려도 정렬이 다시 시작돼 끝나지 않는다.
+
+        위아래 허용치가 다르다: dy > 0 = 테이프가 기준선보다 아래.
+        범위는 전부 /settings에서 바꾼다(self._tune).
+        """
+        dy_px = line.get("offset_y_px") or 0.0
+        limit = (self._tune.get("align_dy_below", LINE_ALIGN_DY_BELOW_PX) if dy_px > 0
+                 else self._tune.get("align_dy_above", LINE_ALIGN_DY_ABOVE_PX))
+        dy = abs(dy_px) / max(1e-6, float(limit))
+        yaw_tol = max(1e-6, float(self._tune.get("align_yaw_tol", LINE_ALIGN_YAW_TOL)))
+        yaw = (abs(line.get("angle_deg") or 0.0) / yaw_tol
                if self._tune.get("yaw_gain") else 0.0)
         return max(dy, yaw)
 
@@ -1136,7 +1175,7 @@ class LineDriver:
             if got is None:
                 return None      # 깜빡임일 수 있다 — 타임아웃(12s)이 안전망
             marker, dx = got
-            centered = abs(dx) <= LINE_MARK_ALIGN_TOL_PX
+            centered = abs(dx) <= self._tune.get("align_tol_x", LINE_MARK_ALIGN_TOL_PX)
             level = self._align_error(line)          # dy·yaw 오차(데드밴드 배수)
             now = time.monotonic()
 

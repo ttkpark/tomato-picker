@@ -282,8 +282,18 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
             speed=body.get("speed"), pulse_on=body.get("pulse_on"),
             pulse_period=body.get("pulse_period"),
             align_dither=body.get("align_dither"),
+            # ⚠ smooth_speed가 빠져 있었다(2026-08-13 발견). 대시보드는 보내는데
+            #   여기서 안 넘겨서 **[저속 주행 속도] 슬라이더가 조용히 무시**됐다 —
+            #   "적용을 눌러도 속도가 그대로"의 원인. 목록에 빠지면 티가 안 나므로
+            #   set_params의 limits와 여기를 항상 같이 볼 것.
+            smooth_speed=body.get("smooth_speed"),
             travel_kick=body.get("travel_kick"),
             travel_wiggle=body.get("travel_wiggle"),
+            # 정렬 완료 목표 범위(px·도).
+            align_tol_x=body.get("align_tol_x"),
+            align_dy_below=body.get("align_dy_below"),
+            align_dy_above=body.get("align_dy_above"),
+            align_yaw_tol=body.get("align_yaw_tol"),
         )
     return False, f"알 수 없는 라인 명령: {action}"
 

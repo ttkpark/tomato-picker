@@ -661,6 +661,33 @@ _SETTINGS_BODY = """
   </p>
 </div>
 
+<h2>정렬 목표 범위 <span class="dim">— "이 안에 들어오면 그만"</span></h2>
+<div class="card">
+  <!-- 이 값들은 **정렬을 끝낼지**의 기준이다(주행 중 보정을 낼지의 데드밴드와 다름).
+       좁으면 정착 후 재측정에서 조금만 밀려도 정렬이 다시 시작돼 끝나지 않는다. -->
+  <label>x 허용(진행축) <input type="range" id="rTolX" min="5" max="200" step="5" value="50"
+    oninput="rTolXOut.textContent=this.value"> ±<b id="rTolXOut">50</b> px
+    <span class="dim">— 마커가 화면 중앙에서 이 안이면 맞은 것</span></label>
+  <label>y 허용 — 테이프 <b>아래</b> <input type="range" id="rDyBelow" min="5" max="200" step="5" value="50"
+    oninput="rDyBelowOut.textContent=this.value"> <b id="rDyBelowOut">50</b> px
+    <span class="dim">— 테이프가 기준선보다 아래로 이만큼까지 허용</span></label>
+  <label>y 허용 — 테이프 <b>위</b> <input type="range" id="rDyAbove" min="5" max="200" step="5" value="20"
+    oninput="rDyAboveOut.textContent=this.value"> <b id="rDyAboveOut">20</b> px
+    <span class="dim">— 위로 벗어나면 시야 밖이라 좁게 두는 쪽</span></label>
+  <label>회전 허용 <input type="range" id="rYaw" min="0.5" max="20" step="0.5" value="2"
+    oninput="rYawOut.textContent=this.value"> ±<b id="rYawOut">2</b> °
+    <span class="dim">⚠ x·y가 다 맞아도 이게 좁으면 정렬이 안 끝난다</span></label>
+  <div class="row-flex"><button onclick="applyRange()">적용</button>
+    <button class="small" onclick="rpreset(50,50,20,2)">기본(50 / 50·20 / 2°)</button>
+    <button class="small" onclick="rpreset(70,80,40,5)">넉넉히</button>
+    <span id="rNow" class="dim"></span></div>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    완료 판정은 x · y · 회전 <b>셋 다</b> 들어와야 합니다(가장 나쁜 축이 기준).
+    지금 값은 위 <b>라인 영점</b> 카드의 "테이프 아래/위 NNpx"와 같은 단위입니다 —
+    거기 숫자를 보면서 맞추세요.
+  </p>
+</div>
+
 <h2>모터 튜닝 <span class="dim">— 소음 ↔ 속도</span></h2>
 <div class="card">
   <div class="row-flex" style="margin-bottom:0.5rem">
@@ -699,7 +726,7 @@ _SETTINGS_BODY = """
 """
 
 _SETTINGS_JS = """
-  let tuneInit = false, pulseInit = false;
+  let tuneInit = false, pulseInit = false, rangeInit = false;
   function applyPulse() {
     cmd({action:'line_params',
          speed: +document.getElementById('pSpeed').value,
@@ -712,6 +739,19 @@ _SETTINGS_JS = """
   }
   function preset(sp, on, per) {
     setRange('pSpeed', sp); setRange('pOn', on); setRange('pPeriod', per); applyPulse();
+  }
+  // 정렬을 **끝낼** 목표 범위. 주행 설정과 저장처는 같지만(line_params →
+  // ~/line_tuning.json) 만지는 이유가 달라 카드를 나눴다.
+  function applyRange() {
+    cmd({action:'line_params',
+         align_tol_x: +document.getElementById('rTolX').value,
+         align_dy_below: +document.getElementById('rDyBelow').value,
+         align_dy_above: +document.getElementById('rDyAbove').value,
+         align_yaw_tol: +document.getElementById('rYaw').value});
+  }
+  function rpreset(x, below, above, yaw) {
+    setRange('rTolX', x); setRange('rDyBelow', below);
+    setRange('rDyAbove', above); setRange('rYaw', yaw); applyRange();
   }
   function setRange(id, v) {
     document.getElementById(id).value = v;
@@ -765,6 +805,20 @@ _SETTINGS_JS = """
                                      + ' (출발 ' + Math.round(ln.travel_kick || 0)
                                      + ' · 좌우톡 ' + Math.round(ln.travel_wiggle || 0) + ')'
                                    : '펄스(톡톡)'));
+
+    // 정렬 목표 범위 — 슬라이더는 처음 한 번만 서버 값으로 채운다(만지는 중에
+    // 덮어쓰면 손에서 값이 튄다). 아래 현재값 표시는 매 틱 갱신한다.
+    if (!rangeInit && ln.align_tol_x != null) {
+      rangeInit = true;
+      setRange('rTolX', Math.round(ln.align_tol_x));
+      setRange('rDyBelow', Math.round(ln.align_dy_below));
+      setRange('rDyAbove', Math.round(ln.align_dy_above));
+      setRange('rYaw', ln.align_yaw_tol);
+    }
+    document.getElementById('rNow').textContent = ln.align_tol_x == null ? '' :
+      ('현재: x ±' + Math.round(ln.align_tol_x) + 'px  ·  y 아래 '
+       + Math.round(ln.align_dy_below) + ' / 위 ' + Math.round(ln.align_dy_above)
+       + 'px  ·  회전 ' + (ln.yaw_gain ? '±' + ln.align_yaw_tol + '°' : '판정 안 함(회전보정 꺼짐)'));
 
     const t = base.tuning;
     if (t) {
