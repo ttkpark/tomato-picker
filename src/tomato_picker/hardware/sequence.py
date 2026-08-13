@@ -30,7 +30,12 @@ import re
 import threading
 import time
 
-from ..config import SEQUENCE_FILE, SEQUENCE_PRESETS, SEQUENCE_STEP_TIMEOUT_SEC
+from ..config import (
+    ARM_POSE_GAP_SEC,
+    SEQUENCE_FILE,
+    SEQUENCE_PRESETS,
+    SEQUENCE_STEP_TIMEOUT_SEC,
+)
 
 _TOKEN = re.compile(r"^(m\d+|w\d+(?:\.\d+)?|\d+)$", re.I)
 
@@ -199,6 +204,10 @@ class SequenceRunner:
                     if arm is None:
                         raise RuntimeError("팔이 연결되지 않았습니다")
                     arm.play_preset(int(value))
+                    # 자세와 자세 **사이**에만 쉰다 — 다음 단계가 또 자세일 때만.
+                    # 마지막 뒤나 지점 이동 앞에 넣으면 정착이 아니라 그냥 지연이다.
+                    if index < len(steps) and steps[index][0] == "preset":
+                        self._stop.wait(ARM_POSE_GAP_SEC)   # 정지 버튼에 반응해야 한다
                 else:
                     self._goto_station(int(value))
             self._finish("완료")

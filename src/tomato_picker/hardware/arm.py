@@ -29,6 +29,7 @@ from ..config import (
     ARM_MOVE_SECS,
     ARM_PICK_PRESETS,
     ARM_PLACE_PRESETS,
+    ARM_POSE_GAP_SEC,
     ARM_PRESET_FILE,
     ARM_SERIAL_PORT,
 )
@@ -474,7 +475,10 @@ class LerobotArm(RobotArm):
     # ------------------------------------------------------------------
 
     def _play_sequence(self, preset_ids: list[int]) -> None:
-        for preset_id in preset_ids:
+        # 자세 **사이**에만 쉰다 — 마지막 자세 뒤에 쉬면 그냥 지연이다.
+        for i, preset_id in enumerate(preset_ids):
+            if i:
+                time.sleep(ARM_POSE_GAP_SEC)
             self.play_preset(preset_id)
 
     def _move_to(self, target: dict, secs: float, fps: int) -> None:
