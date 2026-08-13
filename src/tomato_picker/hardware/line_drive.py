@@ -1404,7 +1404,9 @@ class LineDriver:
             #   순항 속도 그대로 마커 중앙을 지나면 센싱 지연 + 펌웨어 감속 슬루
             #   동안 그대로 밀려 목표를 지나쳐 선다. 다음에 만날 마커(_mark_armed)가
             #   접근 창에 들어오면 거리에 비례해 늦춘다 — 도착 순간엔 거의 기어간다.
-            braking = False
+            # ⚠ 지점 간격(≈375px)이 이 창(640px)보다 좁아서, 실질적으로 **주행
+            #   내내 감속 구간**이다 — 출발 속도가 곧장 하한(LINE_APPROACH_MIN)까지
+            #   깎인다. 그래서 출발 킥이 더 중요해졌다(아래 _travel_kick 주석).
             if self.smooth and mode in DETOUR_MODES and self._mark_armed:
                 got = self._nearest_station_marker(self._line, ahead_dir=self._last_dir)
                 if got is not None:
@@ -1416,7 +1418,6 @@ class LineDriver:
                     adx = abs(got[1])
                     if adx < zone:
                         speed = int(max(LINE_APPROACH_MIN, speed * adx / zone))
-                        braking = True
             # OFF 구간엔 **보정까지 전부 0** — 완전히 멈춰 정착시킨 뒤 다시 잰다.
             if self._pulse_gate(goal, mode):
                 phase1 = False
@@ -1438,10 +1439,17 @@ class LineDriver:
                 # 출발엔 세게 한 방, 주행 중엔 주기적으로 옆으로 톡.
                 wiggle = 0
                 if self.smooth and mode not in ("align", "align_mark"):
-                    # 감속 중엔 킥이 이기면 안 된다 — 마커 앞에서 세게 밀면
-                    # 감속의 의미가 없다(킥은 정지 출발용이고, 감속 중이면 이미 구른다).
-                    if not braking:
-                        use = self._travel_kick(goal, use)
+                    # ⚠ 예전엔 `if not braking:`으로 감속 중 킥을 막았다. 그 전제가
+                    #   "감속 중이면 이미 구른다"였는데 **이 코스에선 거짓이다.**
+                    #   감속은 마커가 반화면(640px) 안에 들어오면 시작되는데 지점
+                    #   간격이 ≈375px이라, **출발하는 순간 이미 감속 구간**이다.
+                    #   그래서 킥은 도달할 수 없는 코드였고, 슬라이더를 올려도
+                    #   아무 일도 안 났다(2026-08-13). 심지어 출발 속도는 감속으로
+                    #   하한(60)까지 깎이니, 정지마찰을 깰 수단이 하나도 없었다.
+                    #   막을 필요도 없다 — _travel_kick은 오도메트리가 25px 움직인
+                    #   순간(=실제로 굴렀다는 증거) 스스로 끝나고, 한 명령에 한 번만
+                    #   난다. 즉 "구르는 중에 감속을 이기는" 상황은 원래 생기지 않는다.
+                    use = self._travel_kick(goal, use)
                     wiggle = self._travel_wiggle(goal)
                 vx, vy, w = self._command(self._line, travel, use, mode, dither)
                 if mode == "align_mark" and time.monotonic() < self._mark_break_until                         and self._mark_break_axis == "corr":
