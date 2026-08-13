@@ -22,8 +22,12 @@ import numpy as np
 from ultralytics import YOLOWorld
 WIDTH = int(os.environ.get("TV_WIDTH", "1280"))
 HEIGHT = int(os.environ.get("TV_HEIGHT", "720"))
-CONF = float(os.environ.get("TV_CONF", "0.10"))
+CONF = float(os.environ.get("TV_CONF", "0.05"))
 MODEL = os.environ.get("TV_MODEL", "yolov8s-worldv2.pt")
+# 추론 입력 해상도. **기본값(640)에 넣으면 안 된다** — 1280x720 프레임이 절반으로
+# 줄면서 열매가 검출 한계 아래로 내려가, 여섯 중 가까운 두 개만 잡히던 원인이었다
+# (2026-08-13). 캡처 해상도 그대로 넣으면 6/6. ultralytics는 32의 배수만 받는다.
+IMGSZ = max(320, round(int(os.environ.get("TV_IMGSZ", str(WIDTH))) / 32) * 32)
 CLASSES = [c.strip() for c in os.environ.get("TV_CLASSES", "tomato").split(",") if c.strip()]
 JPEG_PATH = os.environ.get("TV_JPEG", "/dev/shm/tomato_vision.jpg")
 COUNT_PATH = os.environ.get("TV_COUNT", "/dev/shm/tomato_count")
@@ -122,7 +126,8 @@ def _draw(frame: np.ndarray, air: list, ground: list, air_count: int) -> np.ndar
 
 
 def main() -> None:
-    print(f"[tomato_vision] 모델 로딩({MODEL}), 클래스={CLASSES}, conf={CONF}", flush=True)
+    print(f"[tomato_vision] 모델 로딩({MODEL}), 클래스={CLASSES}, "
+          f"conf={CONF}, imgsz={IMGSZ}", flush=True)
     model = YOLOWorld(MODEL)
     model.set_classes(CLASSES)
     interval = 1.0 / TARGET_FPS
@@ -142,7 +147,8 @@ def main() -> None:
             if not ok:
                 raise RuntimeError("프레임 읽기 실패")
             fail = 0
-            res = model.predict(frame, device="cuda", conf=CONF, verbose=False)
+            res = model.predict(frame, device="cuda", conf=CONF, imgsz=IMGSZ,
+                                verbose=False)
             air, ground = _classify(res[0].boxes, frame.shape[1])
             raw = len(air)  # 공중(부착) 토마토만 센다
             now = time.monotonic()
