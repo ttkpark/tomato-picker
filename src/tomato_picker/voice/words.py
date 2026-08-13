@@ -26,6 +26,7 @@ from ..config import (
     VOICE_INTENTS,
     VOICE_MOVE_WORDS,
     VOICE_PICK_WORDS,
+    VOICE_ALL_WORDS,
     VOICE_STATION_WORDS,
     VOICE_WAKE_WORDS,
     VOICE_WORDS_FILE,
@@ -36,6 +37,8 @@ from . import korean
 CATALOG: list[tuple[str, str, str]] = [
     ("wake", "호출어",
      "이 말을 들어야 명령을 받기 시작한다. 켬/끔과 대기 시간은 아래 ‘호출어’ 카드에서"),
+    ("all", "모두",
+     "수확 낱말과 <b>함께</b> 들리면 보이는 토마토를 전부 딴다"),
     ("pick", "수확",
      "이 말이 들리면 토마토를 딴다. 높이(위/아래)는 아래 두 칸에서 따로 읽는다"),
     ("height_upper", "위(2층)", "이 말이 같이 들리면 2층 프리셋으로 딴다"),
@@ -57,6 +60,7 @@ _LABELS = {key: label for key, label, _hint in CATALOG}
 def _defaults() -> dict[str, list[str]]:
     return {
         "wake": list(VOICE_WAKE_WORDS),
+        "all": list(VOICE_ALL_WORDS),
         "pick": list(VOICE_PICK_WORDS),
         "height_upper": list(VOICE_HEIGHT_WORDS["upper"]),
         "height_lower": list(VOICE_HEIGHT_WORDS["lower"]),

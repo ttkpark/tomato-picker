@@ -98,8 +98,16 @@ def match_intent(text: str) -> Intent | None:
             return Intent("station_move", f"{number}번(토마토{number}) 지점으로 이동",
                           {"station": station, "spoken": str(number)})
 
-    # 2) 수확 — 높이를 같이 읽는다. 못 읽으면 기본값으로 가되 그 사실을 남긴다.
+    # 2) 수확. "모두"가 같이 들리면 **보이는 걸 전부** — 개별 수확보다 먼저 본다
+    #    (안 그러면 "모두 토마토 따줘"가 그냥 한 개 따기로 새어 나간다).
     if korean.contains(text, words.STORE.get("pick")):
+        # ⚠ 여기만 **정확히 일치**를 요구한다(거리 0). 다른 슬롯처럼 오인식을
+        #   허용했더니 "상단 토마토 따"·"도마뚱"이 전체 수확으로 걸렸다 — 1글자
+        #   차이였다. 잘못 걸리면 로봇이 코스를 길게 자율 주행한다. 애매하면
+        #   작은 동작(한 개 따기)으로 떨어지는 게 안전하다.
+        hit = korean.best(text, words.STORE.get("all"))
+        if hit is not None and hit[1] == 0:
+            return Intent("harvest_all", "보이는 토마토 모두 따기")
         height, sure = _height(text)
         korean_name = "위(2층)" if height == "upper" else "아래(1층)"
         label = f"{korean_name} 토마토 따기" + ("" if sure else " — 높이 미지정, 기본값")

@@ -37,6 +37,7 @@ from .config import (
 from .hardware.base import MobileBase, RobotArm
 from .hardware.mock import MockArm, MockBase
 from .voice.controller import VoiceController
+from .harvest import HarvestRunner
 from .voice.intents import Intent
 from .voice.log_hub import LogHub
 from .voice.server import start_log_server, start_redirect_server
@@ -240,6 +241,9 @@ def run_voice() -> None:
     from .hardware.sequence import SequenceRunner
 
     hardware["seq"] = SequenceRunner(hardware)
+    # 5) 수확 계획 — 비전 좌표를 나무/높이로 읽어 다음 동작을 정하고, 자동 모드면
+    #    스스로 실행한다. 비전이 없어도(None) "없음"으로 답할 뿐 죽지 않는다.
+    hardware["harvest"] = HarvestRunner(hardware, vision, log_hub)
 
     hw["마이크"] = "확인 중"
     publish_hw()
@@ -279,6 +283,11 @@ def run_voice() -> None:
                 return
             say(f"{intent.label} → {LINE_STATION_LABELS[index]}")
             say(seq.run_text(intent.label, f"m{index}"))
+        elif intent.name == "harvest_all":
+            harvest = hardware["harvest"]
+            plan = harvest.plan()
+            say(f"{intent.label} — 지금 {plan['count']}개 보입니다 · 다음: {plan['next']}")
+            say(harvest.start("모두 따기"))
         elif intent.name == "tomato_pick":
             key = VOICE_PICK_SEQUENCE_KEYS[intent.slots["height"]]
             if line is not None:

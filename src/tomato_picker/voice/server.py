@@ -21,7 +21,7 @@ from .wake import GATE as WAKE
 from .words import STORE as WORDS
 
 
-def _status_payload(arm, base, line=None, seq=None) -> dict:
+def _status_payload(arm, base, line=None, seq=None, harvest=None) -> dict:
     """조작 화면이 폴링하는 상태. 어떤 조회가 실패해도 페이지는 떠야 하므로
     항목마다 개별로 감싸고, 없는 장비는 None으로 내려보낸다."""
     def _safe(fn, fallback):
@@ -53,8 +53,14 @@ def _status_payload(arm, base, line=None, seq=None) -> dict:
     # _safe의 폴백은 dict여야 한다(에러를 병합해 돌려주므로) — 목록은 감싸서 넘긴다.
     voice_status = _safe(lambda: {"items": WORDS.catalog(), "wake": WAKE.status()},
                          {"items": [], "wake": {}})
+    harvest_status = (
+        _safe(harvest.plan, {"count": 0, "trees": [], "order": []})
+        if harvest is not None
+        else {"count": 0, "trees": [], "order": [], "next": "수확 계획 비활성",
+              "error": "수확 러너 없음"}
+    )
     return {"arm": arm_status, "base": base_status, "line": line_status, "seq": seq_status,
-            "voice": voice_status}
+            "voice": voice_status, "harvest": harvest_status}
 
 # 하드웨어가 하나도 없어도 대시보드는 떠야 한다(부스 데모에서 화면이 검은 것보다
 # "장비 미연결"이라고 떠 있는 게 낫다). 그래서 이 모듈의 어떤 것도 하드웨어
@@ -152,6 +158,9 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
           display: inline-block; margin-bottom: 0.5rem;
           background: color-mix(in srgb, CanvasText 10%, Canvas); }}
   #wake.on {{ background: color-mix(in srgb, #2ecc71 30%, Canvas); }}
+  /* 수확 계획 — 지금 몇 개 보이고 다음에 뭘 딸 차례인지. */
+  #harvest {{ font-size: 0.95rem; padding: 0.3rem 0.7rem; border-radius: 8px;
+             margin-bottom: 0.5rem; background: color-mix(in srgb, CanvasText 8%, Canvas); }}
 
   /* ===== 좁은 화면(휴대폰·작은 창): 위아래로 쌓되 로그 몫을 먼저 떼어 둔다 =====
      ⚠ 이 블록은 반드시 **위 기본 규칙들 뒤**에 있어야 한다. 앞에 뒀더니 같은
@@ -179,6 +188,7 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
 <div id="hw"><span>장비 상태 확인 중...</span></div>
 <div id="wake">🎤 음성 상태 확인 중...</div>
 <div id="count">🍅 공중 토마토: —</div>
+<div id="harvest">수확 계획 확인 중...</div>
 <div id="positions">위치: —</div>
 </div>
 <div id="panes">
@@ -223,8 +233,11 @@ def _page(has_video: bool, has_floor: bool = False) -> str:
   }}
   const lineEl = document.getElementById('line');
   const wakeEl = document.getElementById('wake');
+  const harvestEl = document.getElementById('harvest');
   function onEvent(ev) {{
     if (ev.kind === 'hw') {{ renderHw(ev.items); return; }}
+    // 수확 계획 — 배지만. 0.5초마다 오므로 로그로 쌓으면 도배된다.
+    if (ev.kind === 'harvest') {{ harvestEl.textContent = ev.text; return; }}
     // 호출어 상태 — 배지만 갈아끼우고 로그로는 안 쌓는다(1초마다 오므로).
     if (ev.kind === 'wake') {{
       wakeEl.textContent = ev.text;
@@ -420,6 +433,17 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
                 outs.append(f"{svc}: {(r.stdout or r.stderr).strip() or '?'}")
             return True, " · ".join(outs)
 
+        # --- 자동 수확 ---
+        if action in ("harvest_start", "harvest_stop", "harvest_auto"):
+            harvest = _SEQ.get("harvest")
+            if harvest is None:
+                return False, "수확 러너가 없습니다"
+            if action == "harvest_start":
+                return True, harvest.start("모두 따기")
+            if action == "harvest_stop":
+                return True, harvest.stop()
+            return True, harvest.set_auto(bool(body.get("on")))
+
         # --- 음성 명령어 사전 (하드웨어 불필요) ---
         # 저장은 즉시 반영된다 — 인텐트 매칭이 매번 STORE에서 읽으므로 재시작이 필요 없다.
         if action == "voice_words_save":
@@ -599,7 +623,8 @@ def _make_handler(
                 # 조작 화면이 1초마다 폴링하는 상태 스냅샷. 하드웨어가 없거나
                 # 상태 조회가 실패해도 화면은 떠 있어야 하므로 전부 감싼다.
                 self._write_json(_status_payload(hw.get("arm"), hw.get("base"),
-                                                 hw.get("line"), hw.get("seq")))
+                                                 hw.get("line"), hw.get("seq"),
+                                                 hw.get("harvest")))
                 return
 
             if self.path in ("/control", "/settings", "/diag"):
@@ -676,6 +701,7 @@ def _make_handler(
                 return
             # 러너는 서버보다 늦게 만들어진다 — 요청 시점에 최신 핸들을 집는다.
             _SEQ["runner"] = hw.get("seq")
+            _SEQ["harvest"] = hw.get("harvest")
             length = int(self.headers.get("Content-Length") or 0)
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")

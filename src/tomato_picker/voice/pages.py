@@ -205,6 +205,29 @@ _CONTROL_BODY = """
   <button onclick="drive(0,0,1)">↻ 우회전</button>
 </div>
 
+<h2>자동 수확 <span class="dim">— 화면의 토마토를 나무·높이로 읽어 순서를 짠다</span></h2>
+<div class="card">
+  <div id="harvestNext" style="margin-bottom:0.6rem">수확 계획 확인 중...</div>
+  <div id="harvestTable" style="margin-bottom:0.6rem"></div>
+  <div class="row-flex">
+    <button onclick="cmd({action:'harvest_start'})">🍅 모두 따기</button>
+    <button class="stop" onclick="cmd({action:'harvest_stop'})">■ 수확 정지</button>
+    <label><input type="checkbox" id="hAuto" onchange="cmd({action:'harvest_auto', on:this.checked})">
+      자동 모드</label>
+    <span id="harvestAuto" class="dim"></span>
+  </div>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    나무는 <b>화면 x</b>로 가릅니다(무대 카메라가 고정이라 x가 곧 나무). 높이는 y 하나로
+    2층/1층. 순서는 <b>가까운 나무부터</b> — 지금 지점의 열매를 다 따고 다음 나무로 옮깁니다.
+    <br>한 개를 딸 때마다 화면을 <b>다시 읽습니다</b> — 처음 목록을 붙들고 돌면 이미 딴 것을
+    또 따러 갑니다.
+    <br><b>자동 모드</b>는 평소엔 대기하다가 토마토가 잠깐 이상 계속 보이면 시작하고, 다 따면
+    다시 대기합니다. 못 딴 게 남아 있으면 <b>같은 동작을 반복하지 않고</b> 남았다고 알립니다
+    (치워서 화면이 비면 다시 대기 상태로 돌아갑니다).
+    <br>음성으로는 <code>모두 토마토 따줘</code>.
+  </p>
+</div>
+
 <h2>시퀀스 <span class="dim">— 팔 프리셋 + 지점 이동을 섞은 대본</span></h2>
 <div class="card">
   <div id="seqState" style="margin-bottom:0.6rem">시퀀스 상태 확인 중...</div>
@@ -342,8 +365,32 @@ _CONTROL_JS = """
     cmd({action:'mirror', on: !(state && state.arm && state.arm.mirroring)});
   }
 
+  let hAutoInit = false;
+  function renderHarvest(h) {
+    const nx = document.getElementById('harvestNext');
+    if (!nx || !h) return;
+    nx.textContent = (h.running ? '▶ 수확 중 — ' + (h.detail || '')
+                                : '토마토 ' + (h.count || 0) + '개  ·  다음: ' + (h.next || '—'))
+                   + (h.at_label ? '   (지금 ' + h.at_label + ')' : '   (지점 미확인)');
+    nx.style.background = h.running ? 'color-mix(in srgb, #2ecc71 20%, Canvas)' : '';
+    const tb = document.getElementById('harvestTable');
+    tb.textContent = '';
+    for (const row of h.trees || []) {
+      const d = document.createElement('div');
+      const cell = v => v ? '● (' + v[0] + ',' + v[1] + ')' : '○ 없음';
+      d.innerHTML = '<b>' + row.name + '</b> <span class="dim">지점' + row.station + '</span>'
+                  + ' &nbsp; 2층 ' + cell(row.upper) + ' &nbsp; 1층 ' + cell(row.lower);
+      tb.append(d);
+    }
+    // 체크박스는 **한 번만** 서버 값으로 맞춘다(폴링이 매번 덮으면 못 끈다).
+    const box = document.getElementById('hAuto');
+    if (box && !hAutoInit) { hAutoInit = true; box.checked = !!h.auto; }
+    document.getElementById('harvestAuto').textContent = h.auto_note || '';
+  }
+
   function render() {
     if (!state) return;
+    renderHarvest(state.harvest);
     const arm = state.arm || {}, base = state.base || {}, ln = state.line || {};
 
     const ok = base.connected;
