@@ -6,8 +6,9 @@
 지점 이동으로 걸렸다(2026-08-13). 그래서 **걸려야 할 말**과 **걸리면 안 되는
 말**을 한 표에 같이 둔다. 낱말을 추가·수정할 때는 여기부터 돌릴 것.
 
-    python tools/check_intents.py          # 프로젝트 루트에서
-    python tools/check_intents.py "들린 말"  # 한 문장만 즉석 확인
+    python tools/check_intents.py           # 출고 기본값으로 표 전체
+    python tools/check_intents.py --live    # 현장에서 고친 사전으로 표 전체
+    python tools/check_intents.py "들린 말"   # 한 문장만 즉석 확인
 
 종료 코드: 0=전부 통과, 1=실패 있음.
 """
@@ -19,8 +20,15 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from tomato_picker.voice import korean  # noqa: E402
+from tomato_picker.voice import korean, words  # noqa: E402
 from tomato_picker.voice.intents import match_intent  # noqa: E402
+
+# 기본은 **출고 기본값**을 시험한다 — 현장에서 고친 사전(~/voice_words.json)이
+# 결과를 바꾸면 이 검사가 무엇을 보장하는지 알 수 없어진다. 지금 로봇에 들어 있는
+# 사전을 그대로 시험하려면 --live.
+LIVE = "--live" in sys.argv
+if not LIVE:
+    words.STORE = words.WordStore(path=None)
 
 # (발화, 기대 인텐트명, 확인할 슬롯). 기대가 None이면 **아무것도 걸리면 안 된다**.
 CASES: list[tuple[str, str | None, dict]] = [
@@ -65,10 +73,12 @@ CASES: list[tuple[str, str | None, dict]] = [
     ("두번째로 이동", "station_move", {"station": 1}),
     ("일번 이돈", "station_move", {"station": 0}),
     ("이번 이똥해", "station_move", {"station": 1}),
-    # --- 바구니(지점3): 낱말 자체가 특이해 이동 낱말 없이도 인정 ---
-    ("바구니로 이동", "station_move", {"station": 3}),
-    ("바구니", "station_move", {"station": 3}),
-    ("빠구니로 가줘", "station_move", {"station": 3}),
+    # --- 바구니: 낱말 자체가 특이해 이동 낱말 없이도 인정 ---
+    # 바구니는 첫 화분 오른쪽, 즉 **지점0**에 놓는다(2026-08-13 현장 배치).
+    # "1번 이동"과 같은 곳으로 가는 게 맞다 — 겹치는 게 의도된 배치다.
+    ("바구니로 이동", "station_move", {"station": 0}),
+    ("바구니", "station_move", {"station": 0}),
+    ("빠구니로 가줘", "station_move", {"station": 0}),
     # --- 지점 이름이 "토마토1"이라 수확과 헷갈릴 수 있는 문장 ---
     ("토마토 1번으로 이동해", "station_move", {"station": 0}),
     # --- 기존 인텐트 ---
@@ -99,11 +109,13 @@ def _describe(text: str) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) > 1:                     # 한 문장만 즉석 확인
-        for arg in sys.argv[1:]:
+    sentences = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if sentences:                             # 한 문장만 즉석 확인
+        for arg in sentences:
             print(f"{arg!r} → {_describe(arg)}    [발음: {korean.phonemes(arg)}]")
         return 0
 
+    print("사전: " + ("현장(~/voice_words.json)" if LIVE else "출고 기본값"))
     fails = []
     for text, want_name, want_slots in CASES:
         got = match_intent(text)

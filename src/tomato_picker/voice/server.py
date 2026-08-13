@@ -14,8 +14,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from ..config import BASE_DRIVE_SPEED, CAMERA_HEIGHT
 from . import pages
+from .intents import match_intent
 from .linkmon import LinkSampler
 from .log_hub import LogHub
+from .words import STORE as WORDS
 
 
 def _status_payload(arm, base, line=None, seq=None) -> dict:
@@ -47,7 +49,10 @@ def _status_payload(arm, base, line=None, seq=None) -> dict:
         if seq is not None
         else {"sequences": {}, "error": "시퀀스 비활성"}
     )
-    return {"arm": arm_status, "base": base_status, "line": line_status, "seq": seq_status}
+    # _safe의 폴백은 dict여야 한다(에러를 병합해 돌려주므로) — 목록은 감싸서 넘긴다.
+    voice_status = _safe(lambda: {"items": WORDS.catalog()}, {"items": []})
+    return {"arm": arm_status, "base": base_status, "line": line_status, "seq": seq_status,
+            "voice": voice_status}
 
 # 하드웨어가 하나도 없어도 대시보드는 떠야 한다(부스 데모에서 화면이 검은 것보다
 # "장비 미연결"이라고 떠 있는 게 낫다). 그래서 이 모듈의 어떤 것도 하드웨어
@@ -344,6 +349,23 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
                                    capture_output=True, text=True, timeout=5)
                 outs.append(f"{svc}: {(r.stdout or r.stderr).strip() or '?'}")
             return True, " · ".join(outs)
+
+        # --- 음성 명령어 사전 (하드웨어 불필요) ---
+        # 저장은 즉시 반영된다 — 인텐트 매칭이 매번 STORE에서 읽으므로 재시작이 필요 없다.
+        if action == "voice_words_save":
+            return True, WORDS.set(str(body.get("key", "")), str(body.get("text", "")))
+        if action == "voice_words_reset":
+            key = body.get("key")
+            return True, WORDS.reset(None if key in (None, "", "all") else str(key))
+        if action == "voice_test":
+            # 말하지 않고 문장을 넣어 어떤 명령으로 읽히는지 본다 — 낱말을 고친 뒤
+            # 마이크에 대고 시험하려면 사람이 계속 말해야 하고, 그러면 로봇이 움직인다.
+            text = str(body.get("text", ""))
+            got = match_intent(text)
+            if got is None:
+                return True, f"'{text}' → (매칭 없음)"
+            slots = f"  {got.slots}" if got.slots else ""
+            return True, f"'{text}' → {got.label}{slots}"
 
         # --- 시퀀스 (팔 + 지점 이동 혼합 대본) ---
         if action in ("seq_start", "seq_stop", "seq_save"):

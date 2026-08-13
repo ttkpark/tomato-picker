@@ -570,6 +570,26 @@ def control_page(default_speed: int, frame_height: int) -> str:
 # ======================================================================
 
 _SETTINGS_BODY = """
+<h2>음성 명령어 <span class="dim">— 안 걸리는 말은 여기에 추가한다</span></h2>
+<div class="card">
+  <div class="row-flex" style="margin-bottom:0.6rem">
+    <input type="text" id="vTest" placeholder="들린 말을 넣어 시험 (예: 아래 토마토 따줘)"
+      style="width:min(360px,70vw)" onkeydown="if(event.key==='Enter')testVoice()">
+    <button onclick="testVoice()">시험</button>
+    <button class="small" onclick="if(confirm('모든 명령어를 기본값으로 되돌릴까요?'))
+      cmd({action:'voice_words_reset'})">전체 기본값</button>
+  </div>
+  <div id="voiceRows"></div>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    쉼표로 구분합니다. <b>많이 적을 필요 없습니다</b> — 발음을 접어서 비교하므로
+    "토마토" 하나로 <code>도마도·또마또·도마토</code>가 다 걸립니다. 로그에 찍힌 오인식이
+    계속 안 걸릴 때만 그 말을 그대로 추가하세요.
+    저장하면 <b>즉시 반영</b>됩니다(재시작 불필요, <code>~/voice_words.json</code>에 남습니다).
+    <br>⚠ 짧고 흔한 말은 넣지 마세요 — 잡담이 명령이 되어 바퀴가 구릅니다.
+    넣기 전에 위 [시험] 칸으로 확인하는 게 안전합니다.
+  </p>
+</div>
+
 <h2>서비스 <span class="dim">— 안 움직일 때 여기서 되살린다 (ssh 불필요)</span></h2>
 <div class="card">
   <div class="row-flex">
@@ -727,6 +747,55 @@ _SETTINGS_BODY = """
 
 _SETTINGS_JS = """
   let tuneInit = false, pulseInit = false, rangeInit = false;
+  // --- 음성 명령어 ---
+  // 칸은 서버가 주는 목록으로 만든다(코드에 항목을 또 적지 않게). 타이핑 중에
+  // 폴링이 값을 덮어쓰면 안 되므로 **한 번만** 그리고, 그 뒤로는 '고침' 표시만 갱신한다.
+  const vInputs = {};
+  function testVoice() {
+    const t = document.getElementById('vTest').value.trim();
+    if (t) cmd({action:'voice_test', text:t});
+  }
+  function saveWords(key) {
+    cmd({action:'voice_words_save', key:key, text:vInputs[key].value});
+  }
+  function renderVoice(items) {
+    const box = document.getElementById('voiceRows');
+    if (!box || !items || !items.length) return;
+    if (box.dataset.n !== String(items.length)) {
+      box.dataset.n = String(items.length);
+      box.textContent = '';
+      for (const it of items) {
+        const row = document.createElement('div');
+        row.style.margin = '0.45rem 0';
+        const head = document.createElement('div');
+        head.innerHTML = '<b>' + it.label + '</b> <span class="dim" style="font-size:0.82rem">'
+                       + it.hint + '</span>';
+        const line = document.createElement('div');
+        line.className = 'row-flex';
+        const inp = document.createElement('input');
+        inp.type = 'text'; inp.value = it.text; inp.style.width = 'min(420px,72vw)';
+        vInputs[it.key] = inp;
+        const save = document.createElement('button');
+        save.className = 'small'; save.textContent = '저장';
+        save.onclick = () => saveWords(it.key);
+        const def = document.createElement('button');
+        def.className = 'small'; def.textContent = '기본값';
+        def.onclick = () => cmd({action:'voice_words_reset', key:it.key});
+        const flag = document.createElement('span');
+        flag.className = 'dim'; flag.id = 'vFlag_' + it.key;
+        line.append(inp, save, def, flag);
+        row.append(head, line);
+        box.append(row);
+      }
+    }
+    // 저장·기본값 복원 뒤 서버가 내려주는 값으로 칸과 표시를 맞춘다.
+    for (const it of items) {
+      const inp = vInputs[it.key];
+      if (inp && document.activeElement !== inp) inp.value = it.text;
+      const flag = document.getElementById('vFlag_' + it.key);
+      if (flag) flag.textContent = it.changed ? '· 기본값에서 고침' : '';
+    }
+  }
   function applyPulse() {
     cmd({action:'line_params',
          speed: +document.getElementById('pSpeed').value,
@@ -767,6 +836,7 @@ _SETTINGS_JS = """
   function render() {
     if (!state) return;
     const arm = state.arm || {}, base = state.base || {}, ln = state.line || {};
+    renderVoice((state.voice || {}).items);
 
     const el = document.getElementById('lineState');
     if (ln.found) {

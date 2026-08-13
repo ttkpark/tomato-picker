@@ -27,16 +27,10 @@ from dataclasses import dataclass, field
 
 from ..config import (
     VOICE_BASKET_STATION,
-    VOICE_BASKET_WORDS,
-    VOICE_HEIGHT_WORDS,
-    VOICE_INTENTS,
-    VOICE_MOVE_WORDS,
     VOICE_PICK_DEFAULT_HEIGHT,
-    VOICE_PICK_WORDS,
     VOICE_SPOKEN_TO_STATION,
-    VOICE_STATION_WORDS,
 )
-from . import korean
+from . import korean, words
 
 
 @dataclass(frozen=True)
@@ -57,8 +51,8 @@ def _height(text: str) -> tuple[str, bool]:
     기본값으로 처리하고 로그에 남긴다).
     """
     scored = {}
-    for height, words in VOICE_HEIGHT_WORDS.items():
-        hit = korean.best(text, words)
+    for height in ("upper", "lower"):
+        hit = korean.best(text, words.STORE.get(f"height_{height}"))
         if hit is not None:
             scored[height] = hit[1]
     if not scored:
@@ -77,8 +71,8 @@ def _spoken_number(text: str) -> int | None:
     가는 것보다 아무 데도 안 가는 게 낫다.
     """
     scored = {}
-    for number, words in VOICE_STATION_WORDS.items():
-        hit = korean.best(text, words)
+    for number in VOICE_SPOKEN_TO_STATION:
+        hit = korean.best(text, words.STORE.get(f"station_{number}"))
         if hit is not None:
             scored[number] = hit[1]
     if not scored:
@@ -90,11 +84,11 @@ def _spoken_number(text: str) -> int | None:
 
 def match_intent(text: str) -> Intent | None:
     """들린 문장에서 인텐트 하나를 뽑는다. 못 찾으면 None."""
-    moving = korean.contains(text, VOICE_MOVE_WORDS)
+    moving = korean.contains(text, words.STORE.get("move"))
 
     # 1) 지점 이동 — 수확보다 먼저 본다("토마토 1번으로 이동"이 수확으로 새지 않게).
     #    바구니는 그 자체로 특이한 낱말이라 이동 낱말 없이도 인정한다.
-    if korean.contains(text, VOICE_BASKET_WORDS):
+    if korean.contains(text, words.STORE.get("basket")):
         return Intent("station_move", "바구니로 이동",
                       {"station": VOICE_BASKET_STATION, "spoken": "바구니"})
     if moving:
@@ -105,15 +99,15 @@ def match_intent(text: str) -> Intent | None:
                           {"station": station, "spoken": str(number)})
 
     # 2) 수확 — 높이를 같이 읽는다. 못 읽으면 기본값으로 가되 그 사실을 남긴다.
-    if korean.contains(text, VOICE_PICK_WORDS):
+    if korean.contains(text, words.STORE.get("pick")):
         height, sure = _height(text)
         korean_name = "위(2층)" if height == "upper" else "아래(1층)"
         label = f"{korean_name} 토마토 따기" + ("" if sure else " — 높이 미지정, 기본값")
         return Intent("tomato_pick", label, {"height": height, "explicit": sure})
 
     # 3) 슬롯 없는 단순 인텐트.
-    for name, words in VOICE_INTENTS.items():
-        if korean.contains(text, words):
+    for name in ("arm_move", "drive_forward"):
+        if korean.contains(text, words.STORE.get(name)):
             return Intent(name, name)
     return None
 
