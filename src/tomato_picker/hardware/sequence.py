@@ -9,7 +9,7 @@
     3        팔 프리셋 3 재생
     m2       지점 2로 이동 (m = move)
     w1.5     1.5초 대기 (팔이 흔들림을 멈추길 기다릴 때)
-  예) "m0 1 2 3 m3 8 9"  =  0번 지점 → 따기(1,2,3) → 3번 지점 → 놓기(8,9)
+  예) "m2 1 2 3 m0 8 9"  =  2번 지점(종착) → 따기(1,2,3) → 0번 지점(바구니) → 놓기(8,9)
 
 **설계 원칙 두 가지**
 
@@ -53,7 +53,7 @@ def parse(text: str) -> list[tuple[str, float]]:
         if not _TOKEN.match(raw):
             raise ValueError(
                 f"알 수 없는 단계 '{raw}' — 숫자=팔 프리셋, m숫자=지점 이동, "
-                "w초=대기 (예: m0 1 2 3 m3 8 9)")
+                "w초=대기 (예: m2 1 2 3 m0 8 9)")
         low = raw.lower()
         if low.startswith("m"):
             steps.append(("station", float(low[1:])))
