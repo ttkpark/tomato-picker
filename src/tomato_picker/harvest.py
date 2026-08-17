@@ -47,6 +47,7 @@ from .config import (
     HARVEST_EDGE_MARGIN_PX,
     HARVEST_LEARN_CONFIRM,
     HARVEST_LEARN_EMA,
+    HARVEST_MAX_FRUIT_Y,
     HARVEST_MERGE_PX,
     HARVEST_MIN_TREE_GAP_PX,
     HARVEST_REARM_EMPTY_SEC,
@@ -374,18 +375,36 @@ def _fallback_tree(x: float) -> int:
     return len(HARVEST_TREE_X_BOUNDS)
 
 
-def _dedupe(positions) -> list[tuple[int, int]]:
-    """[[x,y], …] → 정리된 좌표. 좌표 지터로 같은 열매가 둘로 세어지는 걸 막는다."""
+def _split_offstage(positions) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """[[x,y], …] → (나무에 달린 것, 무대 아래 것). 좌표 지터 중복도 여기서 없앤다.
+
+    **무대 아래 = 바구니·바닥.** 나무에 달린 게 아니므로 계획에서 뺀다.
+    2026-08-17: 바구니에 담긴 열매가 y=594로 비전 낙과선(600)보다 6px 위라
+    '공중'으로 세어졌고, 바구니가 왼쪽 나무 바로 아래라 x로도 안 걸러져서
+    **이미 딴 토마토를 15초마다 다시 따러 갔다.** 구역이 셋인데 선이 하나였다.
+    """
     pts: list[tuple[int, int]] = []
+    off: list[tuple[int, int]] = []
     for pos in positions or []:
         try:
             x, y = int(pos[0]), int(pos[1])
         except (TypeError, ValueError, IndexError):
             continue          # 이상한 항목 하나가 계획 전체를 죽이면 안 된다
+        bucket = off if y >= HARVEST_MAX_FRUIT_Y else pts
         if not any(abs(px - x) < HARVEST_MERGE_PX and abs(py - y) < HARVEST_MERGE_PX
-                   for px, py in pts):
-            pts.append((x, y))
-    return pts
+                   for px, py in bucket):
+            bucket.append((x, y))
+    return pts, off
+
+
+def _dedupe(positions) -> list[tuple[int, int]]:
+    """나무에 달린 열매만, 중복 없이."""
+    return _split_offstage(positions)[0]
+
+
+def offstage(positions) -> list[tuple[int, int]]:
+    """무대 아래(바구니·바닥)라 계획에서 뺀 열매들. 화면에 그 사실을 알리려고 센다."""
+    return _split_offstage(positions)[1]
 
 
 def visible_trees(positions) -> int:
@@ -537,7 +556,9 @@ class HarvestRunner:
 
     def plan(self) -> dict:
         """지금 보이는 것으로 세운 계획. 대시보드가 1초마다 이걸 그린다."""
-        fruits = classify(self._positions(), self._scene)
+        positions = self._positions()
+        fruits = classify(positions, self._scene)
+        off = len(offstage(positions))
         at = self._station()
         queue = order(fruits, at)
         with self._lock:
@@ -554,6 +575,8 @@ class HarvestRunner:
             "running": running, "detail": detail, "picked": done,
             "auto": auto_on, "auto_note": auto_note,
             "scene": self._scene.note(),
+            # 바구니·바닥에 있어 계획에서 뺀 개수. **조용히 빼면 "왜 안 따지?"가 된다.**
+            "offstage": off,
         }
 
     # ---------------- 실행 ----------------
@@ -673,7 +696,8 @@ class HarvestRunner:
         if running:
             return f"{head} · 수확 중 — {detail}"
         plan = self.plan()
-        return f"{head} · 토마토 {plan['count']}개 · 다음: {plan['next']}"
+        off = (f" · 바구니/바닥 {plan['offstage']}개 제외" if plan.get("offstage") else "")
+        return f"{head} · 토마토 {plan['count']}개{off} · 다음: {plan['next']}"
 
     # ---------------- 자동 모드 ----------------
 
