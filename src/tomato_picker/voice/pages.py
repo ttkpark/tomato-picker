@@ -148,7 +148,8 @@ _CONTROL_BODY = """
 <div class="card" id="link">링크 상태 확인 중...</div>
 
 <div class="card" id="keys">⌨ <b>키보드</b>: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 또는 방향키 = 이동(누르는 동안 계속) ·
-<kbd>Q</kbd><kbd>E</kbd> = 회전 · <kbd>Space</kbd> = 정지 · <kbd>0</kbd>~<kbd>9</kbd> = 프리셋(현재 모드로) · <kbd>R</kbd> = 힘 빼기
+<kbd>Q</kbd><kbd>E</kbd> = 회전 · <kbd>Space</kbd> = 정지 · <kbd>0</kbd>~<kbd>9</kbd> = 프리셋(현재 모드로) ·
+<kbd>Shift</kbd>+<kbd>0</kbd>~<kbd>9</kbd> = 프리셋 10~19 · <kbd>R</kbd> = 힘 빼기
 <span id="held" class="dim"></span></div>
 
 <h2>라인 주행 <span class="dim">— 테이프를 유지하며 무대 앞을 오간다</span></h2>
@@ -271,7 +272,7 @@ _CONTROL_BODY = """
   </p>
 </div>
 
-<h2>프리셋 슬롯 0~9</h2>
+<h2>프리셋 슬롯 0~19</h2>
 <div class="card">
   <div class="row-flex">
     <span>모드:</span>
@@ -606,7 +607,10 @@ _CONTROL_JS = """
     const k = e.key.toLowerCase();
     if (k === ' ') { held.clear(); e.preventDefault(); cmd({action:'stop'}); return; }
     if (k === 'r') { cmd({action:'arm_relax'}); return; }
-    if ('0123456789'.includes(k)) { slotClick(+k); return; }
+    // 0~9 = 슬롯 0~9, Shift+0~9 = 슬롯 10~19.
+    // e.key로는 못 가른다 — Shift+1이 '!'로 온다. e.code는 Shift와 무관하게 Digit1이다.
+    const digit = /^(?:Digit|Numpad)([0-9])$/.exec(e.code || '');
+    if (digit) { slotClick(+digit[1] + (e.shiftKey ? 10 : 0)); return; }
     if (KEY_VEC[k]) { held.add(k); e.preventDefault(); }
   });
   addEventListener('keyup', (e) => { held.delete(e.key.toLowerCase()); });

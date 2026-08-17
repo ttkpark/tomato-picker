@@ -1,8 +1,8 @@
-"""로봇팔 자세 프리셋 저장소 — 슬롯 0~9 + "높이 앵커" 보간.
+"""로봇팔 자세 프리셋 저장소 — 슬롯 0~19 + "높이 앵커" 보간.
 
 두 가지 쓰임이 한 파일에 공존한다:
 
-1. **시퀀스 슬롯 (0~9)** — 접근/집기/들기/놓기처럼 *순서대로 재생*하는 동작 단계.
+1. **시퀀스 슬롯 (0~19)** — 접근/집기/들기/놓기처럼 *순서대로 재생*하는 동작 단계.
    기존 ~/arm_presets.json의 1~4가 그대로 여기 들어온다([[tomato-pick-sequence]]).
 
 2. **높이 앵커** — 그중 몇 개에 "상/중/하" 같은 라벨과 **기준 높이(y)** 를 달아두면,
@@ -31,7 +31,13 @@ import tempfile
 import threading
 
 META_KEY = "__meta__"
-SLOT_IDS = [str(i) for i in range(10)]  # "0".."9"
+# 슬롯 개수. 여기만 바꾸면 저장소·대시보드·게임패드가 다 따라온다 —
+# 대시보드 격자는 auto-fill이고, 시퀀스 파서는 \d+라 두 자리도 그대로 먹는다.
+# 10 → 20 (2026-08-17): 수확 대본 하나가 '접근·집기·들기·놓기'로 4~5칸을 먹는데
+# 위/아래 두 벌에 바구니 동작까지 넣으면 10칸이 꽉 찼다. 남는 슬롯이 없으면
+# 새 자세를 시험할 때 기존 걸 덮어써야 해서, 되돌리려면 다시 교시해야 했다.
+SLOT_COUNT = 20
+SLOT_IDS = [str(i) for i in range(SLOT_COUNT)]  # "0".."19"
 DEFAULT_ANCHOR_LABELS = ["상", "중", "하"]
 
 
@@ -210,4 +216,4 @@ class PresetStore:
 
 def _check_slot(slot: int) -> None:
     if str(slot) not in SLOT_IDS:
-        raise ValueError(f"슬롯 번호는 0~9만 됩니다 (받은 값: {slot})")
+        raise ValueError(f"슬롯 번호는 0~{SLOT_COUNT - 1}만 됩니다 (받은 값: {slot})")

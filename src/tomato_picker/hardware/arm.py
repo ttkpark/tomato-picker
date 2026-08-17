@@ -1,7 +1,7 @@
 """SO-101 Follower 팔 — 프리셋 포즈 보간 재생으로 구현한 실물 RobotArm.
 
 담당 범위:
-  · 프리셋 슬롯 0~9 재생/저장 (저장소는 presets.PresetStore)
+  · 프리셋 슬롯 0~19 재생/저장 (저장소는 presets.PresetStore)
   · **높이 앵커 보간 재생** — 비전이 준 토마토 y좌표로 상/중/하 사이 자세를 계산
   · **리더암 미러링** — 리더(SO-101 Leader)를 손으로 움직이면 팔로워가 따라오고,
     원하는 자세에서 슬롯에 저장한다. 예전에는 tools/mirror_toggle.py를 터미널에서

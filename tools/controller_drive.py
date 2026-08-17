@@ -163,7 +163,7 @@ def pump():
                     if   e.code == ecodes.BTN_TL2:   zl_btn = bool(e.value)
                     elif e.code == ecodes.BTN_TR2:   zr_btn = bool(e.value)
                     elif e.value == 1:
-                        # LB/RB = 저장된 슬롯 목록을 순환(0~9 중 **채워진 것만**).
+                        # LB/RB = 저장된 슬롯 목록을 순환(0~19 중 **채워진 것만**).
                         # 예전엔 1~4 고정이라 슬롯을 늘려도 못 돌았다.
                         slots = sorted((int(k) for k in presets), key=int)
                         if   e.code == ecodes.BTN_TR and slots:

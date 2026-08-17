@@ -29,8 +29,9 @@
   Switch 프로콘/Xbox360 게임패드(evdev)를 읽어 → 메카넘 `V` 지령 + 팔 프리셋 재생.
   **systemd `controller-drive` 서비스로 부팅 자동실행**([`deploy/`](deploy/)). 조작: **LT(ZL) 데드맨=누르는 동안만 주행**,
   왼스틱=이동/오른스틱=회전/D패드=디지털, **LB/RB=팔 프리셋(이전/다음)**. 셋업·이슈=[`docs/jetson-gamepad-setup.md`](docs/jetson-gamepad-setup.md).
-- **팔 제어 = 대시보드 `/control`** ✅ 권장 — 리더암 연결·미러링·프리셋 **슬롯 0~9** 저장/재생·
+- **팔 제어 = 대시보드 `/control`** ✅ 권장 — 리더암 연결·미러링·프리셋 **슬롯 0~19** 저장/재생·
   **높이 앵커 보간**을 브라우저에서 전부 한다([`docs/dashboard-presets.md`](docs/dashboard-presets.md)).
+  슬롯 수는 `presets.py`의 `SLOT_COUNT` 하나로 정한다(2026-08-17: 10→20).
   구현: [`hardware/presets.py`](src/tomato_picker/hardware/presets.py)(저장소·보간) +
   [`hardware/arm.py`](src/tomato_picker/hardware/arm.py)(미러링·재생).
   프리셋=`~/arm_presets.json` — 옛 형식 호환, 이름·앵커는 `"__meta__"` 키에.
