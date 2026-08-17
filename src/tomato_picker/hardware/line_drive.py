@@ -96,9 +96,13 @@ from ..config import (
     LINE_WIGGLE_SIGN,
     LINE_WIGGLE_YAW,
     LINE_YAW_DEADBAND,
+    LINE_YAW_DEG_PER_UNIT,
     LINE_YAW_GAIN,
     LINE_YAW_GAIN_ON,
+    LINE_YAW_PULSE_MAX,
+    LINE_YAW_PULSE_MIN,
     LINE_YAW_SIGN,
+    LINE_YAW_STICTION,
 )
 
 # 런타임에 뒤집을 수 있는 축·부호. 실기에서만 확정되는 값이라 파일로 뺀다.
@@ -1126,6 +1130,31 @@ class LineDriver:
         step = 1.0 if int(elapsed * 6) % 2 == 0 else -1.0
         return self._shake(step, LINE_MARK_BREAK_CROSS)
 
+    def _yaw_pulse(self, line: dict) -> int:
+        """각도 오차 → **한 번에 그만큼 도는** 회전 펄스. 데드밴드 안이면 0.
+
+        ⚠ 예전엔 게걸음과 같은 _corr_pulse를 거쳤다. 그래서 크기가 corr_min~corr_max
+        (현장 60~75)로 잘렸는데, **75는 로봇을 1도도 못 돌린다.** 2026-08-17 실측
+        (제자리, 펄스 0.12s): w=75 → 0.00° · 100 → 0.45° · 120 → 1.1° · 140 → 1.95° ·
+        160 → 3.20° · 180 → 4.35°. 정지마찰 문턱이 w≈90이다.
+        회전 보정은 매 펄스 나가고 있었지만 **물리적으로 아무 일도 없었다** —
+        "각도 부호를 뒤집든 말든 똑같다"가 그 뜻이었다(0에 부호를 붙여도 0).
+
+        이제 크기는 실측 곡선의 **역함수**로 낸다: deg ≈ 0.043 × (w − 90)이므로
+        오차만큼 돌리려면 w = 90 + 오차/0.043. 한 펄스로 오차를 덮는 게 목표다.
+        게걸음 슬라이더(corr_min/corr_max)는 이제 이 축에 닿지 않는다 — 축이 다르면
+        정지마찰도 다르다.
+        """
+        err = line.get("angle_deg")
+        if err is None or not self._tune.get("yaw_gain"):
+            return 0                      # 회전 보정 꺼짐(대시보드 토글)
+        if abs(err) < LINE_YAW_DEADBAND:
+            return 0
+        want = LINE_YAW_STICTION + abs(err) / LINE_YAW_DEG_PER_UNIT
+        mag = int(max(LINE_YAW_PULSE_MIN, min(LINE_YAW_PULSE_MAX, want)))
+        # 부호 규칙은 예전과 같다(실측으로 확정된 것): yaw_sign×오차가 양수면 +.
+        return mag if (self._tune["yaw_sign"] * err) > 0 else -mag
+
     def _shake_toward_line(self, cross: int, corr_now: int) -> int:
         """굳음 해제 흔들기에서 **기준선에서 멀어지는 반 주기**를 잘라낸다.
 
@@ -1200,8 +1229,8 @@ class LineDriver:
                 if not (self.no_strafe and driving):
                     corr = self._corr_pulse(line.get("offset_y_norm"), LINE_DY_GAIN,
                                             self._tune["dy_sign"], LINE_DY_DEADBAND)
-                w = self._corr_pulse(line.get("angle_deg"), self._tune["yaw_gain"],
-                                     self._tune["yaw_sign"], LINE_YAW_DEADBAND)
+                # 회전은 **전용 크기**로 낸다 — 게걸음 슬라이더에 잘리면 안 돈다.
+                w = self._yaw_pulse(line)
         # 흔들기는 진행축에 그대로 얹는다(부호 뒤집기는 호출자가 이미 했다).
         travel = int(self._tune["travel_sign"] * travel_dir * speed) + dither
         travel = max(-255, min(255, travel))
