@@ -87,6 +87,16 @@ JPEG_QUALITY = int(os.environ.get("LF_JPEG_QUALITY", "70"))
 # --- 주행 테이프 (극성 자동 · Otsu 임계) ---
 # 자세한 배경은 모듈 docstring의 "색 분리" 절 참고.
 TAPE_MARGIN = float(os.environ.get("LF_TAPE_MARGIN", "22"))  # 중앙값보다 이만큼은 높아야
+# --- 조명이 물들 때를 위한 두 가지 (2026-08-17 현장: "배경이 빨개지면 못 잡는다") ---
+# ⚠ 무대 조명이 마젠타로 물들면 **자주색 테이프가 같은 색 계열이라 같이 밝아진다.**
+#   실측: 정상 조명에서 테이프 V=59 / 종이 V=145 (차이 86)
+#         마젠타 조명에서 테이프 V=108 / 종이 V=141 (차이 **32**) — 37%로 무너진다.
+#   종이 노이즈 σ가 4.5인데 대비가 32면 Otsu 마스크가 너덜너덜해져, 띠 한복판이
+#   숭숭 뚫리고 조각들이 두께 1~3%로 갈린다("가로지름 19%", "두께 3%·0%").
+#   대비 자체는 되살릴 수 없지만 **노이즈는 지울 수 있다** — 블러를 키우고 구멍을
+#   메우면 같은 프레임이 그대로 살아난다(실측: 실패 6프레임 전부 복구).
+BLUR = int(os.environ.get("LF_BLUR", "15")) | 1        # 홀수여야 한다
+TAPE_CLOSE = int(os.environ.get("LF_TAPE_CLOSE", "31")) | 1
 # 한 행이 "띠"로 인정되려면 화면 폭의 이 비율 이상이 테이프여야 한다.
 # 테이프는 화면을 가로지르므로 값이 크고, 얼룩·반사는 이 폭이 안 나온다.
 # ⚠ 0.35였다가 0.28로(2026-08-11). **코스 끝점에서는 테이프가 화면을 다
@@ -411,7 +421,8 @@ def _band_angle(tape: np.ndarray, r0: int, r1: int) -> float | None:
 
 def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
     h, w = frame.shape[:2]
-    hsv = cv2.cvtColor(cv2.GaussianBlur(frame, (7, 7), 0), cv2.COLOR_BGR2HSV).astype(np.int16)
+    hsv = cv2.cvtColor(cv2.GaussianBlur(frame, (BLUR, BLUR), 0),
+                       cv2.COLOR_BGR2HSV).astype(np.int16)
     H, S, V = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
     target_y = _read_target_y(h / 2.0)
 
@@ -440,6 +451,12 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
         thr = max(float(otsu), med_score + TAPE_MARGIN)
         mask = ((score > thr) * 255).astype(np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+        # ★ 구멍 메우기. 조명이 물들면 대비가 무너져 마스크가 **너덜너덜해진다** —
+        #   띠 한복판이 숭숭 뚫려 행 채움이 임계 아래로 떨어지고, 남은 조각들이
+        #   두께 1~3%짜리 덩어리로 갈린다("가로지름 19%", "두께 3%·0%"가 그 흔적).
+        #   구멍만 메우면 같은 프레임이 그대로 살아난다(아래 실측).
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE,
+                                np.ones((TAPE_CLOSE, TAPE_CLOSE), np.uint8))
         sel = score[mask > 0]
         sep = float(sel.mean() - med_score) if sel.size else 0.0
         if sep < TAPE_MARGIN:
