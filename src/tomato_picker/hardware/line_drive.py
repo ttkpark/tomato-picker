@@ -99,13 +99,12 @@ from ..config import (
     LINE_WIGGLE_SIGN,
     LINE_WIGGLE_YAW,
     LINE_YAW_DEADBAND,
-    LINE_YAW_DEG_PER_UNIT,
+    LINE_YAW_BIG_DEG,
     LINE_YAW_GAIN,
     LINE_YAW_GAIN_ON,
     LINE_YAW_PULSE_MAX,
     LINE_YAW_PULSE_MIN,
     LINE_YAW_SIGN,
-    LINE_YAW_STICTION,
 )
 
 def _pulse_for_px(want_px: float) -> int:
@@ -1172,9 +1171,14 @@ class LineDriver:
         회전 보정은 매 펄스 나가고 있었지만 **물리적으로 아무 일도 없었다** —
         "각도 부호를 뒤집든 말든 똑같다"가 그 뜻이었다(0에 부호를 붙여도 0).
 
-        이제 크기는 실측 곡선의 **역함수**로 낸다: deg ≈ 0.043 × (w − 90)이므로
-        오차만큼 돌리려면 w = 90 + 오차/0.043. 한 펄스로 오차를 덮는 게 목표다.
-        게걸음 슬라이더(corr_min/corr_max)는 이제 이 축에 닿지 않는다 — 축이 다르면
+        ★ 크기는 **문턱 바로 위로 고정**한다 — 한 번에 덮으려 하지 않는다.
+        회전은 제자리 회전이 아니라서(회전 중심이 카메라에서 벗어나 있다) **1도마다
+        진행축이 ≈17px 밀린다.** 크게 돌릴수록 진행축이 그만큼 어긋나고, 오버슈트가
+        나면 되돌리느라 총 회전량이 배가 되어 밀림도 배가 된다. 그래서 "확실히
+        움직이는 가장 작은 크기"(실측 w=100 → 0.2°/펄스, 밀림 ≈3px)로 여러 번 친다.
+        오차가 클 때만 조금 키우되 120을 넘기지 않는다(그 위는 재현이 안 된다).
+
+        게걸음 슬라이더(corr_min/corr_max)는 이 축에 닿지 않는다 — 축이 다르면
         정지마찰도 다르다.
         """
         err = line.get("angle_deg")
@@ -1182,8 +1186,7 @@ class LineDriver:
             return 0                      # 회전 보정 꺼짐(대시보드 토글)
         if abs(err) < LINE_YAW_DEADBAND:
             return 0
-        want = LINE_YAW_STICTION + abs(err) / LINE_YAW_DEG_PER_UNIT
-        mag = int(max(LINE_YAW_PULSE_MIN, min(LINE_YAW_PULSE_MAX, want)))
+        mag = LINE_YAW_PULSE_MAX if abs(err) >= LINE_YAW_BIG_DEG else LINE_YAW_PULSE_MIN
         # 부호 규칙은 예전과 같다(실측으로 확정된 것): yaw_sign×오차가 양수면 +.
         return mag if (self._tune["yaw_sign"] * err) > 0 else -mag
 
@@ -1687,9 +1690,21 @@ class LineDriver:
                 if mode == "align":
                     travel, use = 0, speed
                 elif mode == "align_mark":
-                    # 진행축 펄스가 마커의 dx를 향한다 — 지나쳤으면 되돌아온다.
-                    travel, use = self._mark_pulse(self._line)
-                    phase1 = bool(travel)   # 1단계: 마커부터. 보정은 그 다음.
+                    # ★ **각도부터.** 회전은 제자리 회전이 아니라 1도마다 진행축을
+                    #   ≈17px 밀어낸다(실측). x를 먼저 맞추면 각도를 잡는 순간
+                    #   방금 맞춘 x가 깨진다 — 정렬 x 허용범위가 ±60px이니 3.5도면
+                    #   그것만으로 벗어난다. 그래서 순서를 뒤집었다(2026-08-17):
+                    #     1단계 각도 → 2단계 마커 x → 3단계 거리(dy)
+                    #   각도가 잡힌 뒤의 x 펄스는 회전을 거의 안 만들므로 안 깨진다.
+                    ang = (self._line or {}).get("angle_deg")
+                    yaw_first = (bool(self._tune.get("yaw_gain")) and ang is not None
+                                 and abs(ang) >= LINE_YAW_DEADBAND)
+                    if yaw_first:
+                        travel, use = 0, speed      # 진행축은 쉰다 — 각도만 잡는다
+                    else:
+                        # 진행축 펄스가 마커의 dx를 향한다 — 지나쳤으면 되돌아온다.
+                        travel, use = self._mark_pulse(self._line)
+                    phase1 = bool(travel)   # 2단계: 마커. 거리(dy)는 그 다음.
                 else:
                     travel, use = self._travel_dir(goal), speed
                 # 정렬은 제자리 동작이지만 **완전히 제자리면 롤러가 안 미끄러진다.**
@@ -1747,6 +1762,13 @@ class LineDriver:
                         vx = self._shake_toward_line(cross, vx)
                     if cross_w:          # 위와 같은 이유 — 회전 보정을 지우지 않는다
                         w = cross_w
+                elif mode == "align_mark" and yaw_first:
+                    # 1단계 — 각도만. 거리(dy) 보정을 같이 내면 대각선으로 움직여
+                    # 각도 판정이 흔들린다. 진행축의 dither는 남긴다(롤러 정지마찰).
+                    if self._tune["dy_axis"] == "vy":
+                        vy = 0
+                    else:
+                        vx = 0
                 elif mode == "align_mark" and phase1:
                     # ★ 한 번에 한 축만. 진행 펄스에 dy/yaw 보정까지 얹으면
                     #   대각선으로 왔다갔다해 "너무 요란하게" 보인다(실기 보고).
