@@ -67,6 +67,9 @@ from ..config import (
     LINE_MARK_REARM_MIN_PX,
     LINE_MARK_SETTLE_SEC,
     LINE_MARK_STALL_LIMIT,
+    LINE_MARK_PULSE_CURVE,
+    LINE_MARK_PULSE_MAX,
+    LINE_MARK_PULSE_MIN,
     LINE_MARK_REARM_PX,
     LINE_MAX_CORRECTION,
     LINE_MAX_DETOURS,
@@ -104,6 +107,23 @@ from ..config import (
     LINE_YAW_SIGN,
     LINE_YAW_STICTION,
 )
+
+def _pulse_for_px(want_px: float) -> int:
+    """"이만큼 가고 싶다" → 진행축 펄스 크기. 실측 곡선(LINE_MARK_PULSE_CURVE)의 역함수.
+
+    곡선은 심하게 비선형이다(90→9px, 110→36px, 130→96px). 비례게인 하나로는
+    아래쪽에서 문턱을 못 넘고 위쪽에서 두 배씩 지나친다 — 실제로 그렇게 망가졌다.
+    구간별 선형보간으로 **목표 거리에 맞는 크기**를 고르고, 곡선 밖은 양끝으로 죈다.
+    """
+    pts = LINE_MARK_PULSE_CURVE
+    if want_px <= pts[0][1]:
+        return LINE_MARK_PULSE_MIN
+    for (m0, d0), (m1, d1) in zip(pts, pts[1:]):
+        if want_px <= d1:
+            t = (want_px - d0) / max(1e-6, d1 - d0)
+            return int(round(m0 + t * (m1 - m0)))
+    return LINE_MARK_PULSE_MAX
+
 
 # 런타임에 뒤집을 수 있는 축·부호. 실기에서만 확정되는 값이라 파일로 뺀다.
 TUNING_KEYS = ("dy_axis", "dy_sign", "yaw_sign", "travel_sign", "yaw_gain",
@@ -860,9 +880,11 @@ class LineDriver:
             # 굳음 해제 구간 — 크기는 톡톡 그대로다. 푸는 건 직각 흔들기가 한다.
             mag = LINE_MARK_BREAK_MAG
         else:
-            # 하한은 게걸음과 같은 슬라이더를 따른다(둘 다 "한 번 톡 치는 크기").
-            floor = float(self._tune.get("corr_min", LINE_CORR_MIN))
-            mag = int(max(floor, min(max(floor, 150), 0.6 * abs(dx))))
+            # ⚠ 하한을 게걸음 슬라이더(corr_min, 현장 60)에서 가져왔었다. 그런데
+            #   실측하면 60은 **한 펄스에 2.2px** — 아무 일도 안 한다. 그걸 "굳었다"로
+            #   읽고 흔들다가 정렬이 발산했다(2026-08-17). 이제 **실측 곡선**으로
+            #   "dx만큼 가려면 얼마를 줘야 하나"를 역산한다.
+            mag = _pulse_for_px(abs(dx))
         return (1 if dx > 0 else -1), mag
 
     def _begin_arrive_align(self, reached: str) -> None:
@@ -972,6 +994,16 @@ class LineDriver:
             self._wiggle_on = False
             self._wiggle_n = 0
             self._kick_done = False
+        # ★ **지금 서 있는 마커는 다시 세지 않는다.**
+        #   2026-08-17 실기: [다음 지점]을 눌렀는데 0.7초 만에 "중간지점(노랑) 도착"이
+        #   떴다 — 출발 지점의 마커가 아직 화면 중앙에 있는데 _observe_markers가 그걸
+        #   세었고, next_mark의 도착 판정이 "_last_marker가 바뀌었나"라서 곧바로 걸렸다.
+        #   그 뒤 엉뚱한 목표로 지점 정렬이 돌며 dy가 -7 → 327px로 발산해 테이프를
+        #   놓쳤다. 재무장 거리(LINE_MARK_REARM_PX)를 **여기서부터** 다시 재게 한다.
+        if mode in DETOUR_MODES and self._centered_station_marker(self._line) is not None:
+            with self._lock:
+                self._mark_armed = False
+                self._marked_odom = self._odom()
 
     def _odom(self) -> float | None:
         return (self._line or {}).get("odom_x_px")
@@ -1696,7 +1728,11 @@ class LineDriver:
                     else:
                         vx, vy = signed, cross
                     # 회전도 함께 흔든다 — 네 바퀴가 다 돌아 정지마찰이 가장 잘 풀린다.
-                    w = cross_w
+                    # ⚠ 흔들기에 회전 성분이 없으면(wiggle_yaw=0, 현장 기본값)
+                    #   **회전 보정을 지우지 않는다.** 예전엔 무조건 덮어써서 굳음 해제
+                    #   구간 내내 각도가 방치됐다(실기: 그 구간에서 -2°→7°로 벌어짐).
+                    if cross_w:
+                        w = cross_w
                 elif (mode == "align_mark" and phase1
                       and time.monotonic() < self._mark_break_until):
                     # 진행축이 굳었다 — 크기는 그대로 두고 **직각축을 흔들어**
@@ -1709,7 +1745,8 @@ class LineDriver:
                         vy = self._shake_toward_line(cross, vy)
                     else:
                         vx = self._shake_toward_line(cross, vx)
-                    w = cross_w
+                    if cross_w:          # 위와 같은 이유 — 회전 보정을 지우지 않는다
+                        w = cross_w
                 elif mode == "align_mark" and phase1:
                     # ★ 한 번에 한 축만. 진행 펄스에 dy/yaw 보정까지 얹으면
                     #   대각선으로 왔다갔다해 "너무 요란하게" 보인다(실기 보고).
