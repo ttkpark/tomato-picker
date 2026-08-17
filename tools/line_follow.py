@@ -184,8 +184,28 @@ HUE_NAMES = [
 ]
 
 
+def _role_pixels(H: np.ndarray) -> np.ndarray:
+    """**우리가 아는 색**(주황·노랑·초록)인 픽셀만 True.
+
+    ⚠ 예전엔 색 마커에서 "어두운 것"을 밝기로 뺐다(`& ~dark_mask`). 주행 테이프가
+    채도까지 높아서(실측 S=76~82, 문턱 80) 그러지 않으면 화면의 10만 px짜리
+    덩어리가 통째로 마커로 잡혔기 때문이다. 그런데 그 그물에 **초록 마커가 같이
+    걸렸다** — 2026-08-17 실측: 초록 H=73 S=104 **V=83**, 어두움 문턱이 93이라
+    99%가 제거됐다. "초록은 인식이 안 된다"고 알고 코스에서 뺐던 게 이것이다.
+
+    밝기로 색을 가리려 한 게 잘못이었다. 테이프를 막는 건 **hue**가 할 일이다 —
+    테이프는 H=152~157(자주)이라 어느 역할 창에도 안 들어간다. 정의된 창의
+    픽셀만 남기면 테이프는 픽셀 단위로 빠지고, 그 위에 붙은 주황 마커는 테이프와
+    한 덩어리로 뭉치지도 않는다(실측: 면적 51487 → 51756, 사실상 그대로).
+    """
+    ok = np.zeros(H.shape, bool)
+    for lo, hi in (HUE_END, HUE_MID, HUE_WAY):
+        ok |= (H >= lo) & (H <= hi)
+    return ok
+
+
 def _hue_role(hue: float) -> str | None:
-    """hue → 코스에서의 역할. 'end'(주황) | 'mid'(노랑) | None(정의 안 된 색)."""
+    """hue → 코스에서의 역할. 'end'(주황) | 'mid'(노랑) | 'way'(초록) | None."""
     if HUE_END[0] <= hue <= HUE_END[1]:
         return "end"
     if HUE_MID[0] <= hue <= HUE_MID[1]:
@@ -474,7 +494,8 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
     color_thr = max(COLOR_S_MIN, med_s + COLOR_S_MARGIN)
     markers: list[dict] = []
     if COLOR_ENABLED:
-        color = (((S > color_thr) & ~dark_mask) * 255).astype(np.uint8)
+        # 채도 + **정의된 hue**. 밝기(dark_mask)로 가르면 어두운 초록이 같이 죽는다.
+        color = (((S > color_thr) & _role_pixels(H)) * 255).astype(np.uint8)
         color = cv2.morphologyEx(color, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
         num, _lbl, stats, cents = cv2.connectedComponentsWithStats(color, 8)
         for i in range(1, num):
