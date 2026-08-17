@@ -1267,6 +1267,16 @@ class LineDriver:
                                             self._tune["dy_sign"], LINE_DY_DEADBAND)
                 # 회전은 **전용 크기**로 낸다 — 게걸음 슬라이더에 잘리면 안 돈다.
                 w = self._yaw_pulse(line)
+        # ★ **보정할 게 하나도 없으면 흔들지 않는다.**
+        #   흔들기는 게걸음/회전이 정지마찰을 넘도록 **도와주는** 것이지 그 자체가
+        #   목적이 아니다. 그런데 조건이 "진행축 펄스가 없을 때"라, x가 허용범위에
+        #   들어와 travel=0이 되는 순간부터 오히려 흔들기만 계속 나갔다.
+        #   진행축 실측이 130 → 96px이므로 흔들기 140은 **한 번에 ~100px**를 민다.
+        #   2026-08-17 실기: mark_dx가 -0.3px(완벽)까지 갔는데 "0px 밀림, 다시
+        #   맞춥니다"가 뜨고 다시 +70px로 밀려나는 **무한 진동**이 돌았다
+        #   (odom 1350↔1495 왕복). 맞춰 놓은 걸 흔들기가 도로 밀어낸 것이다.
+        if dither and not travel_dir and not corr and not w:
+            dither = 0
         # 흔들기는 진행축에 그대로 얹는다(부호 뒤집기는 호출자가 이미 했다).
         travel = int(self._tune["travel_sign"] * travel_dir * speed) + dither
         travel = max(-255, min(255, travel))
