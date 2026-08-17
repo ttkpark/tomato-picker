@@ -482,7 +482,6 @@ _CONTROL_JS = """
       p.push((ln.station != null ? '📍 ' + ln.station_label
                                  : '📍 지점 미확인 — 주황 끝지점을 한 번 지나가세요')
              + (ln.between ? ' (이동 중)' : ''));
-      if (ln.phase) p.push(ln.phase === 'coarse' ? '🏃 접근(길게)' : '👆 정밀(톡톡)');
       const seen = (ln.markers || []).map(m => m.name + '(h' + Math.round(m.hue) + ')');
       if (seen.length) p.push('보이는 마커 ' + seen.join(', '));
       p.push(ln.pulsing ? '펄스 ' + ln.pulse_on + 's/' + ln.pulse_period + 's' : '연속');

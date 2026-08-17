@@ -45,12 +45,8 @@ from ..config import (
     LINE_ALIGN_DY_BELOW_PX,
     LINE_ALIGN_TIMEOUT_SEC,
     LINE_ALIGN_YAW_TOL,
-    LINE_APPROACH_FRAC,
     LINE_APPROACH_MIN,
     LINE_ARRIVE_ALIGN,
-    LINE_COARSE_MAX_PX,
-    LINE_COARSE_ON,
-    LINE_COARSE_PERIOD,
     LINE_CORR_MIN,
     LINE_DY_AXIS,
     LINE_DY_DEADBAND,
@@ -171,7 +167,7 @@ class LineDriver:
         self._at_end = False
         self._mark_armed = True          # 다음 마커 통과를 받을 준비가 됐나
         self._marked_odom: float | None = None   # 마지막으로 마커를 센 시점의 변위
-        self._seek_odom0: float | None = None    # 지금 명령을 시작한 시점의 변위
+        self._seek_odom0: float | None = None    # 명령 시작 시점의 변위(출발 킥 종료 판정)
         self._kick_done = False    # 출발 킥이 끝났나(굴렀으면 재점화하지 않는다)
         # 한 칸씩 가는 중이면 **최종** 목적지. 매 도착마다 다음 칸을 이어 시작한다.
         self._chain_target: int | None = None
@@ -672,7 +668,6 @@ class LineDriver:
             "station_labels": list(LINE_STATION_LABELS),
             "at_end": self._at_end,
             "between": self._between,
-            "phase": "fine" if self._is_fine(self._mode) else "coarse",
             "markers": (self._line or {}).get("markers") or [],
             "markers_dropped": (self._line or {}).get("markers_dropped") or 0,
             # 가장 가까운 지점 마커의 중앙 오차(px) — 지점 정렬이 잡는 값.
@@ -751,34 +746,18 @@ class LineDriver:
         mag = max(lo, min(hi, want))
         return int(mag if (sign * error) > 0 else -mag)
 
-    def _is_fine(self, mode: str) -> bool:
-        """지금이 '정밀(톡톡)' 국면인가. 아니면 '접근(거의 연속)'.
-
-        사람이 키보드로 할 때처럼 — **먼 거리는 꾹 눌러 가고 목표 근처에서만 톡톡**.
-        전 구간을 톡톡으로 가면 정지 시간이 절반이라 답답하게 느리다.
-        정렬은 언제나 정밀이고, 이동 중엔 **지점 마커가 중앙 근처로 들어왔을 때**
-        정밀로 바꾼다(마커가 안 보이면 아직 먼 것이다).
-        """
-        if mode in ("align", "align_mark"):
-            return True
-        # ★ 폭주 방지. "접근(길게)"는 88% 듀티라 사실상 연속 주행이다. 마커를
-        #   놓친 채 이 속도로 계속 가면 코스를 벗어난다(2026-08-11: 2번에서
-        #   1번을 못 세고 왼쪽 끝까지 밀려갔다). 한 지점 간격(≈375px)을 넘게
-        #   갔는데도 아직 도착을 못 했으면 뭔가 잘못된 것이므로 톡톡으로 내려온다.
-        odom = self._odom()
-        if odom is not None and self._seek_odom0 is not None:
-            if abs(odom - self._seek_odom0) >= LINE_COARSE_MAX_PX:
-                return True
-        line = self._line or {}
-        width = line.get("width") or 1280
-        near = [m for m in (line.get("markers") or [])
-                if self._marker_kind(m) in ("end", "mid")
-                and abs(m["x"] - width / 2) < width * LINE_APPROACH_FRAC]
-        return bool(near)
-
     def _pulse_gate(self, goal: dict, mode: str = "") -> bool:
         """지금이 펄스의 ON 구간인가. OFF 구간에는 **보정까지 전부 0**을 보내
-        완전히 멈춘 상태에서 정착시킨 뒤 다시 측정한다."""
+        완전히 멈춘 상태에서 정착시킨 뒤 다시 측정한다.
+
+        ⚠ 예전엔 여기서 '접근(coarse)/정밀(fine)' 두 국면을 갈라, 목표 마커가
+        화면 중앙 근처에 없으면 ON 0.30/주기 0.34(≈88% 듀티)로 갔다. 지점이 3개일
+        땐 간격이 판정 창보다 좁아 그 국면이 거의 안 나왔는데, 2지점(간격 955px)이
+        되자 코스 한가운데가 통째로 그 국면이 됐다 — **톡톡으로 설정해 뒀는데도
+        사실상 연속 주행으로 달려 발산했다.** 판정에 히스테리시스도 없어서 검출이
+        한 프레임 깜빡이는 것만으로 300ms짜리 가속 펄스가 났다.
+        지금은 국면이 하나다 — 설정한 펄스 값이 전 구간에 그대로 나간다.
+        """
         # 저속 연속 주행에서는 게이팅 자체가 없다 — 계속 굴러가면서 보정한다.
         # (정렬은 제자리 동작이라 여전히 톡톡이다. 안 구르면 롤러가 안 미끄러진다.)
         if self.smooth and mode not in ("align", "align_mark"):
@@ -787,11 +766,8 @@ class LineDriver:
         # 그래야 그 다음 측정이 진짜 최종 위치다.
         if mode == "align_mark" and time.monotonic() < self._mark_settle_until:
             return False
-        if self._is_fine(mode):
-            on = float(self._tune.get("pulse_on", LINE_PULSE_ON))
-            period = float(self._tune.get("pulse_period", LINE_PULSE_PERIOD))
-        else:
-            on, period = LINE_COARSE_ON, LINE_COARSE_PERIOD
+        on = float(self._tune.get("pulse_on", LINE_PULSE_ON))
+        period = float(self._tune.get("pulse_period", LINE_PULSE_PERIOD))
         if period <= on:
             return True
         return ((time.monotonic() - goal["started"]) % period) < on
@@ -986,7 +962,7 @@ class LineDriver:
             # 새 명령이 들어왔으면 한 칸씩 가던 연쇄도 끝이다. 이어달리기를
             # 계속할 _start_leg만 이 뒤에서 다시 건다.
             self._chain_target = None
-            # 이 명령이 얼마나 굴러갔는지 재는 기준 — 접근(길게) 상한에 쓴다.
+            # 이 명령이 얼마나 굴러갔는지 재는 기준 — 출발 킥을 언제 끝낼지에 쓴다.
             self._seek_odom0 = self._odom()
             self._wiggle_on = False
             self._wiggle_n = 0
