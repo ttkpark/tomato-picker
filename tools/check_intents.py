@@ -59,17 +59,19 @@ CASES: list[tuple[str, str | None, dict]] = [
     ("도루도", "tomato_pick", {"height": "upper"}),
     ("도마뚱", "tomato_pick", {"height": "upper"}),
     ("수학해줘", "tomato_pick", {"height": "upper"}),
-    # --- 지점 이동: 말하는 번호는 화분 번호(1~3) → 지점 0~2 ---
+    # --- 지점 이동: 말하는 번호는 화분 번호(1~2) → 지점 0~1 ---
     ("1번 이동", "station_move", {"station": 0}),
     ("2번 이동", "station_move", {"station": 1}),
-    ("3번 이동", "station_move", {"station": 2}),
     ("일번 이동해", "station_move", {"station": 0}),
     ("이번 이동해줘", "station_move", {"station": 1}),
-    ("삼번으로 이동", "station_move", {"station": 2}),
     ("2번으로 가줘", "station_move", {"station": 1}),
     ("1번으로 가", "station_move", {"station": 0}),
-    ("3번 지점으로 이동해", "station_move", {"station": 2}),
     ("어 그럼 1번으로 이동해줘", "station_move", {"station": 0}),
+    # 없어진 3번(2026-08-17 2지점화). "삼번"은 "일번"·"이번" 둘 다에서 편집거리 1이라
+    # 동점이 되어 아무것도 안 고른다 — 엉뚱한 지점으로 가느니 안 가는 게 낫다.
+    ("3번 이동", None, {}),
+    ("삼번으로 이동", None, {}),
+    ("3번 지점으로 이동해", None, {}),
     ("두번째로 이동", "station_move", {"station": 1}),
     ("일번 이돈", "station_move", {"station": 0}),
     ("이번 이똥해", "station_move", {"station": 1}),

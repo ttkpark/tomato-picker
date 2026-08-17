@@ -60,6 +60,7 @@ from ..config import (
     LINE_END_SIDE_MARGIN,
     LINE_HUE_END,
     LINE_HUE_MID,
+    LINE_MARKER_STATION,
     LINE_LOST_STOP_SEC,
     LINE_MARK_ALIGN_TIMEOUT_SEC,
     LINE_MARK_ALIGN_TOL_PX,
@@ -165,7 +166,7 @@ class LineDriver:
         self._would: tuple[int, int, int] = (0, 0, 0)
         self._lost_since: float | None = None
         self._found_ts = 0.0   # 마지막으로 테이프가 **보였던** 시각(출발 판정 히스테리시스)
-        # 지점(스테이션) 추적 — 주황을 지나야 인덱스가 확정된다(추측하지 않는다)
+        # 지점(스테이션) 추적 — 마커 **색**이 곧 번호다(LINE_MARKER_STATION).
         self._station: int | None = None
         self._at_end = False
         self._mark_armed = True          # 다음 마커 통과를 받을 준비가 됐나
@@ -249,12 +250,33 @@ class LineDriver:
     # ------------------------------------------------------------------
 
     def _end_marker_centered(self, line: dict) -> bool:
-        """끝점(주황) 마커가 지금 화면 중앙에 와 있나."""
+        """**지점 마커**가 지금 화면 중앙에 와 있나.
+
+        ⚠ 예전엔 주황(end)만 봤다. 2지점 코스에서는 노랑도 코스의 끝이라
+        (노랑=지점0=좌측 끝) 지점 마커면 전부 끝점이다 — LINE_MARKER_STATION이
+        코스의 정의이므로 거기 있는 색이면 받는다.
+        """
         width = line.get("width") or 1280
-        return any(
-            self._marker_kind(m) == "end" and abs(m["x"] - width / 2) < width * self.MARK_TOL_FRAC
-            for m in (line.get("markers") or [])
-        )
+        return self._centered_station_marker(line, width) is not None
+
+    def _centered_station_marker(self, line: dict, width: float | None = None):
+        """중앙에 와 있는 지점 마커 하나. 없으면 None."""
+        width = width or line.get("width") or 1280
+        near = [m for m in (line.get("markers") or [])
+                if self._marker_kind(m) in LINE_MARKER_STATION
+                and abs(m["x"] - width / 2) < width * self.MARK_TOL_FRAC]
+        return min(near, key=lambda m: abs(m["x"] - width / 2)) if near else None
+
+    def _station_of(self, marker: dict) -> int | None:
+        """마커 **색 하나로** 지점 번호를 정한다 — 세지 않는다.
+
+        코스가 2지점이 되면서 색이 곧 지점이다(노랑=0, 주황=1). 예전의 "주황을
+        기준으로 잡고 마커를 지날 때마다 진행 방향으로 ±1" 방식은 진행 방향
+        추정에 얹혀 있어서, 부호가 어긋나거나 사람이 로봇을 손으로 옮기면 번호가
+        통째로 틀어졌다(2026-08-11: 제자리 정렬 중에 1→2→3으로 올라간 사고).
+        관측 하나가 곧 답이면 그런 사고가 구조적으로 생기지 않는다.
+        """
+        return LINE_MARKER_STATION.get(self._marker_kind(marker) or "")
 
     def goto_end(self, side: str, speed: int | None = None) -> str:
         """끝점(주황 마커)까지 라인을 유지하며 저속 주행 후 정지."""
@@ -335,11 +357,15 @@ class LineDriver:
             self._detail = f"설정 저장 실패: {exc}"
 
     # ------------------------------------------------------------------
-    # 지점(스테이션) 이동 — 주황=양끝(절대 기준), 노랑=중간(세어서 구분)
+    # 지점(스테이션) 이동 — **색 하나가 곧 지점**(노랑=0, 주황=1). 세지 않는다.
     # ------------------------------------------------------------------
 
     def _marker_kind(self, marker: dict) -> str | None:
-        """마커의 역할. 'end'(주황=양끝) | 'mid'(노랑=중간) | None.
+        """마커의 색. 'end'(주황) | 'mid'(노랑) | 'way'(초록=경유) | None.
+
+        ⚠ 'end'/'mid'는 이제 **색 이름일 뿐**이다 — 옛 "양끝/중간"이라는 뜻은
+        2지점 코스에서 사라졌다(둘 다 코스의 끝이다). 색 → 지점은
+        config.LINE_MARKER_STATION이 정한다.
 
         판정은 **검출기(line_follow)가 이미 했다** — 여기서 다시 하면 두 곳의
         hue 창이 어긋날 수 있다. 옛 상태 파일 호환용으로만 hue 폴백을 남긴다.
@@ -413,20 +439,22 @@ class LineDriver:
         주행 중이 아니어도 돈다 — 손으로 옮겨놨든, 번호가 어긋나 있든,
         끝점에 서 있기만 하면 스스로 바로잡힌다.
         """
-        if not self._end_marker_centered(line):
+        marker = self._centered_station_marker(line)
+        if marker is None:
             return
-        side = self._which_end(line)
-        if side is None:
+        index = self._station_of(marker)
+        if index is None:
             return
-        index = 0 if side == "left" else len(LINE_STATION_LABELS) - 1
         if self._station != index:
             with self._lock:
                 self._station = index
                 self._at_end = True
                 self._between = False
-            print(f"  [line] 끝점 확인 — {LINE_STATION_LABELS[index]} "
-                  f"(테이프 L{line.get('band_left_frac')} R{line.get('band_right_frac')})")
-        if self._last_end != side:
+            print(f"  [line] 지점 확인 — {LINE_STATION_LABELS[index]} "
+                  f"(마커 hue {marker.get('hue')})")
+        # 원점 래치는 여전히 **테이프가 이어지는 방향**으로 한다(변위 기준).
+        side = self._which_end(line)
+        if side is not None and self._last_end != side:
             self._latch_end(side)
 
     def set_station(self, index: int) -> str:
@@ -497,7 +525,6 @@ class LineDriver:
         self._marked_odom = odom
         marker = min(near, key=lambda m: abs(m["x"] - center))
         kind = self._marker_kind(marker)
-        direction = self._last_dir
         if kind == "way":
             # 초록 = 경유 표식. **지점 번호를 바꾸지 않는다** — 지점 사이가 멀어
             # 카메라가 아무것도 못 보는 구간을 메우려고 붙인 것이라, 이걸 세면
@@ -505,26 +532,16 @@ class LineDriver:
             self._between = True
             self._last_way = marker
             return
-        if kind == "end":
-            # 주황 = 절대 기준점. 어느 끝인지는 **테이프가 이어지는 방향**으로 안다
-            # — 진행 방향 추측보다 훨씬 믿을 만하다(수동 이동에도 맞는다).
-            # 판정이 안 되면 그때만 진행 방향으로 물러선다. 둘 다 모르면 갱신하지
-            # 않는다 — 틀린 번호를 넣느니 "미확인"으로 두는 게 낫다.
-            side = self._which_end(line)
-            if side is not None:
-                self._station = 0 if side == "left" else len(LINE_STATION_LABELS) - 1
-            elif direction > 0:
-                self._station = len(LINE_STATION_LABELS) - 1
-            elif direction < 0:
-                self._station = 0
-            self._at_end = True
+        # ★ 색 하나가 곧 지점이다 — 세지 않는다(LINE_MARKER_STATION).
+        #   예전엔 주황을 기준으로 잡고 그 뒤로 진행 방향으로 ±1 했는데, 그 셈이
+        #   방향 추정에 얹혀 있어서 부호가 어긋나거나 손으로 옮기면 번호가 통째로
+        #   틀어졌다. 지금은 어느 방향으로 지나든, 손으로 밀어 넣었든 같은 답이다.
+        index = self._station_of(marker)
+        if index is not None:
+            self._station = index
+            # 2지점 코스에서는 지점이 곧 양끝이다.
+            self._at_end = index in (0, len(LINE_STATION_LABELS) - 1)
             self._between = False
-        elif kind == "mid":
-            self._at_end = False
-            self._between = False
-            if self._station is not None and direction:
-                self._station = max(0, min(len(LINE_STATION_LABELS) - 1,
-                                           self._station + direction))
         self._last_marker = {**marker, "kind": kind}
 
     def goto_station(self, index: int, speed: int | None = None) -> str:

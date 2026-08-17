@@ -201,6 +201,10 @@ class SceneModel:
             ys = [None if v is None else float(v) for v in raw.get("y_split") or []]
         except (OSError, ValueError, KeyError, TypeError):
             return
+        if len(tx) != len(HARVEST_TREE_STATIONS):
+            # 코스를 바꿨다(3그루 → 2그루 등). 옛 무대를 되살리면 배정이 통째로
+            # 어긋나므로 버린다 — 다음 화면부터 새 그루 수로 다시 배운다.
+            return
         if not tx or not _plausible(tx):
             return               # 저장돼 있어도 말이 안 되면 안 쓴다
         with self._lock:

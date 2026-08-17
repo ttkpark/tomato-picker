@@ -27,6 +27,7 @@ from ..config import (
     VOICE_MOVE_WORDS,
     VOICE_PICK_WORDS,
     VOICE_ALL_WORDS,
+    VOICE_RETIRED_STATION_WORDS,
     VOICE_STATION_WORDS,
     VOICE_WAKE_WORDS,
     VOICE_WORDS_FILE,
@@ -43,9 +44,13 @@ CATALOG: list[tuple[str, str, str]] = [
      "이 말이 들리면 토마토를 딴다. 높이(위/아래)는 아래 두 칸에서 따로 읽는다"),
     ("height_upper", "위(2층)", "이 말이 같이 들리면 2층 프리셋으로 딴다"),
     ("height_lower", "아래(1층)", "이 말이 같이 들리면 1층 프리셋으로 딴다"),
-    ("station_1", "1번 지점", "‘이동’ 낱말과 <b>함께</b> 들려야 인정한다"),
-    ("station_2", "2번 지점", "‘이동’ 낱말과 <b>함께</b> 들려야 인정한다"),
-    ("station_3", "3번 지점", "‘이동’ 낱말과 <b>함께</b> 들려야 인정한다"),
+    # 지점 칸은 **VOICE_STATION_WORDS에서 만든다** — 코스 지점 수가 바뀌면 따라온다.
+    # (2026-08-17에 3지점 → 2지점이 되면서 여기 station_3이 남아 KeyError가 났다.)
+    *[(f"station_{n}", f"{n}번 지점", "‘이동’ 낱말과 <b>함께</b> 들려야 인정한다")
+      for n in sorted(VOICE_STATION_WORDS)],
+    ("station_retired", "없어진 지점(무시)",
+     "코스에서 뺀 번호. 들리면 <b>아무 명령도 실행하지 않는다</b> — 비슷한 번호로 "
+     "잘못 걸려 엉뚱한 지점으로 가는 걸 막는다"),
     ("basket", "바구니", "낱말이 특이해서 ‘이동’ 없이 단독으로도 인정한다"),
     ("move", "이동",
      "번호와 짝이 되는 말. ‘이번에는…’ 같은 일상 발화가 명령이 되지 않게 하는 안전장치라 "
@@ -64,9 +69,8 @@ def _defaults() -> dict[str, list[str]]:
         "pick": list(VOICE_PICK_WORDS),
         "height_upper": list(VOICE_HEIGHT_WORDS["upper"]),
         "height_lower": list(VOICE_HEIGHT_WORDS["lower"]),
-        "station_1": list(VOICE_STATION_WORDS[1]),
-        "station_2": list(VOICE_STATION_WORDS[2]),
-        "station_3": list(VOICE_STATION_WORDS[3]),
+        **{f"station_{n}": list(w) for n, w in VOICE_STATION_WORDS.items()},
+        "station_retired": list(VOICE_RETIRED_STATION_WORDS),
         "basket": list(VOICE_BASKET_WORDS),
         "move": list(VOICE_MOVE_WORDS),
         "arm_move": list(VOICE_INTENTS["arm_move"]),

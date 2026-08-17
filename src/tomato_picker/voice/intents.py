@@ -64,8 +64,8 @@ def _height(text: str) -> tuple[str, bool]:
     return winners[0], True
 
 
-def _spoken_number(text: str) -> int | None:
-    """말한 화분 번호(1~3). 가장 가까운 하나만 — 동점이면 안 고른다.
+def _spoken_number(text: str) -> tuple[int | None, bool]:
+    """(말한 화분 번호, 없어진 번호였나). 가장 가까운 하나만 — 동점이면 안 고른다.
 
     "일번"과 "이번"도 편집거리 1이라 서로 걸린다. 애매하면 엉뚱한 지점으로
     가는 것보다 아무 데도 안 가는 게 낫다.
@@ -76,10 +76,17 @@ def _spoken_number(text: str) -> int | None:
         if hit is not None:
             scored[number] = hit[1]
     if not scored:
-        return None
+        return None, False
     best_score = min(scored.values())
+    # ⚠ 코스에서 뺀 번호를 **경쟁자로 세운다.** 그냥 목록에서 지우기만 하면
+    #   "삼번"이 "이번"에 편집거리 1로 걸려 지점1로 간다(2026-08-17 실측:
+    #   "3번 이동" → station 1). 습관대로 옛 번호를 말했는데 로봇이 조용히 다른
+    #   지점으로 가는 게 가장 나쁘다. 은퇴 번호가 더 가깝거나 비기면 안 고른다.
+    retired = korean.best(text, words.STORE.get("station_retired"))
+    if retired is not None and retired[1] <= best_score:
+        return None, True
     winners = [n for n, s in scored.items() if s == best_score]
-    return winners[0] if len(winners) == 1 else None
+    return (winners[0] if len(winners) == 1 else None), False
 
 
 def match_intent(text: str) -> Intent | None:
@@ -92,11 +99,19 @@ def match_intent(text: str) -> Intent | None:
         return Intent("station_move", "바구니로 이동",
                       {"station": VOICE_BASKET_STATION, "spoken": "바구니"})
     if moving:
-        number = _spoken_number(text)
+        number, retired = _spoken_number(text)
         if number is not None:
             station = VOICE_SPOKEN_TO_STATION[number]
             return Intent("station_move", f"{number}번(토마토{number}) 지점으로 이동",
                           {"station": station, "spoken": str(number)})
+        if retired:
+            # ⚠ 없어진 번호를 말했다 — **여기서 끝낸다.** 아래로 흘려보내면 엉뚱한
+            #   명령이 된다(2026-08-17 실측: "3번 지점으로 이동해"가 번호를 못 찾고
+            #   흘러내려 **drive_forward**(전진)로 걸렸다). 어디로 갈지 모르면 아무
+            #   데도 안 가는 게 이 로봇의 원칙이다.
+            #   ⚠ 여기서 무조건 return None 하면 안 된다 — "토마토 따줘"·"앞으로 가"도
+            #   'move' 낱말에 걸려 moving=True가 되므로 수확·전진이 통째로 죽는다.
+            return None
 
     # 2) 수확. "모두"가 같이 들리면 **보이는 걸 전부** — 개별 수확보다 먼저 본다
     #    (안 그러면 "모두 토마토 따줘"가 그냥 한 개 따기로 새어 나간다).
