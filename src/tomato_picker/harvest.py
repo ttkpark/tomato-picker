@@ -32,16 +32,25 @@
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .config import (
+    CAMERA_WIDTH,
     HARVEST_ARM_SEC,
+    HARVEST_ASSIGN_TOL_FRAC,
+    HARVEST_DISTRUST_FRAMES,
+    HARVEST_EDGE_MARGIN_PX,
+    HARVEST_LEARN_CONFIRM,
     HARVEST_LEARN_EMA,
     HARVEST_MERGE_PX,
     HARVEST_MIN_TREE_GAP_PX,
     HARVEST_REARM_EMPTY_SEC,
+    HARVEST_SCENE_FILE,
     HARVEST_TREE_NAMES,
     HARVEST_TREE_STATIONS,
     HARVEST_TREE_X_BOUNDS,
@@ -91,70 +100,194 @@ def _cluster_x(xs: list[float]) -> list[list[int]]:
     return groups
 
 
+def _plausible(centers: list[float], width: float = CAMERA_WIDTH) -> bool:
+    """이 중심들이 **나무일 수 있나** — 배우기 전 상식 검사.
+
+    화면에 걸쳐 잘린 덩어리는 중심이 진짜 나무 위치가 아니다. 잘린 만큼 중심이
+    가장자리로 끌려가고, 그 값으로 배운 무대는 통째로 어긋난다.
+    2026-08-17: x=1258을 나무로 배웠는데 화면이 1280이었다 — 22px 남은 자리다.
+    """
+    if not centers:
+        return False
+    if any(c < HARVEST_EDGE_MARGIN_PX or c > width - HARVEST_EDGE_MARGIN_PX
+           for c in centers):
+        return False
+    # 나무끼리는 최소한 군집 문턱만큼은 떨어져 있다(아니면 한 그루를 쪼갠 것).
+    return all(b - a >= HARVEST_MIN_TREE_GAP_PX for a, b in zip(centers, centers[1:]))
+
+
+def _same_scene(a: list[float], b: list[float]) -> bool:
+    """두 관측이 **같은 무대**인가. 후보를 몇 프레임 모을 때 쓴다."""
+    return len(a) == len(b) and all(
+        abs(x - y) < HARVEST_MIN_TREE_GAP_PX / 2 for x, y in zip(a, b))
+
+
 @dataclass
 class SceneModel:
     """무대에 대해 **배운 것**. 고정 상수 대신 이걸 쓴다.
 
     tree_x    나무별 x 중심(왼→오른). 지점 인덱스와 같은 순서다.
     y_split   나무별 위/아래 경계. 그 나무에서 위·아래를 둘 다 본 적이 있어야 생긴다.
+
+    ⚠ **한 프레임으로 확정하지 않는다** (2026-08-17 실사고). 예전엔 세 묶음이
+    보이는 첫 프레임을 그대로 무대로 삼았다. 1000프레임 중 딱 한 번 나온 엉터리
+    프레임(화면 오른쪽 끝 오검출 포함)이 무대를 영구히 정의했고, 그 뒤로는 열매가
+    둘뿐이라 세 묶음이 영영 안 나와 **스스로 못 빠져나왔다.** 배정 DP는 틀린 자를
+    들고 순서 규칙만 정확히 지켜서, 가운데·오른쪽 열매가 왼쪽·가운데로 찍혔다.
+
+    그래서 세 겹으로 막는다:
+      ① 상식 검사  — 중심이 화면 가장자리에 붙은 프레임은 아예 안 배운다
+      ② 확인 프레임 — 같은 무대가 연속으로 보여야 채택한다(HARVEST_LEARN_CONFIRM)
+      ③ 불신 탈출  — 배운 값으로 배정한 오차가 계속 크면 스스로 버리고 다시 배운다
+    그리고 배운 값은 **파일에 남긴다** — 서비스 재시작이 학습을 지우던 게 사고의
+    직접 원인이었다.
     """
 
     tree_x: list[float] | None = None
     y_split: list[float | None] | None = None
     learned: int = 0
+    # --- 확정 전 후보 (한 프레임으로 안 믿기 위한 대기실) ---
+    cand: list[float] | None = None
+    cand_n: int = 0
+    # --- 배운 값이 안 맞는 상태가 몇 번 이어졌나 ---
+    distrust: int = 0
+    warn: str = ""                    # 화면에 그대로 띄우는 한 줄
+    path: str = ""                    # 비어 있으면 저장 안 함(순수 함수 시험용)
+    _lock: threading.RLock = field(default_factory=threading.RLock,
+                                   repr=False, compare=False)
+
+    # ------------------------------------------------------------------
+    # 화면
+    # ------------------------------------------------------------------
 
     def note(self) -> str:
-        if self.tree_x is None:
-            return (f"무대 학습 전 — 초기 추정값 사용(경계 {HARVEST_TREE_X_BOUNDS}). "
-                    "나무 세 그루가 한 화면에 다 보이면 그때 배웁니다")
-        xs = ", ".join(f"{x:.0f}" for x in self.tree_x)
-        ys = ", ".join("—" if y is None else f"{y:.0f}" for y in (self.y_split or []))
-        return f"학습됨 {self.learned}회 · 나무 x=[{xs}] · 위아래 경계 y=[{ys}]"
+        with self._lock:
+            if self.tree_x is None:
+                base = (f"무대 학습 전 — 초기 추정값 사용(경계 {HARVEST_TREE_X_BOUNDS}). "
+                        "나무 세 그루가 한 화면에 다 보이면 그때 배웁니다")
+                if self.cand_n:
+                    base += f" · 후보 확인 중 {self.cand_n}/{HARVEST_LEARN_CONFIRM}"
+                return base + (f" · ⚠ {self.warn}" if self.warn else "")
+            xs = ", ".join(f"{x:.0f}" for x in self.tree_x)
+            ys = ", ".join("—" if y is None else f"{y:.0f}" for y in (self.y_split or []))
+            out = f"학습됨 {self.learned}회 · 나무 x=[{xs}] · 위아래 경계 y=[{ys}]"
+            if self.distrust:
+                out += (f" · ⚠ 배운 위치와 안 맞음 {self.distrust}/{HARVEST_DISTRUST_FRAMES}"
+                        " — 계속되면 스스로 지우고 다시 배웁니다")
+            elif self.cand_n:
+                out += f" · 무대 이동 확인 중 {self.cand_n}/{HARVEST_LEARN_CONFIRM}"
+            return out + (f" · ⚠ {self.warn}" if self.warn else "")
 
-    def reset(self) -> str:
-        self.tree_x, self.y_split, self.learned = None, None, 0
+    def reset(self, why: str = "") -> str:
+        with self._lock:
+            self.tree_x, self.y_split, self.learned = None, None, 0
+            self.cand, self.cand_n, self.distrust = None, 0, 0
+            self.warn = why
+            self._save()
         return "무대 학습을 지웠습니다 — 세 그루가 다 보이면 다시 배웁니다"
 
-    # --- 배우기 ---
+    # ------------------------------------------------------------------
+    # 저장 — 재시작이 학습을 지우면 안 된다
+    # ------------------------------------------------------------------
+
+    def load(self) -> None:
+        """파일에 남은 무대를 되살린다. 없거나 깨졌으면 조용히 빈 상태로 둔다."""
+        if not self.path:
+            return
+        try:
+            with open(os.path.expanduser(self.path), encoding="utf-8") as f:
+                raw = json.load(f)
+            tx = [float(v) for v in raw["tree_x"]]
+            ys = [None if v is None else float(v) for v in raw.get("y_split") or []]
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+        if not tx or not _plausible(tx):
+            return               # 저장돼 있어도 말이 안 되면 안 쓴다
+        with self._lock:
+            self.tree_x = tx
+            self.y_split = (ys + [None] * len(tx))[:len(tx)]
+            self.learned = int(raw.get("learned") or 0)
+
+    def _save(self) -> None:
+        """원자적 저장 — 데모 중 전원이 나가도 파일이 깨지지 않게(presets와 같은 방식)."""
+        if not self.path:
+            return
+        target = os.path.expanduser(self.path)
+        try:
+            os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target) or ".",
+                                       prefix=".scene-", suffix=".json")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"tree_x": self.tree_x, "y_split": self.y_split,
+                           "learned": self.learned}, f, ensure_ascii=False)
+            os.replace(tmp, target)
+        except OSError:
+            pass                 # 저장 실패가 수확을 막으면 안 된다
+
+    # ------------------------------------------------------------------
+    # 배우기
+    # ------------------------------------------------------------------
 
     def _blend(self, old, new):
         return new if old is None else old * (1 - HARVEST_LEARN_EMA) + new * HARVEST_LEARN_EMA
 
+    def _spacing(self) -> float:
+        tx = self.tree_x or []
+        return min((abs(b - a) for a, b in zip(tx, tx[1:])), default=1e9)
+
     def learn_trees(self, centers: list[float]) -> None:
         """세 그루가 다 보이는 **모호하지 않은** 순간에만 부른다.
 
-        평소엔 천천히 따라간다(EMA) — 한 프레임의 좌표 흔들림에 배운 값이
-        휘둘리면 안 되므로. 하지만 **무대를 통째로 옮긴 것은 흔들림이 아니다.**
-        모두가 같은 방향으로 크게 밀렸으면 그대로 갈아끼운다 — 안 그러면 몇 번
-        더 볼 때까지 배운 값이 뒤처진 채로 남아 애매한 화면에서 오배정이 난다.
+        평소의 미세한 흔들림은 EMA로 천천히 따라간다. 하지만 **무대를 처음 배우는
+        것**과 **무대가 통째로 옮겨진 것**은 값을 갈아끼우는 큰 결정이라, 같은 무대가
+        연속으로 확인될 때까지 후보로만 들고 있는다 — 한 프레임의 오검출이 무대를
+        정의하던 게 2026-08-17 사고였다.
         """
-        if self.tree_x is None or len(self.tree_x) != len(centers):
-            self.tree_x = list(centers)
-            self.y_split = [None] * len(centers)
-        else:
-            shift = sum(abs(o - n) for o, n in zip(self.tree_x, centers)) / len(centers)
-            spacing = min((abs(a - b) for a, b in zip(centers, centers[1:])), default=1e9)
-            if shift > 0.5 * spacing:      # 무대가 옮겨졌다 — 천천히 갈 이유가 없다
-                self.tree_x = list(centers)
-            else:
-                self.tree_x = [self._blend(o, n) for o, n in zip(self.tree_x, centers)]
-        self.learned += 1
+        with self._lock:
+            if not _plausible(centers):
+                self.cand, self.cand_n = None, 0
+                self.warn = (f"가장자리에 걸친 덩어리가 있어 이 화면은 안 배웁니다"
+                             f" (x=[{', '.join(f'{c:.0f}' for c in centers)}])")
+                return
+            self.warn = ""
+            if self.tree_x is not None and len(self.tree_x) == len(centers):
+                shift = sum(abs(o - n) for o, n in zip(self.tree_x, centers)) / len(centers)
+                if shift <= 0.5 * self._spacing():
+                    # 평소의 지터 — 바로 조금씩 따라간다. 확인 프레임이 필요 없다.
+                    self.tree_x = [self._blend(o, n) for o, n in zip(self.tree_x, centers)]
+                    self.learned += 1
+                    self.cand, self.cand_n, self.distrust = None, 0, 0
+                    return          # 저장은 '확정'에서만 — 지터까지 초당 3번 쓸 일이 아니다
+            # 처음 배우거나, 무대가 통째로 옮겨졌다 — 연속으로 확인될 때만 채택한다.
+            if self.cand is None or len(self.cand) != len(centers) or not _same_scene(
+                    self.cand, centers):
+                self.cand, self.cand_n = list(centers), 1
+                return
+            self.cand = [(a + b) / 2 for a, b in zip(self.cand, centers)]
+            self.cand_n += 1
+            if self.cand_n < HARVEST_LEARN_CONFIRM:
+                return
+            self.tree_x = list(self.cand)
+            self.y_split = [None] * len(self.cand)
+            self.learned += 1
+            self.cand, self.cand_n, self.distrust = None, 0, 0
+            self._save()
 
     def learn_split(self, tree: int, split: float) -> None:
-        if self.y_split is None or tree >= len(self.y_split):
-            return
-        self.y_split[tree] = self._blend(self.y_split[tree], split)
+        with self._lock:
+            if self.y_split is None or tree >= len(self.y_split):
+                return
+            self.y_split[tree] = self._blend(self.y_split[tree], split)
 
     # --- 쓰기 ---
 
-    def assign(self, centers: list[float]) -> list[int] | None:
-        """묶음들의 x 중심 → 나무 번호. 못 정하면 None.
+    def _order_preserving(self, centers: list[float]):
+        """순서를 지키는 조합 중 오차합이 최소인 것 → (나무번호들, 오차합). 없으면 None.
 
         ⚠ "각자 가장 가까운 나무"로 붙이면 안 된다. 무대가 옮겨가 배운 값이 조금
         뒤처진 상태에서는 **두 묶음이 같은 나무를 고르거나 순서가 뒤집힌다**
         (실측: 남은 두 그루가 둘 다 오른쪽 나무로 붙었다). 나무도 묶음도 왼→오른
-        순서가 정해져 있으므로, **순서를 지키는 조합 중 오차 합이 가장 작은 것**을
-        고른다(작은 DP). 그러면 배운 값이 통째로 밀려 있어도 상대 배치로 맞춘다.
+        순서가 정해져 있으므로, 순서를 지키는 조합만 후보로 두고 그중 최소를 고른다.
         """
         if self.tree_x is None or not centers or len(centers) > len(self.tree_x):
             return None
@@ -173,16 +306,54 @@ class SceneModel:
                         best[j][i] = cand + abs(self.tree_x[i] - centers[j])
                         back[j][i] = prev
         end = min(range(n), key=lambda i: best[k - 1][i])
-        if best[k - 1][end] == INF:
+        total = best[k - 1][end]
+        if total == INF:
             return None
         out = [end]
         for j in range(k - 1, 0, -1):
             end = back[j][end]
             out.append(end)
-        return list(reversed(out))
+        return list(reversed(out)), float(total)
+
+    def assign(self, centers: list[float]) -> list[int] | None:
+        """묶음들의 x 중심 → 나무 번호. 못 정하거나 **못 믿겠으면** None.
+
+        ⚠ DP는 배운 값이 엉터리여도 언제나 "최선"을 내놓는다 — 순서 규칙은 정확히
+        지키면서 틀린 자로 잰다. 2026-08-17 실사고가 그것이었다:
+            배운 값 x=[188, 937, 1258] · 열매 x=[539, 897]
+            나무0+1 = 391px(선택)   나무1+2 = 759px(정답)
+        열매당 오차가 195px, 나무 최소 간격이 321px였다 — **이 정도로 안 맞으면
+        배정이 아니라 배운 값을 의심해야 한다.** 그래서 오차가 간격 대비 크면 붙이지
+        않고, 그 상태가 이어지면 배운 값을 스스로 버려 다시 배울 길을 연다.
+
+        잘 맞을 때는 그 열매들로 배운 값을 **조금 당겨준다**(부분 갱신) — 세 그루가
+        다 보여야만 배우던 예전엔 한 그루를 다 딴 뒤로는 영영 갱신이 없었다.
+        """
+        with self._lock:
+            got = self._order_preserving(centers)
+            if got is None:
+                return None
+            trees, total = got
+            resid = total / len(centers)
+            tol = HARVEST_ASSIGN_TOL_FRAC * self._spacing()
+            if resid > tol:
+                self.distrust += 1
+                if self.distrust >= HARVEST_DISTRUST_FRAMES:
+                    self.reset(f"배운 무대가 화면과 안 맞아 지웠습니다"
+                               f"(열매당 {resid:.0f}px > 허용 {tol:.0f}px)."
+                               " 세 그루가 다 보이면 다시 배웁니다")
+                return None
+            self.distrust = 0
+            for t, c in zip(trees, centers):
+                self.tree_x[t] = self._blend(self.tree_x[t], c)
+            return trees
 
     def split_of(self, tree: int) -> float:
         """그 나무의 위/아래 경계. 못 배웠으면 다른 나무들의 평균, 그것도 없으면 초기값."""
+        with self._lock:
+            return self._split_of(tree)
+
+    def _split_of(self, tree: int) -> float:
         known = [y for y in (self.y_split or []) if y is not None]
         if self.y_split and tree < len(self.y_split) and self.y_split[tree] is not None:
             return float(self.y_split[tree])
@@ -199,12 +370,8 @@ def _fallback_tree(x: float) -> int:
     return len(HARVEST_TREE_X_BOUNDS)
 
 
-def classify(positions, model: SceneModel | None = None) -> list[Fruit]:
-    """[[x,y], …] → 나무·높이가 붙은 열매 목록(나무 순, 위 먼저).
-
-    model을 주면 **배운 값**으로 붙이고, 모호하지 않은 화면이면 그 자리에서
-    배운다. 안 주면 초기 추정값만 쓴다(순수 함수로 시험할 때).
-    """
+def _dedupe(positions) -> list[tuple[int, int]]:
+    """[[x,y], …] → 정리된 좌표. 좌표 지터로 같은 열매가 둘로 세어지는 걸 막는다."""
     pts: list[tuple[int, int]] = []
     for pos in positions or []:
         try:
@@ -213,7 +380,23 @@ def classify(positions, model: SceneModel | None = None) -> list[Fruit]:
             continue          # 이상한 항목 하나가 계획 전체를 죽이면 안 된다
         if not any(abs(px - x) < HARVEST_MERGE_PX and abs(py - y) < HARVEST_MERGE_PX
                    for px, py in pts):
-            pts.append((x, y))   # 좌표 지터로 같은 열매가 둘로 세어지는 것 방지
+            pts.append((x, y))
+    return pts
+
+
+def visible_trees(positions) -> int:
+    """지금 화면에 **몇 그루**가 보이나. [무대 다시 배우기]가 되는 상황인지 판단용."""
+    pts = _dedupe(positions)
+    return len(_cluster_x([p[0] for p in pts])) if pts else 0
+
+
+def classify(positions, model: SceneModel | None = None) -> list[Fruit]:
+    """[[x,y], …] → 나무·높이가 붙은 열매 목록(나무 순, 위 먼저).
+
+    model을 주면 **배운 값**으로 붙이고, 모호하지 않은 화면이면 그 자리에서
+    배운다. 안 주면 초기 추정값만 쓴다(순수 함수로 시험할 때).
+    """
+    pts = _dedupe(positions)
     if not pts:
         return []
 
@@ -249,7 +432,8 @@ def classify(positions, model: SceneModel | None = None) -> list[Fruit]:
                 fruits.append(Fruit(x, y, tree, "upper" if k <= cut else "lower"))
         else:
             y, x = ys[0]
-            split = model.split_of(tree) if model is not None else float(HARVEST_UPPER_MAX_Y)
+            split = (model.split_of(tree) if model is not None
+                     else float(HARVEST_UPPER_MAX_Y))
             fruits.append(Fruit(x, y, tree, "upper" if y < split else "lower"))
     return sorted(fruits, key=lambda f: (f.tree, 0 if f.height == "upper" else 1))
 
@@ -321,7 +505,11 @@ class HarvestRunner:
         self._done = 0
         self._auto = _AutoState()
         # 무대 모형은 러너가 들고 있다 — 관측할 때마다 조금씩 배운다.
-        self._scene = SceneModel()
+        # ⚠ 파일에서 되살린다. 메모리에만 두었더니 **서비스를 재시작할 때마다 학습이
+        #   통째로 날아갔고**, 다시 배우는 첫 프레임이 엉터리면 그게 무대가 됐다
+        #   (2026-08-17: 프리셋 배포로 재시작 → 오검출 프레임 하나로 무대 확정).
+        self._scene = SceneModel(path=HARVEST_SCENE_FILE)
+        self._scene.load()
         threading.Thread(target=self._auto_loop, daemon=True, name="harvest-auto").start()
 
     # ---------------- 관찰 ----------------
@@ -399,9 +587,19 @@ class HarvestRunner:
         return "수확 정지 요청 — 진행 중인 동작이 끝나면 멈춥니다"
 
     def relearn(self) -> str:
-        """무대를 옮겼을 때 — 배운 걸 지우고 다음 화면부터 다시 배운다."""
-        with self._lock:
-            return self._scene.reset()
+        """무대를 옮겼을 때 — 배운 걸 지우고 다음 화면부터 다시 배운다.
+
+        ⚠ 지금 화면에 세 그루가 다 안 보이면 지워봐야 **초기 추정값으로 떨어질 뿐**
+        더 나빠진다(다시 배우려면 세 묶음이 필요한데 그게 안 나온다). 그래서 그런
+        상태면 지우지 않고 그렇게 알려준다 — 사람이 열매를 올린 뒤 다시 누르면 된다.
+        """
+        n_trees = len(HARVEST_TREE_STATIONS)
+        seen = visible_trees(self._positions())
+        if seen != n_trees:
+            return (f"지금 화면에 나무가 {seen}그루만 보입니다 — 지금 지우면 "
+                    f"다시 배울 수가 없습니다. {n_trees}그루에 열매를 하나씩 올린 뒤 "
+                    "다시 눌러주세요")
+        return self._scene.reset()
 
     def set_auto(self, on: bool) -> str:
         with self._lock:
