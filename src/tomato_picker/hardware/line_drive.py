@@ -74,6 +74,7 @@ from ..config import (
     LINE_NO_STRAFE,
     LINE_PULSE_ON,
     LINE_PULSE_PERIOD,
+    LINE_SHAKE_ONE_WAY_PX,
     LINE_SMOOTH_CORR_MAX,
     LINE_SMOOTH_DY_GAIN,
     LINE_SMOOTH_SPEED,
@@ -1125,6 +1126,24 @@ class LineDriver:
         step = 1.0 if int(elapsed * 6) % 2 == 0 else -1.0
         return self._shake(step, LINE_MARK_BREAK_CROSS)
 
+    def _shake_toward_line(self, cross: int, corr_now: int) -> int:
+        """굳음 해제 흔들기에서 **기준선에서 멀어지는 반 주기**를 잘라낸다.
+
+        흔들기는 부호를 교대해 순변위를 상쇄하는 게 원칙이다 — 정렬하는 동안
+        위치가 밀려나지 않게 하려는 것이라 평소엔 그게 맞다. 그런데 **이미 크게
+        벗어나 있으면 상쇄가 미덕이 아니다.** 멀어지는 쪽 반 주기가 오차를 그대로
+        키운다(2026-08-17 현장: 지점 정렬 중 dy=-312px에서 양쪽으로 나갔다).
+
+        그래서 |dy|가 LINE_SHAKE_ONE_WAY_PX를 넘으면 **가까워지는 쪽만** 낸다.
+        방향은 같은 축의 보정 지령(corr_now) 부호로 판단한다 — 그게 "지금 어디로
+        가야 기준선에 붙는가"의 답이고, 부호 설정([거리 부호 ±])도 거기 반영돼 있다.
+        회전 흔들기는 자르지 않는다: Y를 안 움직이면서 정지마찰은 더 잘 푼다.
+        """
+        dy = (self._line or {}).get("offset_y_px")
+        if dy is None or abs(dy) <= LINE_SHAKE_ONE_WAY_PX or not corr_now or not cross:
+            return cross
+        return cross if (cross > 0) == (corr_now > 0) else 0
+
     def _align_dither(self, goal: dict) -> int:
         """정렬 펄스에 얹을 **전후 흔들기**. 펄스마다 부호가 뒤집힌다.
 
@@ -1653,11 +1672,14 @@ class LineDriver:
                       and time.monotonic() < self._mark_break_until):
                     # 진행축이 굳었다 — 크기는 그대로 두고 **직각축을 흔들어**
                     #   바퀴를 굴린다. 구르기 시작하면 같은 톡톡으로도 나간다.
+                    # ⚠ 이 직각축이 곧 **기준선까지의 거리축(Y)** 이다. 기준선에서
+                    #   크게 벗어나 있으면 멀어지는 반 주기를 자른다 — 안 그러면
+                    #   흔들다가 오차를 더 키운다(현장: dy -312px).
                     cross, cross_w = self._cross_shake()
                     if self._tune["dy_axis"] == "vy":
-                        vy = cross
+                        vy = self._shake_toward_line(cross, vy)
                     else:
-                        vx = cross
+                        vx = self._shake_toward_line(cross, vx)
                     w = cross_w
                 elif mode == "align_mark" and phase1:
                     # ★ 한 번에 한 축만. 진행 펄스에 dy/yaw 보정까지 얹으면
