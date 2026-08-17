@@ -187,9 +187,19 @@ class JetsonBase(MobileBase):
         """
         self._ensure_tuning()
         deadline = time.monotonic() + max(0.0, seconds)
-        while time.monotonic() < deadline:
+        # ⚠ 예전엔 `while ...: set_velocity(); sleep(0.1)` 이었다. 그러면 실제 구동
+        #   시간이 **100ms 단위로 올림**된다: 0.12초를 부탁하면 0.2초를 돌고,
+        #   0.35초는 0.4초를 돈다. 짧은 "톡"일수록 오차 비율이 커서(0.12→0.2 = +67%)
+        #   "톡 쳤는데 쭈욱 밀려난다"가 됐고, 펄스 크기 실측도 전부 이 뻥튀기된
+        #   시간으로 잰 값이 됐다(2026-08-17 현장 지적).
+        #   재전송은 MotorLink 스레드가 20ms마다 알아서 한다 — 여기서 자주 찍을
+        #   이유가 없다. 남은 시간만큼만 자고 제때 끊는다.
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
             self._link.set_velocity(vx, vy, w)
-            time.sleep(0.1)
+            time.sleep(min(0.02, left))
         self._link.stop()
 
     def hold(self, vx: int = 0, vy: int = 0, w: int = 0) -> None:
