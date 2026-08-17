@@ -103,6 +103,17 @@ BAND_COL_FRAC = float(os.environ.get("LF_BAND_COL_FRAC", "0.40"))
 # 띠 두께 허용범위(화면 높이 대비). 너무 두꺼우면 밝은 바닥 전체를 잡은 것.
 MIN_BAND_FRAC = float(os.environ.get("LF_MIN_BAND_FRAC", "0.03"))
 MAX_BAND_FRAC = float(os.environ.get("LF_MAX_BAND_FRAC", "0.45"))
+# --- 띠 연속성: 바닥의 띠는 한 프레임에 순간이동하지 않는다 ---
+# 15fps에서 한 프레임 사이 띠는 몇 px 움직인다(실측 주행 중 dy 변화 20~50px/0.7초).
+# 이보다 크게 뛰면 로봇이 옮겨간 게 아니라 **다른 것을 잡은 것**이다.
+# 2026-08-17: 코스 끝을 지나쳐 서자 테이프가 화면의 23%만 남아 탈락하고 원목 마루
+# 경계가 뽑혔다 — band_y 360 → 703(dy 343px)을 found=True로 내보냈다.
+BAND_JUMP_PX = float(os.environ.get("LF_BAND_JUMP_PX", "120"))
+# 직전 띠가 이보다 오래됐으면 검사하지 않는다(막 살아난 참이라 비교 대상이 없다).
+BAND_JUMP_SEC = float(os.environ.get("LF_BAND_JUMP_SEC", "0.8"))
+# 연속으로 이만큼 거부하면 새 위치를 현실로 받아들인다 — 손으로 옮겼거나 코스를
+# 새로 깔았을 때 영영 "테이프 없음"에 잠기면 안 된다(≈0.7초 @15fps).
+BAND_JUMP_MAX_REJECT = int(os.environ.get("LF_BAND_JUMP_MAX_REJECT", "10"))
 # 로봇이 무대와 올바른 거리에 있을 때 띠 중심이 오는 y(px). 미설정이면 화면 중앙.
 TARGET_Y = os.environ.get("LF_TARGET_Y")
 # 런타임 교정: 이 파일에 숫자가 있으면 위 환경변수보다 우선한다. 대시보드의
@@ -322,6 +333,42 @@ def _largest_blob(mask: np.ndarray, min_area: int):
     )
 
 
+# 띠 연속성 — 직전에 인정한 띠의 위치와 시각, 그리고 연속 거부 횟수.
+_BAND_LAST: dict = {"y": None, "ts": 0.0, "rejects": 0}
+
+
+def _band_is_continuous(band_y: float | None) -> tuple[bool, str]:
+    """이 띠가 **직전 띠에서 이어진 것**인가. 아니면 (False, 사유).
+
+    ⚠ 2026-08-17 실기: 코스 오른쪽 끝을 지나쳐 서자 화면에 테이프가 왼쪽 23%만
+    남아 행 임계(28%)를 못 넘었고, 대신 **아래쪽 원목 마루 경계**가 띠로 뽑혔다.
+    band_y가 한 프레임에 360 → 703으로 뛰었고(dy 1.5px → 343px), 검출기는 그걸
+    found=True로 자신 있게 내보냈다. 그 값을 믿고 정렬하면 엉뚱한 데로 간다.
+
+    **바닥의 띠는 한 프레임(≈1/15초)에 300px를 못 움직인다.** 그러니 그런 점프는
+    "로봇이 옮겨간 것"이 아니라 "다른 것을 잡은 것"이다. 거부하고 테이프 없음으로
+    둔다 — 코스 끝에서는 그게 사실이기도 하다.
+
+    ⚠ 단 **영영 잠기면 안 된다.** 사람이 로봇을 손으로 옮기거나 코스를 새로 깔면
+    진짜로 띠가 멀리 가 있다. 그래서 (a) 직전 띠가 오래됐으면 검사하지 않고,
+    (b) 연속으로 몇 번 거부하면 새 위치를 현실로 받아들인다.
+    """
+    now = time.monotonic()
+    last_y, last_ts = _BAND_LAST["y"], _BAND_LAST["ts"]
+    if band_y is None:
+        return True, ""                      # 애초에 못 찾았다 — 여기서 할 말이 없다
+    fresh = last_y is not None and (now - last_ts) <= BAND_JUMP_SEC
+    if fresh and abs(band_y - last_y) > BAND_JUMP_PX:
+        _BAND_LAST["rejects"] += 1
+        if _BAND_LAST["rejects"] <= BAND_JUMP_MAX_REJECT:
+            return False, (f"띠가 한 프레임에 {abs(band_y - last_y):.0f}px 튐"
+                           f"(>{BAND_JUMP_PX:.0f}) — 다른 것을 잡은 것으로 보고 버림"
+                           f" [{_BAND_LAST['rejects']}/{BAND_JUMP_MAX_REJECT}]")
+        # 계속 같은 곳이 보인다 = 정말 옮겨간 것이다. 새 위치를 받아들인다.
+    _BAND_LAST.update(y=band_y, ts=now, rejects=0)
+    return True, ""
+
+
 def _contiguous(idx: np.ndarray) -> list[tuple[int, int]]:
     """정렬된 인덱스 배열 → 끊기지 않은 구간 [(시작, 끝), …].
 
@@ -455,6 +502,12 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
             margin = max(4, thickness // 4)
             angle = _band_angle(tape, max(0, int(band_rows.min()) - margin),
                                 min(h, int(band_rows.max()) + margin + 1))
+
+    # --- 띠는 한 프레임에 순간이동하지 않는다 ---
+    ok, jump_reason = _band_is_continuous(band_y)
+    if not ok:
+        found, band_y, thickness, angle = False, None, None, None
+        reasons.append(jump_reason)
 
     # --- 띠가 가로로 **어디까지 이어지는가** ---
     # 끝점(주황)에 섰을 때 "어느 쪽 끝인가"를 이걸로 안다. 코스는 한쪽으로만
