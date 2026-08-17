@@ -295,6 +295,20 @@ def _largest_blob(mask: np.ndarray, min_area: int):
     )
 
 
+def _contiguous(idx: np.ndarray) -> list[tuple[int, int]]:
+    """정렬된 인덱스 배열 → 끊기지 않은 구간 [(시작, 끝), …].
+
+    "띠로 인정된 행"들을 **덩어리로 갈라 보기 위한** 것이다. 이게 없으면 화면
+    맨 위의 물건과 맨 아래의 물건이 한 띠로 취급된다(아래 _detect 주석 참고).
+    """
+    if not idx.size:
+        return []
+    breaks = np.nonzero(np.diff(idx) > 1)[0]
+    starts = np.concatenate(([idx[0]], idx[breaks + 1]))
+    ends = np.concatenate((idx[breaks], [idx[-1]]))
+    return [(int(a), int(b)) for a, b in zip(starts, ends)]
+
+
 def _band_angle(tape: np.ndarray, r0: int, r1: int) -> float | None:
     """띠의 기울기(도). 열마다 띠 중심 y를 구해 직선을 최소자승으로 맞춘다.
 
@@ -366,11 +380,30 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
             reasons.append(f"{polarity}: 띠가 화면을 안 가로지름"
                            f"(최대 {100.0 * rows.max() / w:.0f}% < {100 * BAND_ROW_FRAC:.0f}%)")
             continue
-        thick = int(band.max() - band.min() + 1)
-        if not (h * MIN_BAND_FRAC <= thick <= h * MAX_BAND_FRAC):
-            reasons.append(f"{polarity}: 띠 두께 {100.0 * thick / h:.0f}%가 범위 밖"
-                           f"({100 * MIN_BAND_FRAC:.0f}~{100 * MAX_BAND_FRAC:.0f}%)")
+        # 자격 행들을 **연속 덩어리로 쪼갠 뒤** 덩어리마다 두께를 잰다.
+        # ⚠ 예전엔 band.max() - band.min()으로 한 번에 쟀는데, 그건 띠의 두께가
+        #   아니라 **맨 위 자격행에서 맨 아래 자격행까지의 거리**다. 화면에 가로로
+        #   긴 것이 하나만 더 있으면 — 밑단에 걸친 원목 마루, 위쪽 마커 판 —
+        #   진짜 띠와 통째로 묶여 그 사이 빈 도화지까지 두께로 세어졌다.
+        #   2026-08-17 실측: 띠 99px(14%) + 밑단 마루 30px + 사이 258px = 387px(54%)
+        #   → 45% 초과로 **멀쩡한 띠가 16프레임 중 15프레임에서 버려졌다**(같은 원인
+        #   으로 그 전엔 자주색 마커 판이, 그 전엔 마루 경계가 물었다). 덩어리별로
+        #   재면 같은 16프레임이 전부 통과한다. 각도도 같이 살아난다 — 387px 범위
+        #   에서는 _band_angle의 열 조건이 안 차 angle이 계속 None이었다.
+        chunks = _contiguous(band)
+        cands = [(float(rows[r0:r1 + 1].mean()), r0, r1) for r0, r1 in chunks
+                 if h * MIN_BAND_FRAC <= r1 - r0 + 1 <= h * MAX_BAND_FRAC]
+        if not cands:
+            spans = " · ".join(f"{100.0 * (r1 - r0 + 1) / h:.0f}%" for r0, r1 in chunks)
+            reasons.append(f"{polarity}: 띠 두께가 범위 밖"
+                           f"({100 * MIN_BAND_FRAC:.0f}~{100 * MAX_BAND_FRAC:.0f}%)"
+                           f" — 덩어리 {len(chunks)}개, 두께 {spans}")
             continue
+        # 덩어리가 여럿 남으면 **가장 잘 가로지르는 것**이 주행 테이프다. 마루·그림자
+        # 는 화면을 덜 가로지른다. 두께로 고르면 굵은 배경 쪽에 끌려간다.
+        _fill, r0, r1 = max(cands)
+        band = np.arange(r0, r1 + 1)
+        thick = int(r1 - r0 + 1)
         if best is None or sep > best[0]:
             best = (sep, polarity, mask, rows, band, thick, thr)
 
