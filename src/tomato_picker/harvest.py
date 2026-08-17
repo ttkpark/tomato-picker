@@ -49,6 +49,7 @@ from .config import (
     HARVEST_LEARN_EMA,
     HARVEST_MAX_FRUIT_Y,
     HARVEST_MERGE_PX,
+    HARVEST_MOVE_TRIES,
     HARVEST_MIN_TREE_GAP_PX,
     HARVEST_REARM_EMPTY_SEC,
     HARVEST_SCENE_FILE,
@@ -664,11 +665,24 @@ class HarvestRunner:
                 fruit = queue[0]
                 key = VOICE_PICK_SEQUENCE_KEYS[fruit.height]
                 if self._station() != fruit.station:
-                    self._say(f"{fruit.label} — {LINE_STATION_LABELS[fruit.station]}(으)로 이동")
-                    seq.run_text(f"{fruit.label} 이동", f"m{fruit.station}")
-                    if not self._wait_sequence():
-                        self._say("이동이 끝나지 않아 중단합니다")
-                        return
+                    # ⚠ 이동 한 번 실패했다고 **수확 전체를 버리지 않는다.**
+                    #   끝점에서는 테이프가 화면 밖으로 나가는 게 구조적으로 정상이라
+                    #   잠깐 놓치는 일이 있고, 그때마다 계획이 통째로 끝났다
+                    #   (2026-08-17 현장: "잠깐이라도 놓치면 바로 시퀀스가 멈춘다").
+                    #   잠깐 쉬었다 한 번 더 걸어본다 — 놓친 띠가 돌아올 시간이다.
+                    label = LINE_STATION_LABELS[fruit.station]
+                    for attempt in range(1, HARVEST_MOVE_TRIES + 1):
+                        again = f" (재시도 {attempt - 1})" if attempt > 1 else ""
+                        self._say(f"{fruit.label} — {label}(으)로 이동{again}")
+                        seq.run_text(f"{fruit.label} 이동", f"m{fruit.station}")
+                        if self._wait_sequence():
+                            break
+                        if self._stop.is_set():
+                            return
+                        if attempt >= HARVEST_MOVE_TRIES:
+                            self._say(f"이동이 {HARVEST_MOVE_TRIES}번 다 끝나지 않아 중단합니다")
+                            return
+                        self._stop.wait(1.2)
                     if self._stop.is_set():
                         break
                 self._say(f"{fruit.label} 따기 → 바구니")

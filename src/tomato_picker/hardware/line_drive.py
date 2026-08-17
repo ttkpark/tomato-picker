@@ -57,6 +57,7 @@ from ..config import (
     LINE_HUE_END,
     LINE_HUE_MID,
     LINE_MARKER_STATION,
+    LINE_LOST_STOP_ALIGN_SEC,
     LINE_LOST_STOP_SEC,
     LINE_MARK_ALIGN_TIMEOUT_SEC,
     LINE_MARK_ALIGN_TOL_PX,
@@ -1596,7 +1597,7 @@ class LineDriver:
             #   ④ 그래도 안 되면(정렬 불가·횟수 소진) 그때 정지
             # ③을 ④보다 먼저 두는 게 핵심이다. 예전엔 ④가 먼저라 크게 벗어나면
             # 붙여볼 기회도 없이 멈췄고, 멈춘 뒤에는 정렬도 잠겨 있었다.
-            stop_reason = self._safety_lost(self._line)
+            stop_reason = self._safety_lost(self._line, mode)
             reached = None
             if stop_reason is None:
                 reached = self._goal_reached(self._line, goal, mode)
@@ -1795,13 +1796,24 @@ class LineDriver:
                 self.cancel(f"주행 실패: {exc}")
             time.sleep(self.RATE)
 
-    def _safety_lost(self, line: dict) -> str | None:
-        """눈 감고 달리지 않기 — 테이프를 놓치면 정지. 어떤 모드에서도 최우선."""
+    def _safety_lost(self, line: dict, mode: str = "") -> str | None:
+        """눈 감고 달리지 않기 — 테이프를 놓치면 정지.
+
+        ⚠ 유예는 **모드마다 다르다.** 주행 중이면 짧아야 한다(굴러가는 중이라
+        정말 위험하다). 하지만 정렬은 제자리 동작이라 잠깐 못 보는 게 위험하지
+        않고, 무엇보다 **코스 끝에서는 테이프가 화면 밖으로 나가는 게 정상**이다.
+        주행과 같은 0.4초를 걸었더니 끝점에 도착하자마자 "테이프를 놓쳐 정지"가
+        떴고, 그걸 수확 러너가 "이동 실패"로 읽어 **수확 전체가 중단**됐다
+        (2026-08-17 현장). 띠 연속성 검사도 최대 0.67초 거부하므로 두 안전장치가
+        서로를 트리거하고 있었다.
+        """
+        limit = (LINE_LOST_STOP_ALIGN_SEC if mode in ("align", "align_mark")
+                 else LINE_LOST_STOP_SEC)
         now = time.monotonic()
         if not line.get("found"):
             if self._lost_since is None:
                 self._lost_since = now
-            elif now - self._lost_since > LINE_LOST_STOP_SEC:
+            elif now - self._lost_since > limit:
                 return "테이프를 놓쳐 정지 — 카메라가 띠를 보게 한 뒤 다시 시도"
             return None
         self._lost_since = None
