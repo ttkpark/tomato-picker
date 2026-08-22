@@ -63,8 +63,10 @@ gst에 맡기고 여기서는 JPEG만 받아 처리한다. 지연은 한 프레�
 
 유령 검출은 임계가 아니라 **물리적 성질**로 막는다:
     · 선택 영역이 배경보다 뚜렷할 것 (separation ≥ 22)
-    · 화면 폭의 35% 이상을 가로지르는 행이 있을 것
+    · 화면 폭의 28% 이상을 가로지르는 행이 있을 것
     · 띠 두께가 화면 높이의 3~45%일 것
+    · 자격을 갖춘 덩어리가 **여럿이면 뚜렷함 × 가로지름**이 가장 큰 것을 고른다
+      (가로지름만 보면 화면 끝까지 이어지는 마룻바닥 경계에 진다 — 2026-08-18)
 
 실측 참고값 (흰 도화지 코스): 배경 V=151 S=11 / 테이프 V=70 S=58 / 색마커 V=174 S=162
 """
@@ -482,29 +484,54 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
         #   재면 같은 16프레임이 전부 통과한다. 각도도 같이 살아난다 — 387px 범위
         #   에서는 _band_angle의 열 조건이 안 차 angle이 계속 None이었다.
         chunks = _contiguous(band)
-        cands = [(float(rows[r0:r1 + 1].mean()), r0, r1) for r0, r1 in chunks
-                 if h * MIN_BAND_FRAC <= r1 - r0 + 1 <= h * MAX_BAND_FRAC]
+        # 덩어리마다 **뚜렷함(separation)과 가로지름**을 따로 잰다. 둘 다 물리적
+        # 성질이고, 둘 다 있어야 주행 테이프다 — 아래 순위 계산에 쓴다.
+        cands = []
+        for r0, r1 in chunks:
+            if not (h * MIN_BAND_FRAC <= r1 - r0 + 1 <= h * MAX_BAND_FRAC):
+                continue
+            sub = mask[r0:r1 + 1] > 0
+            chunk_sel = score[r0:r1 + 1][sub]
+            csep = float(chunk_sel.mean() - med_score) if chunk_sel.size else 0.0
+            cross = float(rows[r0:r1 + 1].mean()) / w
+            cands.append((csep * cross, csep, cross, r0, r1))
         if not cands:
             spans = " · ".join(f"{100.0 * (r1 - r0 + 1) / h:.0f}%" for r0, r1 in chunks)
             reasons.append(f"{polarity}: 띠 두께가 범위 밖"
                            f"({100 * MIN_BAND_FRAC:.0f}~{100 * MAX_BAND_FRAC:.0f}%)"
                            f" — 덩어리 {len(chunks)}개, 두께 {spans}")
             continue
-        # 덩어리가 여럿 남으면 **가장 잘 가로지르는 것**이 주행 테이프다. 마루·그림자
-        # 는 화면을 덜 가로지른다. 두께로 고르면 굵은 배경 쪽에 끌려간다.
-        _fill, r0, r1 = max(cands)
+        # 덩어리가 여럿이면 **뚜렷함 × 가로지름**이 가장 큰 것이 주행 테이프다.
+        # ⚠ 예전엔 **가로지름만** 봤다("마루·그림자는 화면을 덜 가로지른다").
+        #   2026-08-18 새 무대에서 그 전제가 반증됐다 — 마룻바닥 경계는 화면
+        #   **끝까지** 이어지는데, 진짜 테이프는 위에 붙은 색 마커와 가장자리
+        #   때문에 오히려 덜 찬다. 같은 프레임 실측(극성 dark):
+        #       자주 테이프 r255-371  가로지름 86.3%  separation 72.4  (V=68 S=83 H=159)
+        #       마루 경계   r594-719  가로지름 93.0%  separation 41.6  (V=98 S=25 H=5)
+        #   가로지름만 보면 마루가 이겨(93.0>86.3) band_y가 313 대신 656으로 잡혔고,
+        #   dy가 +302px로 떠서 정렬이 무대에서 멀어지는 쪽으로 밀었다. 게다가 색
+        #   마커 근접 검사가 **틀린 띠**를 기준으로 돌아 멀쩡한 마커까지 버려졌다
+        #   (markers_dropped=1) — "테이프는 잡히는데 마커가 없다"의 정체가 이것이다.
+        #   뚜렷함을 곱하면 62.5 대 38.7로 갈린다. 테이프는 배경과 **뚜렷하게**
+        #   구분되라고 붙이는 물건이니, 그게 마루 경계보다 흐릴 수는 없다.
+        #   가로지름을 곱으로 남겨 두는 이유: 뚜렷함만 보면 화면을 조금만 가로지르는
+        #   아주 검은 것(전선·그림자)이 이길 수 있다.
+        rank, csep, _cross, r0, r1 = max(cands)
         band = np.arange(r0, r1 + 1)
         thick = int(r1 - r0 + 1)
-        if best is None or sep > best[0]:
-            best = (sep, polarity, mask, rows, band, thick, thr)
+        # 극성도 **선택된 덩어리**의 순위로 겨룬다 — 마스크 전체의 sep은 두 덩어리를
+        # 섞어 버려서, 배경이 넓게 물든 극성이 이길 수 있다.
+        if best is None or rank > best[0]:
+            best = (rank, polarity, mask, rows, band, thick, thr, csep)
 
     if best is None:
         tape = np.zeros((h, w), np.uint8)
-        separation, polarity, tape_thr = 0.0, None, 0.0
+        separation, polarity, tape_thr, band_rank = 0.0, None, 0.0, 0.0
         rows = np.zeros(h, dtype=int)
         band_rows = np.array([], dtype=int)
     else:
-        separation, polarity, tape, rows, band_rows, _thick, tape_thr = best
+        # separation은 **선택된 띠 덩어리**의 뚜렷함이다(마스크 전체가 아니라).
+        band_rank, polarity, tape, rows, band_rows, _thick, tape_thr, separation = best
 
     band_y = thickness = angle = None
     found = False
@@ -630,7 +657,10 @@ def _detect(frame: np.ndarray, odom: "_Odometry | None" = None) -> dict:
         "odom_conf": None if odom is None else round(odom.response, 3),
         # 튜닝/진단용 — 검출이 안 될 때 임계가 어디에 걸렸는지 숫자로 본다.
         "tape_thr": round(tape_thr, 1),
+        # 선택된 띠 덩어리의 뚜렷함, 그리고 그것이 이긴 순위(뚜렷함 × 가로지름).
+        # 가짜 띠(마루 경계 등)와 겨룰 때 무엇으로 이겼는지 숫자로 남긴다.
         "separation": round(separation, 1),
+        "band_rank": round(band_rank, 1),
         "med_v": round(med_v, 1), "med_s": round(med_s, 1),
     }
 

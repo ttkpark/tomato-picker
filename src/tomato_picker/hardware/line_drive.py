@@ -838,9 +838,15 @@ class LineDriver:
         진행축은 마커의 dx를 향해 톡, 보정축은 dy/yaw를 함께 잡는다.
         """
         if self._nearest_station_marker(self._line) is None:
+            # ⚠ **지금 보이는 마커를 같이 말해준다.** 초록(경유)만 보일 때도 문구가
+            #   "마커가 없습니다"였는데, 화면에는 마커 상자가 버젓이 떠 있어서
+            #   검출이 고장난 줄 알고 엉뚱한 데를 뒤지게 된다(2026-08-18 현장).
+            #   초록은 위치 추적용 경유 표식이라 지점이 아니다 — 그걸 문구가 말해야 한다.
+            seen = [m.get("name") or "?" for m in (self._line.get("markers") or [])]
+            extra = f" (지금 보이는 것: {', '.join(seen)} — 지점이 아닙니다)" if seen else ""
             raise RuntimeError(
                 "화면에 지점 마커(주황/노랑)가 없습니다 — [톡]으로 마커가 보이는 "
-                "곳까지 이동한 뒤 다시 누르세요")
+                f"곳까지 이동한 뒤 다시 누르세요{extra}")
         self._start("align_mark", {"speed": self._speed(speed)},
                     "지점 정렬 — 마커를 화면 중앙에")
         self._reset_mark_align()
