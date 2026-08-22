@@ -45,7 +45,12 @@
 - 장치: `/dev/ttyUSB0`=모터보드, `/dev/ttyACM0`=팔로버, 게임패드=USB/BT.
 - **IP를 모를 때는 블루투스로 물어본다** ([`docs/bluetooth-console.md`](docs/bluetooth-console.md), 2026-08-22 추가).
   `ble-console.service`가 BLE로 `tomato-jetson`을 광고하고, **안드로이드 앱**
-  ([`android/handset/`](android/handset/), `./build.sh install`)에서 `ip`·`wifi`·`join`·`status`를 친다.
+  ([`android/handset/`](android/handset/), `./build.sh install`) 또는 **PC 앱**
+  ([`tools/ble_handset_pc.py`](tools/ble_handset_pc.py), `pip install bleak`)에서
+  `ip`·`wifi`·`join`·`status`를 친다.
+  ⚠ **연결이 한 번 이루어지면 광고가 멈추고 BlueZ가 되살리지 않는다** — 그래서 손님이
+  한 번 다녀가면 젯슨이 스캔에서 사라진다("블루투스 고장"으로 보인다). 서버가
+  끊김을 보면 다시 등록하게 해 뒀다. **한 번에 한 대만** 붙을 수 있는 것도 같은 이유다.
   ⚠ **웹(Web Bluetooth)으로는 안 된다** — 샌드박스 iframe에 `bluetooth` 권한이 위임되지
   않아 `requestDevice`가 권한정책에 막힌다(실측). 그래서 화면은 WebView로 재사용하고
   블루투스만 네이티브로 내린 APK를 쓴다. Gradle 없이 build-tools로 몇 초면 빌드된다.

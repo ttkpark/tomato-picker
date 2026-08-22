@@ -69,6 +69,9 @@ TOKEN_FILE = os.environ.get("BLE_TOKEN_FILE", "/etc/tomato-ble-token")
 CHUNK = int(os.environ.get("BLE_CHUNK", "20"))
 EOT = b"\x04"                     # 응답 끝 표식
 CHUNK_GAP_MS = int(os.environ.get("BLE_CHUNK_GAP_MS", "6"))
+# 광고 간격(ms). 촘촘할수록 멀리서도 빨리 잡힌다 — 자세한 근거는 Advertisement 참고.
+ADV_MIN_MS = int(os.environ.get("BLE_ADV_MIN_MS", "150"))
+ADV_MAX_MS = int(os.environ.get("BLE_ADV_MAX_MS", "250"))
 
 # 재시작을 허용할 서비스 — 여기 없는 이름은 거부한다.
 ALLOWED_SERVICES = ("tomato-voice", "line-cam", "line-follow", "controller-drive")
@@ -485,19 +488,30 @@ class RxCharacteristic(Characteristic):
 class Advertisement(dbus.service.Object):
     PATH = "/com/tomatopicker/adv0"
 
-    def __init__(self, bus):
-        dbus.service.Object.__init__(self, bus, self.PATH)
-
     def get_path(self):
         return dbus.ObjectPath(self.PATH)
 
+    # 광고 간격(ms). ⚠ 기본값(BlueZ ~1.28초)은 **멀리 있는 상대에게 너무 성기다** —
+    #   2026-08-22 실측: 노트북(rssi -83)에서 20초 스캔에 단 2번 잡혔고, 12초짜리
+    #   탐색은 절반쯤 놓쳤다. 촘촘히 쏘면 같은 거리에서도 확률이 올라간다.
+    #   대가는 전력인데, 이 로봇은 벽 전원이거나 큰 배터리를 지고 다닌다.
+    #   ⚠ 이 속성은 BlueZ 5.56+에서만 있다. 없으면 등록이 통째로 실패하므로
+    #   main()에서 실패 시 이 둘을 빼고 다시 등록한다(intervals=False).
+    def __init__(self, bus, intervals: bool = True):
+        self.intervals = intervals
+        dbus.service.Object.__init__(self, bus, self.PATH)
+
     def get_properties(self):
-        return {"org.bluez.LEAdvertisement1": {
+        props = {
             "Type": "peripheral",
             "ServiceUUIDs": dbus.Array([NUS_SVC], signature="s"),
             "LocalName": dbus.String(ADV_NAME),
             "Includes": dbus.Array(["tx-power"], signature="s"),
-        }}
+        }
+        if self.intervals:
+            props["MinInterval"] = dbus.UInt32(ADV_MIN_MS)
+            props["MaxInterval"] = dbus.UInt32(ADV_MAX_MS)
+        return {"org.bluez.LEAdvertisement1": props}
 
     @dbus.service.method(DBUS_PROPS, in_signature="s", out_signature="a{sv}")
     def GetAll(self, interface):
@@ -543,30 +557,73 @@ def main() -> None:
     adv_mgr = dbus.Interface(bus.get_object(BLUEZ, adapter), ADV_MGR)
     adv = Advertisement(bus)
 
+    def die(err):
+        log(f"등록 실패: {err}")
+        sys.exit(1)
+
+    def on_first_error(err):
+        """첫 등록이 실패하면 **간격 속성 탓인지부터 의심한다.**
+
+        MinInterval/MaxInterval은 BlueZ 5.56+에만 있다. 오래된 BlueZ에서는 이것
+        하나 때문에 등록 전체가 거절되는데, 그러면 광고가 아예 안 나가 서비스가
+        무용지물이 된다. 간격은 있으면 좋은 것이지 필수가 아니므로 빼고 다시 건다.
+        """
+        if adv.intervals:
+            log(f"광고 등록 실패({err}) — 간격 속성을 빼고 다시 시도합니다")
+            adv.intervals = False
+            start_advertising(first=True)
+            return
+        die(err)
+
+    def start_advertising(first: bool = False) -> bool:
+        adv_mgr.RegisterAdvertisement(
+            adv.get_path(), {},
+            reply_handler=lambda: log(
+                f"광고 시작: '{ADV_NAME}'"
+                + (f" (간격 {ADV_MIN_MS}~{ADV_MAX_MS}ms)" if adv.intervals else "")),
+            error_handler=(on_first_error if first
+                           else lambda e: log(f"광고 재개 실패: {e}")))
+        return False        # GLib.timeout_add용 — 한 번만 돈다
+
+    def readvertise() -> bool:
+        """⚠ **이게 이 파일에서 제일 중요한 다섯 줄이다.**
+
+        BLE 규격상 **연결 가능 광고는 연결이 성립되는 순간 컨트롤러가 끈다.** 그건
+        정상이다. 문제는 **BlueZ가 끊긴 뒤에도 다시 켜주지 않는다**는 것 —
+        그래서 손님이 한 번 다녀가면 젯슨은 **영영 안 보이는 상태가 된다.**
+
+        2026-08-22 실측으로 확정: 폰이 붙었다 끊긴 뒤 PC에서 12초 전체 스캔을 해도
+        47개 기기 중 젯슨만 없었다. 서비스를 재시작하니 즉시 잡혔다(rssi -84).
+        그날 "연결이 안 된다"던 증상이 전부 이것이었다 — 폰의 첫 시도가 링크 계층
+        에서 붙어 광고를 끄고 GATT에서 깨졌고, 그 뒤로는 찾을 수조차 없었다.
+        재시작만이 살렸고, 그래서 원인이 컨트롤러 문제처럼 보였다.
+        """
+        try:
+            adv_mgr.UnregisterAdvertisement(adv.get_path())
+        except Exception as exc:  # noqa: BLE001 - 이미 풀려 있으면 그게 정상이다
+            log(f"(광고 해제 생략: {exc})")
+        return start_advertising()
+
     def on_conn_change(iface, changed, _invalidated, path=None):
-        """연결이 끊기면 인증을 푼다 — 다음 사람이 남의 세션을 물려받으면 안 된다."""
+        """연결이 끊기면 인증을 풀고 **광고를 되살린다**."""
         if iface != "org.bluez.Device1" or "Connected" not in changed:
             return
         if bool(changed["Connected"]):
             log(f"연결됨: {path}")
         else:
-            log(f"끊김: {path} — 인증 해제")
+            log(f"끊김: {path} — 인증 해제, 광고 재개")
             state["authed"] = False
             tx.notifying = False
+            # 끊김 직후 바로 걸면 BlueZ가 아직 정리 중이라 거절한다. 한 박자 쉰다.
+            GLib.timeout_add(500, readvertise)
 
     bus.add_signal_receiver(on_conn_change, dbus_interface=DBUS_PROPS,
                             signal_name="PropertiesChanged", path_keyword="path")
 
-    def die(err):
-        log(f"등록 실패: {err}")
-        sys.exit(1)
-
     gatt.RegisterApplication(app.get_path(), {},
                              reply_handler=lambda: log("GATT 등록됨"),
                              error_handler=die)
-    adv_mgr.RegisterAdvertisement(adv.get_path(), {},
-                                  reply_handler=lambda: log(f"광고 시작: '{ADV_NAME}'"),
-                                  error_handler=die)
+    start_advertising(first=True)
 
     log(f"토큰: {state['token']}   (파일: {TOKEN_FILE})")
     log(f"크롬에서 웹앱을 열고 이 이름을 고르세요: {ADV_NAME}")

@@ -21,8 +21,30 @@
 |---|---|
 | [`tools/ble_console.py`](../tools/ble_console.py) | 젯슨의 BLE 서버(Nordic UART Service) |
 | [`deploy/ble-console.service`](../deploy/ble-console.service) | 부팅 자동실행 유닛 (**root** — nmcli·systemctl 때문) |
-| [`android/handset/`](../android/handset/) | **안드로이드 앱**(권장). WebView 화면 + 네이티브 BLE |
+| [`android/handset/`](../android/handset/) | **안드로이드 앱**. WebView 화면 + 네이티브 BLE |
+| [`tools/ble_handset_pc.py`](../tools/ble_handset_pc.py) | **PC 앱**(윈도우·맥·리눅스). bleak + tkinter |
 | [`tools/ble_handset.html`](../tools/ble_handset.html) | 크롬 Web Bluetooth 웹앱 — ⚠ **아래 제약 참고** |
+
+## ⚠ 제일 중요한 함정 — 연결 뒤에 광고가 죽는다
+
+**BLE 규격상 연결 가능 광고는 연결이 성립되는 순간 컨트롤러가 끈다.** 그건 정상이다.
+문제는 **BlueZ가 끊긴 뒤에도 다시 켜주지 않는다**는 것이다. 그래서 손님이 한 번
+다녀가면 젯슨은 **영영 안 보이는 상태**가 된다 — 스캔에도 안 잡히니 "블루투스가
+고장났다"로 보인다. 재시작만이 살렸고, 그래서 원인이 컨트롤러 문제처럼 보였다.
+
+2026-08-22 실측: 폰이 붙었다 끊긴 뒤 PC에서 전체 스캔을 해도 47개 기기 중 젯슨만
+없었다. 서비스를 재시작하니 즉시 잡혔다.
+
+지금은 `ble_console.py`가 **끊김을 보면 광고를 다시 등록한다**(`readvertise()`).
+증상이 재발하면 로그에서 이 줄부터 찾아라:
+
+```
+[ble] 끊김: /org/bluez/hci0/dev_… — 인증 해제, 광고 재개
+[ble] 광고 시작: 'tomato-jetson' (간격 150~250ms)
+```
+
+⚠ **한 번에 한 대만 붙을 수 있다.** 연결 중에는 광고가 멈추므로, 폰이 붙어 있으면
+PC는 젯슨을 찾지 못한다(그 반대도 같다). 다른 쪽에서 [연결 끊기]를 눌러야 한다.
 
 ### ⚠ 웹앱이 아니라 안드로이드 앱을 쓰는 이유
 
@@ -58,6 +80,23 @@ cd android/handset
 
 ⚠ 앱은 토큰을 `assets/ui.html`의 `DEFAULT_TOKEN`에 기본값으로 담고 있다. 토큰을
 바꿨으면 앱의 [접속 토큰] 칸에 새 값을 넣으면 되고, 다시 빌드할 필요는 없다.
+
+## PC 앱
+
+```bash
+pip install bleak
+python tools/ble_handset_pc.py
+```
+
+tkinter는 파이썬에 들어 있다. 윈도우면 WinRT, 맥은 CoreBluetooth, 리눅스는 BlueZ를
+쓴다 — 코드는 같다. 토큰은 `~/.tomato_handset.json`에 저장된다.
+
+⚠ **PC는 폰보다 훨씬 둔하다.** 윈도우의 BLE 스캐너는 듀티 사이클이 낮아
+(대략 1.3초마다 수십 ms만 열어 본다) 광고를 촘촘히 쏘아도 잡히는 게 성기다.
+2026-08-22 실측(rssi −75~−84): **15초에 2번**. 능동/수동 스캔 모드 차이는 없었다.
+그래서 앱이 **30초** 훑는다. 안 잡히면 노트북을 젯슨 쪽으로 가져가는 게 제일 빠르다.
+
+⚠ 콘솔에서 돌릴 때 한글이 깨지면 `PYTHONIOENCODING=utf-8`을 주면 된다(GUI는 무관).
 
 ## 설치
 
