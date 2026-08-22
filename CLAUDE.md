@@ -43,6 +43,16 @@
 - `ssh server@192.168.0.8` (IP는 DHCP라 바뀔 수 있음 / 공개키 등록·passwordless sudo).
   Bash 툴은 `-i /c/Users/parkg/.ssh/id_ed25519` 명시 필요(HOME 다름).
 - 장치: `/dev/ttyUSB0`=모터보드, `/dev/ttyACM0`=팔로버, 게임패드=USB/BT.
+- **IP를 모를 때는 블루투스로 물어본다** ([`docs/bluetooth-console.md`](docs/bluetooth-console.md), 2026-08-22 추가).
+  `ble-console.service`가 BLE로 `tomato-jetson`을 광고하고, **안드로이드 앱**
+  ([`android/handset/`](android/handset/), `./build.sh install`)에서 `ip`·`wifi`·`join`·`status`를 친다.
+  ⚠ **웹(Web Bluetooth)으로는 안 된다** — 샌드박스 iframe에 `bluetooth` 권한이 위임되지
+  않아 `requestDevice`가 권한정책에 막힌다(실측). 그래서 화면은 WebView로 재사용하고
+  블루투스만 네이티브로 내린 APK를 쓴다. Gradle 없이 build-tools로 몇 초면 빌드된다.
+  ⚠ IP를 알려면 SSH가, SSH를 하려면 IP가 필요한 **닭과 달걀**을 끊는 유일한 경로다 —
+  ARP 스윕은 젯슨이 *이미 내가 아는 망에* 붙어 있을 때만 통한다.
+  **`join`으로 망을 갈아타도 BLE는 안 끊긴다**(SSH로 하면 자기가 탄 가지를 자른다).
+  반경 10m 한계 / 토큰은 젯슨의 `/etc/tomato-ble-token`.
 
 ## 바닥 카메라 · 라인 주행 (2026-08-09 추가)
 - **바닥 CSI 카메라 = Arducam RPi Cam v2.1(IMX219), CAM1**, 전면 우측 바퀴 앞. jetson-io로

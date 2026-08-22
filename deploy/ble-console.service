@@ -1,0 +1,23 @@
+[Unit]
+Description=BLE console (Nordic UART) - ask the Jetson its IP and switch WiFi over Bluetooth
+# BlueZ가 떠 있어야 GATT/광고를 등록할 수 있다. 없으면 시작해도 의미가 없다.
+After=bluetooth.service network.target
+Requires=bluetooth.service
+
+[Service]
+Type=simple
+# ⚠ root로 돈다. nmcli(망 전환)와 systemctl(서비스 재시작)을 하기 때문이다.
+#   User=server로 두면 polkit이 막는다 — 세션 없는 데몬에는 권한이 안 붙는다
+#   (2026-08-18 실측: "Not authorized to control networking"). 대신 이 서버는
+#   임의 셸을 열지 않고 허용 목록에 있는 명령만 실행한다.
+User=root
+Environment=PYTHONUNBUFFERED=1
+# 폰의 블루투스 목록에 뜰 이름.
+Environment=BLE_NAME=tomato-jetson
+# 시스템 python이면 충분하다 — dbus/gi는 OS 패키지이고, vision venv에는 없다.
+ExecStart=/usr/bin/python3 /home/server/tomato-picker/tools/ble_console.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
