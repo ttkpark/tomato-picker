@@ -6,6 +6,8 @@
   · **리더암 미러링** — 리더(SO-101 Leader)를 손으로 움직이면 팔로워가 따라오고,
     원하는 자세에서 슬롯에 저장한다. 예전에는 tools/mirror_toggle.py를 터미널에서
     돌려야 했지만(리더 필요 + SSH 필요), 이제 대시보드에서 켜고 끈다.
+  · **좌표(xyz) 이동과 제자리 회전** — `arm.cartesian`([`cartesian.py`](cartesian.py)).
+    저장해 둔 자세가 없어도 "5mm만 더 앞으로", "문 채로 30° 돌려"가 된다.
 
 RobotArm.pick()의 position 인자는 아직 고정 시퀀스만 쓴다 — 좌표 기반 접근은
 play_blended(y) 쪽이 담당한다(비전 y → 자세).
@@ -34,6 +36,7 @@ from ..config import (
     ARM_SERIAL_PORT,
 )
 from .base import RobotArm
+from .cartesian import DEG_PER_TICK, CartesianArm
 from .ports import list_arm_ports, resolve_arm_port, resolve_leader_port
 from .presets import PresetStore
 from .servo_probe import require_live_bus
@@ -75,6 +78,8 @@ class LerobotArm(RobotArm):
         self._cal_max: dict = {}
         self._cal_now: dict = {}
         self._cal_error: str | None = None
+        # --- 카테시안(xyz) 유닛 --- 처음 쓸 때 만든다(설정 파일을 그때 읽는다)
+        self._cartesian: CartesianArm | None = None
 
     # ------------------------------------------------------------------
     # 연결 관리
@@ -455,6 +460,17 @@ class LerobotArm(RobotArm):
         }
 
     # ------------------------------------------------------------------
+    # 좌표(xyz) 이동 · 제자리 회전
+    # ------------------------------------------------------------------
+
+    @property
+    def cartesian(self) -> CartesianArm:
+        """집게 좌표로 말하는 유닛. `arm.cartesian.jog(dz=10)` 처럼 쓴다."""
+        if self._cartesian is None:
+            self._cartesian = CartesianArm(_FollowerJointIO(self))
+        return self._cartesian
+
+    # ------------------------------------------------------------------
     # 상태 스냅샷 (웹 UI)
     # ------------------------------------------------------------------
 
@@ -468,6 +484,7 @@ class LerobotArm(RobotArm):
             "mirror_error": self._mirror_error,
             "presets": self.presets.snapshot(),
             "calibration": self.calibration_status(),
+            "cartesian": self.cartesian.snapshot(),
         }
 
     # ------------------------------------------------------------------
@@ -499,3 +516,47 @@ class LerobotArm(RobotArm):
             slack = (start + step * interval) - time.monotonic()
             if slack > 0:
                 time.sleep(slack)
+
+
+class _FollowerJointIO:
+    """CartesianArm ↔ LerobotArm 접착제. 정규화값을 읽고 쓰는 통로 하나뿐이다.
+
+    왜 팔에 직접 안 넣고 어댑터를 두나 — 이렇게 해두면 같은 CartesianArm이
+    Mock(SimJointIO)에도 그대로 붙어, 좌표 계산과 화면을 **팔 없이** 검증할 수
+    있다(tools/arm_cartesian_check.py가 그렇게 33가지를 확인한다).
+    """
+
+    def __init__(self, arm: "LerobotArm") -> None:
+        self._arm = arm
+
+    def read(self) -> dict[str, float]:
+        return {k[:-4]: v for k, v in self._arm.current_pose().items() if k.endswith(".pos")}
+
+    def write(self, target: dict[str, float], secs: float) -> None:
+        goal = {f"{name}.pos": float(v) for name, v in target.items()}
+        self._arm._with_retry(  # noqa: SLF001 - 재연결 재시도를 그대로 쓰려고
+            lambda: self._arm._move_to(goal, secs, ARM_MOVE_FPS)  # noqa: SLF001
+        )
+
+    def spans_deg(self) -> dict[str, float]:
+        """정규화 -100..100이 실제 몇 도인지 — **캘리브레이션에서 읽는다**.
+
+        lerobot은 캘리브레이션된 raw 구간을 -100..100으로 편다. 그래서 관절마다
+        1단위의 각도가 다르다(특히 wrist_roll은 한 바퀴 전체라 두 배다). 이걸
+        추측하면 회전 명령이 관절마다 다른 크기로 나간다 — 반드시 읽어야 한다.
+        """
+        follower = self._arm._follower  # noqa: SLF001
+        cal = getattr(follower, "calibration", None) or {}
+        out = {}
+        for name, c in cal.items():
+            try:
+                out[name] = abs(int(c.range_max) - int(c.range_min)) * DEG_PER_TICK
+            except (AttributeError, TypeError, ValueError):
+                continue
+        return out
+
+    def busy_lock(self):
+        return self._arm._lock  # noqa: SLF001 - 미러링·프리셋과 같은 락을 써야 한다
+
+    def before_move(self) -> None:
+        self._arm.stop_mirror()

@@ -59,6 +59,17 @@ _CSS = """
   .tag { font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 999px;
          background: color-mix(in srgb, #3498db 35%, Canvas); }
   #mode { font-weight: 700; }
+  /* 좌표 이동 패널 — 축마다 색을 달리해 "지금 어느 축을 누르는지"를 눈으로 잡는다.
+     세 축 버튼이 전부 회색이면 급할 때 반드시 잘못 누른다. */
+  .axgrp { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+           margin-bottom: 0.45rem; }
+  .axgrp > .lbl { font-size: 0.85rem; opacity: 0.7; min-width: 4.2rem; }
+  .ax { min-width: 5.2rem; }
+  .ax.x { background: color-mix(in srgb, #e74c3c 18%, Canvas); }
+  .ax.y { background: color-mix(in srgb, #2ecc71 18%, Canvas); }
+  .ax.z { background: color-mix(in srgb, #3498db 18%, Canvas); }
+  .ax.rot { background: color-mix(in srgb, #9b59b6 20%, Canvas); }
+  #cartState { font-size: 0.9rem; font-variant-numeric: tabular-nums; }
   #link, #lineState, #calState, #tNow { font-size: 0.9rem; font-variant-numeric: tabular-nums; }
   /* /diag 계측 화면 — 숫자가 1초에 10번 바뀌므로 tabular-nums가 필수다.
      아니면 자릿수가 바뀔 때마다 폭이 흔들려 읽을 수가 없다. */
@@ -282,6 +293,63 @@ _CONTROL_BODY = """
   </div>
 </div>
 <div id="presets"></div>
+
+<h2>3D 좌표 이동 <span class="dim">— 문 물건을 xyz로 옮기고, 제자리에서 돌린다</span></h2>
+<div class="card">
+  <div id="cartState" style="margin-bottom:0.6rem">좌표 상태 확인 중...</div>
+  <label>이동 스텝 <input type="range" id="cStep" min="1" max="50" step="1" value="10"
+    oninput="cStepOut.textContent=this.value"> <b id="cStepOut">10</b> mm</label>
+  <label>회전 스텝 <input type="range" id="cRot" min="1" max="45" step="1" value="10"
+    oninput="cRotOut.textContent=this.value"> <b id="cRotOut">10</b> °</label>
+  <label class="row-flex" style="margin:0.6rem 0">
+    <input type="checkbox" id="cTool" onchange="renderCartLabels()">
+    <span>집게 기준으로 움직이기 <span class="dim">(끄면 로봇 기준 xyz)</span></span>
+  </label>
+
+  <div class="axgrp"><span class="lbl">앞뒤</span>
+    <button class="ax x" id="cXp" onclick="cjog('x', 1)">앞 +X</button>
+    <button class="ax x" id="cXm" onclick="cjog('x', -1)">뒤 −X</button>
+  </div>
+  <div class="axgrp"><span class="lbl">좌우</span>
+    <button class="ax y" id="cYp" onclick="cjog('y', 1)">왼 +Y</button>
+    <button class="ax y" id="cYm" onclick="cjog('y', -1)">오른 −Y</button>
+  </div>
+  <div class="axgrp"><span class="lbl">위아래</span>
+    <button class="ax z" id="cZp" onclick="cjog('z', 1)">위 +Z</button>
+    <button class="ax z" id="cZm" onclick="cjog('z', -1)">아래 −Z</button>
+  </div>
+
+  <div class="axgrp" style="margin-top:0.7rem"><span class="lbl">제자리 회전</span>
+    <button class="ax rot" onclick="cspin('roll', 1)">비틀기 ↺</button>
+    <button class="ax rot" onclick="cspin('roll', -1)">비틀기 ↻</button>
+    <button class="ax rot" onclick="cspin('pitch', 1)">손목 들기 ⤴</button>
+    <button class="ax rot" onclick="cspin('pitch', -1)">손목 숙이기 ⤵</button>
+    <button class="ax rot" onclick="cspin('yaw', 1)">돌리기 ↺</button>
+    <button class="ax rot" onclick="cspin('yaw', -1)">돌리기 ↻</button>
+  </div>
+  <div class="axgrp"><span class="lbl">집게</span>
+    <button class="small" onclick="cmd({action:'arm_grip', percent:100})">열기</button>
+    <button class="small" onclick="cmd({action:'arm_grip', percent:0})">닫기(쥐기)</button>
+    <span class="dim" style="font-size:0.82rem">좌표 이동은 집게를 건드리지 않는다 —
+      쥔 힘이 풀리지 않게 일부러 뺐다.</span>
+  </div>
+
+  <div class="axgrp" style="margin-top:0.7rem"><span class="lbl">좌표로 직접</span>
+    x <input type="number" id="cX" step="1" style="width:5.5rem">
+    y <input type="number" id="cY" step="1" style="width:5.5rem">
+    z <input type="number" id="cZ" step="1" style="width:5.5rem">
+    pitch <input type="number" id="cP" step="1" style="width:5rem">
+    <button class="small" onclick="cmoveTo()">여기로</button>
+    <button class="small" onclick="cfillNow()">지금 값 채우기</button>
+  </div>
+
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    <b>돌리기(yaw)</b>는 <b>집게가 바닥을 볼 때만</b> 됩니다 — 5축 팔이라 집게가
+    향하는 좌우 방향은 팔 위치에 묶여 있고, 수직으로 내려다볼 때만 손목 비틀기가
+    곧 좌우 회전이 됩니다. 그 밖에는 <b>비틀기(roll)</b>를 쓰세요.
+    <br>안 움직이면 <b>이유가 위 상태줄에 뜹니다</b>(사거리 밖 · 관절 한계 · 스텝이 너무 작음).
+  </p>
+</div>
 
 <h2>시퀀스 · 힘 빼기</h2>
 <div class="row-flex">
@@ -570,10 +638,73 @@ _CONTROL_JS = """
       box.append(head, nm, main, tools);
       grid.append(box);
     }
+    renderCart(arm.cartesian);
     const anchors = (arm.presets || {}).anchors || [];
     document.getElementById('anchorList').textContent = anchors.length
       ? '앵커(위→아래): ' + anchors.map(a => a.label + '=슬롯' + a.slot + '(y' + Math.round(a.y) + ')').join('  →  ')
       : '앵커 없음 — 슬롯의 [앵커] 버튼으로 상/중/하를 지정하세요.';
+  }
+
+  // --- 3D 좌표 이동 ---
+  function cstep() { return +document.getElementById('cStep').value; }
+  function crot() { return +document.getElementById('cRot').value; }
+  function cframe() { return document.getElementById('cTool').checked ? 'tool' : 'base'; }
+  function cjog(axis, sign) {
+    const body = {action:'arm_jog', frame: cframe(), dx:0, dy:0, dz:0};
+    body['d' + axis] = cstep() * sign;
+    cmd(body);
+  }
+  function cspin(axis, sign) { cmd({action:'arm_spin', axis, deg: crot() * sign}); }
+  function cmoveTo() {
+    const v = id => { const t = document.getElementById(id).value; return t === '' ? null : +t; };
+    cmd({action:'arm_tool_move', x:v('cX'), y:v('cY'), z:v('cZ'), pitch:v('cP')});
+  }
+  function cfillNow() {
+    const c = ((state || {}).arm || {}).cartesian || {};
+    if (!c.pose) { out.textContent = '아직 좌표를 읽지 못했습니다'; return; }
+    document.getElementById('cX').value = Math.round(c.pose.x);
+    document.getElementById('cY').value = Math.round(c.pose.y);
+    document.getElementById('cZ').value = Math.round(c.pose.z);
+    document.getElementById('cP').value = Math.round(c.pose.pitch);
+  }
+  // 도구 기준으로 바꾸면 축 이름이 달라진다 — "앞 +X"가 그대로 남아 있으면 로봇
+  // 기준인 줄 알고 누르게 되고, 집게가 비스듬할 때 전혀 다른 방향으로 간다.
+  function renderCartLabels() {
+    const tool = document.getElementById('cTool').checked;
+    const names = tool
+      ? {cXp:'찔러넣기 ▶', cXm:'빼기 ◀', cYp:'집게 왼쪽', cYm:'집게 오른쪽',
+         cZp:'집게 위', cZm:'집게 아래'}
+      : {cXp:'앞 +X', cXm:'뒤 −X', cYp:'왼 +Y', cYm:'오른 −Y',
+         cZp:'위 +Z', cZm:'아래 −Z'};
+    for (const id in names) document.getElementById(id).textContent = names[id];
+  }
+  function renderCart(c) {
+    const el = document.getElementById('cartState');
+    if (!el) return;
+    if (!c) { el.textContent = '좌표 유닛 없음(팔 미연결)'; el.style.background = ''; return; }
+    if (!c.ready) {
+      el.textContent = '⚠ 기구학 영점이 없습니다 — [⚙ 시스템 설정]의 '
+                     + '[3D 좌표 영점]에서 한 번 등록해야 좌표 이동이 됩니다.';
+      el.style.background = 'color-mix(in srgb, #f39c12 25%, Canvas)';
+      return;
+    }
+    if (!c.pose) {
+      el.textContent = '좌표를 읽지 못했습니다' + (c.error ? ' — ' + c.error : '');
+      el.style.background = 'color-mix(in srgb, #e74c3c 18%, Canvas)';
+      return;
+    }
+    const p = c.pose;
+    const bits = ['x ' + Math.round(p.x) + '  y ' + Math.round(p.y)
+                  + '  z ' + Math.round(p.z) + ' mm',
+                  '집게 각 ' + Math.round(p.pitch) + '°',
+                  '비틀림 ' + Math.round(p.roll) + '°'];
+    if (c.r != null) bits.push('수평거리 ' + Math.round(c.r) + '/'
+                               + Math.round(c.config.reach_max) + 'mm');
+    if (Math.abs(p.pitch + 90) <= 15) bits.push('⤓ 내려다보는 중 — 돌리기(yaw) 가능');
+    if (c.stale) bits.push('(이동 중 — 값이 조금 늦습니다)');
+    if (c.error) bits.push('⚠ ' + c.error);
+    el.textContent = bits.join('  ·  ');
+    el.style.background = c.stale ? '' : 'color-mix(in srgb, #3498db 14%, Canvas)';
   }
 
   // --- 키보드 홀드 주행 ---
@@ -615,6 +746,7 @@ _CONTROL_JS = """
   addEventListener('keyup', (e) => { held.delete(e.key.toLowerCase()); });
   addEventListener('blur', () => held.clear());
   setMode('play');
+  renderCartLabels();
 """
 
 
@@ -867,6 +999,49 @@ _SETTINGS_BODY = """
     <br>⚠ 저장하면 <b>기존 프리셋 숫자는 다른 자세를 가리키게 됩니다</b> — 다시 교시하세요.
   </p>
 </div>
+
+<h2>3D 좌표 영점 <span class="dim">— xyz 이동을 쓰려면 한 번 잡아야 한다</span></h2>
+<div class="card">
+  <div id="cartCfg" class="dim" style="margin-bottom:0.6rem">좌표 설정 확인 중...</div>
+  <div class="row-flex" style="margin-bottom:0.5rem">
+    <button onclick="cmd({action:'arm_relax'})">① 힘 빼기</button>
+    <button onclick="zeroCart()">② 지금 자세를 영점으로</button>
+    <button class="small" onclick="cmd({action:'arm_tool_zero_clear'})">영점 해제</button>
+  </div>
+  <p class="dim" style="margin:0 0 0.8rem; font-size:0.85rem">
+    ① 힘을 뺀 뒤 <b>어깨(몸통 회전)는 정면</b>으로 두고, <b>나머지는 곧게 위로</b> 세우세요 —
+    상완·전완·집게가 <b>한 줄로 수직</b>입니다(팔꿈치·손목을 꺾지 않습니다).
+    문틀이나 벽 모서리에 대보면 눈으로 맞습니다.
+    ② 그 자세에서 누르면 화면의 mm 숫자가 실제와 맞습니다.
+    <br>수평으로 편 자세를 안 쓰는 이유 — 힘을 빼는 순간 <b>중력이 팔을 끌어내려</b>
+    그 처짐이 그대로 영점 오차가 됩니다. 수직은 기준선이 있어 처지지도, 사람마다 다르지도 않습니다.
+    <br>⚠ 세운 자세는 집게가 <b>회전축 바로 위</b>라 좌표 방향이 정해지지 않습니다 —
+    영점 등록 직후 조그가 막히는 건 정상입니다. 프리셋으로 앞으로 뻗은 뒤 쓰세요.
+    <br>⚠ 팔 범위 캘리브레이션을 <b>다시 하면 이 영점도 다시</b> 잡아야 합니다(정규화값의 뜻이 바뀝니다).
+  </p>
+
+  <div id="signRows" style="margin-bottom:0.6rem"></div>
+  <p class="dim" style="margin:0 0 0.8rem; font-size:0.85rem">
+    <b>부호 맞추는 법</b> — 힘을 뺀 채 관절 하나만 손으로 움직이면서 위 각도 표시를 보세요.
+    <b>상완을 위로</b> 들 때 shoulder_lift가 <b>커져야</b> 하고, <b>전완을 위로</b> 접을 때
+    elbow_flex가, <b>집게를 위로</b> 젖힐 때 wrist_flex가, <b>왼쪽</b>으로 돌 때
+    shoulder_pan이 커져야 합니다. 반대로 가는 관절만 [뒤집기]를 누르세요.
+    <br>⚠ 부호가 틀리면 "위로"가 아래로 갑니다 — <b>영점보다 먼저</b> 맞추는 게 안전합니다.
+  </p>
+
+  <div class="axgrp"><span class="lbl">링크 길이</span>
+    z0 <input type="number" id="gZ0" step="1" style="width:5rem">
+    l1 <input type="number" id="gL1" step="1" style="width:5rem">
+    l2 <input type="number" id="gL2" step="1" style="width:5rem">
+    l3 <input type="number" id="gL3" step="1" style="width:5rem">
+    <button class="small" onclick="saveGeom()">저장</button>
+    <span class="dim" style="font-size:0.82rem">mm</span>
+  </div>
+  <p class="dim" style="margin:0.4rem 0 0; font-size:0.85rem">
+    자로 재서 넣으세요(축과 축 사이). z0=바닥판→어깨축 높이, l1=어깨→팔꿈치,
+    l2=팔꿈치→손목, l3=손목→<b>집게가 무는 지점</b>. 틀리면 이동 <b>크기</b>가 그만큼 어긋납니다.
+  </p>
+</div>
 """
 
 _SETTINGS_JS = """
@@ -986,11 +1161,96 @@ _SETTINGS_JS = """
   function tpreset(hz, pwm) { setRange('tHz', hz); setRange('tPwm', pwm); applyTune(); }
   function spreset(pct) { setRange('tScale', pct); applyTune(); }
 
+  // --- 3D 좌표 영점·부호·링크길이 ---
+  let geomInit = false;
+  const SIGN_HINT = {
+    shoulder_pan: '몸통 회전 — 왼쪽으로 돌 때 +',
+    shoulder_lift: '상완 — 앞에서 위로 들 때 +',
+    elbow_flex: '전완 — 위로 접을 때 +',
+    wrist_flex: '집게 — 위로 젖힐 때 +',
+    wrist_roll: '집게 비틀기 — 반시계 +',
+  };
+  function zeroCart() {
+    if (!confirm('지금 자세를 "어깨는 정면, 나머지는 곧게 위로 세운 자세"로 등록합니다.\n'
+                 + '상완·전완·집게가 한 줄로 수직인가요?')) return;
+    cmd({action:'arm_tool_zero'});
+  }
+  function flipSign(joint, now) {
+    cmd({action:'arm_tool_config', signs: {[joint]: now > 0 ? -1 : 1}});
+  }
+  function saveGeom() {
+    const v = id => { const t = document.getElementById(id).value; return t === '' ? null : +t; };
+    cmd({action:'arm_tool_config',
+         geometry: {z0: v('gZ0'), l1: v('gL1'), l2: v('gL2'), l3: v('gL3')}});
+  }
+  function renderCartCfg(c) {
+    const el = document.getElementById('cartCfg');
+    if (!el) return;
+    if (!c) { el.textContent = '팔 미연결 — 좌표 설정을 읽을 수 없습니다'; return; }
+    const cfg = c.config || {};
+    const ref = cfg.ref_deg || {};
+    const bits = [c.ready
+      ? '● 영점 등록됨 (기준: lift ' + Math.round(ref.shoulder_lift || 0) + '° = 곧게 위로)'
+      : '○ 영점 없음 — 좌표 이동 불가'];
+    if (c.pose) bits.push('지금 x ' + Math.round(c.pose.x) + '  y ' + Math.round(c.pose.y)
+                          + '  z ' + Math.round(c.pose.z) + ' mm  ·  집게 각 '
+                          + Math.round(c.pose.pitch) + '°');
+    bits.push('최대 사거리 ' + Math.round(cfg.reach_max || 0) + 'mm');
+    bits.push(cfg.path || '');
+    el.textContent = bits.filter(Boolean).join('  ·  ');
+    el.style.background = c.ready ? 'color-mix(in srgb, #2ecc71 18%, Canvas)'
+                                  : 'color-mix(in srgb, #f39c12 22%, Canvas)';
+
+    // 관절 표 — 지금 각도(손으로 움직이며 부호를 확인하는 화면)와 뒤집기 버튼.
+    const rows = document.getElementById('signRows');
+    const signs = cfg.signs || {};
+    const joints = Object.keys(SIGN_HINT);
+    if (rows.dataset.n !== String(joints.length)) {
+      rows.dataset.n = String(joints.length);
+      rows.textContent = '';
+      for (const j of joints) {
+        const line = document.createElement('div');
+        line.className = 'axgrp';
+        const name = document.createElement('span');
+        name.className = 'lbl'; name.style.minWidth = '8.5rem'; name.textContent = j;
+        const now = document.createElement('b');
+        now.id = 'jd_' + j; now.style.minWidth = '4.5rem';
+        now.style.display = 'inline-block'; now.style.textAlign = 'right';
+        const sign = document.createElement('span');
+        sign.id = 'js_' + j; sign.className = 'dim';
+        const flip = document.createElement('button');
+        flip.className = 'small'; flip.textContent = '뒤집기';
+        flip.onclick = () => flipSign(j, (cfg.signs || {})[j] || 1);
+        const hint = document.createElement('span');
+        hint.className = 'dim'; hint.style.fontSize = '0.82rem';
+        hint.textContent = SIGN_HINT[j];
+        line.append(name, now, sign, flip, hint);
+        rows.append(line);
+      }
+    }
+    for (const j of joints) {
+      const d = document.getElementById('jd_' + j);
+      const sg = document.getElementById('js_' + j);
+      if (d) d.textContent = (c.joints && c.joints[j] != null)
+                             ? c.joints[j].toFixed(1) + '°' : '—';
+      if (sg) sg.textContent = (signs[j] > 0 ? '(+)' : '(−)');
+    }
+
+    if (!geomInit && cfg.geometry) {
+      geomInit = true;
+      document.getElementById('gZ0').value = cfg.geometry.z0;
+      document.getElementById('gL1').value = cfg.geometry.l1;
+      document.getElementById('gL2').value = cfg.geometry.l2;
+      document.getElementById('gL3').value = cfg.geometry.l3;
+    }
+  }
+
   function render() {
     if (!state) return;
     const arm = state.arm || {}, base = state.base || {}, ln = state.line || {};
     renderVoice((state.voice || {}).items);
     renderWake((state.voice || {}).wake);
+    renderCartCfg(arm.cartesian);
 
     const el = document.getElementById('lineState');
     if (ln.found) {

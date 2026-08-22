@@ -577,6 +577,49 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
         elif action == "arm_relax":
             arm.relax()
             return True, "팔 토크 해제"
+        # --- 좌표(xyz) 이동 · 제자리 회전 (hardware/cartesian.py) ---
+        # 프리셋이 "저장한 자세로 점프"라면 이쪽은 "지금 자리에서 조금 옮기기"다.
+        # 실패는 전부 예외로 올라오고(사거리 밖·너무 작음·관절한계) 아래 except가
+        # 그대로 화면에 띄운다 — **왜 안 갔는지가 화면에 남는 게 핵심**이다.
+        elif action == "arm_jog":
+            return True, arm.cartesian.jog(
+                dx=float(body.get("dx", 0) or 0), dy=float(body.get("dy", 0) or 0),
+                dz=float(body.get("dz", 0) or 0),
+                dpitch=float(body.get("dpitch", 0) or 0),
+                droll=float(body.get("droll", 0) or 0),
+                frame=str(body.get("frame", "base")),
+            )
+        elif action == "arm_tool_move":
+            def _num(key):
+                v = body.get(key)
+                return None if v in (None, "") else float(v)
+            return True, arm.cartesian.move_to(
+                x=_num("x"), y=_num("y"), z=_num("z"),
+                pitch=_num("pitch"), roll=_num("roll"),
+            )
+        elif action == "arm_spin":
+            return True, arm.cartesian.spin(
+                float(body.get("deg", 0) or 0), axis=str(body.get("axis", "roll")))
+        elif action == "arm_grip":
+            return True, arm.cartesian.set_grip(float(body.get("percent", 0) or 0))
+        elif action == "arm_tool_zero":
+            return True, arm.cartesian.set_zero()
+        elif action == "arm_tool_zero_clear":
+            return True, arm.cartesian.clear_zero()
+        elif action == "arm_tool_config":
+            cfg = arm.cartesian.config
+            if body.get("signs"):
+                cfg.set_signs({k: float(v) for k, v in dict(body["signs"]).items()})
+            if body.get("geometry"):
+                cfg.set_geometry({k: float(v) for k, v in dict(body["geometry"]).items()
+                                  if v not in (None, "")})
+            g = cfg.geometry()
+            short = {"shoulder_pan": "pan", "shoulder_lift": "lift", "elbow_flex": "elbow",
+                     "wrist_flex": "wflex", "wrist_roll": "wroll"}
+            return True, (f"좌표 설정 저장 — 링크 z0={g.z0:.0f} l1={g.l1:.0f} l2={g.l2:.0f} "
+                          f"l3={g.l3:.0f} (사거리 {g.reach_max:.0f}mm), 부호 "
+                          + " ".join(f"{s}{'+' if cfg.sign(k) > 0 else '−'}"
+                                     for k, s in short.items()))
         elif action == "arm_cal_start":
             return True, arm.start_calibration()
         elif action == "arm_cal_finish":

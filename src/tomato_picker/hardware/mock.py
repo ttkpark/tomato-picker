@@ -89,11 +89,23 @@ class MockArm(RobotArm):
     # 프리셋은 **읽기만** 실제 파일에서 한다. 팔이 없는 상태에서 저장하면
     # 진짜 관절값이 아닌 가짜 값이 ~/arm_presets.json을 덮어써 데모용 자세가
     # 통째로 날아가므로, 쓰기 계열은 전부 거부한다.
+    # 좌표(xyz) 유닛은 **가짜 관절 위에** 그대로 얹는다 — 화면·안전검사·계산이
+    # 팔 없이도 진짜와 같은 코드를 탄다. 다만 설정 파일은 실물과 갈라 쓴다
+    # (Mock의 영점은 진짜 팔에서 아무 의미가 없는 숫자라, 섞이면 위험하다).
+    MOCK_START_DEG = {"shoulder_pan": 0.0, "shoulder_lift": 75.0, "elbow_flex": -85.0,
+                      "wrist_flex": -20.0, "wrist_roll": 0.0}
+
     def __init__(self) -> None:
-        from ..config import ARM_PRESET_FILE
+        from ..config import ARM_CART_FILE, ARM_PRESET_FILE
+        from .cartesian import CartesianArm, SimJointIO
+        from .kinematics import JOINTS
         from .presets import PresetStore
 
         self.presets = PresetStore(ARM_PRESET_FILE)
+        sim = SimJointIO()
+        self.cartesian = CartesianArm(sim, path=ARM_CART_FILE + ".mock")
+        self.cartesian.config.set_zero({j: 0.0 for j in JOINTS})
+        sim.joints.update(self.cartesian.to_norms(self.MOCK_START_DEG))
 
     @property
     def preset_ids(self) -> list[int]:
@@ -154,6 +166,7 @@ class MockArm(RobotArm):
             "follower_port": None, "leader_connected": False, "leader_port": None,
             "leader_candidates": [], "mirroring": False,
             "mirror_error": "Mock(팔 미연결)", "presets": self.presets.snapshot(),
+            "cartesian": self.cartesian.snapshot(),
         }
 
 

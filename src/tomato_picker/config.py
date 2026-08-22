@@ -592,6 +592,65 @@ ARM_MOVE_FPS = 50
 # 더 길게 세우고 싶은 특정 구간은 시퀀스 대본에 w초 토큰을 그대로 쓰면 된다.
 ARM_POSE_GAP_SEC = 0.3
 
+# --- 팔 카테시안 유닛 (xyz 이동 · 제자리 회전) — hardware/cartesian.py ---
+# 프리셋 재생만으로는 "5mm만 더 앞으로", "문 채로 90° 돌려"를 할 수 없다.
+# 좌표로 말하려면 링크 길이(기구학)와 영점이 필요하다.
+#
+# ⚠ 아래 링크 길이는 **SO-101 도면 근사치다 — 자로 재서 고쳐라.** 5분이면 된다.
+#   (힘 빼고 팔을 앞으로 쭉 편 뒤 축과 축 사이를 잰다. 자세한 건
+#    docs/arm-cartesian.md.) 값이 틀리면 조그 방향은 맞고 **크기만** 어긋나며,
+#   절대 좌표 이동은 그만큼 틀린다.
+# ⚠ 현장에서 고친 값은 ARM_CART_FILE(~/arm_cartesian.json)에 남고, 그쪽이 이긴다
+#   — BASE_TUNING_FILE과 같은 구조다(코드는 공장 초기값, 파일은 이 팔의 실측).
+ARM_GEOM_Z0 = 55.0     # 마운트 평면 → shoulder_lift 축 높이 (mm)
+ARM_GEOM_D0 = 0.0      # pan 축 → shoulder_lift 축 수평 오프셋 (mm)
+ARM_GEOM_L1 = 116.0    # shoulder_lift → elbow_flex (mm)
+ARM_GEOM_L2 = 135.0    # elbow_flex → wrist_flex (mm)
+ARM_GEOM_L3 = 95.0     # wrist_flex → 집게가 무는 지점(TCP) (mm)
+ARM_CART_FILE = "~/arm_cartesian.json"
+
+# --- 영점을 잡을 때 팔을 두는 자세 ("교시 자세") ---
+# 각도 규약 자체는 그대로 "0° = 수평"이다(kinematics.py). 여기서 정하는 건
+# **사람이 [영점 등록]을 누를 때 팔이 어떤 자세여야 하는가**뿐이다.
+# ⚠ 수평으로 쭉 편 자세를 쓰지 않는 이유(2026-08-22 현장에서 바꿈):
+#   ① 힘을 빼면 **중력이 팔을 끌어내린다** — 수평을 손으로 붙들고 버튼을 누르는
+#      동안 이미 몇 도가 처진다. 그 처짐이 그대로 영점 오차가 된다.
+#   ② **수직은 눈으로 맞출 수 있다.** 벽 모서리·문틀에 대보면 1° 안쪽으로 맞고,
+#      수평은 기준선이 없어 사람마다 다르게 잡는다.
+# 그래서 어깨(pan)만 정면을 보게 두고, 나머지는 **곧게 위로 세운다**
+# (상완=수직, 전완·집게는 꺾지 않고 그대로 이어서 = elbow·wrist가 0).
+ARM_CART_ZERO_POSE_DEG = {
+    "shoulder_pan": 0.0,     # 정면
+    "shoulder_lift": 90.0,   # 상완이 수직 위
+    "elbow_flex": 0.0,       # 안 꺾음 — 전완도 수직
+    "wrist_flex": 0.0,       # 안 꺾음 — 집게도 수직
+    "wrist_roll": 0.0,
+}
+
+# 관절 정규화값(-100..100)이 커질 때 기구학 각도도 커지면 +1, 반대면 -1.
+# ⚠ **코드를 읽어서는 알 수 없다** — 서보 조립 방향이 팔마다 다르다. 확인법은
+#   하나뿐: 힘 빼고 손으로 그 관절만 움직이며 /settings의 각도 표시를 본다.
+#   (docs/arm-cartesian.md의 "부호 맞추기" 절차. 결과는 JSON에 남는다.)
+ARM_CART_SIGNS = {
+    "shoulder_pan": 1, "shoulder_lift": 1, "elbow_flex": 1,
+    "wrist_flex": 1, "wrist_roll": 1,
+}
+
+ARM_CART_STEP_MM = 10.0        # 화면 버튼 한 번의 기본 이동량
+ARM_CART_STEP_DEG = 10.0       # 화면 버튼 한 번의 기본 회전량
+ARM_CART_MAX_STEP_MM = 80.0    # 한 번에 허용하는 최대 이동 — 좌표 오타 방어
+ARM_CART_MAX_STEP_DEG = 60.0
+ARM_CART_MOVE_SECS = 0.6       # 조그 한 번에 쓰는 시간(보간). ARM_MOVE_SECS보다 짧다.
+# ⚠ 서보에도 "정지마찰"이 있다 — STS3215 분해능은 0.088°/틱이라 이보다 작은
+#   지령은 물리적으로 0이다. 필요한 관절 변화가 이 값보다 작으면 **거절**한다
+#   (성공했다고 말한 뒤 아무 일도 안 일어나는 게 이 로봇의 1번 병이다).
+ARM_CART_MIN_JOINT_DEG = 0.15
+# 정규화 ±100이 가동 끝. 끝까지 밀면 Overload로 굳으므로 여유를 남긴다.
+ARM_CART_NORM_MARGIN = 2.0
+ARM_CART_Z_MIN = 15.0          # 이보다 낮은 z는 무대를 긁는다 (mm, 마운트 평면 기준)
+ARM_CART_R_MIN = 90.0          # 몸통 반경 — 이보다 가까우면 자기를 친다 (mm)
+ARM_CART_ELBOW_UP = True       # 팔꿈치를 현 위로 접는다(아래로 접으면 바닥을 친다)
+
 # --- 음성 명령 (온디바이스 STT, Jetson 단독 추론) ---
 # 마이크 카드가 재부팅/USB 재연결/장치 교체마다 번호와 이름이 다 바뀌는 게
 # 실측으로 확인돼(2026-07-08: 카메라 card 2→0, 이후 웹캠으로 교체하니
