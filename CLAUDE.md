@@ -31,7 +31,7 @@
   ⚠ **잔차를 보라** — 최소자승은 입력이 쓰레기여도 답을 낸다. 15mm를 넘으면 집게가 헛집는다.
 - **ROS 없이 PC에서 도는 자체검증** (이 저장소의 규칙: 숫자는 젯슨에 올리기 전에 확인한다)
   `python tools/handeye_check.py` (보정 수학 45종) ·
-  `python ros2/tools/ros_selfcheck.py` (URDF↔기구학 일치·보드계약·깊이 거절 등 56종).
+  `python ros2/tools/ros_selfcheck.py` (레거시 경계·URDF↔기구학 일치·보드계약·깊이 거절 등 69종).
 
 ## 하드웨어 제어 — **현재 구성 (중요: 옛 문서와 혼동 주의)**
 로봇 = **메카넘 베이스(Moebius Uno + PCA9685)** + **SO-101 팔로워(집게)** + 젯슨 Orin Nano.
