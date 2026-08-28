@@ -1,0 +1,14 @@
+# 좌표 하나로 집게를 보낸다. 프리셋이 아니라 **IK**로 간다.
+#
+# ⚠ 못 가면 **가까운 데까지 가지 않고 거절한다.** 이 로봇에서 가장 비싼 실패는
+#    "지령은 나갔는데 딴 데로 갔다"이고, 그 절반이 조용한 폴백이다.
+
+geometry_msgs/PointStamped target   # 어느 좌표계든 됨 — TF로 arm_base로 옮긴다
+float32 approach_pitch_deg          # 집게가 들린 각. -90 = 위에서 내려찍기
+float32 standoff_m                  # 목표에서 접근축 반대로 이만큼 떨어진 곳까지만 간다
+bool dry_run                        # true면 IK만 풀어 보고 팔은 안 움직인다
+---
+bool ok
+string detail
+float64[] joints_deg                # 풀린 관절각 (pan, lift, elbow, wrist_flex, wrist_roll)
+geometry_msgs/Point reached         # arm_base 기준 실제 목표점 m

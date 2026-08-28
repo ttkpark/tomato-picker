@@ -1,0 +1,11 @@
+# 모아 둔 표본으로 변환을 푼다. 성공해도 **잔차를 보고 사람이 판단**한다.
+
+bool save         # true면 잔차가 기준 이내일 때만 파일에 저장한다
+---
+bool ok
+bool good         # 잔차 RMS <= 15mm (열매 지름 30~40mm 기준)
+float32 rms_mm
+float32 max_mm
+int16 worst_index # 가장 어긋난 표본 번호. -1이면 없음
+uint16 samples
+string detail     # 사람이 읽을 요약 (Fit.summary 그대로)

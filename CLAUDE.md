@@ -7,6 +7,25 @@
 - `main.py` (demo/run) → `src/tomato_picker/` (skills.py=스킬5종, orchestrator.py=Claude tool-use,
   demo_mode.py=오프라인 폴백, hardware/=Base·Arm·Camera 추상화, vision/=색검출).
 
+## ⚠ 계통이 둘이다 — 어느 쪽을 고치는지 먼저 정하라 (2026-08-28~)
+- **기존 스택** = `src/tomato_picker/`. **지금 데모에서 도는 것.** 태그 `v1.*`, 브랜치 `master`.
+- **ROS 2 계통** = [`ros2/`](ros2/). 만드는 중. 태그 `v2.0.0-ros.N`, 브랜치 `feat/ros2-*`.
+  픽셀과 무대 학습을 버리고 **D405 깊이 + 손-눈 보정 + TF**로 좌표를 만든다 —
+  무대를 옮기거나 카메라를 다시 달아도 안 무너지게 하려는 것.
+  왜·무엇을 = [`ros2/README.md`](ros2/README.md) · 단계와 태그 규칙 =
+  [`docs/ros2-이행계획.md`](docs/ros2-이행계획.md) · 젯슨에서 띄우기 =
+  [`ros2/docker/README.md`](ros2/docker/README.md).
+  ⚠ **둘을 동시에 못 켠다**(포트는 한 프로세스만). `tomato-voice`를 끄기 싫으면
+  팔을 `arm_mode:=proxy`로 — 대시보드의 `/status`·`/cmd`를 통해 쓰므로 포트를 안 잡는다.
+  ⚠ 태그는 `tools/tag.sh`로 단다(계통을 섞어 달면 거절한다).
+- **손-눈 보정 수학 = [`hardware/handeye.py`](src/tomato_picker/hardware/handeye.py)**
+  — 카메라가 본 3D 점을 팔 좌표로 옮기는 강체 변환 하나를 **실측에서 푼다**(자로 재지 않는다).
+  numpy만 쓰며 `fixed`(카메라 고정)와 `on_arm`(손목 장착) 두 식이 있다.
+  ⚠ **잔차를 보라** — 최소자승은 입력이 쓰레기여도 답을 낸다. 15mm를 넘으면 집게가 헛집는다.
+- **ROS 없이 PC에서 도는 자체검증** (이 저장소의 규칙: 숫자는 젯슨에 올리기 전에 확인한다)
+  `python tools/handeye_check.py` (보정 수학 45종) ·
+  `python ros2/tools/ros_selfcheck.py` (URDF↔기구학 일치·보드계약·깊이 거절 등 56종).
+
 ## 하드웨어 제어 — **현재 구성 (중요: 옛 문서와 혼동 주의)**
 로봇 = **메카넘 베이스(Moebius Uno + PCA9685)** + **SO-101 팔로워(집게)** + 젯슨 Orin Nano.
 

@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>tomato_bringup</name>
+  <version>0.1.0</version>
+  <description>런치와 파라미터 — 1단계 전체를 한 번에 띄운다</description>
+  <maintainer email="juhyung1021@gmail.com">Giho Park</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>tomato_description</depend>
+  <depend>tomato_bridge</depend>
+  <depend>tomato_perception</depend>
+  <depend>tomato_handeye</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

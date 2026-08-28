@@ -1,0 +1,41 @@
+# 젯슨에서 ROS 계통을 띄운다.
+#
+#   cd ros2/docker
+#   docker compose build            # 처음 한 번 (10~20분)
+#   docker compose run --rm ros     # 셸로 들어간다
+#
+# ⚠ **network_mode: host 가 필수다.** ROS 2의 DDS는 멀티캐스트로 서로를 찾는데,
+#    도커 기본 브리지 안에서는 컨테이너 밖 노드(예: PC의 rviz)와 서로 안 보인다.
+#    "노드는 떠 있는데 토픽이 안 보인다"의 대부분이 이것이다.
+#
+# ⚠ **장치는 필요한 것만** 넘긴다. `privileged: true`면 편하지만, 그러면
+#    컨테이너가 엉뚱한 시리얼 장치를 잡아도 아무도 모른다. 어느 장치를 쓰는지가
+#    이 파일에 적혀 있는 편이 낫다.
+services:
+  ros:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: tomato-ros:jazzy
+    container_name: tomato-ros
+    network_mode: host
+    ipc: host              # DDS 공유메모리 전송 — 없으면 이미지 토픽이 느려진다
+    stdin_open: true
+    tty: true
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-7}
+      - RCUTILS_COLORIZED_OUTPUT=1
+      # ⚠ HOME을 **호스트의 홈으로** 돌린다. 팔 영점(~/arm_cartesian.json)과
+      #    손눈보정(~/tomato_handeye.json)을 기존 스택과 **같은 파일**로 쓰기
+      #    위해서다. 컨테이너 안에만 저장되면 재시작마다 영점이 사라지고,
+      #    두 계통이 같은 팔을 다르게 믿게 된다.
+      - HOME=/host-home
+    volumes:
+      - ..:/ws                       # ros2/ 가 곧 colcon 워크스페이스다
+      - ../..:/repo:ro               # 저장소 — 기구학·손눈보정·모터링크를 그대로 쓴다
+      - ${HOME}:/host-home           # 영점·보정 파일 (위의 HOME 설명 참고)
+      - /dev/shm:/dev/shm            # 기존 스택이 쓰는 프레임 공유메모리
+      - /dev/bus/usb:/dev/bus/usb    # RealSense는 libusb로 직접 연다 (필수)
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0    # 주행 보드 (CH340). 없으면 이 줄을 지운다
+      - /dev/ttyACM0:/dev/ttyACM0    # SO-101 팔로워. arm_mode:=direct 일 때만 필요
