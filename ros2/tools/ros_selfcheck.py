@@ -12,6 +12,8 @@
 무엇을 확인하나:
   ① **rclpy 격리** — `*_node.py`가 아닌 파일에 rclpy가 섞이지 않았는가
      (섞이는 순간 이 검증 자체가 불가능해진다. 그래서 첫 번째다)
+  ①' **레거시 경계** — 레거시에서 무엇을 끌어오는가. *계산은 공유하고 소유권은
+     넘긴다*는 선을 지키는지. 웹 서비스에 붙는 경로가 기본값이 아닌지
   ② **URDF ↔ 기구학 일치** — xacro의 관절 원점·축으로 계산한 TCP가
      kinematics.forward()와 같은 곳을 가리키는가. **부호 하나만 틀려도 여기서 걸린다.**
   ③ **링크 길이 일치** — so101_geometry.yaml과 ArmGeometry 기본값
@@ -74,6 +76,124 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 # ----------------------------------------------------------------------
 # ① rclpy 격리
 # ----------------------------------------------------------------------
+
+LEGACY_ALLOWED = {
+    "tomato_picker.hardware.kinematics": "순수 계산 (import: math)",
+    "tomato_picker.hardware.handeye": "순수 계산 (import: numpy)",
+    "tomato_picker.hardware.cartesian": "이 팔의 영점·환산·안전 — 실측값은 한 벌",
+    "tomato_picker.hardware.eye": "보정 저장소 — ~/arm_eye.json 한 벌",
+    "tomato_picker.hardware.ports": "포트 탐색 유틸",
+    "tomato_picker.hardware.servo_probe": "버스 생존 확인 유틸",
+    "tomato_picker.config": "상수(공장 초기값)",
+}
+# 지금은 쓰되 정해진 이정표에서 끊는다.
+LEGACY_TRANSITIONAL = {
+    "tomato_picker.hardware.motor_link": ("주행 보드 드라이버", "v2.0.0-ros.4 (ros2_control)"),
+}
+# 이유를 적어 둔 금지 목록 — 걸렸을 때 "왜 안 되는지"가 바로 나와야 한다.
+LEGACY_FORBIDDEN = {
+    "tomato_picker.hardware.arm": "LerobotArm은 프리셋·미러링·시퀀스까지 든 "
+                                  "레거시 대시보드의 팔이다. 필요한 건 모터 버스뿐 "
+                                  "(tomato_bridge.follower_io)",
+    "tomato_picker.voice": "레거시 웹 서비스 — ROS가 거기 붙으면 새 계통이 아니다",
+    "tomato_picker.harvest": "무대 학습(SceneModel)은 새 계통이 없애려는 그것이다",
+    "tomato_picker.vision": "검출은 ROS 토픽으로 받는다 (tomato_perception)",
+}
+
+
+def _legacy_imports() -> dict[str, list[str]]:
+    """ros2/src의 모든 파일에서 tomato_picker.* import를 모은다 → {모듈: [파일…]}."""
+    found: dict[str, list[str]] = {}
+    pattern = re.compile(
+        r"^\s*(?:from\s+(tomato_picker[\w.]*)\s+import\s+(.+)|import\s+(tomato_picker[\w.]*))",
+        re.MULTILINE)
+    for root, _dirs, files in os.walk(SRC):
+        if "__pycache__" in root:
+            continue
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            path = os.path.join(root, f)
+            with open(path, encoding="utf-8") as fh:
+                body = fh.read()
+            rel = os.path.relpath(path, REPO)
+            for base, names, plain in pattern.findall(body):
+                if plain:
+                    found.setdefault(plain, []).append(rel)
+                    continue
+                # `from tomato_picker.hardware import kinematics as kin` 처럼
+                # 패키지에서 모듈을 꺼내는 형태는 이름 쪽이 모듈이다.
+                if base in ("tomato_picker", "tomato_picker.hardware"):
+                    for chunk in names.replace("(", " ").replace(")", " ").split(","):
+                        name = chunk.strip().split(" as ")[0].strip()
+                        if name:
+                            found.setdefault(f"{base}.{name}", []).append(rel)
+                else:
+                    found.setdefault(base, []).append(rel)
+    return found
+
+
+def test_legacy_boundary() -> None:
+    """**계산은 공유하고, 소유권은 넘긴다** — 그 선을 코드가 지키는지 본다.
+
+    이 검사가 있는 이유: 경계는 사람이 지키기로 한 약속이라 반드시 한 번은
+    어긴다. 어긴 결과가 "새 계통이 옛 계통의 껍데기"인데, 그건 한참 뒤에야
+    눈에 띈다. 여기서 즉시 걸리게 한다.
+    """
+    print("\n[경계] 레거시에서 무엇을 끌어오는가")
+    imports = _legacy_imports()
+    unknown, forbidden = [], []
+
+    for module, users in sorted(imports.items()):
+        where = ", ".join(sorted(set(os.path.basename(u) for u in users)))
+        if module in LEGACY_ALLOWED:
+            check(f"허용 — {module}", True, f"{LEGACY_ALLOWED[module]} · {where}")
+        elif module in LEGACY_TRANSITIONAL:
+            why, until = LEGACY_TRANSITIONAL[module]
+            check(f"과도기 — {module}", True, f"{why}, {until}까지 · {where}")
+        else:
+            reason = next((r for pre, r in LEGACY_FORBIDDEN.items()
+                           if module == pre or module.startswith(pre + ".")), None)
+            (forbidden if reason else unknown).append((module, where, reason))
+
+    for module, where, reason in forbidden:
+        check(f"금지된 의존 — {module}", False, f"{reason} (쓰는 곳: {where})")
+    for module, where, _ in unknown:
+        check(f"표에 없는 의존 — {module}", False,
+              f"허용/과도기/금지 어디에도 없다. docs/ros2-이행계획.md의 "
+              f"'레거시 의존 졸업표'에 판정을 적고 이 목록에 넣어라 (쓰는 곳: {where})")
+
+    # 웹 서비스는 import가 아니라 HTTP로 붙으므로 위 검사에 안 걸린다. 기본값을 본다.
+    with open(os.path.join(SRC, "tomato_bringup", "config", "stage1.yaml"),
+              encoding="utf-8") as f:
+        params = yaml.safe_load(f)
+    mode = params["tomato_arm"]["ros__parameters"]["arm_mode"]
+    check("팔 기본 경로가 direct다 (웹 서비스에 안 붙는다)", mode == "direct",
+          f"arm_mode={mode!r} — proxy가 기본이면 새 계통이 레거시 대시보드 없이는 "
+          "못 돈다")
+
+    launch = os.path.join(SRC, "tomato_bringup", "launch", "stage1.launch.py")
+    with open(launch, encoding="utf-8") as f:
+        body = f.read()
+    check("런치 기본값도 direct다",
+          '"arm_mode", default_value="direct"' in body,
+          "런치 인자와 yaml이 다르면 어느 쪽이 이겼는지 아무도 모른다")
+
+    eye = params["tomato_handeye"]["ros__parameters"]
+    check("보정 파일이 한 벌이다 (레거시와 같은 ~/arm_eye.json)",
+          eye["calib_path"] == "",
+          f"calib_path={eye['calib_path']!r} — 따로 두면 같은 카메라의 보정이 두 벌이 된다")
+    check("장착 방식은 보정 파일이 정한다", eye["mount"] == "",
+          f"mount={eye['mount']!r} — 값을 박으면 대시보드에서 바꿨을 때 갈린다")
+
+    # store.py가 자기 형식으로 파일을 쓰면 '한 벌'이 깨진다.
+    with open(os.path.join(SRC, "tomato_handeye", "tomato_handeye", "store.py"),
+              encoding="utf-8") as f:
+        store_body = f.read()
+    check("store.py가 보정 형식을 다시 구현하지 않는다",
+          "json.dump" not in store_body,
+          "저장 형식이 둘이면 값도 둘이 된다 — eye.EyeConfig를 호출하라")
+
 
 def test_rclpy_isolation() -> None:
     print("\n[격리] rclpy는 *_node.py에만 있어야 한다")
@@ -429,6 +549,7 @@ def main() -> int:
           f"l3={geom.l3} → 사거리 {geom.reach_max:.0f}mm")
 
     test_rclpy_isolation()
+    test_legacy_boundary()
     test_geometry_matches()
     test_urdf_matches_kinematics()
     test_board_contract()

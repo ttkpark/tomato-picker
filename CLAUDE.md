@@ -15,8 +15,15 @@
   왜·무엇을 = [`ros2/README.md`](ros2/README.md) · 단계와 태그 규칙 =
   [`docs/ros2-이행계획.md`](docs/ros2-이행계획.md) · 젯슨에서 띄우기 =
   [`ros2/docker/README.md`](ros2/docker/README.md).
-  ⚠ **둘을 동시에 못 켠다**(포트는 한 프로세스만). `tomato-voice`를 끄기 싫으면
-  팔을 `arm_mode:=proxy`로 — 대시보드의 `/status`·`/cmd`를 통해 쓰므로 포트를 안 잡는다.
+  **경계 한 줄: 계산과 실측값은 공유하고, 장치·상태의 소유권은 ROS가 가지며,
+  웹 서비스에는 붙지 않는다.** 기구학을 다시 짜면 같은 팔을 두 계통이 다르게 믿는다 —
+  그래서 `kinematics`·`handeye`·`cartesian`·`eye.EyeConfig`는 계속 쓴다(라이브러리다).
+  반대로 팔을 여는 일은 ROS가 가져왔다(`tomato_bridge/follower_io.py`).
+  졸업표 = [`docs/ros2-이행계획.md`](docs/ros2-이행계획.md) §4, **강제** = `ros_selfcheck`의 [경계] 검사.
+  ⚠ **둘을 동시에 못 켠다** — 팔(`tomato-voice`)·주행(`controller-drive`)·**D405(`depth-cam`)**
+  셋 다 한 프로세스만 연다. ROS를 띄우기 전에 끈다. `arm_mode:=proxy`는 배선 확인용
+  임시 경로일 뿐이다(HTTP 폴링이라 TF 시각 정렬이 안 된다, ros.3에서 삭제).
+  ⚠ **보정은 한 벌** — `~/arm_eye.json`을 대시보드와 ROS가 같이 쓴다.
   ⚠ 태그는 `tools/tag.sh`로 단다(계통을 섞어 달면 거절한다).
 - **손-눈 보정 수학 = [`hardware/handeye.py`](src/tomato_picker/hardware/handeye.py)**
   — 카메라가 본 3D 점을 팔 좌표로 옮기는 강체 변환 하나를 **실측에서 푼다**(자로 재지 않는다).

@@ -5,10 +5,11 @@
 
 tomato_arm:
   ros__parameters:
-    # proxy = 기존 대시보드(tomato-voice)를 통해 팔을 읽고 움직인다. 포트를
-    #         안 잡으므로 대시보드를 켜 둔 채 쓸 수 있다. 대신 ~10Hz.
-    # direct = 이 프로세스가 /dev/ttyACM0을 직접 연다. ⚠ tomato-voice를 먼저 끌 것.
-    arm_mode: "proxy"
+    # direct = ROS가 /dev/ttyACM0을 직접 연다(lerobot SOFollower 직결). **기본값.**
+    #          ⚠ tomato-voice.service를 먼저 끌 것 — 포트는 한 프로세스만 연다.
+    # proxy  = 레거시 대시보드를 통해 읽고 움직인다. **브링업 전용**이며 관절값이
+    #          HTTP 폴링(~10Hz)이라 TF 시각 정렬이 안 된다. v2.0.0-ros.3에서 삭제.
+    arm_mode: "direct"
     dashboard_url: "http://127.0.0.1:8090"   # config.VOICE_LOG_HTTP_PORT
     arm_port: ""            # 비우면 자동 탐색
     publish_hz: 10.0
@@ -53,14 +54,20 @@ tomato_detect:
 
 tomato_handeye:
   ros__parameters:
-    # fixed  = 카메라가 팔과 무관하게 고정(차체에 볼트로). 마커를 **집게에** 붙인다.
-    # on_arm = 카메라가 손목에 붙어 같이 움직임. 마커를 **책상에** 둔다.
-    mount: "fixed"
+    # ⚠ 보정 파일은 레거시와 **한 벌**이다 — ~/arm_eye.json (config.ARM_EYE_FILE).
+    #    대시보드에서 잡은 보정을 ROS가 그대로 쓰고, 그 반대도 같다. 팔도 카메라도
+    #    하나뿐이므로 보정도 하나여야 한다.
+    #
+    # mount 를 비우면 **그 파일이 정한다**(권장). 값을 박으면 대시보드에서 장착을
+    # 바꿨을 때 두 계통의 생각이 갈리고, 노드가 그걸 발견하면 뜨지 않고 멈춘다.
+    #   fixed  = 카메라가 팔과 무관하게 고정(차체·삼각대). 마커를 **집게에** 붙인다.
+    #   on_arm = 카메라가 손목에 붙어 같이 움직임. 마커를 **책상에** 둔다.
+    mount: ""
     parent_frame: "arm_base"
     tool_frame: "tool0"
     camera_optical_frame: "camera_color_optical_frame"
     camera_link_frame: "camera_link"
-    calib_path: "~/tomato_handeye.json"
+    calib_path: ""          # 비우면 config.ARM_EYE_FILE
     aruco_dict: "4x4_50"
     marker_id: -1           # -1 = 아무거나(하나만 보일 때). 여러 개면 번호를 지정
     # TCP에서 마커 중심까지 (도구 좌표 mm: +x 찌르는 방향, +y 왼쪽, +z 위).

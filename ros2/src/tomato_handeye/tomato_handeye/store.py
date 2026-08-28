@@ -1,33 +1,59 @@
-"""보정 결과를 파일로 남기고 TF로 되살린다. numpy만 쓴다(rclpy 없음).
+"""보정을 **한 벌로** 유지하고, 그것을 TF로 옮긴다. numpy만 쓴다(rclpy 없음).
 
 ────────────────────────────────────────────────────────────────────────
-⚠ 이 파일에서 제일 중요한 함수는 `retarget()`이다. 왜 필요한지부터.
+① 보정 파일은 하나다 — `~/arm_eye.json`
 
-손-눈 보정이 푸는 것은 **`arm_base → 컬러 광학 프레임`** 이다(그 좌표계에서
-점을 역투영했으니까). 그런데 그 변환을 그대로 static TF로 쏘면 안 된다 —
-realsense2_camera 드라이버가 이미 `camera_link → camera_color_optical_frame`을
-발행하고 있어서, 같은 프레임에 **부모가 둘**이 된다. tf2는 그 순간부터
-"TF_OLD_DATA / multiple parents" 를 뿜으며 조회가 오락가락한다.
+처음에는 ROS 쪽이 `~/tomato_handeye.json`을 따로 썼다. 그건 **같은 카메라의
+보정이 두 벌**이라는 뜻이고, 이 저장소가 반복해서 비싸게 배운 실패 그대로다:
+두 파일이 갈라지는 순간 "보정은 됐다는데 팔이 옆으로 간다"가 시작되고, 어느
+쪽이 진짜인지 아무도 모른다.
 
-그래서 우리가 쏘는 것은 한 칸 위다:
+그래서 저장·복원은 레거시 [`eye.EyeConfig`](../../../../src/tomato_picker/hardware/eye.py)를
+**그대로 호출한다.** 형식을 여기서 다시 구현하지도 않는다 — 구현이 둘이면
+결국 값도 둘이 된다. 파일이 정본이고, 두 계통이 같은 파일을 본다.
 
-    arm_base → camera_link  =  (arm_base → color_optical) ∘ (camera_link → color_optical)⁻¹
+⚠ 그러면 레거시 대시보드에서 보정을 다시 잡아도 ROS가 그걸 그대로 쓴다.
+   그게 의도다. 팔도 카메라도 하나뿐이므로 보정도 하나여야 한다.
 
-드라이버가 발행하는 `camera_link → color_optical`을 TF에서 읽어 합성한다.
-**보정 결과 자체는 안 바뀐다** — 어느 마디에 붙일지만 바꾸는 것이다.
+② `retarget()` — 왜 광학 프레임에 직접 안 붙이는가
+
+손-눈 보정이 푸는 것은 `arm_base → 컬러 광학 프레임`이다(그 좌표계에서 점을
+역투영했으니까). 그런데 그대로 static TF로 쏘면 realsense2_camera가 이미
+발행하는 `camera_link → camera_color_optical_frame`과 겹쳐 **같은 프레임에
+부모가 둘**이 된다. tf2는 그때부터 조회가 오락가락한다.
+
+    arm_base → camera_link = (arm_base → optical) ∘ (camera_link → optical)⁻¹
+
+보정 결과 자체는 안 바뀐다. 어느 마디에 붙일지만 바꾸는 것이다.
 """
 
 from __future__ import annotations
 
-import json
 import math
-import os
-import tempfile
-import time
 
 import numpy as np
 
-DEFAULT_PATH = "~/tomato_handeye.json"
+
+class CalibrationStoreUnavailable(RuntimeError):
+    """보정 저장소(`eye.EyeConfig`)를 못 불러왔다. **대체 구현으로 넘어가지 않는다.**"""
+
+
+def config(path: str = ""):
+    """`eye.EyeConfig` 하나를 만들어 준다. 경로를 비우면 레거시 기본값을 그대로 쓴다.
+
+    lazy import인 이유 — 이 모듈은 `ros_selfcheck.py`가 numpy만으로 읽을 수 있어야
+    하고(TF 수학 검증), `eye.py`는 그보다 무거운 사슬(config·cartesian 상수)을 끈다.
+    """
+    try:
+        from tomato_picker.hardware.eye import EyeConfig
+    except ImportError as exc:  # pragma: no cover - 배치 실수를 즉시 드러낸다
+        raise CalibrationStoreUnavailable(
+            f"tomato_picker.hardware.eye를 import하지 못했다: {exc}\n"
+            "보정 파일(~/arm_eye.json)의 정본은 그 모듈이다 — ROS 쪽에서 형식을 "
+            "다시 구현하지 않는다(두 벌이 되는 순간 어느 쪽이 진짜인지 알 수 없다). "
+            "저장소 src/를 PYTHONPATH에 넣어라."
+        ) from exc
+    return EyeConfig(path) if path else EyeConfig()
 
 
 # ----------------------------------------------------------------------
@@ -82,56 +108,3 @@ def retarget(parent_to_optical, link_to_optical):
     둘 다 handeye.Rigid. 단위는 서로 같기만 하면 된다(여기서는 mm).
     """
     return parent_to_optical.compose(link_to_optical.inverse())
-
-
-# ----------------------------------------------------------------------
-# 파일
-# ----------------------------------------------------------------------
-
-def save(fit, mount: str, parent_frame: str, camera_frame: str,
-         path: str = DEFAULT_PATH, note: str = "") -> str:
-    """보정을 파일로. **잔차를 같이 적는다** — 나중에 "이 값 믿어도 되나"의 답이다.
-
-    원자적으로 쓴다(임시파일 → replace). 저장 중에 전원이 나가도 반쪽짜리
-    보정이 남지 않는다 — 반쪽 보정은 없는 보정보다 나쁘다.
-    """
-    full = os.path.expanduser(path)
-    payload = {
-        "version": 1,
-        "mount": mount,
-        "parent_frame": parent_frame,
-        "camera_frame": camera_frame,
-        "units": "mm",
-        "transform": fit.transform.as_dict(),
-        "rms_mm": round(float(fit.rms_mm), 3),
-        "max_mm": round(float(fit.max_mm), 3),
-        "samples": int(fit.samples),
-        "marker_base_mm": list(fit.marker_base) if fit.marker_base else None,
-        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "note": note,
-    }
-    directory = os.path.dirname(full) or "."
-    os.makedirs(directory, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".handeye-", suffix=".json")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, full)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    return full
-
-
-def load(path: str = DEFAULT_PATH) -> dict | None:
-    """없으면 None. **없는 것과 깨진 것을 구분하지 않는다** — 둘 다 "보정 안 됨"이고,
-    그 상태에서 TF를 안 쏘는 것이 옳은 동작이다(조회가 실패해서 사실이 드러난다)."""
-    try:
-        with open(os.path.expanduser(path), encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) and data.get("transform") else None

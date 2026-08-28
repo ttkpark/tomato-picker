@@ -1,23 +1,29 @@
 """1단계 전부 — URDF/TF · 팔 · 주행 · 인식 · 손눈보정.
 
-기본값은 **가장 안전한 조합**이다: 팔은 proxy(포트를 안 잡는다), 주행은 꺼짐,
-카메라 드라이버는 꺼짐(별도로 띄우는 경우가 많아서). 하나씩 켜 가며 붙인다.
+**켜기 전에 자리를 비운다.** 장치는 한 프로세스만 연다 — 팔(`/dev/ttyACM0`),
+주행 보드(`/dev/ttyUSB0`), 그리고 **D405도 마찬가지다**(`depth-cam.service`가
+잡고 있으면 realsense2_camera가 못 연다).
+
+    sudo systemctl stop tomato-voice depth-cam       # 팔 + 카메라
+    sudo systemctl stop controller-drive             # 주행까지 쓸 때
+
+그다음 하나씩 켜 가며 붙인다.
 
     # ① TF만 — 팔도 카메라도 없이 URDF가 맞는지 rviz로 본다
-    ros2 launch tomato_bringup stage1.launch.py arm:=false
+    ros2 launch tomato_bringup stage1.launch.py arm:=false handeye:=false
 
-    # ② 팔 붙이기 (대시보드를 켜 둔 채로)
-    ros2 launch tomato_bringup stage1.launch.py arm_mode:=proxy
+    # ② 팔 (ROS가 포트를 직접 잡는다)
+    ros2 launch tomato_bringup stage1.launch.py
 
     # ③ 카메라 + 검출까지
     ros2 launch tomato_bringup stage1.launch.py camera:=true perception:=true
 
-    # ④ 주행까지 (⚠ controller-drive.service를 먼저 끌 것)
+    # ④ 주행까지
     ros2 launch tomato_bringup stage1.launch.py base:=true
 
-⚠ 켜는 순서가 아니라 **끄는 순서**가 중요하다. 포트를 한 프로세스만 열 수 있으니
-   `arm_mode:=direct`나 `base:=true`를 쓰기 전에 기존 서비스를 먼저 세워라:
-       sudo systemctl stop tomato-voice controller-drive
+⚠ `arm_mode:=proxy`는 **레거시 대시보드를 켜 둔 채 배선만 확인하는** 임시 경로다.
+   관절값이 HTTP 폴링이라 TF 시각 정렬이 안 되므로 보정·수확에는 쓰지 마라
+   (v2.0.0-ros.3에서 삭제). 포트가 막히면 도망갈 곳이 아니라 **끌 서비스**를 봐라.
 """
 
 import os
@@ -42,8 +48,8 @@ def generate_launch_description() -> LaunchDescription:
     args = [
         DeclareLaunchArgument("arm", default_value="true"),
         DeclareLaunchArgument(
-            "arm_mode", default_value="proxy",
-            description="proxy=기존 대시보드를 통해(포트 안 잡음) / direct=포트를 직접"),
+            "arm_mode", default_value="direct",
+            description="direct=ROS가 포트를 직접(기본) / proxy=레거시 대시보드 경유(브링업 전용)"),
         DeclareLaunchArgument("base", default_value="false",
                               description="⚠ controller-drive를 먼저 끌 것"),
         DeclareLaunchArgument("camera", default_value="false",

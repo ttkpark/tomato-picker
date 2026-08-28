@@ -54,7 +54,9 @@ class ArmNode(Node):
     def __init__(self) -> None:
         super().__init__("tomato_arm")
 
-        self.declare_parameter("arm_mode", "proxy")
+        # ⚠ 기본은 direct — ROS가 팔의 주인이다. proxy는 브링업 전용이며
+        #    관절값이 HTTP 폴링이라 TF 시각 정렬이 안 된다(arm_source.py 참고).
+        self.declare_parameter("arm_mode", "direct")
         self.declare_parameter("dashboard_url", "http://127.0.0.1:8090")
         self.declare_parameter("arm_port", "")
         self.declare_parameter("publish_hz", 10.0)
@@ -71,6 +73,10 @@ class ArmNode(Node):
             port=self.get_parameter("arm_port").value or None,
         )
         self.get_logger().info(f"팔 연결 방식: {self._source.describe()}")
+        if self._source.warning():
+            # 임시 경로로 돌고 있다는 사실은 **뜰 때마다** 말해야 한다.
+            # 조용하면 브링업용 설정이 그대로 실측까지 따라간다.
+            self.get_logger().warning(self._source.warning())
 
         self._pub = self.create_publisher(JointState, "joint_states", 10)
         self._status = self.create_publisher(

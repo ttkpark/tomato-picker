@@ -2,15 +2,19 @@
 
 ## 0. 먼저 자리를 비운다
 
-포트는 **한 프로세스만** 연다. 이건 설정이 아니라 물리다.
+포트도 카메라도 **한 프로세스만** 연다. 이건 설정이 아니라 물리다.
 
 ```bash
+sudo systemctl stop tomato-voice              # 대시보드가 /dev/ttyACM0(팔)을 잡고 있다
+sudo systemctl stop depth-cam                 # 발행기가 D405를 잡고 있다
 sudo systemctl stop controller-drive          # 게임패드가 /dev/ttyUSB0을 잡고 있다
-sudo systemctl stop tomato-voice              # 대시보드가 /dev/ttyACM0을 잡고 있다
 ```
 
-`tomato-voice`를 **끄고 싶지 않다면** 팔을 `arm_mode:=proxy`로 쓴다 — 그 프로세스를
-통해 팔을 읽고 움직이므로 포트를 안 잡는다. 대신 주기가 ~10Hz로 떨어진다.
+⚠ **D405를 빠뜨리기 쉽다.** 팔과 바퀴만 끄고 카메라를 놔두면 `realsense2_camera`가
+조용히 못 연다.
+
+`arm_mode:=proxy`(레거시 대시보드 경유)는 **배선 확인용**이다 — 관절값이 HTTP
+폴링이라 TF 시각 정렬이 안 되므로 보정·수확에는 쓰지 마라.
 
 ## 1. 빌드
 
@@ -36,8 +40,8 @@ cd /ws && colcon build --symlink-install && source install/setup.bash
 ros2 launch tomato_bringup stage1.launch.py arm:=false handeye:=false
 ros2 run tf2_tools view_frames        # 프레임 트리를 PDF로
 
-# ② 팔
-ros2 launch tomato_bringup stage1.launch.py arm_mode:=proxy
+# ② 팔 (ROS가 포트를 직접 잡는다 — 기본값)
+ros2 launch tomato_bringup stage1.launch.py
 ros2 topic echo /joint_states --once
 
 # ③ 카메라 + 검출
@@ -57,6 +61,9 @@ ros2 service call /handeye/capture_sample tomato_msgs/srv/CaptureSample "{label:
 ...
 ros2 service call /handeye/solve tomato_msgs/srv/SolveHandEye "{save: true}"
 ```
+
+저장 위치는 **`~/arm_eye.json`** — 레거시 대시보드와 **같은 파일**이다. 어느 쪽에서
+잡든 보정은 한 벌이고, 다른 쪽이 그대로 쓴다.
 
 잔차 RMS가 15mm를 넘으면 저장되지 않는다. `worst_index`가 가리키는 표본을 지우고
 다시 풀어라:
@@ -86,7 +93,8 @@ ros2 service call /arm/move_to_point tomato_msgs/srv/MoveToPoint \
 | rviz에서 팔이 안 그려진다 | `/joint_states`가 없으면 robot_state_publisher가 TF를 못 만든다 |
 | TF 조회가 오락가락한다 | 카메라 광학 프레임에 부모가 둘 — `store.retarget` 주석 참고 |
 | 열매가 **하나도** 안 나온다 | 깊이가 컬러에 정렬됐는지(`align_depth.enable`), `~/annotated`를 봐라 |
-| 팔을 못 연다 (`direct`) | `tomato-voice`가 살아 있다. `systemctl stop` 후 다시 |
+| 팔을 못 연다 | `tomato-voice`가 살아 있다. `systemctl stop` 후 다시 (proxy로 도망가지 말 것) |
+| 카메라를 못 연다 | `depth-cam.service`가 D405를 잡고 있다 |
 | 바퀴가 안 돈다 | `/cmd_vel`이 끊기면 0.3초 뒤 데드맨이 세운다. 계속 발행해야 한다 |
 | 보정 파일이 재시작마다 사라진다 | `HOME=/host-home` 마운트가 빠졌다 (compose 주석 참고) |
 

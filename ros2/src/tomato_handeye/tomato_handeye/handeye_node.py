@@ -71,12 +71,15 @@ class HandeyeNode(Node):
     def __init__(self) -> None:
         super().__init__("tomato_handeye")
 
-        self.declare_parameter("mount", "fixed")          # fixed | on_arm
+        # 비우면 **보정 파일이 정한다**(~/arm_eye.json). 여기에 값을 박으면 레거시
+        # 대시보드에서 장착을 바꿨을 때 두 계통의 생각이 갈린다.
+        self.declare_parameter("mount", "")               # "" | fixed | on_arm
         self.declare_parameter("parent_frame", "arm_base")
         self.declare_parameter("tool_frame", "tool0")
         self.declare_parameter("camera_optical_frame", "camera_color_optical_frame")
         self.declare_parameter("camera_link_frame", "camera_link")
-        self.declare_parameter("calib_path", store.DEFAULT_PATH)
+        # 비우면 레거시 기본 경로(config.ARM_EYE_FILE = ~/arm_eye.json).
+        self.declare_parameter("calib_path", "")
         self.declare_parameter("aruco_dict", "4x4_50")
         self.declare_parameter("marker_id", -1)           # -1 = 아무 마커나 (하나만 보일 때)
         # TCP에서 마커 중심까지 (도구 좌표 mm). fixed 모드에서만 의미가 있다.
@@ -86,9 +89,20 @@ class HandeyeNode(Node):
                                "/camera/camera/aligned_depth_to_color/image_raw")
         self.declare_parameter("info_topic", "/camera/camera/color/camera_info")
 
-        self._mount = str(self.get_parameter("mount").value)
-        if self._mount not in ("fixed", "on_arm"):
-            raise SystemExit(f"mount는 'fixed' 또는 'on_arm'이다 (받은 값: {self._mount!r})")
+        # 보정 파일은 레거시와 **같은 한 벌**이다 (store.py 머리말 참고).
+        self._eye = store.config(str(self.get_parameter("calib_path").value))
+        wanted = str(self.get_parameter("mount").value)
+        if wanted and wanted not in ("fixed", "on_arm"):
+            raise SystemExit(f"mount는 'fixed' 또는 'on_arm'이다 (받은 값: {wanted!r})")
+        if wanted and wanted != self._eye.mount and self._eye.has_calibration:
+            # 여기서 파일의 mount를 바꾸면 **레거시가 잡아 둔 보정이 지워진다**
+            # (EyeConfig.set_mount가 그렇게 설계돼 있다 — 뜻이 달라지므로 옳다).
+            # 남의 실측을 노드 파라미터 하나로 날리지 않는다. 사람에게 넘긴다.
+            raise SystemExit(
+                f"파라미터 mount={wanted!r}인데 {self._eye.path}에 저장된 보정은 "
+                f"mount={self._eye.mount!r}다. 장착을 정말 바꿨다면 대시보드에서 "
+                "장착 방식을 바꿔 보정을 다시 잡아라 — 여기서 파일을 고치지 않는다.")
+        self._mount = wanted or self._eye.mount
 
         self._bridge = CvBridge()
         self._intr: Intrinsics | None = None
@@ -270,11 +284,11 @@ class HandeyeNode(Node):
 
         self._broadcast(fit.transform)
         if req.save:
-            path = store.save(fit, self._mount,
-                              str(self.get_parameter("parent_frame").value),
-                              str(self.get_parameter("camera_optical_frame").value),
-                              str(self.get_parameter("calib_path").value))
-            res.detail += f" · 저장: {path}"
+            # 레거시와 같은 파일·같은 형식으로 저장한다. 내부파라미터도 함께 —
+            # 해상도를 바꾸면 그 값이 달라지는데, 기록이 없으면 나중에 왜 빗나가는지
+            # 아무도 모른다.
+            self._eye.store(self._mount, fit, self._intr, note="ROS handeye_node")
+            res.detail += f" · 저장: {self._eye.path}"
         else:
             res.detail += " · TF만 갱신(저장 안 함, save=true로 저장)"
         return res
@@ -354,24 +368,30 @@ class HandeyeNode(Node):
             f"rpy=({roll:.1f}, {pitch:.1f}, {yaw:.1f})°")
 
     def _restore(self) -> None:
-        """저장된 보정이 있으면 켜자마자 쏜다. 없으면 **아무것도 안 쏜다.**"""
-        data = store.load(str(self.get_parameter("calib_path").value))
-        if not data:
+        """저장된 보정이 있으면 켜자마자 쏜다. 없으면 **아무것도 안 쏜다.**
+
+        레거시 대시보드에서 잡은 보정도 여기로 그대로 들어온다 — 파일이 한 벌이기
+        때문이다. 어느 쪽에서 잡았든 팔과 카메라의 관계는 하나뿐이다.
+        """
+        self._eye.reload()
+        if not self._eye.has_calibration:
             self.get_logger().warning(
-                "저장된 손-눈 보정이 없다 — 카메라 TF를 발행하지 않는다. "
-                "이 상태에서 열매 좌표를 팔 좌표로 옮기려 하면 TF 조회가 실패한다"
-                "(그게 옳은 동작이다: 보정 안 된 값으로 팔을 움직이지 않는다).")
+                f"저장된 손-눈 보정이 없다({self._eye.path}) — 카메라 TF를 발행하지 "
+                "않는다. 이 상태에서 열매 좌표를 팔 좌표로 옮기려 하면 TF 조회가 "
+                "실패한다(그게 옳은 동작이다: 보정 안 된 값으로 팔을 움직이지 않는다).")
             return
-        if data.get("mount") != self._mount:
+        if not self._eye.good:
+            # 잔차가 나쁜 보정을 TF로 쏘면 "보정돼 있다"고 표시된 채 팔이 헛집는다.
             self.get_logger().error(
-                f"저장된 보정은 mount={data.get('mount')!r}인데 지금 파라미터는 "
-                f"{self._mount!r}다 — 다른 장착 방식의 값을 쓰면 팔이 엉뚱한 데로 간다. "
-                "발행하지 않는다.")
+                f"저장된 보정의 잔차가 RMS {self._eye.rms_mm}mm다 — 기준을 넘으므로 "
+                "발행하지 않는다. 표본을 더 흩어 다시 잡아라.")
             return
-        self._broadcast(Rigid.from_dict(data["transform"]))
+        self._broadcast(self._eye.transform)
+        snap = self._eye.snapshot()
         self.get_logger().info(
-            f"저장된 보정 복원 — 표본 {data.get('samples')}개, "
-            f"잔차 RMS {data.get('rms_mm')}mm ({data.get('saved_at')})")
+            f"저장된 보정 복원({self._eye.path}) — mount={self._mount} "
+            f"표본 {snap.get('samples')}개, 잔차 RMS {snap.get('rms_mm')}mm "
+            f"({snap.get('saved_at')})")
 
 
 def main(args=None) -> None:

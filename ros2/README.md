@@ -115,15 +115,39 @@ python ros2/tools/ros_selfcheck.py        # ROS도 젯슨도 필요 없음
 
 단계와 태그 대응은 [`docs/ros2-이행계획.md`](../docs/ros2-이행계획.md).
 
-## 7. ⚠ 기존 스택과 **동시에 켜지 말 것**
+## 7. ⚠ 장치는 배타적이다 — 켜기 전에 자리를 비운다
 
-포트는 한 프로세스만 연다(`exclusive=True`). 팔(`/dev/ttyACM0`)과 주행 보드
-(`/dev/ttyUSB0`) 둘 다 그렇다.
+포트도 카메라도 **한 프로세스만** 연다. 설정이 아니라 물리다.
+
+| 장치 | 레거시가 잡는 것 | ROS가 잡는 것 |
+|---|---|---|
+| `/dev/ttyACM0` (팔) | `tomato-voice.service` | `arm_node` |
+| `/dev/ttyUSB0` (주행 보드) | `controller-drive.service` | `cmd_vel_node` |
+| **D405** | `depth-cam.service` (`/dev/shm`) | `realsense2_camera` |
 
 ```bash
-sudo systemctl stop tomato-voice controller-drive     # 먼저 비운다
+sudo systemctl stop tomato-voice depth-cam      # 팔 + 카메라
+sudo systemctl stop controller-drive            # 주행까지 쓸 때
 ```
 
-비우기 싫다면 `tomato_bridge`를 **proxy 모드**로 띄운다 — 기존 대시보드의
-`GET /status` / `POST /cmd`를 통해 팔을 읽고 움직이므로 포트를 안 잡는다.
-느리지만(폴링 ~10Hz) 데모 중에 나란히 띄워 볼 수 있다. `ros2/docker/README.md` 참고.
+`arm_mode:=proxy`는 **레거시 대시보드를 켜 둔 채 배선만 확인하는** 임시 경로다.
+관절값이 HTTP 폴링(~10Hz)이라 **TF 시각 정렬이 안 되므로** 보정·수확에는 쓰지 마라
+(`v2.0.0-ros.3`에서 삭제). 포트가 막히면 도망갈 곳이 아니라 **끌 서비스**를 봐라.
+
+## 8. 레거시와 무엇을 공유하고 무엇을 안 하는가
+
+한 줄로: **계산과 실측값은 공유하고, 장치와 상태의 소유권은 ROS가 가지며, 웹
+서비스에는 붙지 않는다.**
+
+기구학을 여기 다시 쓰면 같은 팔을 두 계통이 다르게 믿게 된다 — 그래서
+`kinematics.py`·`handeye.py`·`cartesian.py`·`eye.EyeConfig`는 **계속 쓴다**.
+그건 라이브러리를 쓰는 것이지 옛 계통을 따라가는 것이 아니다. 반대로 팔을 여는 일,
+보드에 쓰는 일, 카메라를 잡는 일은 ROS가 가져왔다.
+
+보정 파일은 **한 벌**이다(`~/arm_eye.json`). 대시보드에서 잡은 보정을 ROS가 그대로
+쓰고, 그 반대도 같다 — 팔도 카메라도 하나뿐이므로.
+
+전체 표와 언제 무엇을 끊는지는
+[`docs/ros2-이행계획.md`](../docs/ros2-이행계획.md) §4 "레거시 의존 졸업표".
+그 표는 `ros2/tools/ros_selfcheck.py`의 **[경계]** 검사가 강제한다 — 표에 없는
+의존이 들어오면 실패한다.
