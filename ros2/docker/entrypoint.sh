@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # ROS 환경 + 저장소 경로를 세우고 넘긴다.
 #
-# `set -e`를 안 쓴다 — 여기서 죽으면 셸조차 안 뜨고, 컨테이너에서 무엇이
-# 잘못됐는지 볼 방법이 사라진다. 대신 문제를 **말하고** 계속 간다.
-set -u
+# ⚠ `set -e`도 `set -u`도 쓰지 않는다.
+#
+#   · `set -e` — 여기서 죽으면 셸조차 안 뜨고, 컨테이너에서 무엇이 잘못됐는지
+#     볼 방법이 사라진다. 대신 문제를 **말하고** 계속 간다.
+#   · `set -u` — ROS의 `/opt/ros/$ROS_DISTRO/setup.bash`가 `set -u` 안전하지 않다.
+#     (실측: `line 8: AMENT_TRACE_SETUP_FILES: unbound variable`로 엔트리포인트가
+#      통째로 죽어 컨테이너가 즉시 종료됐다. colcon은 시작조차 못 했다.)
+#     ROS 환경 스크립트는 미정의 변수를 참조하는 것을 정상으로 삼는다.
 
 source "/opt/ros/${ROS_DISTRO}/setup.bash"
 

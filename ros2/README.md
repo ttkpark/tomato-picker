@@ -96,10 +96,23 @@ numpy 하나로 버티는 이유와 같다. **숫자가 맞는지를 확인하�
 떼어 놓고, PC에서 이걸 돌린다.
 
 ```bash
-python ros2/tools/ros_selfcheck.py        # ROS도 젯슨도 필요 없음
+python ros2/tools/ros_selfcheck.py        # ROS도 젯슨도 필요 없음 (69종)
 ```
 
-`rclpy`가 들어간 파일은 `*_node.py` **뿐이다.** 그 규칙을 셀프체크가 직접 검사한다.
+패키지 안에서 `rclpy`가 들어간 파일은 `*_node.py` **뿐이다.** 그 규칙을 셀프체크가
+직접 검사한다.
+
+검사는 두 층이다 — 아래쪽이 위쪽의 구멍을 막는다.
+
+| 어디서 | 무엇을 | 구멍 |
+|---|---|---|
+| PC | `ros2/tools/ros_selfcheck.py` — xacro를 **직접 파싱해** 계산한 값과 대조 | 내가 xacro를 잘못 읽었으면 검사도 같이 틀린다 |
+| 로봇 | `ros2/tools/bringup_check.sh` → `tf_check.py` — **진짜 RSP가 만든 TF**와 대조 | 그 구멍을 막는다. 팔·카메라 없이 돈다 |
+
+```bash
+# 컨테이너 안에서 (팔도 카메라도 필요 없다)
+sudo HOME="$HOME" docker compose run --rm ros bash /ws/tools/bringup_check.sh
+```
 
 ## 6. 지금 되는 것 / 아직 아닌 것
 

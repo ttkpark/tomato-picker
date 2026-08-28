@@ -42,16 +42,21 @@
       </inertial>
     </xacro:macro>
 
-    <!-- 길이 len짜리 막대를 로컬 +x 방향으로 그린다 -->
-    <xacro:macro name="rod_visual" params="len mname rgba">
+    <!-- 길이 rod_len짜리 막대를 로컬 +x 방향으로 그린다.
+         ⚠ 인자 이름을 `len`으로 두면 안 된다 — xacro의 내장 심볼을 덮어써서
+            `warning: redefining global symbol: len`을 stderr로 뱉는다. 그 자체는
+            무해해 보이지만 런치의 Command 치환이 **stderr 한 줄을 곧 실패로**
+            취급해서 로봇 기술 전체가 안 뜬다(실측: /robot_description 없음,
+            TF 트리 없음, 링크 0개). 증상이 원인을 전혀 안 가리킨다. -->
+    <xacro:macro name="rod_visual" params="rod_len mname rgba">
       <visual>
-        <origin xyz="${len/2} 0 0" rpy="0 ${pi/2} 0"/>
-        <geometry><cylinder radius="${rod_r}" length="${len}"/></geometry>
+        <origin xyz="${rod_len/2} 0 0" rpy="0 ${pi/2} 0"/>
+        <geometry><cylinder radius="${rod_r}" length="${rod_len}"/></geometry>
         <material name="${prefix}m_${mname}"><color rgba="${rgba}"/></material>
       </visual>
       <collision>
-        <origin xyz="${len/2} 0 0" rpy="0 ${pi/2} 0"/>
-        <geometry><cylinder radius="${rod_r}" length="${len}"/></geometry>
+        <origin xyz="${rod_len/2} 0 0" rpy="0 ${pi/2} 0"/>
+        <geometry><cylinder radius="${rod_r}" length="${rod_len}"/></geometry>
       </collision>
     </xacro:macro>
 
@@ -89,7 +94,7 @@
 
     <!-- ============ 2. shoulder_lift ============ -->
     <link name="${prefix}upper_arm_link">
-      <xacro:rod_visual len="${l1}" mname="upper" rgba="0.9 0.45 0.2 1"/>
+      <xacro:rod_visual rod_len="${l1}" mname="upper" rgba="0.9 0.45 0.2 1"/>
       <xacro:dummy_inertial m="0.2"/>
     </link>
     <joint name="${prefix}shoulder_lift" type="revolute">
@@ -102,7 +107,7 @@
 
     <!-- ============ 3. elbow_flex ============ -->
     <link name="${prefix}forearm_link">
-      <xacro:rod_visual len="${l2}" mname="fore" rgba="0.95 0.7 0.25 1"/>
+      <xacro:rod_visual rod_len="${l2}" mname="fore" rgba="0.95 0.7 0.25 1"/>
       <xacro:dummy_inertial m="0.15"/>
     </link>
     <joint name="${prefix}elbow_flex" type="revolute">
@@ -132,7 +137,7 @@
 
     <!-- ============ 5. wrist_roll ============ -->
     <link name="${prefix}gripper_link">
-      <xacro:rod_visual len="${l3}" mname="grip" rgba="0.55 0.75 0.4 1"/>
+      <xacro:rod_visual rod_len="${l3}" mname="grip" rgba="0.55 0.75 0.4 1"/>
       <xacro:dummy_inertial m="0.1"/>
     </link>
     <joint name="${prefix}wrist_roll" type="revolute">

@@ -58,12 +58,45 @@ except ImportError as exc:  # pragma: no cover
         "저장소 src/를 PYTHONPATH에 넣어라 — 보정 계산은 그 모듈이 한다."
     ) from exc
 
-ARUCO_DICTS = {
-    "4x4_50": cv2.aruco.DICT_4X4_50,
-    "5x5_50": cv2.aruco.DICT_5X5_50,
-    "6x6_250": cv2.aruco.DICT_6X6_250,
-    "apriltag_36h11": cv2.aruco.DICT_APRILTAG_36h11,
+ARUCO_DICT_NAMES = {
+    "4x4_50": "DICT_4X4_50",
+    "5x5_50": "DICT_5X5_50",
+    "6x6_250": "DICT_6X6_250",
+    "apriltag_36h11": "DICT_APRILTAG_36h11",
 }
+
+
+def detect_markers(image, dict_name: str):
+    """ArUco 검출 — **OpenCV 4.6과 4.7+ 양쪽에서 돈다.**
+
+    4.7에서 aruco API가 통째로 바뀌었다(`ArucoDetector` 클래스 도입, `Dictionary_get`
+    → `getPredefinedDictionary`). 우분투 24.04가 싣는 python3-opencv는 **4.6**이라
+    새 API만 쓰면 컨테이너 안에서 `AttributeError`로 죽는다 — 그런데 그 에러는
+    "보정이 안 된다"로만 보이고 원인을 안 가리킨다.
+
+    모듈 최상단에서 상수를 읽지 않는 이유도 같다: aruco가 아예 없는 opencv
+    (contrib 없는 빌드)에서는 import 시점에 노드 전체가 죽어, 카메라와 무관한
+    기능까지 같이 못 쓰게 된다. 여기서 **필요할 때** 확인하고 문장으로 말한다.
+    """
+    aruco = getattr(cv2, "aruco", None)
+    if aruco is None:
+        raise LookupError(
+            "이 OpenCV에는 cv2.aruco가 없다(contrib 미포함 빌드). "
+            "컨테이너라면 `pip3 install opencv-contrib-python`.")
+    if dict_name not in ARUCO_DICT_NAMES:
+        raise LookupError(f"모르는 aruco_dict={dict_name!r}. 쓸 수 있는 것: "
+                          + ", ".join(ARUCO_DICT_NAMES))
+    dict_id = getattr(aruco, ARUCO_DICT_NAMES[dict_name])
+
+    if hasattr(aruco, "ArucoDetector"):        # OpenCV >= 4.7
+        detector = aruco.ArucoDetector(aruco.getPredefinedDictionary(dict_id),
+                                       aruco.DetectorParameters())
+        corners, ids, _ = detector.detectMarkers(image)
+    else:                                      # OpenCV <= 4.6 (우분투 24.04 기본)
+        corners, ids, _ = aruco.detectMarkers(
+            image, aruco.Dictionary_get(dict_id),
+            parameters=aruco.DetectorParameters_create())
+    return corners, ids
 
 
 class HandeyeNode(Node):
@@ -201,13 +234,7 @@ class HandeyeNode(Node):
         PnP 자세는 거리 방향으로 잘 흔들리는데, D405는 그 거리를 직접 잰다.
         우리에게 필요한 것도 자세가 아니라 **점 하나**다.
         """
-        name = str(self.get_parameter("aruco_dict").value)
-        if name not in ARUCO_DICTS:
-            raise LookupError(f"모르는 aruco_dict={name!r}. 쓸 수 있는 것: "
-                              + ", ".join(ARUCO_DICTS))
-        dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICTS[name])
-        detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
-        corners, ids, _ = detector.detectMarkers(color)
+        corners, ids = detect_markers(color, str(self.get_parameter("aruco_dict").value))
         if ids is None or len(ids) == 0:
             raise LookupError("마커가 안 보인다 — 카메라 화각 안에 들어왔는지, "
                               "너무 기울지 않았는지, 초점이 맞는지 확인하라.")

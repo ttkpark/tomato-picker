@@ -18,10 +18,29 @@ sudo systemctl stop controller-drive          # 게임패드가 /dev/ttyUSB0을 
 
 ## 1. 빌드
 
+이 젯슨은 **Ubuntu 24.04 noble / arm64**라 Jazzy가 배포판 기본이다(그래서
+`ros:jazzy-ros-base`가 그대로 맞는다). `server` 계정은 **docker 그룹이 아니라**
+`sudo`로 돌린다.
+
 ```bash
 cd ~/tomato-picker/ros2/docker
-docker compose build                 # 처음 한 번. 젯슨에서 10~20분
-docker compose run --rm ros          # 셸
+sudo HOME="$HOME" docker compose build     # 처음 한 번. 젯슨에서 10~20분
+sudo HOME="$HOME" docker compose run --rm ros
+```
+
+⚠ **`HOME="$HOME"`을 빠뜨리지 마라.** `sudo`는 HOME을 `/root`로 바꾸는데,
+compose가 `${HOME}`을 그대로 마운트에 쓴다(`- ${HOME}:/host-home`). 빠뜨리면
+팔 영점(`~/arm_cartesian.json`)과 손-눈 보정(`~/arm_eye.json`)을 **엉뚱한 홈에서**
+찾게 되고, 증상은 "보정을 방금 했는데 컨테이너가 없다고 한다"로 나타난다.
+(귀찮으면 `sudo usermod -aG docker server` 후 재로그인 — 그 뒤로는 sudo가 필요 없다.)
+
+⚠ **RAM이 빠듯하다** — 7.4Gi 중 `tomato_vision.py`(YOLO)가 2.7Gi를 쓴다. 빌드가
+OOM으로 죽으면 잠깐 비운다:
+
+```bash
+sudo systemctl stop tomato-vision      # 2.7Gi 확보 (검출만 멈춘다)
+colcon build --symlink-install --parallel-workers 1
+sudo systemctl start tomato-vision
 ```
 
 컨테이너 안에서:

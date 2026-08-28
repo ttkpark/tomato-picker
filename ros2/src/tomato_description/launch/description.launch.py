@@ -19,6 +19,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 PKG = "tomato_description"
 
@@ -61,7 +62,11 @@ def generate_launch_description() -> LaunchDescription:
     geometry = os.path.join(share, "config", "so101_geometry.yaml")
 
     args = " ".join(f"{k}:={v}" for k, v in _mappings(geometry).items())
-    robot_description = Command(["xacro ", xacro_file, " ", args])
+    # on_stderr="warn" — 기본값은 "fail"이라 **xacro가 경고 한 줄만 뱉어도** 로봇
+    # 기술이 통째로 안 뜬다. 그때 증상은 "/robot_description 없음 · TF 트리 없음"
+    # 이고 원인을 전혀 안 가리킨다(실측). 경고는 보여 주되 죽이지는 않는다 —
+    # 진짜 실패면 xacro가 0이 아닌 코드로 끝나므로 여기서 그대로 예외가 난다.
+    robot_description = Command(["xacro ", xacro_file, " ", args], on_stderr="warn")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -71,7 +76,13 @@ def generate_launch_description() -> LaunchDescription:
         Node(
             package="robot_state_publisher", executable="robot_state_publisher",
             output="screen",
-            parameters=[{"robot_description": robot_description}],
+            # ParameterValue(..., value_type=str) 가 **반드시** 있어야 한다.
+            # 없으면 launch가 xacro 출력(URDF 문자열)을 YAML로 파싱하려다 실패한다:
+            #   "Unable to parse the value of parameter robot_description as yaml"
+            # URDF는 `<`로 시작해 YAML로도 읽히는 척하다 깨지므로, 문자열이라고
+            # 명시해 줘야 한다. (실측: 이것 하나로 TF 트리가 통째로 안 섰다.)
+            parameters=[{"robot_description": ParameterValue(robot_description,
+                                                             value_type=str)}],
         ),
         Node(
             package="joint_state_publisher_gui", executable="joint_state_publisher_gui",
