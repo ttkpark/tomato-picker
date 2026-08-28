@@ -55,7 +55,7 @@ class ArmNode(Node):
         super().__init__("tomato_arm")
 
         self.declare_parameter("arm_mode", "proxy")
-        self.declare_parameter("dashboard_url", "http://127.0.0.1:8000")
+        self.declare_parameter("dashboard_url", "http://127.0.0.1:8090")
         self.declare_parameter("arm_port", "")
         self.declare_parameter("publish_hz", 10.0)
         self.declare_parameter("base_frame", "arm_base")

@@ -9,7 +9,7 @@ tomato_arm:
     #         안 잡으므로 대시보드를 켜 둔 채 쓸 수 있다. 대신 ~10Hz.
     # direct = 이 프로세스가 /dev/ttyACM0을 직접 연다. ⚠ tomato-voice를 먼저 끌 것.
     arm_mode: "proxy"
-    dashboard_url: "http://127.0.0.1:8000"
+    dashboard_url: "http://127.0.0.1:8090"   # config.VOICE_LOG_HTTP_PORT
     arm_port: ""            # 비우면 자동 탐색
     publish_hz: 10.0
     base_frame: "arm_base"

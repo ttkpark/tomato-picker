@@ -71,7 +71,7 @@ class ProxyArm:
     **이미 도(°) 단위**다 — 여기서 환산할 것이 없다. 그게 이 길의 장점이다.
     """
 
-    def __init__(self, base_url: str = "http://127.0.0.1:8000",
+    def __init__(self, base_url: str = "http://127.0.0.1:8090",
                  timeout: float = 1.0) -> None:
         self._url = base_url.rstrip("/")
         self._timeout = timeout

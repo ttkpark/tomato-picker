@@ -82,7 +82,7 @@ ros2 service call /arm/move_to_point tomato_msgs/srv/MoveToPoint \
 | 증상 | 원인 |
 |---|---|
 | 노드는 떴는데 다른 기계에서 토픽이 안 보인다 | `network_mode: host`가 빠졌거나 `ROS_DOMAIN_ID`가 다르다 |
-| `/joint_states`가 안 온다 | proxy 모드에서 대시보드가 안 떠 있다 (`curl localhost:8000/status`) |
+| `/joint_states`가 안 온다 | proxy 모드에서 대시보드가 안 떠 있다 (`curl localhost:8090/status`) |
 | rviz에서 팔이 안 그려진다 | `/joint_states`가 없으면 robot_state_publisher가 TF를 못 만든다 |
 | TF 조회가 오락가락한다 | 카메라 광학 프레임에 부모가 둘 — `store.retarget` 주석 참고 |
 | 열매가 **하나도** 안 나온다 | 깊이가 컬러에 정렬됐는지(`align_depth.enable`), `~/annotated`를 봐라 |
