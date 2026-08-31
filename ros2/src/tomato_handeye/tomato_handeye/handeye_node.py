@@ -352,9 +352,27 @@ class HandeyeNode(Node):
     # TF로 내보내기
     # ------------------------------------------------------------------
 
+    def _tf_parent(self) -> str:
+        """보정 결과를 **어느 마디에 매달 것인가** — 장착 방식이 정한다.
+
+        ⚠ 이걸 틀리면 아무 에러 없이 전부 틀린다.
+
+          fixed  : 푼 값이 `T_parent_cam`  → 부모는 `parent_frame`(arm_base).
+                   카메라가 팔과 무관하게 고정이니 팔이 움직여도 그 자리다.
+          on_arm : 푼 값이 `T_tool_cam`    → 부모는 **`tool_frame`(tool0)**.
+                   카메라가 손목에 볼트로 붙어 팔과 **함께 움직인다.**
+
+        `on_arm`인데 arm_base에 매달면 카메라가 팔 밑동에 박혀 손목을 따라가지
+        않는다. 정지 상태에서는 그럴듯해 보이고, **팔이 움직이는 순간부터**
+        열매 좌표가 통째로 틀린다 — 증상은 "보정은 됐다는데 팔이 헛집는다"다.
+        """
+        if self._mount == "on_arm":
+            return str(self.get_parameter("tool_frame").value)
+        return str(self.get_parameter("parent_frame").value)
+
     def _broadcast(self, transform: Rigid) -> None:
         """보정 결과를 static TF로. **camera_link에 붙인다**(store.retarget 참고)."""
-        parent = str(self.get_parameter("parent_frame").value)
+        parent = self._tf_parent()
         optical = str(self.get_parameter("camera_optical_frame").value)
         link = str(self.get_parameter("camera_link_frame").value)
 

@@ -183,8 +183,17 @@ def test_legacy_boundary() -> None:
     check("보정 파일이 한 벌이다 (레거시와 같은 ~/arm_eye.json)",
           eye["calib_path"] == "",
           f"calib_path={eye['calib_path']!r} — 따로 두면 같은 카메라의 보정이 두 벌이 된다")
-    check("장착 방식은 보정 파일이 정한다", eye["mount"] == "",
-          f"mount={eye['mount']!r} — 값을 박으면 대시보드에서 바꿨을 때 갈린다")
+    # 장착 방식은 "파일이 정한다"(빈 값)거나, 실물과 맞는 값이어야 한다.
+    check("장착 방식이 fixed/on_arm/빈값 중 하나", eye["mount"] in ("", "fixed", "on_arm"),
+          f"mount={eye['mount']!r}")
+    # ⚠ on_arm인데 TF 부모가 arm_base면 카메라가 팔 밑동에 박혀 손목을 안 따라간다.
+    #    정지 상태에서는 그럴듯해 보이고 팔이 움직이는 순간부터 전부 틀린다.
+    node_src = os.path.join(SRC, "tomato_handeye", "tomato_handeye", "handeye_node.py")
+    with open(node_src, encoding="utf-8") as f:
+        handeye_body = f.read()
+    check("TF 부모를 장착 방식이 정한다",
+          "_tf_parent" in handeye_body and 'self._mount == "on_arm"' in handeye_body,
+          "on_arm은 T_tool_cam을 푼다 — tool0에 매달아야 한다")
 
     # store.py가 자기 형식으로 파일을 쓰면 '한 벌'이 깨진다.
     with open(os.path.join(SRC, "tomato_handeye", "tomato_handeye", "store.py"),
