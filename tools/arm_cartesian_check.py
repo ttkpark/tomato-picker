@@ -177,10 +177,13 @@ def test_guards() -> None:
     expect_error("바닥 아래로 (z=10, 하한 15)", lambda: low.move_to(z=10), "바닥 아래")
     near = fresh_arm(TOPDOWN_POSE_DEG)                   # x=135mm에서 시작
     expect_error("몸통 안쪽으로 (x=85, 하한 90)", lambda: near.move_to(x=85), "너무 가깝")
-    far = fresh_arm()                                    # x=312mm에서 시작
-    # ⚠ 실측 반영 후 사거리가 346 → 422mm로 늘었다. 옛 x=320은 이제 **닿는다** —
-    #    한 걸음(80mm) 안쪽이면서 확실히 못 닿는 곳으로 올린다.
-    expect_error("사거리 밖 (x=390)", lambda: far.move_to(x=390), "사거리")
+    far = fresh_arm()
+    # ⚠ 목표 x를 **기하에서 계산한다.** 숫자를 박아 두면 링크 길이를 고칠 때마다
+    #    이 시험이 깨진다 — 2026-08-31 실측 반영 때 두 번 깨졌다(사거리가 346 →
+    #    422 → 391mm로 움직였고, 박아 둔 320·390이 각각 "닿는다"·"한 걸음보다
+    #    멀다"로 뜻이 바뀌었다). 한 걸음(80mm) 안쪽에서 가장 먼 곳을 고른다.
+    x_far = far.pose().x + 79.0
+    expect_error(f"사거리 밖 (x={x_far:.0f})", lambda: far.move_to(x=x_far), "사거리")
 
     arm = fresh_arm()
     arm.config.clear_zero()
@@ -220,13 +223,21 @@ def test_zero_pose(geom: ArmGeometry) -> None:
 
     pose = arm.pose()
     up = geom.z0 + geom.l1 + geom.l2 + geom.l3
-    check("집게가 회전축 바로 위, 높이 = z0+l1+l2+l3",
-          abs(pose.x) < 1e-9 and abs(pose.y) < 1e-9 and abs(pose.z - up) < 1e-9,
-          f"x={pose.x:.1f} y={pose.y:.1f} z={pose.z:.1f} (기대 {up:.0f})")
+    # ⚠ 곧게 세워도 집게는 pan축 **바로 위가 아니다** — d0(2번 축의 수평 오프셋)
+    #    만큼 비켜서 있다. 2026-08-31 실측에서 d0 = -31.5mm(뒤쪽)로 밝혀졌고,
+    #    그 전까지 0으로 두었던 탓에 이 시험이 "x는 0"이라고 적혀 있었다.
+    check("집게 높이 = z0+l1+l2+l3, 수평위치 = d0",
+          abs(pose.x - geom.d0) < 1e-9 and abs(pose.y) < 1e-9
+          and abs(pose.z - up) < 1e-9,
+          f"x={pose.x:.1f} (기대 {geom.d0:.1f}) y={pose.y:.1f} "
+          f"z={pose.z:.1f} (기대 {up:.0f})")
     check("집게가 하늘을 본다 (pitch +90°)", abs(pose.pitch - 90) < 1e-9,
           f"pitch={pose.pitch:.1f}°")
+    # 세운 자세의 수평거리는 |d0|뿐이라 여전히 가드에 막힌다. 다만 d0가 음수면
+    # signed_radius도 음수라 가드가 "몸통 뒤로 넘어가 있습니다" 쪽 문장을 고른다
+    # — 둘 다 같은 가드이고, 여기서는 **막혔는지**만 본다.
     expect_error("세운 채로 조그하면 막힌다(특이점)", lambda: arm.jog(dx=10),
-                 "수직으로 서 있습니다")
+                 "수평거리")
 
     # 교시 자세가 파일에 남아야 한다 — 안 남으면 나중에 기준을 바꿀 때
     # 이미 잡아둔 팔이 조용히 90° 틀어진다.

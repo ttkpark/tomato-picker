@@ -609,7 +609,9 @@ ARM_POSE_GAP_SEC = 0.3
 #   ros2/.../so101_geometry.yaml. 셋을 **같이** 고쳐야 한다
 #   (ros_selfcheck가 뒤 둘의 불일치를 잡고, arm_cartesian_check가 이쪽을 잡는다).
 ARM_GEOM_Z0 = 119.5    # 마운트 평면 → 2번(shoulder_lift) 혼 중심 (mm)  옛 55.0
-ARM_GEOM_D0 = 0.0      # 1번(pan) 축 → 2번 혼 중심 수평 오프셋 (mm)  아직 안 쟀다
+ARM_GEOM_D0 = -31.5    # 1번(pan) 축 → 2번 혼 중심 수평 오프셋 (mm)
+#   ⚠ **음수 = 뒤쪽.** pan=0에서 팔이 뻗는 방향(+x)으로 재므로, 2번 축이
+#     pan축보다 뒤에 있으면 음수다. 2026-08-31 실측 31.5mm 뒤.
 ARM_GEOM_L1 = 116.5    # 2번 → 3번(elbow_flex) 혼 중심 (mm)  옛 116.0
 ARM_GEOM_L2 = 138.0    # 3번 → 4번(wrist_flex) 혼 중심 (mm)  옛 135.0
 ARM_GEOM_L3 = 168.0    # 4번 → 집게가 무는 지점(TCP) (mm)  옛 95.0 ← 가장 크게 틀렸다
