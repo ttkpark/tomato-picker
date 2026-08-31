@@ -87,11 +87,14 @@ PROBE_DEG = 8.0        # 야코비안 시험각
 W, H = 848.0, 480.0
 
 # 후보 격자. 앞 둘은 회전(도), 뒤 둘은 평행이동을 만드는 관절 변화(도).
-PAN_GRID = (-24.0, -12.0, 0.0, 12.0, 24.0)
-PITCH_GRID = (-10.0, 0.0, 10.0, 18.0)
-LIFT_GRID = (-14.0, 0.0, 14.0)
-ELBOW_GRID = (-14.0, 0.0, 14.0)
-WANT_POSES = 14
+# ⚠ lift 범위가 좁으면 **카메라가 안 움직인다** — 2026-08-31에 그것 때문에
+#   기선이 32mm뿐이었고 보정이 안 풀렸다. 표적을 가로로 눕혀 화면 여유가
+#   생겼으므로 lift를 넓게 쓴다(카메라 이동 폭 ~110mm를 노린다).
+PAN_GRID = (-28.0, -14.0, 0.0, 14.0, 28.0)
+PITCH_GRID = (-14.0, -4.0, 6.0, 16.0)
+LIFT_GRID = (-20.0, -10.0, 0.0, 12.0, 24.0)
+ELBOW_GRID = (-16.0, 0.0, 16.0)
+WANT_POSES = 16
 
 
 def tool_frame_from_joints(degs: dict, geom: kin.ArmGeometry) -> Rigid:
@@ -210,6 +213,18 @@ def main() -> int:
         d["wrist_flex"] += dpitch - dlift - delbow
         return d
 
+    def compensable(dpan, dpitch, dlift, delbow):
+        """`wrist_flex`가 **실제로 상쇄할 수 있는** 조합인가.
+
+        ⚠ 이걸 안 보면 조용히 틀린다. lift를 -12° 움직이며 wrist_flex를 +12°로
+          상쇄하려 했는데 wrist_flex가 이미 93°였고 한계가 105°라 다 못 갔다.
+          그러면 "자세는 그대로, 위치만 이동"이라는 전제가 깨지는데 **아무도
+          말해주지 않는다** — 실측에서 a3가 9.6° 어긋난 채로 표본이 들어갔다.
+        """
+        d = pose_for(dpan, dpitch, dlift, delbow)
+        lim = spans.get("wrist_flex", 210.0) / 2.0
+        return abs(d["wrist_flex"] - ref.get("wrist_flex", 0.0)) <= lim - 2.0
+
     # ── 야코비안: 각 축이 화면을 몇 px 옮기는가 (실측) ──
     print(f"\n[야코비안] 축마다 {PROBE_DEG:.0f}°가 화면을 몇 px 옮기는지 실측")
     axes = ("pan", "pitch", "lift", "elbow")
@@ -251,7 +266,7 @@ def main() -> int:
             for dl in LIFT_GRID:
                 for de in ELBOW_GRID:
                     a = (dp, dt, dl, de)
-                    if not visible(a):
+                    if not visible(a) or not compensable(*a):
                         continue
                     degs = pose_for(*a)
                     pose = kin.forward(degs, geom)

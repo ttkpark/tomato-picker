@@ -108,7 +108,10 @@ def test_jog() -> None:
 
     print("\n   도구 좌표계 — 집게가 보는 쪽으로 전진")
     arm = fresh_arm()
-    arm.jog(dpitch=-30)                      # 집게를 30° 더 숙인다
+    # ⚠ 2026-08-31 실측으로 l3가 95 → 168mm가 되면서 이 각이 -30°면 손목이
+    #    사거리를 넘는다(팔이 커지면 같은 각도라도 손목이 훨씬 뒤로 물러난다).
+    #    시험의 뜻(집게가 보는 쪽으로 전진)은 그대로고 크기만 줄인다.
+    arm.jog(dpitch=-15)                      # 집게를 15° 더 숙인다
     before = arm.pose()
     arm.jog(dx=20, frame="tool")             # 보는 쪽으로 20mm
     after = arm.pose()
@@ -174,8 +177,10 @@ def test_guards() -> None:
     expect_error("바닥 아래로 (z=10, 하한 15)", lambda: low.move_to(z=10), "바닥 아래")
     near = fresh_arm(TOPDOWN_POSE_DEG)                   # x=135mm에서 시작
     expect_error("몸통 안쪽으로 (x=85, 하한 90)", lambda: near.move_to(x=85), "너무 가깝")
-    far = fresh_arm()                                    # x=245mm에서 시작
-    expect_error("사거리 밖 (x=320)", lambda: far.move_to(x=320), "사거리")
+    far = fresh_arm()                                    # x=312mm에서 시작
+    # ⚠ 실측 반영 후 사거리가 346 → 422mm로 늘었다. 옛 x=320은 이제 **닿는다** —
+    #    한 걸음(80mm) 안쪽이면서 확실히 못 닿는 곳으로 올린다.
+    expect_error("사거리 밖 (x=390)", lambda: far.move_to(x=390), "사거리")
 
     arm = fresh_arm()
     arm.config.clear_zero()
