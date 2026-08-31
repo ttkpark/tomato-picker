@@ -30,6 +30,7 @@ PC에서 이 파일을 못 읽고, 그러면 자체검증이 통째로 죽는다
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 
@@ -84,6 +85,52 @@ class FollowerIO:
     def connected(self) -> bool:
         return self._follower is not None
 
+    @staticmethod
+    def _find_lerobot() -> str:
+        """lerobot을 못 찾으면 **호스트 venv를 sys.path 끝에 붙인다.**
+
+        왜 이 짓이 필요한가 — lerobot은 컨테이너에 없다. 젯슨의
+        `~/lerobot/.venv`(2.0G)에 있고, 그 venv의 파이썬은 3.12.3으로
+        컨테이너(우분투 24.04)와 **같은 버전**이라 그대로 읽힌다.
+
+        ⚠ `PYTHONPATH`가 아니라 `sys.path.append`인 것이 중요하다. PYTHONPATH는
+          표준 site-packages **앞**에 끼어들어서 venv의 numpy가 컨테이너의 numpy를
+          가린다 — cv_bridge는 컨테이너 numpy에 맞춰 빌드돼 있어 그 순간 깨진다.
+          끝에 붙이면 **컨테이너에 있는 것이 이기고, 없는 것만** venv에서 온다.
+
+        ⚠ 그래도 대가가 있다: `SOFollower`를 import하면 **torch(607MB)가 딸려온다**
+          (실측 3.5초). 서보 하나 열자고 딥러닝 프레임워크를 올리는 셈이다.
+          이게 졸업표에서 이 의존을 과도기로 둔 이유다 — 결국은 `scservo_sdk`
+          (이미 그 venv에 있는 순수 파이썬 SDK)로 직접 내려가야 한다. 다만 그때
+          **정규화(-100..100) 규약을 lerobot과 똑같이 맞춰야** 한다. 안 그러면
+          이미 잡아 둔 영점(~/arm_cartesian.json)의 뜻이 통째로 달라진다.
+        """
+        import glob
+        import os
+
+        # ⚠ `glob("<root>/**/site-packages", recursive=True)`로 찾으면 **못 찾는다.**
+        #    venv 디렉터리가 `.venv`라 숨김이고, glob의 `**`는 `.`으로 시작하는
+        #    디렉터리를 건너뛴다. 마운트도 환경변수도 멀쩡한데 결과가 빈 목록으로
+        #    나와서, 증상은 "lerobot을 못 찾았다"로만 보인다(실측).
+        #    그래서 venv 경로를 **명시적으로** 적는다.
+        patterns = (
+            os.path.join("{root}", ".venv", "lib", "python*", "site-packages"),
+            os.path.join("{root}", "venv", "lib", "python*", "site-packages"),
+            os.path.join("{root}", "lib", "python*", "site-packages"),
+            "{root}",  # root 자체가 site-packages인 경우
+        )
+        for root in (os.environ.get("TOMATO_LEROBOT", ""),
+                     os.path.expanduser("~/lerobot")):
+            if not root:
+                continue
+            for pattern in patterns:
+                for site in sorted(glob.glob(pattern.format(root=root))):
+                    if os.path.isdir(os.path.join(site, "lerobot")):
+                        if site not in sys.path:
+                            sys.path.append(site)
+                        return site
+        return ""
+
     def _connect(self) -> None:
         """지금 실제로 있는 경로를 다시 찾아 연결한다(USB 재열거 대응).
 
@@ -94,7 +141,16 @@ class FollowerIO:
           "포트가 보인다"가 "서보가 있다"는 뜻이 아니다 — 그대로 lerobot에 넘기면
           응답을 기다리며 **무한 블로킹**되고, 노드가 통째로 선다.
         """
-        from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
+        try:
+            from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
+        except ImportError:
+            site = self._find_lerobot()
+            if not site:
+                raise ImportError(
+                    "lerobot을 못 찾았다. 컨테이너 안이라면 호스트 venv를 물려야 한다 — "
+                    "compose가 ${HOME}/lerobot 을 /lerobot 로 마운트하고 "
+                    "TOMATO_LEROBOT=/lerobot 을 넣는지 확인하라.") from None
+            from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
 
         port = resolve_arm_port(
             self._port_fallback,

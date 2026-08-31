@@ -79,6 +79,7 @@ tools/tag.sh v2.0.0-ros.2 "손-눈 보정 실측 통과"
 | 손눈보정 수학 자체검증 | ✅ `tools/handeye_check.py` (45종, PC에서) |
 | **젯슨에서 실제 빌드** | ✅ 2026-08-28 — 도커 이미지 3.02GB, `colcon build` 6패키지 1분 12초 |
 | **로봇 위에서 TF 확인** | ✅ `bringup_check.sh` 0~2단 — RSP가 만든 TF가 `kinematics.forward()`와 **0.000mm** 일치 (7자세) |
+| **실물 팔 직결 확인** | ✅ `arm_check.sh` 3~4단 — ROS가 포트를 직접 잡고 실물 관절을 읽는다. 그 TF가 **레거시 대시보드가 보고한 집게 좌표와 0.03mm 일치** |
 
 **1단계에서 일부러 안 한 것들**
 
@@ -141,6 +142,7 @@ tools/tag.sh v2.0.0-ros.2 "손-눈 보정 실측 통과"
 | `eye.EyeConfig` (`~/arm_eye.json`) | `handeye_node` | **공유** — 이 카메라의 보정도 한 벌 | 안 끊는다 |
 | `ports`, `servo_probe`, `config` | `follower_io` | **공유** — 유틸·상수 | 안 끊는다 |
 | `motor_link` (주행 보드 드라이버) | `cmd_vel_node` | **과도기** | `v2.0.0-ros.4` — `ros2_control` 하드웨어 인터페이스로 승격 |
+| `lerobot.SOFollower` (모터 버스) | `follower_io` | **과도기** — import 하나에 **torch 607MB**가 딸려온다(실측 3.5초) | `v2.0.0-ros.4` — `scservo_sdk` 직결. ⚠ 그때 정규화(-100..100) 규약을 lerobot과 똑같이 맞춰야 한다(안 그러면 영점의 뜻이 달라진다) |
 | `arm.LerobotArm` | — | **금지** (ros.1에서 끊음) | 끝 |
 | `voice.*` (웹 서비스) | — | **금지** | 끝 |
 | `harvest.SceneModel` | — | **금지** — 새 계통이 없애려는 그것이다 | 끝 |

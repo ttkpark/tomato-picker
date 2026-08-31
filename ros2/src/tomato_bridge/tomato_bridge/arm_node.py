@@ -107,11 +107,15 @@ class ArmNode(Node):
         msg = JointState()
         msg.header.stamp = stamp
         msg.name = list(JOINT_NAMES) + list(EXTRA_JOINTS)
-        msg.position = [math.radians(degs.get(j, 0.0)) for j in JOINT_NAMES]
         # 집게는 지금 읽을 길이 없다(대시보드 status가 안 준다). 0으로 채우되
         # **모른다는 걸 파라미터 이름으로 남긴다** — 나중에 읽게 되면 여기만 고친다.
-        msg.position += [math.radians(float(self.get_parameter("gripper_deg").value))
-                         for _ in EXTRA_JOINTS]
+        gripper = math.radians(float(self.get_parameter("gripper_deg").value))
+        # ⚠ 한 번에 대입한다. `msg.position += [...]`로 이어붙이면 죽는다 —
+        #    rclpy의 float64[] 필드는 리스트가 아니라 array.array('d')라서
+        #    `TypeError: can only extend array with array (not "list")`가 난다.
+        #    (실측: 팔이 붙은 첫 프레임에서 노드가 통째로 죽었다.)
+        msg.position = ([math.radians(degs.get(j, 0.0)) for j in JOINT_NAMES]
+                        + [gripper] * len(EXTRA_JOINTS))
         self._pub.publish(msg)
 
     def _note(self, error: str | None) -> None:
