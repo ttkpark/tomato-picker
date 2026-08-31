@@ -74,6 +74,11 @@ def load_frame():
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="계산만 하고 안 움직인다")
+    ap.add_argument("--target", default="",
+                    help="목표 관절각(도) pan,lift,elbow,wflex,wroll. "
+                         "비우면 기본 목표(집게가 수평 앞)")
+    ap.add_argument("--hold", action="store_true",
+                    help="끝나고 토크를 켠 채 둔다 (안 그러면 팔이 떨어진다)")
     args = ap.parse_args()
 
     spans, zero, ref, signs = load_frame()
@@ -106,7 +111,11 @@ def main() -> int:
           f"signed_r {r0:6.1f}mm")
 
     target = dict(now)
-    target.update(TARGET_DEG)
+    if args.target.strip():
+        target.update(dict(zip(kin.JOINTS,
+                               [float(v) for v in args.target.split(",")])))
+    else:
+        target.update(TARGET_DEG)
     pt = kin.forward(target, geom)
     rt = kin.signed_radius(target, geom)
     print(f"목표  " + " ".join(f"{j.split('_')[0]}={target[j]:6.1f}" for j in kin.JOINTS))
@@ -169,7 +178,11 @@ def main() -> int:
     print(f"\n끝  TCP ({fp.x:.1f}, {fp.y:.1f}, {fp.z:.1f}) pitch {fp.pitch:.1f}° "
           f"signed_r {fr:.1f}mm")
     print("좌표 이동 가능" if fr >= 90 else "⚠ 아직 가드 안쪽이다")
-    io.close()
+    if args.hold:
+        # 토크를 끄지 않고 닫는다 — 끄면 그 자리에서 떨어진다.
+        io._follower.disconnect()      # noqa: SLF001
+    else:
+        io.close()
     return 0
 
 
