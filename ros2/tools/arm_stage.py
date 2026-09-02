@@ -47,6 +47,14 @@ CAL = os.path.expanduser(
     "~/.cache/huggingface/lerobot/calibration/robots/so_follower/tomato_follower.json")
 CART = os.path.expanduser("~/arm_cartesian.json")
 
+# 바닥은 팔 base(마운트)보다 이만큼 아래에 있다 — 실측 76.5mm
+# (`ros2/src/tomato_description/config/so101_geometry.yaml` 의 mount.z 와 같은 값).
+# ⚠ 예전에는 "지금 자리보다 1mm 아래"를 바닥으로 삼았다. 그러면 팔이 낮게
+#   늘어져 있을 때 **1.8mm 내려갔다 다시 오르는 정상 경로까지 막혀** 빠져나올
+#   수가 없다(2026-09-01, 복구 불가 상태로 두 번 갇혔다). 바닥은 팔이 어디
+#   있느냐와 무관한 값이다.
+MOUNT_Z_MM = 76.5
+FLOOR_MARGIN_MM = 10.0
 STEP_DEG = 8.0
 SECS = 1.0
 MAX_TRACK_ERR = 12.0
@@ -60,6 +68,10 @@ def main() -> int:
     ap.add_argument("--target", required=True,
                     help="목표 관절각(도) pan,lift,elbow,wflex,wroll")
     ap.add_argument("--dry", action="store_true")
+    ap.add_argument("--order", default="",
+                    help="관절 순서를 손으로 지정한다(쉼표). 비우면 |r|이 작은 쪽부터 자동. "
+                         "자동이 바닥에 걸릴 때 쓴다 — 접힌 관절을 먼저 돌리면 "
+                         "팔이 낮게 지나가지 않는다")
     ap.add_argument("--hold", action="store_true", default=True)
     args = ap.parse_args()
 
@@ -78,7 +90,16 @@ def main() -> int:
         v = signs.get(j)
         return -1.0 if (v is not None and float(v) < 0) else 1.0
 
+    # ⚠ **실측 눈금이 보정표를 이긴다** (`~/arm_cartesian.json`의 deg_per_norm).
+    #   2026-09-01: `wrist_roll`은 계산한 각도의 0.56배만 실제로 돌았다 —
+    #   관절축 측정 잔차가 24.8mm에서 2.6mm로 떨어졌고, 화면회전 실측
+    #   0.549와도 맞는다. 손목 굴림에 감속이 있어 틱→도(360/4096)가 안 통한다.
+    over = cart.get("deg_per_norm") or {}
+
     def dpn(j):
+        v = over.get(j)
+        if v:
+            return abs(float(v))
         s = spans.get(j)
         return abs(s) / 200.0 if s else (1.8 if j == "wrist_roll" else 0.9)
 
@@ -91,7 +112,7 @@ def main() -> int:
                 for j in d if j in kin.JOINTS}
 
     from tomato_bridge.follower_io import FollowerIO
-    io = FollowerIO()
+    io = FollowerIO(hold_torque=True)
     now = to_deg(io.read())
     io.write(to_norm(now), 0.4)          # 붙자마자 지금 자리를 붙든다 (안 그러면 처진다)
 
@@ -107,10 +128,10 @@ def main() -> int:
     show("지금", now)
     show("목표", target)
 
-    # ⚠ 시작 자세가 이미 바닥 아래일 수 있다 — 토크가 꺼진 채 늘어져 있으면
-    #    z가 음수까지 처진다(실측 -17mm). 그때 "z ≥ 15" 를 고집하면 첫 걸음부터
-    #    막혀 **빠져나올 수가 없다.** 시작보다 더 내려가지만 않으면 통과시킨다.
-    z_floor = min(15.0, kin.forward(now, geom).z - 1.0)
+    # ⚠ 진짜 바닥(마운트 아래 76.5mm)을 쓴다. 팔이 늘어져 z가 음수여도 그건
+    #    아직 바닥 위다. 시작 자세가 그보다도 낮으면 그때만 시작점을 기준 삼는다.
+    now_norm = to_norm(now)
+    z_floor = min(-MOUNT_Z_MM + FLOOR_MARGIN_MM, kin.forward(now, geom).z - 1.0)
 
     def leg(cur, joint):
         """한 관절만 목표로 옮기는 구간 — 경유점과 최대 |r|, 위반 목록."""
@@ -127,8 +148,18 @@ def main() -> int:
             bad = []
             if p.z < z_floor:
                 bad.append("바닥아래")
+            # ⚠ 가동범위는 **정규화값 -100..100**이지, 교시 자세를 중심으로
+            #   대칭인 게 아니다. 영점을 어디서 잡았느냐에 따라 한쪽으로
+            #   크게 치우친다(실측: elbow는 -14.7° ~ +191.1°). 도(度)로
+            #   ±span/2를 보면 멀쩡한 자세를 막고 위험한 자세를 통과시킨다.
+            nm = to_norm(mid)
             for j in kin.JOINTS:
-                if abs(mid[j] - ref.get(j, 0.0)) > spans.get(j, 200.0) / 2.0:
+                # ⚠ **지금 자리를 가두면 안 된다.** 중력에 밀려 이미 한계를 조금
+                #   넘어 있으면 "≤98"을 고집하는 순간 어느 경로도 못 만든다 —
+                #   2026-09-02, elbow가 -101.8에서 팔이 통째로 갇혔다. 바닥 가드에
+                #   넣었던 같은 원칙을 관절 한계에도 적용한다: **더 나빠지지만
+                #   않으면** 통과.
+                if abs(nm[j]) > max(98.0, abs(now_norm.get(j, 0.0))) + 1e-6:
                     bad.append(f"{j}한계")
             pts.append((mid, p, abs(kin.signed_radius(mid, geom)), bad))
         return nxt, pts
@@ -139,6 +170,12 @@ def main() -> int:
     print("\n단계별 경로 (관절 하나씩 · 순서는 |r|이 작은 쪽부터 자동)")
     stages, cur, worst = [], dict(now), 0.0
     remaining = [j for j in kin.JOINTS if abs(target[j] - cur[j]) >= 0.05]
+    forced = [j.strip() for j in args.order.split(",") if j.strip()]
+    for j in forced:
+        if j not in kin.JOINTS:
+            print(f"❌ --order 에 없는 관절: {j}")
+            io.hold_close()
+            return 1
     while remaining:
         scored = []
         for j in remaining:
@@ -146,11 +183,13 @@ def main() -> int:
             if got is None:
                 continue
             nxt, pts = got
-            scored.append((max(q[2] for q in pts), j, nxt, pts))
+            # 손으로 순서를 준 관절은 그 순서대로, 나머지는 |r|이 작은 쪽부터.
+            rank = forced.index(j) if j in forced else len(forced) + 1
+            scored.append(((rank, max(q[2] for q in pts)), j, nxt, pts))
         if not scored:
             break
-        scored.sort()
-        peak, joint, nxt, pts = scored[0]
+        scored.sort(key=lambda x: x[0])
+        (_, peak), joint, nxt, pts = scored[0]
         stages.append((joint, pts))
         worst = max(worst, peak)
         rr = [q[2] for q in pts]
@@ -164,11 +203,11 @@ def main() -> int:
           f"(선형 보간이었다면 277mm에서 서보가 놓았다)")
     if any(q[3] for _, pts in stages for q in pts):
         print("❌ 안전 검사에 걸린 구간이 있다 — 움직이지 않는다.")
-        io.close()
+        io.hold_close()
         return 1
     if args.dry:
         print("(--dry 이므로 여기서 멈춘다)")
-        io.close()
+        io.hold_close()
         return 0
 
     print("\n움직인다 — 단계마다 실제 자세를 되읽어 확인한다.")
@@ -183,13 +222,13 @@ def main() -> int:
                   f"{gp.z:6.1f}) pitch{gp.pitch:7.1f} r{gr:7.1f}  오차 {err:5.1f}°")
             if err > MAX_TRACK_ERR:
                 print(f"     ⚠ {MAX_TRACK_ERR:.0f}°를 넘었다 — 서보가 놓았다. 중단.")
-                io._follower.disconnect()   # noqa: SLF001 - 토크는 켠 채로 둔다
+                io.hold_close()
                 return 1
 
     final = to_deg(io.read())
     show("끝", final)
     print("\n⚠ 토크를 켠 채로 둔다.")
-    io._follower.disconnect()              # noqa: SLF001
+    io.hold_close()
     return 0
 
 

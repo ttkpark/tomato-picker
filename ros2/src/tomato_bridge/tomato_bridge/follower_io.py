@@ -64,9 +64,12 @@ class FollowerIO:
     """
 
     def __init__(self, port: str = "", arm_id: str = ARM_ID,
-                 move_fps: int = ARM_MOVE_FPS) -> None:
+                 move_fps: int = ARM_MOVE_FPS, hold_torque: bool = False) -> None:
         self._port_fallback = port or ARM_SERIAL_PORT
         self._arm_id = arm_id
+        # 연결할 때 힘을 뺄 것인가. 기본은 뺀다(미러링·교시가 그걸 전제한다).
+        # **팔을 움직이는 도구는 True로 열어야 한다** — 아니면 붙기도 전에 처진다.
+        self._hold_torque = bool(hold_torque)
         self._fps = max(5, int(move_fps))
         self._follower = None
         self._port: str | None = None
@@ -160,7 +163,8 @@ class FollowerIO:
         require_live_bus(port)
         follower = SOFollower(SOFollowerRobotConfig(port=port, id=self._arm_id))
         follower.connect(calibrate=False)
-        follower.bus.disable_torque()
+        if not self._hold_torque:
+            follower.bus.disable_torque()
         self._follower = follower
         self._port = port
 
@@ -199,6 +203,27 @@ class FollowerIO:
             try:
                 follower.bus.disable_torque()
                 follower.disconnect()
+            except Exception:  # noqa: BLE001 - 종료 경로에서 실패는 무시
+                pass
+
+    def hold_close(self) -> None:
+        """토크를 **켠 채로** 포트를 닫는다 — 그 자리를 붙들고 있게.
+
+        ⚠ `follower.disconnect()`로는 안 된다. lerobot의
+          `config.disable_torque_on_disconnect`가 기본 True라 닫으면서 힘을 뺀다.
+
+        2026-08-31: 도구들이 `disconnect()`를 부르며 "토크를 켠 채로 둔다"고 찍고
+        있었다. 실제로는 매번 놓았다 — 다음 실행이 팔을 읽으니 elbow가 74° 무너져
+        있었고, 나는 그 무너진 자세로 카메라 화면을 해석하다가 **기구학이 틀렸다고**
+        결론 낼 뻔했다(FK는 "수평"인데 카메라는 바닥을 봤다). 이 저장소의 1번 병과
+        같은 모양이다 — **증상이 원인을 안 가리킨다.**
+        """
+        with self._lock:
+            follower, self._follower = self._follower, None
+            if follower is None:
+                return
+            try:
+                follower.bus.disconnect(disable_torque=False)
             except Exception:  # noqa: BLE001 - 종료 경로에서 실패는 무시
                 pass
 

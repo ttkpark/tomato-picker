@@ -21,7 +21,7 @@ from .wake import GATE as WAKE
 from .words import STORE as WORDS
 
 
-def _status_payload(arm, base, line=None, seq=None, harvest=None) -> dict:
+def _status_payload(arm, base, line=None, seq=None, harvest=None, eye=None, eyes=None) -> dict:
     """조작 화면이 폴링하는 상태. 어떤 조회가 실패해도 페이지는 떠야 하므로
     항목마다 개별로 감싸고, 없는 장비는 None으로 내려보낸다."""
     def _safe(fn, fallback):
@@ -59,8 +59,21 @@ def _status_payload(arm, base, line=None, seq=None, harvest=None) -> dict:
         else {"count": 0, "trees": [], "order": [], "next": "수확 계획 비활성",
               "error": "수확 러너 없음"}
     )
+    def _eye_snapshot(unit):
+        return (
+            _safe(unit.snapshot, {"camera": {"ok": False}, "calibration": {}, "samples": []})
+            if unit is not None
+            else {"camera": {"ok": False, "why": "깊이 카메라 유닛 없음"},
+                  "calibration": {"has_calibration": False}, "samples": [], "needed": 0}
+        )
+
+    eye_status = _eye_snapshot(eye)
+    # 카메라가 둘이라 **둘 다** 싣는다 — 화면이 고르기 전에 "어느 쪽이 지금
+    # 살아 있나"를 보여줘야 하기 때문이다(안 켠 쪽은 왜 안 켜졌는지가 뜬다).
+    eyes_status = {name: _eye_snapshot(unit) for name, unit in (eyes or {}).items()}
     return {"arm": arm_status, "base": base_status, "line": line_status, "seq": seq_status,
-            "voice": voice_status, "harvest": harvest_status}
+            "voice": voice_status, "harvest": harvest_status, "eye": eye_status,
+            "eyes": eyes_status}
 
 # 하드웨어가 하나도 없어도 대시보드는 떠야 한다(부스 데모에서 화면이 검은 것보다
 # "장비 미연결"이라고 떠 있는 게 낫다). 그래서 이 모듈의 어떤 것도 하드웨어
@@ -388,11 +401,30 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
 
 # 대시보드에서 재시작을 허용하는 서비스. ⚠ controller-drive는 뺐다 —
 # tomato-voice와 ttyUSB0을 다투므로(독점) 둘이 같이 뜨면 나중 쪽이 죽는다.
-_SERVICES = ("tomato-voice", "line-follow", "line-cam", "tomato-vision")
+_SERVICES = ("tomato-voice", "line-follow", "line-cam", "tomato-vision",
+             "depth-cam", "astra-cam")
 
 # 시퀀스 러너 핸들. _handle_command는 인자가 이미 많아 여기 담아 쓴다
 # (핸들러 생성 시 hardware 딕셔너리에서 꺼내 넣는다).
 _SEQ: dict = {}
+# 깊이 카메라 유닛들 — _SEQ와 같은 이유로 여기 담아 쓴다.
+# {"eye": 기본 카메라, "eyes": {이름: Eye}} 형태.
+_EYE: dict = {}
+
+
+def _pick_eye(body: dict):
+    """요청이 말한 카메라의 Eye. 이름이 없으면 기본 카메라.
+
+    ⚠ 모르는 이름은 기본값으로 **떨어뜨리지 않는다**. 화면에는 Astra라 적혀
+      있는데 D405를 만지는 상태가 되면, 거리가 이상한 것 말고는 단서가 없다.
+    """
+    eyes = _EYE.get("eyes") or {}
+    name = body.get("camera")
+    if not name:
+        return _EYE.get("eye")
+    if name not in eyes:
+        raise ValueError(f"모르는 깊이 카메라: {name} — 있는 것은 {tuple(eyes)}")
+    return eyes[name]
 
 
 def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool, str]:
@@ -606,6 +638,51 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
             return True, arm.cartesian.set_zero()
         elif action == "arm_tool_zero_clear":
             return True, arm.cartesian.clear_zero()
+        # --- 깊이 카메라(D405) 손-눈 보정 · 보고 집기 (hardware/eye.py) ---
+        # 실패는 전부 예외/False로 올라와 화면에 그대로 뜬다 — 깊이가 비었다,
+        # 너무 멀다, 영점이 없다, 잔차가 나쁘다 중 **무엇인지**가 보여야 한다.
+        elif isinstance(action, str) and action.startswith("eye_"):
+            eye = _pick_eye(body)
+            if eye is None:
+                return False, "깊이 카메라 유닛이 없습니다 — tomato-voice를 재시작하세요."
+            tag = f"[{eye.label}] "
+            if action == "eye_mount":
+                eye.config.set_mount(str(body.get("mount", "fixed")))
+                return True, (f"{tag}장착 방식 = {eye.config.snapshot()['mount_label']} "
+                              f"(표본 {eye.calibrator.needed()}개 필요)")
+            if action == "eye_sample":
+                return True, eye.calibrator.add_sample(
+                    float(body.get("u", 0) or 0), float(body.get("v", 0) or 0))
+            if action == "eye_drop":
+                return True, eye.calibrator.drop_last()
+            if action == "eye_clear":
+                return True, eye.calibrator.clear()
+            if action == "eye_solve":
+                return True, eye.calibrator.solve()
+            if action == "eye_forget":
+                eye.config.clear()
+                return True, f"{tag}손-눈 보정을 지웠습니다 — 다시 잡아야 합니다."
+            if action == "eye_probe":
+                return True, eye.probe(float(body.get("u", 0) or 0),
+                                       float(body.get("v", 0) or 0))
+            if action == "eye_aim":
+                return True, eye.aim(float(body.get("u", 0) or 0),
+                                     float(body.get("v", 0) or 0))
+            if action == "eye_fruits":
+                found = eye.fruits()
+                if not found:
+                    return True, "익은 열매가 안 보입니다."
+                lines = []
+                for i, f in enumerate(found):
+                    if "x" in f:
+                        lines.append(f"{i}: 화면({f['u']},{f['v']}) → "
+                                     f"({f['x']:.0f}, {f['y']:.0f}, {f['z']:.0f})mm "
+                                     f"거리 {f['dist_mm']:.0f}mm")
+                    else:
+                        lines.append(f"{i}: 화면({f['u']},{f['v']}) → 좌표 없음 "
+                                     f"({f.get('why','')[:40]})")
+                return True, f"열매 {len(found)}개 — " + " / ".join(lines)
+            return False, f"알 수 없는 깊이 카메라 명령: {action}"
         elif action == "arm_tool_config":
             cfg = arm.cartesian.config
             if body.get("signs"):
@@ -670,7 +747,8 @@ def _make_handler(
                 # 상태 조회가 실패해도 화면은 떠 있어야 하므로 전부 감싼다.
                 self._write_json(_status_payload(hw.get("arm"), hw.get("base"),
                                                  hw.get("line"), hw.get("seq"),
-                                                 hw.get("harvest")))
+                                                 hw.get("harvest"), hw.get("eye"),
+                                                 eyes=hw.get("eyes")))
                 return
 
             if self.path in ("/control", "/settings", "/diag"):
@@ -692,6 +770,31 @@ def _make_handler(
             if self.path == "/video2":
                 # 바닥 카메라(CSI) — line-cam.service가 /dev/shm에 쓰는 프레임.
                 self._stream_mjpeg(floor)
+                return
+
+            if self.path == "/video3":
+                # D405 컬러 — depth-cam.service가 /dev/shm에 쓴다. 보정에서
+                # 클릭하는 화면이 이거라, 여기 좌표계가 곧 깊이 격자여야 한다
+                # (그래서 발행기가 깊이를 **컬러에** 정렬한다).
+                self._stream_mjpeg(hw.get("depth_color"))
+                return
+
+            if self.path == "/video4":
+                # D405 깊이 컬러맵 — 검정은 "깊이 없음"이다. 보정 전에 열매가
+                # 검게 나오면 그 자리는 클릭해도 거절당한다.
+                self._stream_mjpeg(hw.get("depth_map"))
+                return
+
+            if self.path == "/video5":
+                # Astra 컬러 — astra-cam.service가 ASTRA_COLOR=1일 때만 쓴다.
+                # ⚠ 이 화면은 **깊이 격자가 아니다**(RGB가 별개의 USB 장치라
+                #   정렬돼 있지 않다). 그래서 보정 클릭은 /video6에서 한다.
+                self._stream_mjpeg(hw.get("depth_color_astra"))
+                return
+
+            if self.path == "/video6":
+                # Astra 깊이 컬러맵 — Astra에서 클릭하는 화면이 이쪽이다.
+                self._stream_mjpeg(hw.get("depth_map_astra"))
                 return
 
             if self.path == "/diag-events":
@@ -748,6 +851,8 @@ def _make_handler(
             # 러너는 서버보다 늦게 만들어진다 — 요청 시점에 최신 핸들을 집는다.
             _SEQ["runner"] = hw.get("seq")
             _SEQ["harvest"] = hw.get("harvest")
+            _EYE["eye"] = hw.get("eye")
+            _EYE["eyes"] = hw.get("eyes")
             length = int(self.headers.get("Content-Length") or 0)
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")

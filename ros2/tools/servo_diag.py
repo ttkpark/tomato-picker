@@ -71,7 +71,7 @@ def main() -> int:
     args = ap.parse_args()
 
     from tomato_bridge.follower_io import FollowerIO
-    io = FollowerIO()
+    io = FollowerIO(hold_torque=True)
     io._connect()                      # noqa: SLF001 - 진단이라 내부를 직접 쓴다
     bus = io._follower.bus             # noqa: SLF001
     joints = list(kin.JOINTS) + ["gripper"]
@@ -82,7 +82,7 @@ def main() -> int:
 
     if not args.hold:
         print("\n(--hold 를 주면 토크를 켜고 그 자리를 잡는다)")
-        io.close()
+        io.hold_close()
         return 0
 
     print("\n=== 토크를 켜고 현재 자세를 목표로 준다 ===")
@@ -114,7 +114,7 @@ def main() -> int:
               f"온도 {snap.get('온도')}  토크 {snap.get('토크')}")
 
     print("\n⚠ 토크를 켠 채로 둔다 — 여기서 끄면 팔이 그 자리에서 떨어진다.")
-    io._follower.disconnect()          # noqa: SLF001 - disable_torque 없이 닫는다
+    io.hold_close()   # ⚠ disconnect()는 닫으면서 토크를 끈다 — 팔이 떨어진다
     return 0
 
 

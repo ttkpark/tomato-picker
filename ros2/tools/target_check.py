@@ -48,6 +48,8 @@ META = "/dev/shm/d405_meta.json"
 # 벽에 붙인 표적의 **실측 간격**
 EXPECT_W = 100.0
 EXPECT_H = 174.5
+# 여섯 쌍거리가 아는 직사각형에서 이만큼 넘게 벗어나면 표적이 아니다.
+QUAD_TOL_MM = 12.0
 
 FAILED: list[str] = []
 PASSED = 0
@@ -113,6 +115,28 @@ def find_dots(bgr: np.ndarray) -> list[tuple[float, float]]:
     return [(u, v) for u, v, _ in found[:4]]
 
 
+def quad_error(points) -> float:
+    """네 점이 **아는 직사각형**과 얼마나 다른가 (mm, 가장 큰 변 오차).
+
+    ⚠ "점을 4개 찾았다"는 것과 "그 4개가 표적이다"는 다르다. 2026-09-01:
+      한 프레임에서 점 하나를 엉뚱한 것으로 잡았고(변 길이가 244·264·354mm로
+      나왔다) 그 표본 하나가 손-눈 보정의 잔차를 23mm로 끌어올렸다. 나머지
+      13개는 ±4mm였는데도 그랬다. 최소자승은 썩은 표본 하나를 못 버린다 —
+      **들어가기 전에** 걸러야 한다.
+
+    여섯 개의 쌍거리를 정렬하면 (w, w, h, h, diag, diag) 여야 한다. 점 이름이
+    어떻게 섞이든 이 검사는 성립한다.
+    """
+    P = [np.asarray(q, dtype=float) for q in points]
+    if len(P) != 4:
+        return float("inf")
+    got = sorted(float(np.linalg.norm(P[i] - P[j]))
+                 for i in range(4) for j in range(i + 1, 4))
+    diag = float(np.hypot(EXPECT_W, EXPECT_H))
+    want = sorted([EXPECT_W, EXPECT_W, EXPECT_H, EXPECT_H, diag, diag])
+    return max(abs(a - b) for a, b in zip(got, want))
+
+
 def order_dots(dots):
     """좌상·우상·좌하·우하 순서로."""
     dots = sorted(dots, key=lambda p: p[1])          # y 기준 위/아래
@@ -144,10 +168,18 @@ def measure() -> dict:
     tl, tr, bl, br = order_dots(dots)
     us = [p[0] for p in (tl, tr, bl, br)]
     vs = [p[1] for p in (tl, tr, bl, br)]
-    u0, u1 = int(min(us)) - 10, int(max(us)) + 10
-    v0, v1 = int(min(vs)) - 10, int(max(vs)) + 10
-    patch = depth_mm[max(0, v0):v1, max(0, u0):u1]
-    ys, xs = np.mgrid[max(0, v0):v1, max(0, u0):u1]
+    # ⚠ 화면 밖으로 나간 상자를 **양쪽 다** 잘라야 한다. 넘파이 슬라이스는 위쪽
+    #   끝에서 알아서 잘리지만 `mgrid`는 안 잘려, 상자가 오른쪽·아래로 삐져나가면
+    #   두 배열의 크기가 어긋나 IndexError로 죽는다(2026-08-31, 채집 도중 중단).
+    h_d, w_d = depth_mm.shape
+    u0 = max(0, int(min(us)) - 10)
+    u1 = min(w_d, int(max(us)) + 10)
+    v0 = max(0, int(min(vs)) - 10)
+    v1 = min(h_d, int(max(vs)) + 10)
+    if u1 - u0 < 2 or v1 - v0 < 2:
+        return {"ok": False, "why": "표적 상자가 화면 밖이다", "age": None}
+    patch = depth_mm[v0:v1, u0:u1]
+    ys, xs = np.mgrid[v0:v1, u0:u1]
     valid = patch > 0
     xs_v, ys_v, zs_v = xs[valid], ys[valid], patch[valid]
     if len(xs_v) < 300:
@@ -166,8 +198,13 @@ def measure() -> dict:
 
     P = {k: on_plane(*p).tolist()
          for k, p in (("tl", tl), ("tr", tr), ("bl", bl), ("br", br))}
+    qerr = quad_error(list(P.values()))
+    if qerr > QUAD_TOL_MM:
+        # 점 넷을 찾았지만 **표적이 아니다** — 하나가 엉뚱한 것이다. 버린다.
+        return {"ok": False, "why": f"네 점이 직사각형이 아니다(변 오차 {qerr:.0f}mm)",
+                "quad_err_mm": qerr, "age": None}
     edge = float(np.linalg.norm(np.array(P["tl"]) - np.array(P["tr"])))
-    return {"ok": True, "dots": {"tl": tl, "tr": tr, "bl": bl, "br": br},
+    return {"ok": True, "quad_err_mm": qerr, "dots": {"tl": tl, "tr": tr, "bl": bl, "br": br},
             "points_mm": P, "plane_mm": d,
             "tilt_deg": float(np.degrees(np.arccos(min(1.0, abs(normal[2]))))),
             "edge_top_mm": edge, "age": time.time() - meta["ts"]}
@@ -204,10 +241,15 @@ def main() -> int:
     # ── 흰 종이로 평면을 맞춘다 (검은 점의 깊이는 안 믿는다) ──
     us = [p[0] for p in (tl, tr, bl, br)]
     vs = [p[1] for p in (tl, tr, bl, br)]
-    u0, u1 = int(min(us)) - 10, int(max(us)) + 10
-    v0, v1 = int(min(vs)) - 10, int(max(vs)) + 10
-    patch = depth_mm[max(0, v0):v1, max(0, u0):u1]
-    ys, xs = np.mgrid[max(0, v0):v1, max(0, u0):u1]
+    # ⚠ `measure()`와 **같은 방식으로** 자른다. 넘파이 슬라이스는 배열 끝에서
+    #   알아서 잘리지만 `mgrid`는 안 잘려, 상자가 오른쪽·아래로 삐져나가면 두
+    #   배열의 크기가 어긋나 IndexError로 죽는다. measure()에서 고치고 여기를
+    #   빠뜨려 같은 버그를 두 번 만났다 — **같은 계산은 한 군데에만 두라.**
+    h_d, w_d = depth_mm.shape
+    u0, u1 = max(0, int(min(us)) - 10), min(w_d, int(max(us)) + 10)
+    v0, v1 = max(0, int(min(vs)) - 10), min(h_d, int(max(vs)) + 10)
+    patch = depth_mm[v0:v1, u0:u1]
+    ys, xs = np.mgrid[v0:v1, u0:u1]
     valid = patch > 0
     xs_v, ys_v, zs_v = xs[valid], ys[valid], patch[valid]
 
@@ -245,8 +287,22 @@ def main() -> int:
     P = {k: on_plane(*p) for k, p in (("tl", tl), ("tr", tr), ("bl", bl), ("br", br))}
 
     print("\n[스케일] 아는 길이로 잰다")
-    edges = (("위 가로", "tl", "tr", EXPECT_W), ("아래 가로", "bl", "br", EXPECT_W),
-             ("왼 세로", "tl", "bl", EXPECT_H), ("오른 세로", "tr", "br", EXPECT_H))
+    # 종이가 어느 쪽으로 붙어 있는지 **정하지 않는다.** 점의 순서는 화면 기준
+    # (좌상·우상·…)이라, 손목이 90° 굴러 있으면 종이의 세로가 화면의 가로가 된다.
+    # 2026-08-31 실측: 172.0/98.5 vs 기대 100/174.5 — 딱 뒤바뀐 값이었고
+    # **대각선 둘은 맞았다.** 형상은 옳고 이름만 틀린 것이다. 그래서 두 배치를
+    # 다 재보고 잘 맞는 쪽을 쓴다(대각선은 어느 쪽이든 같으니 판정에 못 쓴다).
+    def misfit(w, h):
+        return sum(abs(float(np.linalg.norm(P[a] - P[b])) - want)
+                   for a, b, want in (("tl", "tr", w), ("bl", "br", w),
+                                      ("tl", "bl", h), ("tr", "br", h)))
+
+    EW, EH = EXPECT_W, EXPECT_H
+    if misfit(EXPECT_H, EXPECT_W) < misfit(EXPECT_W, EXPECT_H):
+        EW, EH = EXPECT_H, EXPECT_W
+        print(f"       (종이가 90° 돌아 붙어 있다 — 화면 가로를 {EW:.1f}mm로 읽는다)")
+    edges = (("위 가로", "tl", "tr", EW), ("아래 가로", "bl", "br", EW),
+             ("왼 세로", "tl", "bl", EH), ("오른 세로", "tr", "br", EH))
     errs = []
     for label, a, b, want in edges:
         got = float(np.linalg.norm(P[a] - P[b]))
@@ -262,8 +318,8 @@ def main() -> int:
               f"실측 {got:6.1f}mm · 오차 {got - diag:+.1f}mm")
 
     bias = float(np.mean(errs))
-    print(f"\n       평균 편향 {bias:+.2f}mm  →  스케일 오차 {bias / EXPECT_W:+.2%}")
-    if abs(bias / EXPECT_W) > 0.02:
+    print(f"\n       평균 편향 {bias:+.2f}mm  →  스케일 오차 {bias / EW:+.2%}")
+    if abs(bias / EW) > 0.02:
         print("       ⚠ 2%를 넘는다 — 내부파라미터(fx·fy)나 깊이 단위를 의심하라. "
               "보정을 아무리 잘해도 이 오차는 안 없어진다.")
 

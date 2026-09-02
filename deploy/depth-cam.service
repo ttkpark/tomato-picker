@@ -1,0 +1,28 @@
+[Unit]
+Description=Tomato-picker D405 depth publisher (RealSense -> /dev/shm)
+After=network.target
+
+[Service]
+Type=simple
+User=server
+Group=server
+# D405는 UVC 장치라 /dev/video* 접근에 video 그룹이 필요하다. plugdev는
+# librealsense가 USB 디스크립터를 읽을 때 쓴다(둘 다 없으면 장치를 못 연다).
+SupplementaryGroups=video plugdev
+WorkingDirectory=/home/server
+Environment=PYTHONUNBUFFERED=1
+# 848x480이 D405 깊이의 기본 해상도다. 1280x720도 되지만 uint16 프레임이
+# 1.8MB가 되고 정확도 이득은 없다(깊이는 같은 스테레오 쌍에서 나온다).
+Environment=D405_WIDTH=848
+Environment=D405_HEIGHT=480
+Environment=D405_FPS=30
+# /dev/shm에 내보내는 주기. 카메라는 30fps로 돌지만 열매는 도망가지 않는다.
+Environment=D405_PUBLISH_FPS=8
+# 공간·시간 필터 — 정지 장면의 깊이 잡음을 줄여 보정 표본의 질을 올린다.
+Environment=D405_FILTERS=1
+ExecStart=/home/server/.venvs/vision/bin/python /home/server/tomato-picker/tools/depth_cam.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

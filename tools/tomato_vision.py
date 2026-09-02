@@ -74,7 +74,23 @@ def _resolve_camera_source() -> int | str:
             "USB 웹캠을 못 찾았습니다(/dev/v4l/by-id/usb-* 없음) — 케이블 확인. "
             "CSI 라인캠(video0)은 이 서비스가 잡으면 안 되므로 인덱스 폴백은 안 한다."
         )
-    return cands[0]
+    # ⚠ **깊이 카메라의 RGB 노드를 웹캠으로 착각하지 않는다.** 2026-09-01,
+    #   Astra Pro를 꽂자 by-id 목록의 **첫 줄**이 바뀌었고(A < I), 이 서비스는
+    #   아무 말 없이 카메라를 갈아탔다. 무대를 보던 화면이 다른 곳을 보게
+    #   됐는데 에러는 하나도 안 났다 — 무대 학습이 오검출을 무대로 삼는
+    #   사고(CLAUDE.md)와 같은 종류의 조용한 고장이다.
+    #   그래서 깊이 카메라는 **뒤로 미룬다**. 진짜 웹캠이 있으면 그쪽이 이기고,
+    #   없으면 깊이 카메라의 RGB라도 쓰되 **어느 것을 골랐는지 찍는다.**
+    depthish = ("astra", "realsense", "orbbec", "depth_camera")
+    ranked = sorted(cands, key=lambda p: (any(k in p.lower() for k in depthish), p))
+    pick = ranked[0]
+    print(f"[tomato_vision] 카메라 선택: {os.path.basename(pick)}"
+          + (f" (후보 {len(cands)}개)" if len(cands) > 1 else ""), flush=True)
+    if any(k in pick.lower() for k in depthish):
+        print("[tomato_vision] ⚠ 이건 깊이 카메라의 RGB 노드다 — 무대용 웹캠이 "
+              "안 보여서 대신 쓴다. 의도한 게 아니면 TV_CAMERA_DEV로 지정하라.",
+              flush=True)
+    return pick
 
 
 def _open_camera() -> cv2.VideoCapture:

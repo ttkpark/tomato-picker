@@ -25,3 +25,9 @@ mon.ps1
 # 제조사 배포본(22MB) — 원본을 다시 받을 수 있고, git 이력에 영구히 남으므로 제외.
 # 참고용으로 로컬에만 둔다. 우리가 쓰는 펌웨어는 firmware/mecanum_stable/.
 firmware/MecanumRobot-Arduino-Uno-master/
+
+# 세션 스크래치 (사진·중간 산출물)
+.work/
+
+# 사진을 통째로 박아 만든 생성물 (젯슨 click-server 로 대체됨)
+stem_console.html

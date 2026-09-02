@@ -68,7 +68,16 @@ def main() -> int:
         v = signs.get(j)
         return -1.0 if (v is not None and float(v) < 0) else 1.0
 
+    # ⚠ **실측 눈금이 보정표를 이긴다** (`~/arm_cartesian.json`의 deg_per_norm).
+    #   2026-09-01: `wrist_roll`은 계산한 각도의 0.56배만 실제로 돌았다 —
+    #   관절축 측정 잔차가 24.8mm에서 2.6mm로 떨어졌고, 화면회전 실측
+    #   0.549와도 맞는다. 손목 굴림에 감속이 있어 틱→도(360/4096)가 안 통한다.
+    over = cart.get("deg_per_norm") or {}
+
     def dpn(j):
+        v = over.get(j)
+        if v:
+            return abs(float(v))
         s = spans.get(j)
         return abs(s) / 200.0 if s else 0.9
 
@@ -81,7 +90,7 @@ def main() -> int:
                 for j in d if j in JOINTS}
 
     from tomato_bridge.follower_io import FollowerIO
-    io = FollowerIO()
+    io = FollowerIO(hold_torque=True)
     bus = io._follower.bus if io.connected else None    # noqa: SLF001
     now = to_deg(io.read())
     io.write(to_norm(now), 0.4)
@@ -163,7 +172,7 @@ def main() -> int:
         print("  · 전압이 11V 아래로 떨어졌다면 → **전원 문제** (배선·전류용량)")
         print("  · 한 관절의 부하만 치솟았다면  → 그 관절 하중을 줄여야 한다")
         print("  · 전압도 멀쩡하고 부하가 고루 높다면 → 이 팔의 물리적 한계다")
-    io._follower.disconnect()                            # noqa: SLF001
+    io.hold_close()
     return 0
 
 

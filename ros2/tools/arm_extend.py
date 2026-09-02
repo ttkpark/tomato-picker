@@ -49,6 +49,14 @@ CAL = os.path.expanduser(
     "~/.cache/huggingface/lerobot/calibration/robots/so_follower/tomato_follower.json")
 CART = os.path.expanduser("~/arm_cartesian.json")
 
+# 바닥은 팔 base(마운트)보다 이만큼 아래에 있다 — 실측 76.5mm
+# (`ros2/src/tomato_description/config/so101_geometry.yaml` 의 mount.z 와 같은 값).
+# ⚠ 예전에는 "지금 자리보다 1mm 아래"를 바닥으로 삼았다. 그러면 팔이 낮게
+#   늘어져 있을 때 **1.8mm 내려갔다 다시 오르는 정상 경로까지 막혀** 빠져나올
+#   수가 없다(2026-09-01, 복구 불가 상태로 두 번 갇혔다). 바닥은 팔이 어디
+#   있느냐와 무관한 값이다.
+MOUNT_Z_MM = 76.5
+FLOOR_MARGIN_MM = 10.0
 STEP_DEG = 12.0        # 한 구간에서 어느 관절도 이 이상 안 움직인다
 SECS_PER_STEP = 1.2
 R_TARGET = 150.0       # 좌표 가드(90mm)에서 충분히 떨어진 곳까지
@@ -68,7 +76,8 @@ def load_frame():
         except (KeyError, TypeError, ValueError):
             pass
     cart = json.load(open(CART))
-    return spans, cart["zero"], cart["ref_deg"], cart.get("signs", {})
+    return (spans, cart["zero"], cart["ref_deg"], cart.get("signs", {}),
+            cart.get("deg_per_norm") or {})
 
 
 def main() -> int:
@@ -81,14 +90,21 @@ def main() -> int:
                     help="끝나고 토크를 켠 채 둔다 (안 그러면 팔이 떨어진다)")
     args = ap.parse_args()
 
-    spans, zero, ref, signs = load_frame()
+    spans, zero, ref, signs, over = load_frame()
     geom = kin.ArmGeometry()
 
     def sign(j):
         v = signs.get(j)
         return -1.0 if (v is not None and float(v) < 0) else 1.0
 
+    # ⚠ **실측 눈금이 보정표를 이긴다** (`~/arm_cartesian.json`의 deg_per_norm).
+    #   2026-09-01: `wrist_roll`은 계산한 각도의 0.56배만 실제로 돌았다 —
+    #   관절축 측정 잔차가 24.8mm에서 2.6mm로 떨어졌고, 화면회전 실측
+    #   0.549와도 맞는다. 손목 굴림에 감속이 있어 틱→도(360/4096)가 안 통한다.
     def dpn(j):
+        v = over.get(j)
+        if v:
+            return abs(float(v))
         s = spans.get(j)
         return abs(s) / 200.0 if s else (1.8 if j == "wrist_roll" else 0.9)
 
@@ -101,7 +117,7 @@ def main() -> int:
                 for j in degs if j in kin.JOINTS}
 
     from tomato_bridge.follower_io import FollowerIO
-    io = FollowerIO()
+    io = FollowerIO(hold_torque=True)
     now_norms = io.read()
     now = to_deg(now_norms)
     p0 = kin.forward(now, geom)
@@ -133,14 +149,14 @@ def main() -> int:
         pose = kin.forward(degs, geom)
         r = kin.signed_radius(degs, geom)
         note = []
-        if pose.z < 15.0:
+        if pose.z < -MOUNT_Z_MM + FLOOR_MARGIN_MM:
             note.append("바닥아래")
         if math.hypot(pose.x, pose.y) > geom.reach_max + 1e-6:
             note.append("사거리밖")
-        for j, lim in (("shoulder_lift", spans.get("shoulder_lift", 205) / 2),
-                       ("elbow_flex", spans.get("elbow_flex", 206) / 2),
-                       ("wrist_flex", spans.get("wrist_flex", 210) / 2)):
-            if abs(degs[j] - ref.get(j, 0.0)) > lim:
+        # ⚠ 가동범위는 정규화값 -100..100이다 — 교시 자세 중심의 대칭이 아니다.
+        nm = to_norm(degs)
+        for j in kin.JOINTS:
+            if abs(nm[j]) > 98.0:
                 note.append(f"{j}한계")
         if note:
             bad.append(i)
@@ -155,7 +171,7 @@ def main() -> int:
 
     if args.dry:
         print("(--dry 이므로 여기서 멈춘다)")
-        io.close()
+        io.hold_close()
         return 0
 
     print("\n움직인다 — 구간마다 실제 자세를 되읽어 확인한다.")
@@ -169,7 +185,7 @@ def main() -> int:
               f"pitch {gp.pitch:6.1f}° r {gr:6.1f}  (관절 오차 최대 {err:.1f}°)")
         if err > 20.0:
             print("     ⚠ 지령과 실제가 20° 넘게 다르다 — 무언가에 걸렸을 수 있다. 중단.")
-            io.close()
+            io.hold_close()
             return 1
 
     final = to_deg(io.read())
@@ -180,9 +196,9 @@ def main() -> int:
     print("좌표 이동 가능" if fr >= 90 else "⚠ 아직 가드 안쪽이다")
     if args.hold:
         # 토크를 끄지 않고 닫는다 — 끄면 그 자리에서 떨어진다.
-        io._follower.disconnect()      # noqa: SLF001
+        io.hold_close()
     else:
-        io.close()
+        io.hold_close()
     return 0
 
 

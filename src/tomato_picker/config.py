@@ -705,6 +705,53 @@ ARM_EYE_STANDOFF_MM = 45.0
 # wrist_roll이 곧 yaw가 되어 방향을 자유롭게 줄 수 있다(kinematics.py 참고).
 ARM_EYE_PICK_PITCH_DEG = -60.0
 
+# --- 깊이 카메라가 둘이다 (2026-09-01, Orbbec Astra Pro 추가) ---
+# ⚠ **어느 쪽이 "더 좋은" 게 아니라 쓰는 자리가 다르다.** 거리 대역이 안 겹친다.
+#
+#     d405   7~50cm    집게가 열매를 무는 순간 — 손목/근접
+#     astra  60~400cm  무대 전체 — 삼각대·차체
+#
+#   D405를 처음 달았을 때 삼각대가 무대에서 2m 떨어져 있어 장면의 **0%**가
+#   유효범위 안이었다(docs/depth-camera.md §0). 그 구멍이 Astra의 자리다.
+#   반대로 Astra는 60cm 아래를 아예 못 본다.
+#
+# ⚠ **거절 기준(min/max)은 여기 있는 값이 아니라 meta.json의 값이 이긴다.**
+#   발행기가 카메라에서 읽어 실어 보내기 때문이다 — 깊이 단위가 그랬듯
+#   (D405 0.1mm / Astra 1mm) 카메라별 상수를 읽는 코드에 박으면 언젠가 틀린다.
+#   아래 값은 발행기가 안 뜬 상태에서도 화면이 뭔가 말할 수 있게 하는 초기값이다.
+#
+# ⚠ **Astra의 컬러는 깊이와 정렬돼 있지 않다** — RGB가 별개의 USB(UVC) 장치이고
+#   이 개체는 공장 D2C 보정값이 전부 NaN이다. 그래서 컬러 픽셀은 3D로 못 바꾼다
+#   (읽는 쪽이 거절한다). 클릭은 깊이 화면에서 한다. D405는 반대다.
+DEPTH_CAMERAS = {
+    "d405": {
+        "label": "D405",
+        "long_label": "Intel RealSense D405 (근거리 7~50cm)",
+        "service": "depth-cam",
+        "meta": D405_META_FILE,
+        "depth": D405_DEPTH_FILE,
+        "color": D405_COLOR_FILE,
+        "depth_view": D405_DEPTH_VIEW_FILE,
+        "min_mm": D405_MIN_MM,
+        "max_mm": D405_MAX_MM,
+        "color_aligned": True,
+    },
+    "astra": {
+        "label": "Astra",
+        "long_label": "Orbbec Astra Pro (원거리 60~400cm)",
+        "service": "astra-cam",
+        "meta": "/dev/shm/astra_meta.json",
+        "depth": "/dev/shm/astra_depth.npy",
+        "color": "/dev/shm/astra_color.jpg",
+        "depth_view": "/dev/shm/astra_depth.jpg",
+        "min_mm": 600.0,
+        "max_mm": 4000.0,
+        "color_aligned": False,
+    },
+}
+# 이름을 안 대면 이쪽. 기존 코드·기존 ~/arm_eye.json이 가리키는 카메라다.
+DEPTH_CAMERA_DEFAULT = "d405"
+
 # --- 음성 명령 (온디바이스 STT, Jetson 단독 추론) ---
 # 마이크 카드가 재부팅/USB 재연결/장치 교체마다 번호와 이름이 다 바뀌는 게
 # 실측으로 확인돼(2026-07-08: 카메라 card 2→0, 이후 웹캠으로 교체하니

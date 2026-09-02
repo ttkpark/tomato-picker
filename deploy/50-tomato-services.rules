@@ -5,7 +5,7 @@
 // 권한 상승(setuid sudo)이 커널 수준에서 차단된다("unable to change to root
 // gid", 2026-08-12 실사고). systemctl은 D-Bus로 systemd(PID 1)에 부탁하는
 // 방식이라 프로세스 자신의 권한 상승이 필요 없고, 허가는 polkit이 판단한다.
-// 즉 이 규칙이 "server 계정은 이 네 유닛만 재시작할 수 있다"의 전부다.
+// 즉 이 규칙이 "server 계정은 이 여섯 유닛만 재시작할 수 있다"의 전부다.
 //
 // 설치: sudo cp deploy/50-tomato-services.rules /etc/polkit-1/rules.d/
 //       (polkitd가 자동 감지 — 재시작 불필요)
@@ -14,7 +14,8 @@ polkit.addRule(function (action, subject) {
     if (subject.user != "server") return;
     var unit = action.lookup("unit");
     var allowed = ["tomato-voice.service", "line-follow.service",
-                   "line-cam.service", "tomato-vision.service"];
+                   "line-cam.service", "tomato-vision.service",
+                   "depth-cam.service", "astra-cam.service"];
     if (allowed.indexOf(unit) < 0) return;
     var verb = action.lookup("verb");
     if (verb == "restart" || verb == "start" || verb == "stop") {
