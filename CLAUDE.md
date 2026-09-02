@@ -1,11 +1,72 @@
 # CLAUDE.md — 에이전트 오리엔테이션
 
+Be extremely brief. Minimize output tokens: no explanations, no summaries,
+no restating the task. Act, then stop. Never trade correctness or
+completeness for brevity: full input validation, every edge case, and all
+behavior the task requires stay in.
+
 토마토 따기 로봇(LG Physical AI 데모). "언어 → 인식 → 행동". 상세 배경은
 [README.md](README.md) · [PROJECT_토마토로봇.md](PROJECT_토마토로봇.md) · [스마트로봇_명세서.md](스마트로봇_명세서.md).
 
 ## 소프트웨어 진입점
 - `main.py` (demo/run) → `src/tomato_picker/` (skills.py=스킬5종, orchestrator.py=Claude tool-use,
   demo_mode.py=오프라인 폴백, hardware/=Base·Arm·Camera 추상화, vision/=색검출).
+
+## ⚠ 계통이 둘이다 — 어느 쪽을 고치는지 먼저 정하라 (2026-08-28~)
+- **기존 스택** = `src/tomato_picker/`. **지금 데모에서 도는 것.** 태그 `v1.*`, 브랜치 `master`.
+- **ROS 2 계통** = [`ros2/`](ros2/). 만드는 중. 태그 `v2.0.0-ros.N`, 브랜치 `feat/ros2-*`.
+  픽셀과 무대 학습을 버리고 **D405 깊이 + 손-눈 보정 + TF**로 좌표를 만든다 —
+  무대를 옮기거나 카메라를 다시 달아도 안 무너지게 하려는 것.
+  왜·무엇을 = [`ros2/README.md`](ros2/README.md) · 단계와 태그 규칙 =
+  [`docs/ros2-이행계획.md`](docs/ros2-이행계획.md) · 젯슨에서 띄우기 =
+  [`ros2/docker/README.md`](ros2/docker/README.md).
+  **경계 한 줄: 계산과 실측값은 공유하고, 장치·상태의 소유권은 ROS가 가지며,
+  웹 서비스에는 붙지 않는다.** 기구학을 다시 짜면 같은 팔을 두 계통이 다르게 믿는다 —
+  그래서 `kinematics`·`handeye`·`cartesian`·`eye.EyeConfig`는 계속 쓴다(라이브러리다).
+  반대로 팔을 여는 일은 ROS가 가져왔다(`tomato_bridge/follower_io.py`).
+  졸업표 = [`docs/ros2-이행계획.md`](docs/ros2-이행계획.md) §4, **강제** = `ros_selfcheck`의 [경계] 검사.
+  ⚠ **둘을 동시에 못 켠다** — 팔(`tomato-voice`)·주행(`controller-drive`)·**D405(`depth-cam`)**
+  넷(**Astra `astra-cam`** 포함) 다 한 프로세스만 연다. ROS를 띄우기 전에 끈다. `arm_mode:=proxy`는 배선 확인용
+  임시 경로일 뿐이다(HTTP 폴링이라 TF 시각 정렬이 안 된다, ros.3에서 삭제).
+  ⚠ **보정 파일은 한 벌** — `~/arm_eye.json`을 대시보드와 ROS가 같이 쓴다
+  (카메라별로 칸이 나뉘고, **최상위가 D405**다 — ROS가 읽는 자리라 안 옮겼다).
+  ⚠ 태그는 `tools/tag.sh`로 단다(계통을 섞어 달면 거절한다).
+- **깊이 카메라도 둘이다** (2026-09-01~) —
+  **D405 = 근거리 7~50cm**(집는 순간) · **Astra Pro = 원거리 60~400cm**(무대 전체).
+  더 좋은 쪽이 있는 게 아니라 **쓰는 자리가 다르다** — D405는 삼각대 거리(1~2m)를
+  못 보고, Astra는 60cm 아래를 못 본다. 발행기가 각각 하나씩
+  ([`tools/depth_cam.py`](tools/depth_cam.py) `depth-cam` /
+  [`tools/astra_cam.py`](tools/astra_cam.py) `astra-cam`)이고, 읽는 쪽은
+  `DepthView(camera=...)` 이름만 다르다. 자세히 = [`docs/depth-camera.md`](docs/depth-camera.md).
+  ⚠ **깊이 단위·유효 거리·정렬 여부를 읽는 코드에 박지 않는다** — 전부 meta.json이
+  말한다(D405 0.1mm / Astra 1mm를 상수로 박으면 거리가 10배가 된다).
+  ⚠ **Astra는 컬러가 깊이와 정렬돼 있지 않다**(RGB가 별개 USB, 공장 D2C값이 NaN).
+  컬러 클릭은 **거절**하고 깊이 화면에서 클릭한다. 🍅 자동 열매 검출도 Astra에선 막힌다.
+  ⚠ **보정은 카메라마다 따로** 저장된다(`~/arm_eye.json` 최상위=D405, `cameras.astra`=Astra).
+  ⚠ **Astra 드라이버는 apt로 안 깔린다** — 우분투 OpenNI2는 Orbbec VID를 모르고
+  "장치 0개"로 조용히 끝난다. `bash deploy/astra-install.sh`.
+  ⚠ **Astra 깊이가 0%면 발행기를 다시 띄워라** — 60cm보다 가까운 것을 보면 LDP가
+  투광기를 끄는데 **스트림 수명 내내 꺼진 채 유지된다**(카메라를 옮겨도 안 풀린다).
+  발행기가 30초 무효 시 스스로 재시작하게 해 뒀다(`ASTRA_ZERO_REOPEN_SEC`).
+  ⚠ Astra는 ROS 2 계통엔 **아직 안 붙였다**(realsense2_camera만 있다).
+- **줄기 잡기 조작대 = [`ros2/tools/click_server.py`](ros2/tools/click_server.py)** (2026-09-03~)
+  — 젯슨이 직접 띄우는 웹 조작대 + API. **http://<젯슨IP>:8090/** (systemd `click-server`).
+  화면을 눌러 **어느 줄기인지 사람이 정하고**(`~/click_target.json`), 자세·조그·집게·
+  잡기를 전부 거기서 시킨다. **버튼과 `curl`과 에이전트가 같은 경로**를 쓴다 —
+  터미널에서만 되는 조작을 남기지 않기로 했다.
+  ⚠ **한 번에 하나만 돈다**(팔 포트는 한 프로세스). 도는 중 새 일은 409로 거절한다.
+  ⚠ 표적 클릭은 **그 프레임의 화소 자리**다 — 팔이 움직였으면 다시 찍어야 한다.
+  잡기 본체 = [`ros2/tools/stem_grasp.py`](ros2/tools/stem_grasp.py),
+  손끝 조그 = [`ros2/tools/tool_jog.py`](ros2/tools/tool_jog.py).
+  **인수인계·함정 목록 = [`docs/인수인계-2026-09-03.md`](docs/인수인계-2026-09-03.md)** — 만지기 전에 읽어라.
+- **손-눈 보정 수학 = [`hardware/handeye.py`](src/tomato_picker/hardware/handeye.py)**
+  — 카메라가 본 3D 점을 팔 좌표로 옮기는 강체 변환 하나를 **실측에서 푼다**(자로 재지 않는다).
+  numpy만 쓰며 `fixed`(카메라 고정)와 `on_arm`(손목 장착) 두 식이 있다.
+  ⚠ **잔차를 보라** — 최소자승은 입력이 쓰레기여도 답을 낸다. 15mm를 넘으면 집게가 헛집는다.
+- **ROS 없이 PC에서 도는 자체검증** (이 저장소의 규칙: 숫자는 젯슨에 올리기 전에 확인한다)
+  `python tools/handeye_check.py` (보정 수학 45종) ·
+  `python tools/eye_check.py` (보정→통합 배선 60종 — 카메라 둘 포함) ·
+  `python ros2/tools/ros_selfcheck.py` (레거시 경계·URDF↔기구학 일치·보드계약·깊이 거절 등 70종).
 
 ## 하드웨어 제어 — **현재 구성 (중요: 옛 문서와 혼동 주의)**
 로봇 = **메카넘 베이스(Moebius Uno + PCA9685)** + **SO-101 팔로워(집게)** + 젯슨 Orin Nano.

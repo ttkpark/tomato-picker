@@ -602,11 +602,19 @@ ARM_POSE_GAP_SEC = 0.3
 #   절대 좌표 이동은 그만큼 틀린다.
 # ⚠ 현장에서 고친 값은 ARM_CART_FILE(~/arm_cartesian.json)에 남고, 그쪽이 이긴다
 #   — BASE_TUNING_FILE과 같은 구조다(코드는 공장 초기값, 파일은 이 팔의 실측).
-ARM_GEOM_Z0 = 55.0     # 마운트 평면 → shoulder_lift 축 높이 (mm)
-ARM_GEOM_D0 = 0.0      # pan 축 → shoulder_lift 축 수평 오프셋 (mm)
-ARM_GEOM_L1 = 116.0    # shoulder_lift → elbow_flex (mm)
-ARM_GEOM_L2 = 135.0    # elbow_flex → wrist_flex (mm)
-ARM_GEOM_L3 = 95.0     # wrist_flex → 집게가 무는 지점(TCP) (mm)
+# 2026-08-31 **실측**(모터 혼 중심 사이를 자로 잼). 그 전까지는 도면 근사치였고,
+# 그 오차 때문에 손-눈 보정이 어떤 강체 변환으로도 안 풀렸다 — 특히 L3가
+# 95 → 168로 1.77배 틀렸다(카메라로 잰 불일치 1.8배와 정확히 일치).
+# ⚠ 같은 값이 세 곳에 있다: 여기 · kinematics.ArmGeometry 기본값 ·
+#   ros2/.../so101_geometry.yaml. 셋을 **같이** 고쳐야 한다
+#   (ros_selfcheck가 뒤 둘의 불일치를 잡고, arm_cartesian_check가 이쪽을 잡는다).
+ARM_GEOM_Z0 = 119.5    # 마운트 평면 → 2번(shoulder_lift) 혼 중심 (mm)  옛 55.0
+ARM_GEOM_D0 = -31.5    # 1번(pan) 축 → 2번 혼 중심 수평 오프셋 (mm)
+#   ⚠ **음수 = 뒤쪽.** pan=0에서 팔이 뻗는 방향(+x)으로 재므로, 2번 축이
+#     pan축보다 뒤에 있으면 음수다. 2026-08-31 실측 31.5mm 뒤.
+ARM_GEOM_L1 = 116.5    # 2번 → 3번(elbow_flex) 혼 중심 (mm)  옛 116.0
+ARM_GEOM_L2 = 138.0    # 3번 → 4번(wrist_flex) 혼 중심 (mm)  옛 135.0
+ARM_GEOM_L3 = 168.0    # 4번 → 집게가 무는 지점(TCP) (mm)  옛 95.0 ← 가장 크게 틀렸다
 ARM_CART_FILE = "~/arm_cartesian.json"
 
 # --- 영점을 잡을 때 팔을 두는 자세 ("교시 자세") ---
@@ -650,6 +658,99 @@ ARM_CART_NORM_MARGIN = 2.0
 ARM_CART_Z_MIN = 15.0          # 이보다 낮은 z는 무대를 긁는다 (mm, 마운트 평면 기준)
 ARM_CART_R_MIN = 90.0          # 몸통 반경 — 이보다 가까우면 자기를 친다 (mm)
 ARM_CART_ELBOW_UP = True       # 팔꿈치를 현 위로 접는다(아래로 접으면 바닥을 친다)
+
+# --- 깊이 카메라 D405 · 손-눈 보정 (2026-08-28 추가) ---
+# 좌표 이동(위)은 "어디로 갈지 사람이 말해주면 간다"였다. 깊이 카메라는 그
+# **어디를 카메라가 말하게** 한다. 실물 = Intel RealSense D405
+# (시리얼 260322272920, FW 5.15.1.55, USB3.2).
+#
+# 카메라는 vision venv의 tools/depth_cam.py가 혼자 잡고 /dev/shm으로 발행한다
+# (tomato_vision.py·line_follow.py와 같은 구조 — venv를 안 섞는다).
+D405_META_FILE = "/dev/shm/d405_meta.json"
+D405_DEPTH_FILE = "/dev/shm/d405_depth.npy"
+D405_COLOR_FILE = "/dev/shm/d405_color.jpg"
+D405_DEPTH_VIEW_FILE = "/dev/shm/d405_depth.jpg"
+# 이보다 오래된 프레임으로는 팔을 움직이지 않는다 — 발행기가 죽으면 화면은
+# 그럴듯하게 굳어 있고, 굳은 좌표로 팔을 보내는 게 가장 위험하다.
+D405_MAX_AGE_SEC = 2.0
+# 깊이 한 픽셀은 못 믿는다 — 이 크기의 정사각 패치에서 중앙값을 쓴다(홀수).
+D405_PATCH_PX = 5
+# 패치에서 유효 픽셀이 이 비율에 못 미치면 값을 주지 않고 거절한다.
+D405_MIN_VALID_FRAC = 0.35
+# ⚠ **D405는 근거리 전용이다** — 이상 동작범위 7~50cm. 이 밖의 거리는 계산은
+#   되지만 오차가 열매 지름(30~40mm)을 넘어 집기에 못 쓴다. 그래서 범위 밖
+#   깊이는 **거절한다**(대충 된 값을 주는 것보다 낫다).
+#   2026-08-28 첫 연결에서 삼각대가 장면에서 2m 떨어져 있어 유효범위 안이
+#   **0%**였다 — 보정 이전에 카메라를 붙이는 게 먼저다.
+D405_MIN_MM = 70.0
+D405_MAX_MM = 900.0
+
+# 손-눈 보정 결과가 남는 곳. ARM_CART_FILE과 같은 규칙 — 코드는 초기값,
+# 파일은 이 로봇의 실측이고 파일이 이긴다.
+ARM_EYE_FILE = "~/arm_eye.json"
+# 장착 방식. "fixed" = 삼각대·차체 고정(카메라가 팔과 무관하게 서 있다),
+#            "on_arm" = 손목 장착(카메라가 팔과 함께 움직인다).
+# ⚠ **"fixed"는 베이스가 주행하면 그 순간 거짓이 된다.** 삼각대는 지면에
+#   고정이지 로봇에 고정이 아니다 — 로봇이 굴러가면 팔과 카메라의 관계가
+#   바뀌는데 코드는 그걸 알 방법이 없다. 주행 후에는 반드시 다시 잡는다.
+ARM_EYE_MOUNT = "fixed"
+# 보정 표본 최소 개수. fixed는 미지수 6개(최소 3), on_arm은 15개(최소 5)지만
+# 실제로는 이만큼 찍어야 잔차가 안정된다.
+ARM_EYE_MIN_SAMPLES_FIXED = 5
+ARM_EYE_MIN_SAMPLES_ON_ARM = 8
+# 열매 앞에서 멈추는 여유(mm). 목표 좌표는 열매 **표면**이라 그대로 가면
+# 집게가 열매를 밀어 떨어뜨린다. 접근축으로 이만큼 앞에 선다.
+ARM_EYE_STANDOFF_MM = 45.0
+# 열매를 위에서 집을지(-90 = 바닥을 봄) 앞에서 집을지. 위에서 집으면
+# wrist_roll이 곧 yaw가 되어 방향을 자유롭게 줄 수 있다(kinematics.py 참고).
+ARM_EYE_PICK_PITCH_DEG = -60.0
+
+# --- 깊이 카메라가 둘이다 (2026-09-01, Orbbec Astra Pro 추가) ---
+# ⚠ **어느 쪽이 "더 좋은" 게 아니라 쓰는 자리가 다르다.** 거리 대역이 안 겹친다.
+#
+#     d405   7~50cm    집게가 열매를 무는 순간 — 손목/근접
+#     astra  60~400cm  무대 전체 — 삼각대·차체
+#
+#   D405를 처음 달았을 때 삼각대가 무대에서 2m 떨어져 있어 장면의 **0%**가
+#   유효범위 안이었다(docs/depth-camera.md §0). 그 구멍이 Astra의 자리다.
+#   반대로 Astra는 60cm 아래를 아예 못 본다.
+#
+# ⚠ **거절 기준(min/max)은 여기 있는 값이 아니라 meta.json의 값이 이긴다.**
+#   발행기가 카메라에서 읽어 실어 보내기 때문이다 — 깊이 단위가 그랬듯
+#   (D405 0.1mm / Astra 1mm) 카메라별 상수를 읽는 코드에 박으면 언젠가 틀린다.
+#   아래 값은 발행기가 안 뜬 상태에서도 화면이 뭔가 말할 수 있게 하는 초기값이다.
+#
+# ⚠ **Astra의 컬러는 깊이와 정렬돼 있지 않다** — RGB가 별개의 USB(UVC) 장치이고
+#   이 개체는 공장 D2C 보정값이 전부 NaN이다. 그래서 컬러 픽셀은 3D로 못 바꾼다
+#   (읽는 쪽이 거절한다). 클릭은 깊이 화면에서 한다. D405는 반대다.
+DEPTH_CAMERAS = {
+    "d405": {
+        "label": "D405",
+        "long_label": "Intel RealSense D405 (근거리 7~50cm)",
+        "service": "depth-cam",
+        "meta": D405_META_FILE,
+        "depth": D405_DEPTH_FILE,
+        "color": D405_COLOR_FILE,
+        "depth_view": D405_DEPTH_VIEW_FILE,
+        "min_mm": D405_MIN_MM,
+        "max_mm": D405_MAX_MM,
+        "color_aligned": True,
+    },
+    "astra": {
+        "label": "Astra",
+        "long_label": "Orbbec Astra Pro (원거리 60~400cm)",
+        "service": "astra-cam",
+        "meta": "/dev/shm/astra_meta.json",
+        "depth": "/dev/shm/astra_depth.npy",
+        "color": "/dev/shm/astra_color.jpg",
+        "depth_view": "/dev/shm/astra_depth.jpg",
+        "min_mm": 600.0,
+        "max_mm": 4000.0,
+        "color_aligned": False,
+    },
+}
+# 이름을 안 대면 이쪽. 기존 코드·기존 ~/arm_eye.json이 가리키는 카메라다.
+DEPTH_CAMERA_DEFAULT = "d405"
 
 # --- 음성 명령 (온디바이스 STT, Jetson 단독 추론) ---
 # 마이크 카드가 재부팅/USB 재연결/장치 교체마다 번호와 이름이 다 바뀌는 게

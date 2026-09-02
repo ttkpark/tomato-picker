@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>tomato_description</name>
+  <version>0.1.0</version>
+  <description>SO-101 팔 + 메카넘 베이스의 URDF. 링크 길이는 kinematics.py와 같은 값을 쓴다.</description>
+  <maintainer email="juhyung1021@gmail.com">Giho Park</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher_gui</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

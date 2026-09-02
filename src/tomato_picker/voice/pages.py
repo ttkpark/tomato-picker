@@ -351,6 +351,54 @@ _CONTROL_BODY = """
   </p>
 </div>
 
+<h2>깊이 카메라 <span class="dim">— 화면의 열매를 클릭하면 팔이 그 앞에 선다</span></h2>
+<div class="card">
+  <div class="axgrp" style="margin-bottom:0.5rem"><span class="lbl">카메라</span>
+    <label><input type="radio" name="eyeCam" value="d405" checked onchange="eyeSwapCam()">
+      D405 <span class="dim">근거리 7~50cm</span></label>
+    <label><input type="radio" name="eyeCam" value="astra" onchange="eyeSwapCam()">
+      Astra <span class="dim">원거리 60~400cm</span></label>
+  </div>
+  <div id="eyeState" style="margin-bottom:0.6rem">깊이 카메라 확인 중...</div>
+
+  <div class="row-flex" style="margin-bottom:0.5rem">
+    <label><input type="radio" name="eyeView" value="color" checked onchange="eyeSwapView()"> 컬러</label>
+    <label><input type="radio" name="eyeView" value="depth" onchange="eyeSwapView()"> 깊이(검정=측정 못 함)</label>
+    <span id="eyeLast" class="dim"></span>
+  </div>
+
+  <img id="eyeImg" src="/video3" onclick="eyeClick(event)"
+       style="width:100%;max-width:848px;cursor:crosshair;border-radius:6px"
+       alt="깊이 카메라">
+
+  <div class="axgrp" style="margin-top:0.6rem"><span class="lbl">클릭하면</span>
+    <label><input type="radio" name="eyeMode" value="probe" checked> 거리만 재기(안전)</label>
+    <label><input type="radio" name="eyeMode" value="sample"> 보정 표본 담기</label>
+    <label><input type="radio" name="eyeMode" value="aim"> 그 앞으로 팔 보내기</label>
+  </div>
+
+  <div class="axgrp"><span class="lbl">보정</span>
+    <button class="small" onclick="cmd({action:'eye_solve', camera:eyeCam()})">보정 풀기</button>
+    <button class="small" onclick="cmd({action:'eye_drop', camera:eyeCam()})">마지막 표본 취소</button>
+    <button class="small" onclick="cmd({action:'eye_clear', camera:eyeCam()})">표본 비우기</button>
+    <button class="small" onclick="cmd({action:'eye_fruits', camera:eyeCam()})">🍅 보이는 열매 좌표</button>
+  </div>
+
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    <b>순서</b> ① [3D 좌표 영점]을 먼저 잡는다 → ② 팔을 카메라가 보는 자리로 옮긴다
+    → ③ 화면에서 <b>집게가 무는 지점</b>을 클릭(표본 1개) → ④ 팔을 <b>멀찍이</b>
+    옮겨가며 5번 이상 반복 → ⑤ [보정 풀기]로 잔차 확인.
+    <br>⚠ 표본을 <b>한 뭉치에 몰아 찍으면 거절</b>됩니다 — 좌우·상하·앞뒤로 크게 흩으세요.
+    <br>⚠ 깊이 화면에서 열매가 검게 나오면 그 자리는 <b>클릭해도 거절</b>됩니다.
+    거리 대역이 서로 다릅니다 — <b>D405 7~50cm</b>(집는 순간) ·
+    <b>Astra 60~400cm</b>(무대 전체). 무대가 그 밖에 있으면 위 상태줄이 말해줍니다.
+    <br>⚠ <b>Astra는 컬러와 깊이가 정렬돼 있지 않습니다</b>(RGB가 별개의 USB 장치).
+    그래서 Astra를 고르면 <b>깊이 화면</b>으로 넘어가고 컬러 클릭은 막힙니다.
+    <br>⚠ <b>보정은 카메라마다 따로</b>입니다 — 한쪽을 다시 잡아도 다른 쪽은 그대로입니다.
+    <br>⚠ 삼각대 고정이면 <b>바퀴가 움직인 순간 보정이 거짓</b>이 됩니다 — 주행 후 다시 잡으세요.
+  </p>
+</div>
+
 <h2>시퀀스 · 힘 빼기</h2>
 <div class="row-flex">
   <input type="text" id="seq" value="1,2,3,4" size="12">
@@ -469,6 +517,7 @@ _CONTROL_JS = """
   function render() {
     if (!state) return;
     renderHarvest(state.harvest);
+    renderEye((state.eyes || {})[eyeCam()] || state.eye);
     const arm = state.arm || {}, base = state.base || {}, ln = state.line || {};
 
     const ok = base.connected;
@@ -677,6 +726,73 @@ _CONTROL_JS = """
       : {cXp:'앞 +X', cXm:'뒤 −X', cYp:'왼 +Y', cYm:'오른 −Y',
          cZp:'위 +Z', cZm:'아래 −Z'};
     for (const id in names) document.getElementById(id).textContent = names[id];
+  }
+  // --- 깊이 카메라 (D405 · Astra) ---
+  // 카메라마다 영상 경로가 다르다. [컬러, 깊이] 순.
+  const EYE_FEEDS = {d405: ['/video3', '/video4'], astra: ['/video5', '/video6']};
+  function eyeCam() {
+    const el = document.querySelector('input[name=eyeCam]:checked');
+    return el ? el.value : 'd405';
+  }
+  function eyeSwapView() {
+    const cam = eyeCam();
+    let v = document.querySelector('input[name=eyeView]:checked').value;
+    // ⚠ Astra는 컬러가 깊이 격자가 아니다 — 클릭이 엉뚱한 자리를 가리키므로
+    //   컬러를 고를 수 없게 한다(고르면 조용히 틀리는 것보다 못 고르는 게 낫다).
+    const colorOk = (EYE_FEEDS[cam] && cam !== 'astra');
+    const colorRadio = document.querySelector('input[name=eyeView][value=color]');
+    if (colorRadio) colorRadio.disabled = !colorOk;
+    if (!colorOk && v === 'color') {
+      v = 'depth';
+      document.querySelector('input[name=eyeView][value=depth]').checked = true;
+    }
+    const feeds = EYE_FEEDS[cam] || EYE_FEEDS.d405;
+    const want = (v === 'depth') ? feeds[1] : feeds[0];
+    // src를 갈아끼우면 MJPEG 연결이 새로 열린다 — 같은 값이면 건드리지 않는다.
+    const img = document.getElementById('eyeImg');
+    if (!img.src.endsWith(want)) img.src = want;
+  }
+  function eyeSwapCam() {
+    document.getElementById('eyeLast').textContent = '';
+    eyeSwapView();
+  }
+  function eyeClick(ev) {
+    // 화면에 보이는 크기와 실제 프레임 크기가 다르다(반응형) — 원본 픽셀로 환산.
+    // naturalWidth가 0이면 아직 첫 프레임이 안 왔다는 뜻이라 보내지 않는다.
+    const img = document.getElementById('eyeImg');
+    if (!img.naturalWidth) { out.textContent = '아직 깊이 카메라 영상이 없습니다'; return; }
+    const r = img.getBoundingClientRect();
+    const u = Math.round((ev.clientX - r.left) / r.width * img.naturalWidth);
+    const v = Math.round((ev.clientY - r.top) / r.height * img.naturalHeight);
+    const mode = document.querySelector('input[name=eyeMode]:checked').value;
+    document.getElementById('eyeLast').textContent = '클릭 (' + u + ', ' + v + ')';
+    cmd({action: 'eye_' + mode, u: u, v: v, camera: eyeCam()});
+  }
+  function renderEye(e) {
+    const el = document.getElementById('eyeState');
+    if (!el) return;
+    if (!e) { el.textContent = '깊이 카메라 유닛 없음'; el.style.background = ''; return; }
+    const cam = e.camera || {}, cal = e.calibration || {};
+    const bits = [];
+    let bg = 'color-mix(in srgb, #2ecc71 15%, Canvas)';
+    if (e.blocker) { bits.push('⚠ ' + e.blocker); bg = 'color-mix(in srgb, #f39c12 25%, Canvas)'; }
+    else if (!cam.ok) { bits.push('⚠ ' + (cam.why || '깊이 없음')); bg = 'color-mix(in srgb, #e74c3c 18%, Canvas)'; }
+    else {
+      bits.push('● ' + (cam.label || '깊이') + ' ' + (cam.size || '')
+                + ' · 유효 ' + Math.round((cam.valid_frac || 0) * 100) + '%'
+                + ' · 중앙값 ' + (cam.median_mm == null ? '?' : Math.round(cam.median_mm)) + 'mm');
+      if (cam.warn) { bits.push('⚠ ' + cam.warn); bg = 'color-mix(in srgb, #f39c12 25%, Canvas)'; }
+    }
+    const n = (e.samples || []).length;
+    bits.push('표본 ' + n + '/' + (e.needed || 0) + ' (' + (cal.mount_label || '?') + ')');
+    if (cal.has_calibration) {
+      bits.push((cal.good ? '보정됨' : '⚠ 보정 나쁨') + ' 잔차 '
+                + (cal.rms_mm == null ? '?' : cal.rms_mm.toFixed(1)) + 'mm'
+                + (cal.camera_at ? ' · 카메라 (' + cal.camera_at.join(', ') + ')mm' : ''));
+      if (!cal.good) bg = 'color-mix(in srgb, #e74c3c 18%, Canvas)';
+    } else bits.push('보정 없음 — 표본을 모아 [보정 풀기]');
+    el.textContent = bits.join('  ·  ');
+    el.style.background = bg;
   }
   function renderCart(c) {
     const el = document.getElementById('cartState');
@@ -1042,10 +1158,42 @@ _SETTINGS_BODY = """
     l2=팔꿈치→손목, l3=손목→<b>집게가 무는 지점</b>. 틀리면 이동 <b>크기</b>가 그만큼 어긋납니다.
   </p>
 </div>
+<h2>카메라 3D 보정 <span class="dim">— 깊이 카메라가 본 점을 팔 좌표로</span></h2>
+<div class="card">
+  <div class="axgrp" style="margin-bottom:0.5rem"><span class="lbl">카메라</span>
+    <label><input type="radio" name="eyeCam" value="d405" checked onchange="render()"> D405</label>
+    <label><input type="radio" name="eyeCam" value="astra" onchange="render()"> Astra</label>
+    <span class="dim" style="font-size:0.82rem">⚠ 보정은 카메라마다 따로 저장됩니다 —
+      아래 버튼은 <b>고른 카메라</b>에만 듭니다.</span>
+  </div>
+  <div id="eyeCfgState" style="margin-bottom:0.6rem">보정 상태 확인 중...</div>
+  <div class="axgrp"><span class="lbl">장착 방식</span>
+    <button class="small" onclick="cmd({action:'eye_mount', mount:'fixed', camera:eyeCam()})">삼각대·차체 고정</button>
+    <button class="small" onclick="cmd({action:'eye_mount', mount:'on_arm', camera:eyeCam()})">손목 장착</button>
+    <span class="dim" style="font-size:0.82rem">⚠ 바꾸면 기존 보정은 버려집니다(뜻이 달라지므로).</span>
+  </div>
+  <div class="axgrp"><span class="lbl">되돌리기</span>
+    <button class="small" onclick="cmd({action:'eye_forget', camera:eyeCam()})">보정 지우기</button>
+    <span class="dim" style="font-size:0.82rem">삼각대를 옮겼거나 팔 캘리브레이션을 다시 했으면 지우고 새로 잡으세요.</span>
+  </div>
+  <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
+    <b>표본을 담고 푸는 것은 [🎮 수동 조작] 화면</b>에서 합니다 — 카메라 영상을 보며
+    클릭해야 하기 때문입니다.
+    <br>⚠ <b>[3D 좌표 영점]이 먼저입니다.</b> 영점이 없으면 팔이 말하는 집게 좌표에 뜻이
+    없어서, 그걸 짝으로 쓰는 이 보정도 통째로 무의미합니다.
+    <br>⚠ <b>팔 범위 캘리브레이션을 다시 하면 영점도 보정도 다시</b> 잡아야 합니다.
+    <br>⚠ <b>삼각대 고정은 바퀴가 움직이면 거짓</b>이 됩니다 — 삼각대는 지면에 고정이지
+    로봇에 고정이 아니라, 로봇이 굴러가면 팔과 카메라의 관계가 바뀝니다.
+  </p>
+</div>
 """
-
 _SETTINGS_JS = """
   let tuneInit = false, pulseInit = false, rangeInit = false;
+  // 깊이 카메라가 둘이라, 이 화면의 보정 버튼도 "어느 쪽인지"를 실어 보낸다.
+  function eyeCam() {
+    const el = document.querySelector('input[name=eyeCam]:checked');
+    return el ? el.value : 'd405';
+  }
   // --- 음성 명령어 ---
   // 칸은 서버가 주는 목록으로 만든다(코드에 항목을 또 적지 않게). 타이핑 중에
   // 폴링이 값을 덮어쓰면 안 되므로 **한 번만** 그리고, 그 뒤로는 '고침' 표시만 갱신한다.
@@ -1171,7 +1319,7 @@ _SETTINGS_JS = """
     wrist_roll: '집게 비틀기 — 반시계 +',
   };
   function zeroCart() {
-    if (!confirm('지금 자세를 "어깨는 정면, 나머지는 곧게 위로 세운 자세"로 등록합니다.\n'
+    if (!confirm('지금 자세를 "어깨는 정면, 나머지는 곧게 위로 세운 자세"로 등록합니다.\\n'
                  + '상완·전완·집게가 한 줄로 수직인가요?')) return;
     cmd({action:'arm_tool_zero'});
   }
@@ -1182,6 +1330,32 @@ _SETTINGS_JS = """
     const v = id => { const t = document.getElementById(id).value; return t === '' ? null : +t; };
     cmd({action:'arm_tool_config',
          geometry: {z0: v('gZ0'), l1: v('gL1'), l2: v('gL2'), l3: v('gL3')}});
+  }
+  function renderEyeCfg(e) {
+    const el = document.getElementById('eyeCfgState');
+    if (!el) return;
+    if (!e) { el.textContent = '깊이 카메라 유닛 없음'; return; }
+    const cal = e.calibration || {}, cam = e.camera || {};
+    const bits = [(e.camera_label || cam.label || '?') + ' · 장착: ' + (cal.mount_label || '?')];
+    let bg = '';
+    if (cal.has_calibration) {
+      bits.push((cal.good ? '✅ 보정됨' : '⚠ 잔차가 큼') + ' RMS '
+                + (cal.rms_mm == null ? '?' : cal.rms_mm.toFixed(1)) + 'mm'
+                + ' (표본 ' + (cal.samples || 0) + '개, ' + (cal.saved_at || '') + ')');
+      if (cal.camera_at) bits.push((cal.camera_at_label || '카메라 위치')
+                                   + ' (' + cal.camera_at.join(', ') + ')mm');
+      if (cal.scale_hint != null && Math.abs(cal.scale_hint - 1) > 0.05)
+        bits.push('⚠ 배율 ' + cal.scale_hint.toFixed(3) + ' — 깊이 단위나 링크 길이를 의심');
+      bg = cal.good ? 'color-mix(in srgb, #2ecc71 15%, Canvas)'
+                    : 'color-mix(in srgb, #e74c3c 18%, Canvas)';
+    } else {
+      bits.push('보정 없음 — [🎮 수동 조작] 화면에서 표본을 모아 [보정 풀기]');
+      bg = 'color-mix(in srgb, #f39c12 22%, Canvas)';
+    }
+    if (!cam.ok && cam.why) bits.push('⚠ ' + cam.why);
+    bits.push(cal.path || '');
+    el.textContent = bits.join('  ·  ');
+    el.style.background = bg;
   }
   function renderCartCfg(c) {
     const el = document.getElementById('cartCfg');
@@ -1251,6 +1425,7 @@ _SETTINGS_JS = """
     renderVoice((state.voice || {}).items);
     renderWake((state.voice || {}).wake);
     renderCartCfg(arm.cartesian);
+    renderEyeCfg((state.eyes || {})[eyeCam()] || state.eye);
 
     const el = document.getElementById('lineState');
     if (ln.found) {

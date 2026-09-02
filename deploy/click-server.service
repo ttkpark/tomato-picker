@@ -1,0 +1,15 @@
+[Unit]
+Description=Tomato stem click page (wrist camera) on :8090
+After=network-online.target depth-cam.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=server
+WorkingDirectory=/home/server/tomato-picker
+ExecStart=/home/server/lerobot/.venv/bin/python /home/server/tomato-picker/ros2/tools/click_server.py --port 8090
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

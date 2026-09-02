@@ -97,6 +97,8 @@ class MotorLink:
         self._stop_flag = False       # 다음 송신에서 S를 한 번 보낸다
         self._closing = False
         self._ser: serial.Serial | None = None
+        # 전체 속도 배율 — 상위(JetsonBase)가 base_tuning.json 값으로 덮어쓴다.
+        self._scale = 1.0
         # 링크 상태(대시보드 표시용)
         self._connected = False
         self._port_now: str | None = None
@@ -124,10 +126,30 @@ class MotorLink:
 
     # --- 공개 API (전부 논블로킹) ---
 
-    def set_velocity(self, vx: int = 0, vy: int = 0, w: int = 0) -> None:
-        """지금부터 이 속도로 가라. STALE_SEC 안에 다시 부르지 않으면 자동으로 선다."""
+    def set_speed_scale(self, scale: float) -> None:
+        """전체 속도 배율(1.0 = 지령 그대로). 여기 거는 이유는 아래 참고."""
         with self._lock:
-            self._target = (_clamp(vx), _clamp(vy), _clamp(w))
+            self._scale = max(0.05, min(2.0, float(scale)))
+
+    @property
+    def speed_scale(self) -> float:
+        return self._scale
+
+    def set_velocity(self, vx: int = 0, vy: int = 0, w: int = 0) -> None:
+        """지금부터 이 속도로 가라. STALE_SEC 안에 다시 부르지 않으면 자동으로 선다.
+
+        ★ **전체 속도 배율**을 여기서 건다. 이 함수가 V 지령의 유일한 길목이라
+        (라인 주행·수동 조작·음성·시퀀스가 전부 여기로 들어온다) 한 곳만 잡으면
+        모든 움직임이 같은 비율로 느려진다. 호출부마다 곱하면 반드시 하나를
+        빠뜨리고, 그러면 "다 줄였는데 저것만 빠르다"가 된다.
+
+        ⚠ 듀티 상한(P)과는 다른 층이다. 저건 **힘의 천장**이고 이건 **지령의 크기**다.
+        ⚠ 너무 낮추면 지령이 정지마찰 아래로 내려가 **아예 안 움직인다**(지령은
+          나가는데 바퀴는 그대로). 안 움직이면 배율부터 되돌릴 것.
+        """
+        with self._lock:
+            k = self._scale
+            self._target = (_clamp(round(vx * k)), _clamp(round(vy * k)), _clamp(round(w * k)))
             self._target_ts = time.monotonic()
 
     def stop(self) -> None:

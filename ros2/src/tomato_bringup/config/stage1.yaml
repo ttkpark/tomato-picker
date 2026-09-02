@@ -1,0 +1,87 @@
+# 1단계 파라미터 — **현장에서 고치는 값은 전부 여기**.
+#
+# 코드 안의 기본값은 공장 초기값이고, 이 파일이 이깁니다(기존 스택의
+# base_tuning.json / arm_cartesian.json과 같은 구조).
+
+tomato_arm:
+  ros__parameters:
+    # direct = ROS가 /dev/ttyACM0을 직접 연다(lerobot SOFollower 직결). **기본값.**
+    #          ⚠ tomato-voice.service를 먼저 끌 것 — 포트는 한 프로세스만 연다.
+    # proxy  = 레거시 대시보드를 통해 읽고 움직인다. **브링업 전용**이며 관절값이
+    #          HTTP 폴링(~10Hz)이라 TF 시각 정렬이 안 된다. v2.0.0-ros.3에서 삭제.
+    arm_mode: "direct"
+    dashboard_url: "http://127.0.0.1:8090"   # config.VOICE_LOG_HTTP_PORT
+    arm_port: ""            # 비우면 자동 탐색
+    publish_hz: 10.0
+    base_frame: "arm_base"
+    gripper_deg: 0.0        # 집게 각을 아직 못 읽는다 — URDF 표시용 자리값
+
+tomato_base:
+  ros__parameters:
+    cmd_timeout: 0.3        # 보드계약 §9 4층: 이 시간 지령이 없으면 스스로 정지
+    serial_port: ""         # 비우면 motor_link가 CH340을 찾는다
+
+    # 축 부호 — 보드계약 §14.1이 아직 안 닫혔다. 실기에서 확정하면 여기 값을
+    # 고치고 그 결정 항목을 닫아라. (+x 앞, +y 왼쪽, +z 반시계가 ROS 규약)
+    sign_vx: 1
+    sign_vy: 1
+    sign_w: 1
+
+    # duty 환산 — ⚠ Ks만 실측이고 Kv는 아니다.
+    #   Ks=90은 CLAUDE.md의 실측 정지마찰 문턱(회전 w=75→0.00°, 100→0.20°).
+    #   Kv는 아무도 안 쟀다. duty_measured가 false인 동안 m/s의 절대 크기는
+    #   못 믿는다(방향과 비율은 맞다). 재는 법: docs/ros2-이행계획.md
+    duty_ks: 90
+    duty_kv: 0.35
+    duty_ks_w: 90
+    duty_kv_w: 1.1
+    duty_max: 255
+    duty_measured: false
+
+tomato_detect:
+  ros__parameters:
+    color_topic: "/camera/camera/color/image_raw"
+    depth_topic: "/camera/camera/aligned_depth_to_color/image_raw"
+    info_topic: "/camera/camera/color/camera_info"
+    min_pixels: 400         # 기존 MIN_FRUIT_AREA_PX와 같은 뜻
+    detect_unripe: false    # 초록 열매까지 낼 것인가
+    annotate: true          # ~/annotated 로 진단 이미지 발행
+    # HSV 임계 — vision/color_detect.py와 같은 값. [h_lo,s_lo,v_lo, h_hi,s_hi,v_hi]가
+    # 한 구간이고, 빨강은 색상환을 넘어가므로 두 구간이다.
+    red_ranges: [0.0, 120.0, 70.0, 10.0, 255.0, 255.0,
+                 170.0, 120.0, 70.0, 180.0, 255.0, 255.0]
+    green_range: [35.0, 80.0, 40.0, 85.0, 255.0, 255.0]
+
+tomato_handeye:
+  ros__parameters:
+    # ⚠ 보정 파일은 레거시와 **한 벌**이다 — ~/arm_eye.json (config.ARM_EYE_FILE).
+    #    대시보드에서 잡은 보정을 ROS가 그대로 쓰고, 그 반대도 같다. 팔도 카메라도
+    #    하나뿐이므로 보정도 하나여야 한다.
+    #
+    # ⚠ **지금 하드웨어는 on_arm이다** — D405가 5번 관절(wrist_roll) 뒤,
+    #    집게 바로 위에 볼트로 붙어 집게 앞을 본다. 컬러 화면 아래쪽에 보이는
+    #    검은 덩어리가 그 집게다. 팔이 움직이면 카메라도 같이 움직인다.
+    #    (차체 고정용 ORBBEC Astra Pro는 아직 안 왔다. 그게 오면 카메라가 둘이
+    #     되므로 프레임 이름과 mount를 나눠야 한다 — 지금은 D405 하나뿐이다.)
+    #
+    #   fixed  = 카메라가 팔과 무관하게 고정(차체·삼각대). 마커를 **집게에** 붙인다.
+    #            푼 값 T_parent_cam → TF 부모는 arm_base.
+    #   on_arm = 카메라가 손목에 붙어 같이 움직임. 마커를 **책상에** 둔다.
+    #            푼 값 T_tool_cam   → TF 부모는 **tool0**.
+    #
+    # 비우면 보정 파일이 정한다. 다만 파일이 아직 없으면 레거시 기본값(fixed)이
+    # 나오므로, 실물과 다른 그 값이 조용히 쓰이지 않게 여기 **명시**한다.
+    mount: "on_arm"
+    parent_frame: "arm_base"
+    tool_frame: "tool0"
+    camera_optical_frame: "camera_color_optical_frame"
+    camera_link_frame: "camera_link"
+    calib_path: ""          # 비우면 config.ARM_EYE_FILE
+    aruco_dict: "4x4_50"
+    marker_id: -1           # -1 = 아무거나(하나만 보일 때). 여러 개면 번호를 지정
+    # TCP에서 마커 중심까지 (도구 좌표 mm: +x 찌르는 방향, +y 왼쪽, +z 위).
+    # ⚠ 안 재고 0으로 두면 그 오프셋이 통째로 보정 오차가 된다.
+    marker_offset_tool_mm: [0.0, 0.0, 0.0]
+    color_topic: "/camera/camera/color/image_raw"
+    depth_topic: "/camera/camera/aligned_depth_to_color/image_raw"
+    info_topic: "/camera/camera/color/camera_info"

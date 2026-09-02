@@ -19,6 +19,8 @@ import time
 
 from .config import (
     BASE_DRIVE_FORWARD_SECONDS,
+    DEPTH_CAMERA_DEFAULT,
+    DEPTH_CAMERAS,
     FLOOR_CAM_JPEG,
     FLOOR_LINE_STATUS,
     FLOOR_VIEW_JPEG,
@@ -244,6 +246,35 @@ def run_voice() -> None:
     # 5) 수확 계획 — 비전 좌표를 나무/높이로 읽어 다음 동작을 정하고, 자동 모드면
     #    스스로 실행한다. 비전이 없어도(None) "없음"으로 답할 뿐 죽지 않는다.
     hardware["harvest"] = HarvestRunner(hardware, vision, log_hub)
+    # 6) 깊이 카메라 — 발행기(depth-cam=D405, astra-cam=Astra)가 /dev/shm에
+    #    올려둔 것을 읽어 "화면의 열매를 클릭하면 팔이 그 앞에 선다"를 만든다.
+    #    ⚠ 서비스가 안 떠 있어도 객체는 만든다 — 화면이 "발행기가 안 돈다"고
+    #      말해주려면 물어볼 상대가 있어야 한다(없으면 패널이 통째로 사라진다).
+    #      **둘 다** 만드는 이유도 같다: 안 켠 카메라를 화면에서 고를 수 있어야
+    #      "왜 안 나오지"의 답이 화면에 뜬다.
+    #    ⚠ 팔은 **핸들이 아니라 꺼내는 함수**로 넘긴다 — USB가 빠졌다 돌아오면
+    #      hardware["arm"]이 새 객체로 갈리기 때문(_retry_hardware_forever).
+    try:
+        from .hardware.depth_camera import DepthView
+        from .hardware.eye import Eye
+
+        def arm_src():
+            return getattr(hardware.get("arm"), "cartesian", None)
+
+        eyes = {}
+        for name, spec in DEPTH_CAMERAS.items():
+            eyes[name] = Eye(DepthView(camera=name), arm_src)
+            hardware[f"depth_color_{name}"] = SharedFrameSource(
+                log_hub, spec["color"], spec["meta"])
+            hardware[f"depth_map_{name}"] = SharedFrameSource(
+                log_hub, spec["depth_view"], spec["meta"])
+        hardware["eyes"] = eyes
+        # 이름 없이 부르던 옛 자리 — 기본 카메라를 가리킨다.
+        hardware["eye"] = eyes[DEPTH_CAMERA_DEFAULT]
+        hardware["depth_color"] = hardware[f"depth_color_{DEPTH_CAMERA_DEFAULT}"]
+        hardware["depth_map"] = hardware[f"depth_map_{DEPTH_CAMERA_DEFAULT}"]
+    except Exception as exc:  # noqa: BLE001 - 깊이 카메라가 없어도 나머지는 돈다
+        print(f"[voice] 깊이 카메라 초기화 실패: {exc} — 나머지 기능은 정상")
 
     hw["마이크"] = "확인 중"
     publish_hw()

@@ -1,0 +1,124 @@
+<?xml version="1.0"?>
+<!--
+  토마토 로봇 전체 — 메카넘 베이스 + SO-101 팔.
+
+  **단위 변환은 이 파일에서만 일어난다.** 인자는 전부 mm/도로 받고(자로 재는
+  단위), 안쪽으로는 m/rad만 내려보낸다(REP-103). 두 단위가 한 파일 안에 같이
+  있는 곳은 여기뿐이며, 그래서 여기만 조심하면 된다.
+
+  카메라(D405)가 **왜 여기 없는가** — 카메라의 위치는 도면이 아니라 **손-눈
+  보정이 실측으로 푸는 값**이다. URDF에 "대충 앞쪽 30cm, 15° 아래"라고 적어 두면
+  그 숫자가 조용히 진실 행세를 한다. 그래서 카메라 프레임은 tomato_handeye가
+  보정 결과로 static TF를 쏘고, 보정 전에는 **아예 없다**(TF 조회가 실패해서
+  "보정을 안 했다"는 사실이 즉시 드러난다). 이게 의도한 동작이다.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="tomato_robot">
+
+  <!-- ── 링크 길이 (mm) ── kinematics.ArmGeometry와 같은 값이어야 한다 -->
+  <xacro:arg name="z0_mm" default="55.0"/>
+  <xacro:arg name="d0_mm" default="0.0"/>
+  <xacro:arg name="l1_mm" default="116.0"/>
+  <xacro:arg name="l2_mm" default="135.0"/>
+  <xacro:arg name="l3_mm" default="95.0"/>
+
+  <!-- ── 팔 마운트 (mm, 도) ── -->
+  <xacro:arg name="mount_x_mm" default="60.0"/>
+  <xacro:arg name="mount_y_mm" default="0.0"/>
+  <xacro:arg name="mount_z_mm" default="180.0"/>
+  <xacro:arg name="mount_yaw_deg" default="0.0"/>
+
+  <!-- ── 차체 (mm) ── -->
+  <xacro:arg name="base_length_mm" default="300.0"/>
+  <xacro:arg name="base_width_mm" default="240.0"/>
+  <xacro:arg name="base_height_mm" default="90.0"/>
+  <xacro:arg name="wheel_radius_mm" default="40.0"/>
+
+  <!-- ── 관절 한계 (도) ── -->
+  <xacro:arg name="pan_min_deg"   default="-110.0"/>
+  <xacro:arg name="pan_max_deg"   default="110.0"/>
+  <xacro:arg name="lift_min_deg"  default="-100.0"/>
+  <xacro:arg name="lift_max_deg"  default="110.0"/>
+  <xacro:arg name="elbow_min_deg" default="-160.0"/>
+  <xacro:arg name="elbow_max_deg" default="160.0"/>
+  <xacro:arg name="wflex_min_deg" default="-110.0"/>
+  <xacro:arg name="wflex_max_deg" default="110.0"/>
+  <xacro:arg name="wroll_min_deg" default="-180.0"/>
+  <xacro:arg name="wroll_max_deg" default="180.0"/>
+  <xacro:arg name="grip_min_deg"  default="0.0"/>
+  <xacro:arg name="grip_max_deg"  default="45.0"/>
+
+  <xacro:property name="mm" value="0.001"/>
+  <xacro:property name="d2r" value="${pi/180.0}"/>
+
+  <xacro:property name="bl" value="${$(arg base_length_mm) * mm}"/>
+  <xacro:property name="bw" value="${$(arg base_width_mm) * mm}"/>
+  <xacro:property name="bh" value="${$(arg base_height_mm) * mm}"/>
+  <xacro:property name="wr" value="${$(arg wheel_radius_mm) * mm}"/>
+
+  <xacro:include filename="$(find tomato_description)/urdf/so101_arm.xacro"/>
+
+  <!-- ============================================================
+       base_link — 차체 중심, **바닥면 높이**.
+       왜 바닥면인가: 주행·라인 검출·(나중의) 내비게이션이 전부 지면 기준이고,
+       REP-105의 base_link도 관례상 지면에 둔다. 열매 z좌표를 사람이 읽을 때
+       "바닥에서 몇 mm"가 되는 것도 이 선택 덕이다.
+       ============================================================ -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 ${bh/2 + wr}"/>
+      <geometry><box size="${bl} ${bw} ${bh}"/></geometry>
+      <material name="m_chassis"><color rgba="0.2 0.22 0.25 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${bh/2 + wr}"/>
+      <geometry><box size="${bl} ${bw} ${bh}"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="4.0"/>
+      <origin xyz="0 0 ${bh/2 + wr}"/>
+      <inertia ixx="0.03" ixy="0" ixz="0" iyy="0.05" iyz="0" izz="0.06"/>
+    </inertial>
+  </link>
+
+  <!-- 바퀴는 **보여 주기만** 한다. 회전 관절로 두지 않는 이유는 엔코더가 없어서
+       각도를 알 방법이 없기 때문이다 — 모르는 값을 0으로 발행하면 rviz에서
+       "안 구르는 바퀴"가 아니라 "구르지 않는다는 거짓말"이 된다.
+       엔코더가 생기면(보드계약 v2 `enc`) 그때 관절로 승격한다. -->
+  <xacro:macro name="wheel" params="name x y">
+    <link name="${name}">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wr}" length="0.04"/></geometry>
+        <material name="m_wheel"><color rgba="0.1 0.1 0.1 1"/></material>
+      </visual>
+    </link>
+    <joint name="${name}_fixed" type="fixed">
+      <parent link="base_link"/>
+      <child link="${name}"/>
+      <origin xyz="${x} ${y} ${wr}"/>
+    </joint>
+  </xacro:macro>
+  <!-- 모터↔바퀴 실측 대응은 CLAUDE.md에 있다: A=FR B=FL C=RR D=RL -->
+  <xacro:wheel name="wheel_fr" x="${ bl/2 - 0.04}" y="${-bw/2 - 0.02}"/>
+  <xacro:wheel name="wheel_fl" x="${ bl/2 - 0.04}" y="${ bw/2 + 0.02}"/>
+  <xacro:wheel name="wheel_rr" x="${-bl/2 + 0.04}" y="${-bw/2 - 0.02}"/>
+  <xacro:wheel name="wheel_rl" x="${-bl/2 + 0.04}" y="${ bw/2 + 0.02}"/>
+
+  <xacro:so101_arm
+      prefix=""
+      parent="base_link"
+      xyz="${$(arg mount_x_mm)*mm} ${$(arg mount_y_mm)*mm} ${$(arg mount_z_mm)*mm}"
+      rpy="0 0 ${$(arg mount_yaw_deg)*d2r}"
+      z0="${$(arg z0_mm)*mm}"
+      d0="${$(arg d0_mm)*mm}"
+      l1="${$(arg l1_mm)*mm}"
+      l2="${$(arg l2_mm)*mm}"
+      l3="${$(arg l3_mm)*mm}"
+      pan_min="${$(arg pan_min_deg)*d2r}"     pan_max="${$(arg pan_max_deg)*d2r}"
+      lift_min="${$(arg lift_min_deg)*d2r}"   lift_max="${$(arg lift_max_deg)*d2r}"
+      elbow_min="${$(arg elbow_min_deg)*d2r}" elbow_max="${$(arg elbow_max_deg)*d2r}"
+      wflex_min="${$(arg wflex_min_deg)*d2r}" wflex_max="${$(arg wflex_max_deg)*d2r}"
+      wroll_min="${$(arg wroll_min_deg)*d2r}" wroll_max="${$(arg wroll_max_deg)*d2r}"
+      grip_min="${$(arg grip_min_deg)*d2r}"   grip_max="${$(arg grip_max_deg)*d2r}"/>
+
+</robot>

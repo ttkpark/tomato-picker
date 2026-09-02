@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>tomato_perception</name>
+  <version>0.1.0</version>
+  <description>D405 컬러+깊이에서 열매 3D 좌표를 뽑는다</description>
+  <maintainer email="juhyung1021@gmail.com">Giho Park</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>message_filters</depend>
+  <depend>tomato_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

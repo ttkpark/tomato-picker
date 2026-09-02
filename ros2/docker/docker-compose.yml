@@ -1,0 +1,65 @@
+# 젯슨에서 ROS 계통을 띄운다.
+#
+#   cd ros2/docker
+#   docker compose build            # 처음 한 번 (10~20분)
+#   docker compose run --rm ros     # 셸로 들어간다
+#
+# ⚠ **network_mode: host 가 필수다.** ROS 2의 DDS는 멀티캐스트로 서로를 찾는데,
+#    도커 기본 브리지 안에서는 컨테이너 밖 노드(예: PC의 rviz)와 서로 안 보인다.
+#    "노드는 떠 있는데 토픽이 안 보인다"의 대부분이 이것이다.
+#
+# ⚠ **장치는 필요한 것만** 넘긴다. `privileged: true`면 편하지만, 그러면
+#    컨테이너가 엉뚱한 시리얼 장치를 잡아도 아무도 모른다. 어느 장치를 쓰는지가
+#    이 파일에 적혀 있는 편이 낫다.
+services:
+  ros:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: tomato-ros:jazzy
+    container_name: tomato-ros
+    network_mode: host
+    ipc: host              # DDS 공유메모리 전송 — 없으면 이미지 토픽이 느려진다
+    stdin_open: true
+    tty: true
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-7}
+      - RCUTILS_COLORIZED_OUTPUT=1
+      # ⚠ HOME을 **호스트의 홈으로** 돌린다. 팔 영점(~/arm_cartesian.json)과
+      #    손눈보정(~/tomato_handeye.json)을 기존 스택과 **같은 파일**로 쓰기
+      #    위해서다. 컨테이너 안에만 저장되면 재시작마다 영점이 사라지고,
+      #    두 계통이 같은 팔을 다르게 믿게 된다.
+      - HOME=/host-home
+      # lerobot은 컨테이너에 없다 — 젯슨의 venv를 읽기전용으로 물린다.
+      # (follower_io._find_lerobot()가 이 경로에서 site-packages를 찾아
+      #  sys.path **끝에** 붙인다. PYTHONPATH로 넣으면 venv numpy가
+      #  컨테이너 numpy를 가려 cv_bridge가 깨진다.)
+      - TOMATO_LEROBOT=/lerobot
+    volumes:
+      - ..:/ws                       # ros2/ 가 곧 colcon 워크스페이스다
+      - ../..:/repo:ro               # 저장소 — 기구학·손눈보정·모터링크를 그대로 쓴다
+      - ${HOME}:/host-home           # 영점·보정 파일 (위의 HOME 설명 참고)
+      - ${HOME}/lerobot:/lerobot:ro  # SO-101 모터 버스 (컨테이너엔 없다)
+      # ⚠ /dev를 통째로 물린다 — **D405 때문이다.**
+      #    librealsense의 V4L2 백엔드는 /sys/class/video4linux 를 훑어 노드 이름을
+      #    얻은 뒤 그 이름으로 /dev/videoN 을 연다. 그런데 D405는 노드를 **여섯 개**
+      #    쓰고(현재 video3~8), 번호는 다시 꽂을 때마다 바뀐다. devices: 로 하나씩
+      #    적으면 sysfs가 말하는 이름과 어긋나는 순간 "No RealSense devices were
+      #    found!"가 뜨고, 그 메시지는 원인을 전혀 안 가리킨다(실측).
+      #    /dev를 통째로 물리면 sysfs와 /dev가 자동으로 일치한다.
+      #    ⚠ 그래도 privileged 는 아니다 — 실제 접근은 아래 device_cgroup_rules 가
+      #      막는다. 규칙에 없는 장치는 노드가 보여도 열리지 않는다.
+      - /dev:/dev
+      - /dev/shm:/dev/shm            # 기존 스택이 쓰는 프레임 공유메모리
+      # ⚠ by-id 심볼릭링크가 **반드시** 있어야 한다. 팔 포트를 시리얼번호로 골라
+      #    리더암을 잘못 잡는 사고를 막는 안전장치(ports.resolve_arm_port)가 이
+      #    디렉터리를 본다. 없으면 "팔로워 팔(시리얼 …)을 찾지 못했습니다"로
+      #    거절당한다 — 장치를 넘겼는데도(devices:) 못 여는 이유가 이것이다.
+      - /dev/serial:/dev/serial:ro
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0    # 주행 보드 (CH340). 없으면 이 줄을 지운다
+      - /dev/ttyACM0:/dev/ttyACM0    # SO-101 팔로워. arm_mode:=direct 일 때만 필요
+    # 노드가 보이는 것과 열 수 있는 것은 다르다. 여기 적은 major 번호만 열린다.
+    device_cgroup_rules:
+      - "c 81:* rmw"                 # video4linux — D405의 스트림 노드 (video3~8)
+      - "c 189:* rmw"                # USB — 펌웨어 질의·XU 컨트롤
