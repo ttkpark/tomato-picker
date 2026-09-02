@@ -60,6 +60,18 @@ GRIP_UV = (471, 395)              # 집게를 여닫아 실측한 기본값
 PARK = "60,65,0,-100,6"           # 열매가 보이던 대기 자세(도)
 
 
+def voice_active():
+    """⚠ `tomato-voice`(레거시 대시보드)가 팔 포트를 쥐고 있으면 여기서 하는
+       모든 일이 조용히 실패한다 — 둘을 동시에 못 켠다(CLAUDE.md의 경계).
+       2026-09-03 인수인계 직전에 이게 되살아나 있었다. 화면에 띄운다."""
+    try:
+        r = subprocess.run(["systemctl", "is-active", "tomato-voice"],
+                           capture_output=True, text=True, timeout=4)
+        return r.stdout.strip() == "active"
+    except Exception:                                      # noqa: BLE001
+        return False
+
+
 def grip_uv():
     try:
         g = json.load(open(GRIPF))
@@ -241,6 +253,8 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
 </header>
 
 <div class="col">
+  <div id="warn" style="display:none;background:#fdecea;color:#8f1d14;border:1px solid #e4572e;
+    border-radius:9px;padding:9px 11px;font-size:13.5px;font-weight:600"></div>
   <div class="row">
     <button id="m_t" class="go">① 줄기 찍기</button>
     <button id="m_g">② 십자(집게 자리) 옮기기</button>
@@ -363,6 +377,10 @@ function state(){
     if(j.u!=null){pt={u:j.u,v:j.v};
       document.getElementById('cur').textContent='표적 ('+j.u+', '+j.v+')  깊이 '+(j.z>0?j.z.toFixed(0)+'mm':'없음');}
     document.getElementById('age').textContent='프레임 '+j.age.toFixed(1)+'초 전'+(j.age>5?' ⚠ depth-cam 확인':'');
+    var wv=document.getElementById('warn');
+    if(j.voice){wv.textContent='⚠ tomato-voice 가 켜져 있다 — 팔 포트를 뺏겨 여기서 시키는 일이 전부 실패한다. '
+      +'젯슨에서 sudo systemctl stop tomato-voice';wv.style.display='';}
+    else wv.style.display='none';
     var e=document.getElementById('jobline');
     e.textContent=j.running?('도는 중: '+j.job):('놀고 있음'+(j.job?(' (마지막 '+j.job+', rc='+j.rc+')'):''));
     e.className='v '+(j.running?'busy':'idle');
@@ -410,7 +428,7 @@ class Handler(BaseHTTPRequestHandler):
             gu, gv = grip_uv()
             out = {"age": 99.0, "u": None, "v": None, "z": -1.0, "gu": gu, "gv": gv,
                    "running": JOB.running(), "job": JOB.name, "rc": JOB.rc,
-                   "log_len": len(JOB.lines)}
+                   "log_len": len(JOB.lines), "voice": voice_active()}
             try:
                 out["age"] = time.time() - os.path.getmtime(COLOR)
             except OSError:
