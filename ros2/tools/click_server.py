@@ -86,7 +86,24 @@ def _kin_constants() -> dict:
                 joints[name] = {"min": round(lim[0], 1), "max": round(lim[1], 1)}
     except Exception:                                      # noqa: BLE001
         pass
-    return {"geom": geom, "joints": joints,
+    # ⚠ **손-눈 보정(T_tool_cam)이 있으면 손목 카메라도 그린다** — 지금까지
+    #   미리보기는 관절만 그려서, "카메라가 실제로 어디를 보고 있는가"는 숫자
+    #   (t_tool_cam)로만 확인해야 했다. 사람이 |t|=250mm 같은 값을 보고
+    #   "그게 팔 길이보다 긴데?"를 눈치채는 것보다, 팔 그림 옆에 카메라가
+    #   허공에 붕 떠 있는 걸 보는 쪽이 훨씬 빨리 걸린다(2026-09-04, 실제로
+    #   그런 물리적으로 말이 안 되는 해가 나온 적이 있다 — §손-눈 보정 부호).
+    #   실패해도 조용히 없는 채로 둔다 — 미리보기는 핵심 기능이 아니다.
+    eye = None
+    try:
+        from tomato_picker.hardware.eye import EyeConfig
+        cfg = EyeConfig()
+        if cfg.mount == "on_arm" and cfg.has_calibration:
+            t = cfg.transform
+            eye = {"R": t.R.flatten().tolist(), "t": t.t.tolist(),
+                   "rms_mm": cfg.rms_mm, "good": cfg.good}
+    except Exception:                                      # noqa: BLE001
+        pass
+    return {"geom": geom, "joints": joints, "eye": eye,
             "floor": -arm_calib.MOUNT_Z_MM + arm_calib.FLOOR_MARGIN_MM}
 
 
@@ -355,6 +372,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <span><b style="background:#4a9eff"></b>지금</span>
       <span><b style="background:#ff9a3d"></b>목표</span>
       <span><b style="background:#3a4550"></b>바닥/한계면</span>
+      <span><b style="background:#22d3ee"></b>손목 카메라(보정 있으면)</span>
       <span>드래그=회전·휠=확대</span>
     </div>
     <div class="k" id="k3dWhy" style="margin-top:5px"></div>
@@ -554,6 +572,12 @@ function log(){
 // ── 3D 미리보기 — 지금/목표 자세를 같은 기구학으로 그린다 ──────────────
 // (ros2/src/.../hardware/kinematics.py 의 forward()를 그대로 옮긴 것)
 var KIN = __KIN_JSON__;
+var EYE = KIN.eye;   // T_tool_cam(있으면) — 손목 카메라를 3D 미리보기에 같이 그린다
+// ⚠ **부호가 `ros2/tools/handeye_collect.py`의 `ROLL_SIGN`과 반드시 같아야 한다.**
+//   2026-09-04 실측으로 -1 확정(+1은 벽 법선 어긋남이 93.8°, -1은 11.4°였다).
+//   `handeye.py`의 `tool_frame()`은 아예 다른 규약(roll을 안 넣는다)이니 그쪽과
+//   헷갈리지 말 것 — 여긴 손목 카메라 보정 쪽(`handeye_resolve.py`) 규약이다.
+var CAM_ROLL_SIGN = -1.0;
 var JNAMES=["shoulder_pan","shoulder_lift","elbow_flex","wrist_flex","wrist_roll"];
 var JLABELS={shoulder_pan:"어깨돌림(pan)",shoulder_lift:"어깨듦(lift)",elbow_flex:"팔꿈치",
   wrist_flex:"손목숙임",wrist_roll:"손목돌림"};
@@ -649,6 +673,54 @@ function jogPreviewTarget(cur,kind,amount,freePitch){
   cols.forEach(function(c,i){ j[c]=cur[c]+sol[i]; });
   return j;
 }
+function toolAxesBase(j){
+  // 관절각 → base 좌표의 (approach, lateral, up) — handeye_resolve.py의
+  // tool_frame()과 같은 식(wrist_roll 포함). fk()/kinForward()와 달리 손목
+  // 카메라는 pan 평면 밖으로도 튀어나와 있을 수 있어 3축이 다 필요하다.
+  var d=Math.PI/180;
+  var pan=j.shoulder_pan*d, a3=(j.shoulder_lift+j.elbow_flex+j.wrist_flex)*d;
+  var appr=[Math.cos(a3)*Math.cos(pan), Math.cos(a3)*Math.sin(pan), Math.sin(a3)];
+  var lat0=[-Math.sin(pan), Math.cos(pan), 0];
+  var up0=[-Math.sin(a3)*Math.cos(pan), -Math.sin(a3)*Math.sin(pan), Math.cos(a3)];
+  var roll=CAM_ROLL_SIGN*j.wrist_roll*d, cr=Math.cos(roll), sr=Math.sin(roll);
+  var lat=[lat0[0]*cr+up0[0]*sr, lat0[1]*cr+up0[1]*sr, lat0[2]*cr+up0[2]*sr];
+  var upr=[-lat0[0]*sr+up0[0]*cr, -lat0[1]*sr+up0[1]*cr, -lat0[2]*sr+up0[2]*cr];
+  return [appr, lat, upr];   // 열이 approach/lat/up인 회전행렬의 "행 나열"
+}
+function mul3(M9,v){
+  return [M9[0]*v[0]+M9[1]*v[1]+M9[2]*v[2],
+          M9[3]*v[0]+M9[4]*v[1]+M9[5]*v[2],
+          M9[6]*v[0]+M9[7]*v[1]+M9[8]*v[2]];
+}
+function baseToDraw(x,y,z){
+  // fk()가 쓰는 것과 **같은** base→그리기 사영(주석 참조): (x,y,z) → (-x,z,-y).
+  return new THREE.Vector3(-x, z, -y);
+}
+function camWorld(j){
+  // 손목 카메라의 base 좌표 위치 + 광학축(조준) 방향 — 없으면 null.
+  if(!EYE) return null;
+  var Rcols=toolAxesBase(j);         // Rcols[k] = approach/lat/up의 base 성분
+  var p0=kinForward(j);
+  var camTool=EYE.t;                 // 카메라 원점은 도구좌표에서 그냥 t_x다
+  var aimTool=mul3(EYE.R,[0,0,1]);   // 카메라 광학축(+z, cam 로컬) → 도구좌표 방향
+  var camBase=[p0.x,p0.y,p0.z], aimBase=[0,0,0];
+  for(var k=0;k<3;k++){
+    camBase[0]+=Rcols[k][0]*camTool[k]; camBase[1]+=Rcols[k][1]*camTool[k]; camBase[2]+=Rcols[k][2]*camTool[k];
+    aimBase[0]+=Rcols[k][0]*aimTool[k]; aimBase[1]+=Rcols[k][1]*aimTool[k]; aimBase[2]+=Rcols[k][2]*aimTool[k];
+  }
+  return {pos:baseToDraw(camBase[0],camBase[1],camBase[2]),
+          aim:baseToDraw(camBase[0]+aimBase[0]*50,camBase[1]+aimBase[1]*50,camBase[2]+aimBase[2]*50)};
+}
+function k3dAddCam(group,j,color){
+  var c=camWorld(j);
+  if(!c) return;
+  var m=new THREE.Mesh(new THREE.BoxGeometry(16,11,11),
+    new THREE.MeshStandardMaterial({color:color}));
+  m.position.copy(c.pos);
+  group.add(m);
+  var lg=new THREE.BufferGeometry().setFromPoints([c.pos,c.aim]);
+  group.add(new THREE.Line(lg,new THREE.LineBasicMaterial({color:color})));
+}
 function jointBad(name, deg){
   var l=KIN.joints[name]; if(!l) return false;
   var span=(l.max-l.min)||1;
@@ -688,6 +760,8 @@ function k3dCamUpdate(){
 }
 function k3dWhy(){
   var msgs=[];
+  if(!EYE) msgs.push('손목 카메라 보정 없음(~/arm_eye.json) — 카메라 마커 안 보임');
+  else if(!EYE.good) msgs.push('카메라 보정 잔차 '+EYE.rms_mm.toFixed(0)+'mm(기준 15mm 초과) — 마커 위치를 믿지 말 것');
   JNAMES.slice(0,4).forEach(function(n){
     var bad=jointBad(n,tgtJ[n]);
     var el=document.getElementById('tl_'+n);
@@ -705,6 +779,8 @@ function k3dRenderOnce(){
   k3dCamUpdate();
   var curTip=k3dBuild(curGroup,curJ,0x4a9eff,0xff3b3b);
   var tgtTip=k3dBuild(tgtGroup,tgtJ,0xff9a3d,0xff3b3b);
+  k3dAddCam(curGroup,curJ,0x22d3ee);
+  k3dAddCam(tgtGroup,tgtJ,0x22d3ee);
   if(k3dVecLine) k3dScene.remove(k3dVecLine);
   var lg=new THREE.BufferGeometry().setFromPoints([curTip,tgtTip]);
   k3dVecLine=new THREE.Line(lg,new THREE.LineBasicMaterial({color:0xffe066}));
