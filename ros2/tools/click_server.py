@@ -251,7 +251,8 @@ def build(job, args):
               "--gain", "%.2f" % num(args, "gain", 0.35, 0.05, 1.0),
               "--tol", "%.0f" % num(args, "tol", 28, 5, 120),
               "--rejacobian", "%d" % int(num(args, "rejacobian", 6, 1, 20)),
-              "--stop-z", "%.0f" % num(args, "stop_z", 88, 0, 400)]
+              "--stop-z", "%.0f" % num(args, "stop_z", 88, 0, 400),
+              "--max-adv", "%.0f" % num(args, "max_adv", 200, 20, 500)]
         if args.get("no_close"):
             a += ["--no-close"]
         if args.get("dry"):
@@ -373,6 +374,11 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <label>문턱px<input id="g_tol" value="28"></label>
       <label>무는거리<input id="g_stop" value="88"></label>
     </div>
+    <div class="row" style="margin-top:6px">
+      <label>믿는거리(mm)<input id="g_maxadv" value="200"></label>
+    </div>
+    <div class="k" style="margin-top:2px">깊이는 못 믿을 수 있다 — 다 합쳐 이 거리 이상은
+      절대 안 나아간다(닿을 때까지가 아니라).</div>
     <div class="row" style="margin-top:8px">
       <button class="go" onclick="run('grasp',grasp(false))">잡으러 간다</button>
       <button onclick="run('grasp',grasp(true))">안 닫고 가기</button>
@@ -472,7 +478,8 @@ function toggleCard(h){
 }
 function val(id,d){var x=parseFloat(document.getElementById(id).value);return isNaN(x)?d:x;}
 function grasp(nc){return {steps:val('g_steps',16),adv:val('g_adv',8),max_turn:val('g_turn',2),
-  gain:val('g_gain',0.35),tol:val('g_tol',28),stop_z:val('g_stop',88),no_close:nc?1:0};}
+  gain:val('g_gain',0.35),tol:val('g_tol',28),stop_z:val('g_stop',88),max_adv:val('g_maxadv',200),
+  no_close:nc?1:0};}
 function jog(k,s){
   var amt=s*val('j_mm',20), free=document.getElementById('j_free').checked;
   tgtJ=jogPreviewTarget(curJ,k,amt,free);
@@ -669,11 +676,20 @@ function k3dRenderOnce(){
   k3dWhy();
 }
 function k3dParseLog(text){
-  var re=/shoulder=\s*(-?[\d.]+)\s+shoulder=\s*(-?[\d.]+)\s+elbow=\s*(-?[\d.]+)\s+wrist=\s*(-?[\d.]+)\s+wrist=\s*(-?[\d.]+)/g;
-  var m,last=null; while((m=re.exec(text))!==null){last=m;}
-  if(last){curJ.shoulder_pan=parseFloat(last[1]);curJ.shoulder_lift=parseFloat(last[2]);
-    curJ.elbow_flex=parseFloat(last[3]);curJ.wrist_flex=parseFloat(last[4]);curJ.wrist_roll=parseFloat(last[5]);
-    k3dRenderOnce();}
+  // ⚠ 앞 태그 단어(지금/끝/자세/관절이름 등)로 "목표"만 따로 가른다 —
+  //   stem_grasp.py --dry가 "목표"로 찍으면 tgtJ(주황, 미리보기)로 가고,
+  //   나머지는 전부 curJ(파랑, 실제 자세)로 간다. arm_stage.py도 시작할 때
+  //   "목표" 한 줄을 찍는데, 그것도 이제 tgtJ로 가는 게 맞다 — 아직 안
+  //   움직인 계획일 뿐 실제 자세가 아니었다.
+  var re=/(\S+)\s+shoulder=\s*(-?[\d.]+)\s+shoulder=\s*(-?[\d.]+)\s+elbow=\s*(-?[\d.]+)\s+wrist=\s*(-?[\d.]+)\s+wrist=\s*(-?[\d.]+)/g;
+  var m,lastCur=null,lastTgt=null;
+  while((m=re.exec(text))!==null){ if(m[1]==='목표') lastTgt=m; else lastCur=m; }
+  if(lastCur){curJ.shoulder_pan=parseFloat(lastCur[2]);curJ.shoulder_lift=parseFloat(lastCur[3]);
+    curJ.elbow_flex=parseFloat(lastCur[4]);curJ.wrist_flex=parseFloat(lastCur[5]);curJ.wrist_roll=parseFloat(lastCur[6]);}
+  if(lastTgt){tgtJ.shoulder_pan=parseFloat(lastTgt[2]);tgtJ.shoulder_lift=parseFloat(lastTgt[3]);
+    tgtJ.elbow_flex=parseFloat(lastTgt[4]);tgtJ.wrist_flex=parseFloat(lastTgt[5]);tgtJ.wrist_roll=parseFloat(lastTgt[6]);
+    JNAMES.forEach(function(n){var el=document.getElementById('tj_'+n); if(el) el.value=tgtJ[n].toFixed(1);});}
+  if(lastCur||lastTgt) k3dRenderOnce();
 }
 function k3dInitRows(){
   var host=document.getElementById('jrows'), html='';

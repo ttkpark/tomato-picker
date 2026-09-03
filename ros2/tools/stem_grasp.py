@@ -50,6 +50,7 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 from tomato_picker.hardware import kinematics as kin      # noqa: E402
+from tomato_picker.hardware.handeye import Intrinsics      # noqa: E402
 import arm_calib                                            # noqa: E402
 import grasp_probe as gp                                   # noqa: E402
 import visual_servo as vs                                  # noqa: E402
@@ -554,6 +555,41 @@ def main() -> int:
         print("지금: %s 화면(%.0f,%.0f) 깊이 %.0fmm 넓이%d  → 남은 화소 %.0f"
               % (args.aim, u, v, z, a, math.hypot(u - tu, v - tv)))
         if args.dry:
+            # ⚠ **여기서만 깊이를 믿는다.** 실제로 무는 동안엔 깊이를 목표로
+            #   안 쓴다(이 파일 머리말 — 조기접촉에 오염된다). 하지만 여긴
+            #   팔을 안 움직이니 잘못돼도 미리보기 한 줄이 틀릴 뿐이다.
+            #   지금 찾은 줄기 화면자리(u,v)의 깊이 + cam_frame.py가 **지금
+            #   자세 근처에서** 잰 국소 회전(R)으로, "줄기를 집게 무는 자리로
+            #   데려가려면 base로 얼마나"를 낸다(S=줄기, G=집게 자리 — 아직
+            #   안 맞춰져 있으면 S와 G가 화면에서도 떨어져 있으니 그 차이가
+            #   곧 겨냥 보정+전진을 한꺼번에 담는다). move_base(순수 기구학,
+            #   물기 전혀 안 함)로 그 변위에 해당하는 관절값을 계산해 찍는다.
+            #   cam_frame.py를 지금 자세와 먼 데서 돌렸으면 이 미리보기도
+            #   같이 틀어진다 — R은 그 자세 근처에서만 맞다(파일 머리말).
+            try:
+                cf = json.load(open(os.path.expanduser("~/cam_frame.json")))
+                R = np.array(cf["R_cam_from_base"])
+                meta = json.load(open(vs.META))
+                intr = Intrinsics.from_dict(meta["intrinsics"])
+                S = np.array(intr.deproject(u, v, z))
+                try:
+                    gg = json.load(open(os.path.expanduser("~/grip_uv.json")))
+                    gu, gv = float(gg["u"]), float(gg["v"])
+                except Exception:                            # noqa: BLE001
+                    gu, gv = 471.0, 395.0
+                G = np.array(intr.deproject(gu, gv, 80.0))
+                move = R.T @ (S - G)
+                dd, _res, _big = move_base(cur, move)
+                tgt = dict(cur)
+                for j, w in dd.items():
+                    tgt[j] += float(w)
+                print("  목표  " + " ".join("%s=%7.1f" % (j.split("_")[0], tgt[j])
+                                            for j in kin.JOINTS))
+                print("  base로 %.0fmm 옮기면 그 자리 (cam_frame.json은 %s 근처에서 잰 값)"
+                      % (float(np.linalg.norm(move)), cf.get("when", "?")))
+            except Exception as e:                           # noqa: BLE001
+                print("  목표 미리보기 계산 실패 (%s) — cam_frame.py를 지금 자세 "
+                      "근처에서 먼저 돌렸는지 확인" % e)
             return 0
 
         def see2(prev):
