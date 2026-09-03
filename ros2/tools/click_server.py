@@ -98,6 +98,12 @@ DEPTH = "/dev/shm/d405_depth.npy"
 META = "/dev/shm/d405_meta.json"
 TARGET = os.path.expanduser("~/click_target.json")
 GRIPF = os.path.expanduser("~/grip_uv.json")
+# target_check.py(손-눈 보정용 4점 표적 인식)가 매번 남기는 실시간 상태 —
+# SSH로만 도는 handeye_collect.py도 여기서 지켜볼 수 있게 화면에 겹쳐 그린다.
+CALIB_VIEW = os.path.expanduser("~/target_view.json")
+# 같은 이유로, SSH로 도는 팔 자세도 여기로 — 조작대의 "일" 체계를 안 거치는
+# 스크립트는 로그(k3dParseLog)로 3D 미리보기가 안 따라오므로 파일로 남긴다.
+ARM_POSE_VIEW = os.path.expanduser("~/arm_pose_view.json")
 GRIP_UV = (471, 395)              # 집게를 여닫아 실측한 기본값
 PARK = "60,65,0,-100,6"           # 열매가 보이던 대기 자세(도)
 
@@ -440,13 +446,36 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
   </div>
 </div>
 </div><script>
-var W=848,H=480,live=true,pt=null,gp={u:471,v:395},mode='target',since=0;
+var W=848,H=480,live=true,pt=null,gp={u:471,v:395},mode='target',since=0,calibView=null;
 var im=document.getElementById('im'),ov=document.getElementById('ov'),stage=document.getElementById('stage');
 function draw(){
   var s='<line x1="'+(gp.u-16)+'" y1="'+gp.v+'" x2="'+(gp.u+16)+'" y2="'+gp.v+'" stroke="#2f6fb0" stroke-width="3"/>'
        +'<line x1="'+gp.u+'" y1="'+(gp.v-16)+'" x2="'+gp.u+'" y2="'+(gp.v+16)+'" stroke="#2f6fb0" stroke-width="3"/>';
   if(pt){s+='<circle cx="'+pt.u+'" cy="'+pt.v+'" r="13" fill="none" stroke="#e4572e" stroke-width="4"/>'
         +'<circle cx="'+pt.u+'" cy="'+pt.v+'" r="2.5" fill="#e4572e"/>';}
+  // ⚠ handeye_collect.py는 SSH로만 돈다 — target_check.py가 남긴 상태를 여기
+  //   겹쳐 그려서, 사람이 이 화면만 보고도 뭘 찾았는지/놓쳤는지 알 수 있게 한다.
+  if(calibView){
+    if(calibView.ok && calibView.dots){
+      var recon=calibView.reconstructed, names=['tl','tr','bl','br'], pts=[];
+      names.forEach(function(k){
+        var p=calibView.dots[k]; if(!p) return;
+        pts.push(p);
+        var bad=(k===recon);
+        s+='<circle cx="'+p[0]+'" cy="'+p[1]+'" r="10" fill="none" '
+          +'stroke="'+(bad?'#c9822a':'#3f7d3a')+'" stroke-width="3"'
+          +(bad?' stroke-dasharray="4 3"':'')+'/>';
+      });
+      if(pts.length>=3){
+        s+='<polygon points="'+pts.map(function(p){return p[0]+','+p[1];}).join(' ')
+          +'" fill="none" stroke="#3f7d3a" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.55"/>';
+      }
+    } else if(!calibView.ok){
+      s+='<text x="10" y="26" fill="#e4572e" font-size="15" '
+        +'style="paint-order:stroke;stroke:#000;stroke-width:3px">보정 표적: '
+        +(calibView.why||'안 보임')+'</text>';
+    }
+  }
   ov.innerHTML=s;
 }
 function tick(){ if(live) im.src='/frame.jpg?t='+Date.now(); }
@@ -492,6 +521,14 @@ function run(job,args){post('/run',{job:job,args:args}).then(function(j){
 function stop(){post('/stop');}
 function state(){
   fetch('/state').then(function(r){return r.json();}).then(function(j){
+    calibView=j.calib_view||null;
+    if(j.arm_pose){
+      // SSH로 직접 도는 스크립트(handeye_collect.py 등)는 조작대의 "일"
+      // 체계를 안 거쳐 로그 기반 추적(k3dParseLog)이 안 통한다 — 이 자리가
+      // 그 빈틈을 메운다.
+      JNAMES.forEach(function(n){ if(j.arm_pose[n]!=null) curJ[n]=j.arm_pose[n]; });
+      k3dRenderOnce();
+    }
     if(j.gu!=null) gp={u:j.gu,v:j.gv};
     if(j.u!=null){pt={u:j.u,v:j.v};
       document.getElementById('cur').textContent='표적 ('+j.u+', '+j.v+')  깊이 '+(j.z>0?j.z.toFixed(0)+'mm':'없음');}
@@ -793,6 +830,20 @@ class Handler(BaseHTTPRequestHandler):
                     t = json.load(open(TARGET))
                     out["u"], out["v"] = int(t["u"]), int(t["v"])
                     out["z"] = depth_at(out["u"], out["v"])
+                except Exception:                          # noqa: BLE001
+                    pass
+            if os.path.exists(CALIB_VIEW):
+                try:
+                    cv_ = json.load(open(CALIB_VIEW))
+                    if time.time() - float(cv_.get("ts", 0)) < 5.0:
+                        out["calib_view"] = cv_
+                except Exception:                          # noqa: BLE001
+                    pass
+            if os.path.exists(ARM_POSE_VIEW):
+                try:
+                    pv_ = json.load(open(ARM_POSE_VIEW))
+                    if time.time() - float(pv_.get("ts", 0)) < 5.0:
+                        out["arm_pose"] = pv_["deg"]
                 except Exception:                          # noqa: BLE001
                     pass
             self._send(200, json.dumps(out))

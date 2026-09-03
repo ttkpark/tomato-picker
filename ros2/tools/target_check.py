@@ -44,6 +44,9 @@ from tomato_picker.hardware.handeye import Intrinsics  # noqa: E402
 COLOR = "/dev/shm/d405_color.jpg"
 DEPTH = "/dev/shm/d405_depth.npy"
 META = "/dev/shm/d405_meta.json"
+# 조작대(click_server.py)가 여기서 읽어 화면에 실시간으로 겹쳐 그린다 —
+# handeye_collect.py처럼 SSH로만 돌리는 작업도 사람이 웹에서 지켜볼 수 있게.
+VIEW_OUT = os.path.expanduser("~/target_view.json")
 
 # 벽에 붙인 표적의 **실측 간격**
 EXPECT_W = 100.0
@@ -137,6 +140,31 @@ def quad_error(points) -> float:
     return max(abs(a - b) for a, b in zip(got, want))
 
 
+def pivot_from_three(P3):
+    """3점(mm, 평면 위)만 보일 때 — 어느 점이 **직각 꼭짓점**(pivot)인가.
+
+    직사각형의 대각 꼭짓점 하나가 가려져도, 나머지 셋 중 "변 두 개가
+    만나는 점"(= W변 이웃 하나 + H변 이웃 하나를 가진 점)을 찾으면
+    가려진 점은 **정확히** (W변 이웃 + H변 이웃 − pivot)이다 — 근사가
+    아니라 평행사변형의 등식이다(평면 위 좌표라 원근 왜곡이 안 낀다).
+
+    돌려주는 값: (pivot_idx, w_neighbor_idx, h_neighbor_idx) 또는,
+    셋이 이 직사각형의 세 꼭짓점처럼 안 보이면 None.
+    """
+    diag = float(np.hypot(EXPECT_W, EXPECT_H))
+    for i in range(3):
+        j, k = (x for x in range(3) if x != i)
+        dj = float(np.linalg.norm(P3[i] - P3[j]))
+        dk = float(np.linalg.norm(P3[i] - P3[k]))
+        djk = float(np.linalg.norm(P3[j] - P3[k]))
+        err_wh_as_jk = abs(dj - EXPECT_W) + abs(dk - EXPECT_H)
+        err_wh_as_kj = abs(dj - EXPECT_H) + abs(dk - EXPECT_W)
+        err_diag = abs(djk - diag)
+        if min(err_wh_as_jk, err_wh_as_kj) < 2.0 * QUAD_TOL_MM and err_diag < QUAD_TOL_MM:
+            return (i, j, k) if err_wh_as_jk <= err_wh_as_kj else (i, k, j)
+    return None
+
+
 def order_dots(dots):
     """좌상·우상·좌하·우하 순서로."""
     dots = sorted(dots, key=lambda p: p[1])          # y 기준 위/아래
@@ -156,18 +184,39 @@ def fit_plane(points: np.ndarray):
 
 
 def measure() -> dict:
-    """검사 없이 숫자만 — 팔을 움직이며 반복 호출하는 쪽(handeye_run)이 쓴다."""
+    """`_measure()`를 부르고, 결과를 매번 `VIEW_OUT`에 남긴다(조작대 실시간
+    표시용) — 실패해도(점을 못 찾아도) 남긴다, 그래야 화면에 "안 보인다"가
+    뜬다."""
+    res = _measure()
+    try:
+        json.dump({"ok": res.get("ok", False), "why": res.get("why"),
+                   "reconstructed": res.get("reconstructed"),
+                   "dots": res.get("dots"), "ts": time.time()},
+                  open(VIEW_OUT, "w"))
+    except Exception:                                          # noqa: BLE001
+        pass
+    return res
+
+
+def _measure() -> dict:
+    """검사 없이 숫자만 — 팔을 움직이며 반복 호출하는 쪽(handeye_run)이 쓴다.
+
+    ⚠ **점 3개면 4번째는 계산해 낸다.** 집게가 꼭짓점 하나를 가리는 일이
+      흔하다(2026-09-03 handeye_collect.py 실측: 16자세 중 15개가 이거였다).
+      나머지 셋 중 직각 꼭짓점(pivot)을 찾으면, 가려진 대각 꼭짓점은
+      **평행사변형 등식**(이웃1 + 이웃2 − pivot)으로 정확히 나온다 — 평면
+      위 좌표라 원근 왜곡이 안 낀다. 점 2개(방향이 안 정해진다)는 아직 안 한다.
+    """
     meta = json.load(open(META))
     intr = Intrinsics.from_dict(meta["intrinsics"])
     bgr = cv2.imread(COLOR)
     depth_mm = np.load(DEPTH).astype(float) * meta["depth_scale_mm"]
     dots = find_dots(bgr)
-    if len(dots) != 4:
-        return {"ok": False, "why": f"점이 {len(dots)}개 보인다(4개여야 한다)",
+    if len(dots) < 3:
+        return {"ok": False, "why": f"점이 {len(dots)}개 보인다(3개 이상 필요)",
                 "age": None}
-    tl, tr, bl, br = order_dots(dots)
-    us = [p[0] for p in (tl, tr, bl, br)]
-    vs = [p[1] for p in (tl, tr, bl, br)]
+    us = [p[0] for p in dots]
+    vs = [p[1] for p in dots]
     # ⚠ 화면 밖으로 나간 상자를 **양쪽 다** 잘라야 한다. 넘파이 슬라이스는 위쪽
     #   끝에서 알아서 잘리지만 `mgrid`는 안 잘려, 상자가 오른쪽·아래로 삐져나가면
     #   두 배열의 크기가 어긋나 IndexError로 죽는다(2026-08-31, 채집 도중 중단).
@@ -196,18 +245,44 @@ def measure() -> dict:
         ray = np.array(intr.deproject(u, v, 1.0))
         return ray * (d / float(normal @ ray))
 
-    P = {k: on_plane(*p).tolist()
-         for k, p in (("tl", tl), ("tr", tr), ("bl", bl), ("br", br))}
-    qerr = quad_error(list(P.values()))
-    if qerr > QUAD_TOL_MM:
-        # 점 넷을 찾았지만 **표적이 아니다** — 하나가 엉뚱한 것이다. 버린다.
-        return {"ok": False, "why": f"네 점이 직사각형이 아니다(변 오차 {qerr:.0f}mm)",
-                "quad_err_mm": qerr, "age": None}
+    recon = None
+    if len(dots) == 4:
+        tl, tr, bl, br = order_dots(dots)
+        dots_px = {"tl": tl, "tr": tr, "bl": bl, "br": br}
+        P = {k: on_plane(*p).tolist() for k, p in dots_px.items()}
+        qerr = quad_error(list(P.values()))
+        if qerr > QUAD_TOL_MM:
+            # 점 넷을 찾았지만 **표적이 아니다** — 하나가 엉뚱한 것이다. 버린다.
+            return {"ok": False, "why": f"네 점이 직사각형이 아니다(변 오차 {qerr:.0f}mm)",
+                    "quad_err_mm": qerr, "age": None}
+    else:  # len(dots) == 3
+        piv = pivot_from_three(np.array([on_plane(*p) for p in dots]))
+        if piv is None:
+            return {"ok": False, "why": "점 3개가 이 표적의 직각 배치와 안 맞는다",
+                    "age": None}
+        i, jw, kh = piv
+        pi, pj, pk = on_plane(*dots[i]), on_plane(*dots[jw]), on_plane(*dots[kh])
+        m3 = pj + pk - pi                       # 대각 꼭짓점 — 평행사변형 등식
+        # ⚠ 라벨(tl/tr/bl/br)과 "dots"(화소, box 계산용)는 화소 좌표의 대략적인
+        #   평행사변형으로 정한다 — 정밀도는 이름 붙이기에 필요 없다. 실제 3D
+        #   위치는 위 m3(평면 위, 정확)를 쓴다.
+        m_px = (dots[jw][0] + dots[kh][0] - dots[i][0],
+                dots[jw][1] + dots[kh][1] - dots[i][1])
+        four_px = list(dots) + [m_px]
+        dots_px = dict(zip(("tl", "tr", "bl", "br"), order_dots(four_px)))
+        px_to_pt = {tuple(dots[i]): pi, tuple(dots[jw]): pj,
+                    tuple(dots[kh]): pk, m_px: m3}
+        P = {name: px_to_pt[tuple(px)].tolist() for name, px in dots_px.items()}
+        recon = next(name for name, px in dots_px.items() if px == m_px)
+        qerr = 0.0        # 정의상 정확한 평행사변형으로 만들었다
     edge = float(np.linalg.norm(np.array(P["tl"]) - np.array(P["tr"])))
-    return {"ok": True, "quad_err_mm": qerr, "dots": {"tl": tl, "tr": tr, "bl": bl, "br": br},
-            "points_mm": P, "plane_mm": d,
-            "tilt_deg": float(np.degrees(np.arccos(min(1.0, abs(normal[2]))))),
-            "edge_top_mm": edge, "age": time.time() - meta["ts"]}
+    out = {"ok": True, "quad_err_mm": qerr, "dots": dots_px,
+           "points_mm": P, "plane_mm": d,
+           "tilt_deg": float(np.degrees(np.arccos(min(1.0, abs(normal[2]))))),
+           "edge_top_mm": edge, "age": time.time() - meta["ts"]}
+    if recon:
+        out["reconstructed"] = recon
+    return out
 
 
 def main() -> int:

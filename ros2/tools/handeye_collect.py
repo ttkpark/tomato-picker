@@ -77,6 +77,11 @@ DEG_PER_TICK = 360.0 / 4096.0
 CAL = os.path.expanduser(
     "~/.cache/huggingface/lerobot/calibration/robots/so_follower/tomato_follower.json")
 CART = os.path.expanduser("~/arm_cartesian.json")
+# 조작대(click_server.py)의 3D 미리보기가 여기서 읽어 실시간으로 따라 그린다.
+# ⚠ 이 스크립트는 SSH로 직접 돌아 조작대의 "일" 체계(JOB.lines/log)를
+#   안 거친다 — 그래서 로그를 긁어 지금 자세를 얻는 기존 방식(k3dParseLog)이
+#   안 통한다. 파일로 직접 남긴다(2026-09-03).
+POSE_VIEW = os.path.expanduser("~/arm_pose_view.json")
 
 STEP_DEG = 10.0        # 이동 중 한 구간에서 어느 관절도 이 이상 안 움직인다
 SETTLE_SEC = 1.2
@@ -106,10 +111,18 @@ W, H = 848.0, 480.0
 #   전부 같은 pitch였다. **회전축이 하나뿐인 표본으로는 eye-in-hand가 안 풀린다**
 #   (잔차 41.5mm, 카메라 위치 -858mm라는 헛된 답이 나왔다). 한계에 붙은 관절은
 #   한쪽으로만 뻗어야 하고, 그만큼 pitch도 같은 쪽으로 따라가야 한다.
-PAN_GRID = (-28.0, -14.0, 0.0, 14.0, 28.0)
-PITCH_GRID = (-34.0, -24.0, -14.0, -4.0, 6.0, 16.0)
-LIFT_GRID = (-20.0, -10.0, 0.0, 12.0, 24.0)
-ELBOW_GRID = (-40.0, -28.0, -16.0, -4.0)
+# ⚠ 2026-09-03 실측 두 차례:
+#   1차 — pan=±28°에서 13개 중 9개를 놓쳤다(그중 7개가 pan=-28). pan=-14인
+#     것만 4개 다 살았다. 회전(pan·pitch)은 화면 밖으로 나가는 값이라 좁히고,
+#     평행이동(lift·elbow)은 정면을 유지한 채 기선만 벌리므로 넓혔다.
+#   2차 — 그런데도 lift는 **+8°짜리 야코비안 시험각에서마저** 표적을 잃어
+#     반대 부호로 다시 쟀다(비대칭). pitch는 음수 쪽만 전부 실패했다(성공한
+#     6개가 전부 양수). lift는 다시 좁히고, pitch는 음수를 줄이고 양수 쪽으로
+#     기울였다.
+PAN_GRID = (-18.0, -9.0, 0.0, 9.0, 18.0)
+PITCH_GRID = (-10.0, -3.0, 4.0, 11.0, 18.0)
+LIFT_GRID = (-20.0, -10.0, 0.0, 10.0, 20.0)
+ELBOW_GRID = (-45.0, -30.0, -15.0, 0.0)
 # 접근축 둘레 회전. 표적을 화면에서 **회전만** 시키므로 여유를 거의 안 먹는데,
 # t_x(카메라가 도구에서 얼마나 벗어나 있는가)를 가르는 것은 이 축이다.
 ROLL_GRID = (-60.0, -30.0, 0.0, 30.0, 60.0)
@@ -195,6 +208,13 @@ def main() -> int:
     from tomato_bridge.follower_io import FollowerIO
     io = FollowerIO(hold_torque=True)
 
+    def save_pose_view(d):
+        try:
+            json.dump({"deg": {j: float(d[j]) for j in kin.JOINTS}, "ts": time.time()},
+                      open(POSE_VIEW, "w"))
+        except Exception:                                      # noqa: BLE001
+            pass
+
     def _goto(degs, secs=0.9):
         cur = to_deg(io.read())
         biggest = max(abs(degs[j] - cur[j]) for j in kin.JOINTS)
@@ -202,6 +222,7 @@ def main() -> int:
         for st in range(1, steps + 1):
             mid = {j: cur[j] + (degs[j] - cur[j]) * st / steps for j in kin.JOINTS}
             io.write(to_norm(mid), secs)
+            save_pose_view(mid)
 
     def move(degs, secs=0.9):
         """목표 자세로 — **마지막 움직임의 방향을 늘 같게** 해서 간다.
@@ -221,6 +242,7 @@ def main() -> int:
         _goto(degs, secs)
         time.sleep(SETTLE_SEC)
         got = to_deg(io.read())
+        save_pose_view(got)
         return got, max(abs(got[j] - degs[j]) for j in kin.JOINTS)
 
     def look():
@@ -495,6 +517,7 @@ def main() -> int:
             print(f"  {label:<34} 표적 안 보임 — 건너뜀")
             continue
         pt = m["points_mm"][args.dot]
+        recon = m.get("reconstructed")   # 점 3개만 보여서 재구성한 자리 이름(있으면)
         cam_pts.append(pt)
         frames.append(tool_frame_from_joints(got, geom))
         labels.append(label)
@@ -503,9 +526,11 @@ def main() -> int:
         raw.append({"label": label, "joints_deg": {k: float(v) for k, v in got.items()},
                     "dots_mm": {k: [float(c) for c in v] for k, v in m["points_mm"].items()},
                     "dots_px": {k: [float(c) for c in v] for k, v in m["dots"].items()},
-                    "plane_mm": float(m["plane_mm"]), "tilt_deg": float(m["tilt_deg"])})
+                    "plane_mm": float(m["plane_mm"]), "tilt_deg": float(m["tilt_deg"]),
+                    "reconstructed": recon})
+        tag = f" ⚠재구성({recon})" if recon else ""
         print(f"  {label:<34} ✓ {len(cam_pts):2}  카메라점 "
-              f"({pt[0]:7.1f},{pt[1]:7.1f},{pt[2]:7.1f}) · 거리 {m['plane_mm']:.0f}mm")
+              f"({pt[0]:7.1f},{pt[1]:7.1f},{pt[2]:7.1f}) · 거리 {m['plane_mm']:.0f}mm{tag}")
 
     print(f"\n표본 {len(cam_pts)}개")
     dump = os.path.expanduser("~/handeye_samples.json")
@@ -559,6 +584,10 @@ def main() -> int:
     if 0 <= w < len(labels):
         print(f"  가장 어긋난 표본: {w}번 ({labels[w]}) {fit.per_sample_mm[w]:.1f}mm")
 
+    # ⚠ 점 3개만 보여 재구성한 표본은 그 재구성된 자리가 나머지 셋의
+    #   평행사변형 등식으로 정의상 완벽히 맞아떨어진다 — 그 자리를 마커로
+    #   삼는 교차검증 칸은 "독립 관측끼리 일치하나"를 재는 게 아니게 된다.
+    #   위 ✓ 줄의 "⚠재구성(...)" 표시로 어떤 표본이 그런지 알 수 있다.
     print("\n[교차검증] 네 점을 각각 마커로 삼아 따로 푼다")
     sols = {}
     for key in ("tl", "tr", "bl", "br"):

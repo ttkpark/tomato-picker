@@ -107,7 +107,18 @@ class Calib:
                 continue
             lo, hi = lim
             m = (hi - lo) * margin
-            if not (lo + m <= v <= hi - m):
+            band_lo, band_hi = lo + m, hi - m
+            if band_lo <= v <= band_hi:
+                continue
+            # ⚠ **이미 여유 밖(중력처짐 등)인 관절을 그 자리에 가두면 안 된다.**
+            #   2026-09-03 실측: shoulder_lift가 -15.0°로 하한(-14.6°)을 살짝
+            #   넘은 채 서 있었더니, 그 관절을 안 건드리는 dz·dy·피치 요청까지
+            #   전부 "shoulder_lift 한계"로 막혔다 — 팔이 통째로 얼어붙었다.
+            #   더 나빠지지만(여유 밖으로 더 나가지만) 않으면 통과시킨다.
+            cv = float(cur.get(j, v))
+            exc_v = max(band_lo - v, v - band_hi, 0.0)
+            exc_c = max(band_lo - cv, cv - band_hi, 0.0)
+            if exc_v > exc_c + 1e-6:
                 return False, "%s 한계" % j
         floor = min(-MOUNT_Z_MM + FLOOR_MARGIN_MM, kin.forward(cur, self.geom).z - 1.0)
         if kin.forward(d, self.geom).z < floor:
