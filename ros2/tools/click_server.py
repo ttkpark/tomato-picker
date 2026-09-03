@@ -30,7 +30,7 @@ API 요약 (전부 JSON)
     GET  /frame.jpg                  손목 화면
     POST /click   {u,v,mode}         mode=target(줄기) | grip(십자)
     POST /clear                      표적 지움
-    POST /run     {job,args}         job=stage|jog|grasp|grip|pose|park
+    POST /run     {job,args}         job=stage|jog|grasp|grip|pose|park|loop
     POST /stop                       도는 일을 끊는다
 """
 
@@ -42,6 +42,7 @@ import os
 import posixpath
 import signal
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -50,6 +51,47 @@ from urllib.parse import parse_qs, urlparse
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.join(HERE, "..", "..")
+sys.path.insert(0, os.path.join(REPO, "src"))
+
+import arm_calib                                             # noqa: E402
+
+
+def _kin_constants() -> dict:
+    """**3D 미리보기용** 링크 길이·관절 한계 — 실측·보정 파일에서 뽑는다.
+
+    ⚠ 여기서 절대 예외를 흘리지 않는다 — 이 계산이 실패해도 조작대 자체는
+      떠야 한다(미리보기는 있으면 좋은 것이지 핵심 기능이 아니다). 그래서
+      기본값으로 조용히 물러난다.
+    ⚠ 관절 한계는 **arm_calib.Calib에서만** 가져온다 — tool_jog.py 등
+      조그 스크립트의 legal()과 같은 계산이어야 한다. 예전엔 여기서 따로
+      계산했는데, 그러면 이 패널은 "갈 수 있다"는데 조그는 거절하는 일이
+      생긴다(2026-09-03 실측).
+    """
+    geom = {"z0": 119.5, "d0": -31.5, "l1": 116.5, "l2": 138.0, "l3": 168.0}
+    try:
+        from tomato_picker.hardware import kinematics as kin
+        g = kin.ArmGeometry()
+        geom = {"z0": g.z0, "d0": g.d0, "l1": g.l1, "l2": g.l2, "l3": g.l3}
+    except Exception:                                      # noqa: BLE001
+        pass
+    joints = {j: {"min": -100.0, "max": 100.0} for j in
+              ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll")}
+    try:
+        calib = arm_calib.Calib()
+        joints = {}
+        for name in calib.zero:
+            lim = calib.joint_range(name)
+            if lim is not None:
+                joints[name] = {"min": round(lim[0], 1), "max": round(lim[1], 1)}
+    except Exception:                                      # noqa: BLE001
+        pass
+    return {"geom": geom, "joints": joints,
+            "floor": -arm_calib.MOUNT_Z_MM + arm_calib.FLOOR_MARGIN_MM}
+
+
+KIN = _kin_constants()
+
 PY = os.environ.get("TOMATO_PY", "/home/server/lerobot/.venv/bin/python")
 COLOR = "/dev/shm/d405_color.jpg"
 DEPTH = "/dev/shm/d405_depth.npy"
@@ -115,10 +157,16 @@ class Job:
                 return False, "%s 가 도는 중이다" % self.name
             self.name, self.rc, self.started = name, None, time.time()
             self.lines.append("$ " + " ".join(argv[1:]))
+            # ⚠ **PYTHONUNBUFFERED가 없으면 진행 상황이 안 보인다.** 자식
+            #   파이썬은 표준출력이 파이프면(터미널이 아니면) 기본이 블록
+            #   버퍼링이라, 몇 KB가 쌓이거나 끝나야 나온다 — 도는 중에 /log를
+            #   봐도 몇 분째 명령줄 한 줄뿐이었다(2026-09-03, harvest_loop 디버깅
+            #   중 발견). 그동안 걸음별 진행을 못 보고 완전히 끝날 때까지 기다려야 했다.
+            env = dict(os.environ, PYTHONUNBUFFERED="1")
             self.proc = subprocess.Popen(
                 argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1, cwd=os.path.join(HERE, "..", ".."),
-                preexec_fn=os.setsid)
+                env=env, preexec_fn=os.setsid)
             threading.Thread(target=self._pump, args=(self.proc,), daemon=True).start()
             return True, ""
 
@@ -189,6 +237,12 @@ def build(job, args):
         if args.get("free_pitch"):
             a += ["--free-pitch"]
         return a
+    if job == "loop":
+        a = [PY, T("harvest_loop.py")]
+        a += ["--hours", "%.2f" % num(args, "hours", 6, 0.1, 24)]
+        a += ["--rest", "%.0f" % num(args, "rest", 25, 5, 300)]
+        a += ["--stop-z", "%.0f" % num(args, "stop_z", 88, 0, 400)]
+        return a
     if job == "grasp":
         a = [PY, T("stem_grasp.py"), "--aim", str(args.get("aim", "click"))]
         a += ["--steps", "%d" % int(num(args, "steps", 16, 1, 60)),
@@ -196,7 +250,7 @@ def build(job, args):
               "--max-turn", "%.1f" % num(args, "max_turn", 2, 0.3, 8),
               "--gain", "%.2f" % num(args, "gain", 0.35, 0.05, 1.0),
               "--tol", "%.0f" % num(args, "tol", 28, 5, 120),
-              "--rejacobian", "%d" % int(num(args, "rejacobian", 3, 1, 20)),
+              "--rejacobian", "%d" % int(num(args, "rejacobian", 6, 1, 20)),
               "--stop-z", "%.0f" % num(args, "stop_z", 88, 0, 400)]
         if args.get("no_close"):
             a += ["--no-close"]
@@ -209,6 +263,7 @@ def build(job, args):
 PAGE = r"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>토마토 조작대</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
 :root{color-scheme:light dark;--ink:#14170f;--bg:#f6f7f2;--panel:#fff;--line:#d5d9cf;
  --dim:#5d655a;--hit:#e4572e;--grip:#2f6fb0;--ok:#3f7d3a}
@@ -247,6 +302,17 @@ pre{margin:0;max-height:270px;overflow:auto;font:12px/1.45 ui-monospace,Menlo,mo
 .busy{color:var(--hit);font-weight:600}
 .idle{color:var(--ok)}
 code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
+.k3d{width:100%;height:190px;border-radius:9px;background:#11151c;touch-action:none}
+.legend{display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--dim);margin-top:5px}
+.legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+.jgrid{display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;margin-top:6px}
+.jrow{display:grid;grid-template-columns:56px 1fr;gap:5px;align-items:center;font-size:11.5px}
+.jrow input{width:100%;padding:4px 5px}
+.jrow .lim{font-family:ui-monospace,Menlo,monospace;font-size:9.5px;color:var(--dim);grid-column:1/-1;margin-top:-2px}
+.jbad{color:var(--hit)!important;font-weight:700}
+.h2tgl{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between}
+.tgl{color:var(--dim);font-size:11px}
+.cbody[hidden]{display:none}
 </style></head><body><div class="wrap">
 <header><h1>토마토 조작대</h1>
 <span class="sub">화면을 눌러 <b>줄기</b>를 정하고, 오른쪽에서 시킨다. 사람과 에이전트가 같은 API를 쓴다.</span>
@@ -276,7 +342,27 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <div class="v" id="jobline">—</div>
   </div>
 
-  <div class="card"><h2>잡기</h2>
+  <div class="card"><h2>3D 미리보기 — 지금 vs 목표</h2>
+    <canvas class="k3d" id="k3d"></canvas>
+    <div class="legend">
+      <span><b style="background:#4a9eff"></b>지금</span>
+      <span><b style="background:#ff9a3d"></b>목표</span>
+      <span><b style="background:#3a4550"></b>바닥/한계면</span>
+      <span>드래그=회전·휠=확대</span>
+    </div>
+    <div class="k" id="k3dWhy" style="margin-top:5px"></div>
+    <h2 class="h2tgl" onclick="toggleCard(this)" style="margin-top:8px;font-size:11.5px">관절값 직접 편집 <span class="tgl">▸</span></h2>
+    <div class="cbody" id="cb_edit" hidden>
+      <div class="jgrid" id="jrows"></div>
+      <div class="row" style="margin-top:8px">
+        <button onclick="k3dLoadCurrent()">지금 값 불러오기</button>
+        <button class="go" onclick="k3dSend()">이 목표로 보내기</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card"><h2 class="h2tgl" onclick="toggleCard(this)">잡기 <span class="tgl">▸</span></h2>
+    <div class="cbody" id="cb_grasp" hidden>
     <div class="row">
       <label>걸음<input id="g_steps" value="16"></label>
       <label>전진<input id="g_adv" value="8"></label>
@@ -291,6 +377,21 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button class="go" onclick="run('grasp',grasp(false))">잡으러 간다</button>
       <button onclick="run('grasp',grasp(true))">안 닫고 가기</button>
       <button onclick="run('grasp',Object.assign(grasp(true),{dry:1}))">겨냥만 본다</button>
+    </div>
+    </div>
+  </div>
+
+  <div class="card"><h2 class="h2tgl" onclick="toggleCard(this)">무인 반복 <span class="tgl">▸</span></h2>
+    <div class="cbody" id="cb_loop" hidden>
+    <div class="row">
+      <label>시간(h)<input id="l_hours" value="6"></label>
+      <label>휴식(초)<input id="l_rest" value="25"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="go" onclick="run('loop',{hours:val('l_hours',6),rest:val('l_rest',25)})">사람 없이 반복 시작</button>
+    </div>
+    <div class="k" style="margin-top:6px">열매를 스스로 찾아(--aim top) 잡고 놓기를 반복한다.
+      열매가 없으면 노란 테이프 아래를 겨눈다. 멈추려면 아래 "지금 하는 일 끊기".</div>
     </div>
   </div>
 
@@ -363,11 +464,22 @@ function setMode(m){mode=m;
   document.getElementById('m_g').className=(m==='grip')?'go':'';}
 document.getElementById('m_t').onclick=function(){setMode('target');};
 document.getElementById('m_g').onclick=function(){setMode('grip');};
+function toggleCard(h){
+  var body=h.nextElementSibling, tgl=h.querySelector('.tgl');
+  var willShow=body.hasAttribute('hidden');
+  if(willShow) body.removeAttribute('hidden'); else body.setAttribute('hidden','');
+  tgl.textContent=willShow?'▾':'▸';
+}
 function val(id,d){var x=parseFloat(document.getElementById(id).value);return isNaN(x)?d:x;}
 function grasp(nc){return {steps:val('g_steps',16),adv:val('g_adv',8),max_turn:val('g_turn',2),
   gain:val('g_gain',0.35),tol:val('g_tol',28),stop_z:val('g_stop',88),no_close:nc?1:0};}
-function jog(k,s){var a={};a[k]=s*val('j_mm',20);
-  if(document.getElementById('j_free').checked)a.free_pitch=1; run('jog',a);}
+function jog(k,s){
+  var amt=s*val('j_mm',20), free=document.getElementById('j_free').checked;
+  tgtJ=jogPreviewTarget(curJ,k,amt,free);
+  JNAMES.forEach(function(n){var el=document.getElementById('tj_'+n); if(el) el.value=tgtJ[n].toFixed(1);});
+  k3dRenderOnce();
+  var a={};a[k]=amt; if(free)a.free_pitch=1; run('jog',a);
+}
 function run(job,args){post('/run',{job:job,args:args}).then(function(j){
   if(!j.ok) alert(j.why||'거절됨');});}
 function stop(){post('/stop');}
@@ -390,11 +502,238 @@ function log(){
   fetch('/log?since='+since).then(function(r){return r.json();}).then(function(j){
     if(j.lines.length){var e=document.getElementById('log');
       e.textContent+=(e.textContent?'\n':'')+j.lines.join('\n');
-      e.scrollTop=e.scrollHeight;}
+      e.scrollTop=e.scrollHeight;
+      k3dParseLog(j.lines.join('\n'));}
     since=j.next;}).catch(function(){});
 }
+
+// ── 3D 미리보기 — 지금/목표 자세를 같은 기구학으로 그린다 ──────────────
+// (ros2/src/.../hardware/kinematics.py 의 forward()를 그대로 옮긴 것)
+var KIN = __KIN_JSON__;
+var JNAMES=["shoulder_pan","shoulder_lift","elbow_flex","wrist_flex","wrist_roll"];
+var JLABELS={shoulder_pan:"어깨돌림(pan)",shoulder_lift:"어깨듦(lift)",elbow_flex:"팔꿈치",
+  wrist_flex:"손목숙임",wrist_roll:"손목돌림"};
+var curJ={shoulder_pan:59.6,shoulder_lift:65,elbow_flex:0,wrist_flex:-100,wrist_roll:6};
+var tgtJ={shoulder_pan:59.6,shoulder_lift:65,elbow_flex:0,wrist_flex:-100,wrist_roll:6};
+
+function fk(j){
+  var d=Math.PI/180;
+  var pan=j.shoulder_pan*d, lift=j.shoulder_lift*d, elbow=j.elbow_flex*d, wrist=j.wrist_flex*d;
+  var a1=lift, a2=lift+elbow, a3=lift+elbow+wrist;
+  var g=KIN.geom;
+  var rz=[[0,0],[g.d0,g.z0]];
+  rz.push([rz[1][0]+g.l1*Math.cos(a1), rz[1][1]+g.l1*Math.sin(a1)]);
+  rz.push([rz[2][0]+g.l2*Math.cos(a2), rz[2][1]+g.l2*Math.sin(a2)]);
+  rz.push([rz[3][0]+g.l3*Math.cos(a3), rz[3][1]+g.l3*Math.sin(a3)]);
+  // ⚠ 화면 좌우(X)만 뒤집는다 — 그리는 용도뿐이라(야코비안 계산은
+  //   kinForward()가 따로 한다) 안전하다. 2026-09-03: 실물과 비교해보니
+  //   미리보기가 좌우 반전으로 보였다.
+  return rz.map(function(p){return new THREE.Vector3(-p[0]*Math.cos(pan), p[1], -p[0]*Math.sin(pan));});
+}
+function kinForward(j){
+  // kinematics.py forward()를 그대로 — (x,y,z,pitch)를 KIN 좌표(회전 전)로.
+  var d=Math.PI/180;
+  var pan=j.shoulder_pan*d, lift=j.shoulder_lift*d, elbow=j.elbow_flex*d, wrist=j.wrist_flex*d;
+  var a1=lift, a2=lift+elbow, a3=lift+elbow+wrist;
+  var g=KIN.geom;
+  var r=g.d0+g.l1*Math.cos(a1)+g.l2*Math.cos(a2)+g.l3*Math.cos(a3);
+  var z=g.z0+g.l1*Math.sin(a1)+g.l2*Math.sin(a2)+g.l3*Math.sin(a3);
+  return {x:r*Math.cos(pan), y:r*Math.sin(pan), z:z, pitch:a3/d};
+}
+function solve4x4(Ain,bin){
+  var n=4, M=[]; for(var i=0;i<n;i++) M.push(Ain[i].concat([bin[i]]));
+  for(var col=0;col<n;col++){
+    var piv=col;
+    for(var r=col+1;r<n;r++) if(Math.abs(M[r][col])>Math.abs(M[piv][col])) piv=r;
+    var tmp=M[col]; M[col]=M[piv]; M[piv]=tmp;
+    if(Math.abs(M[col][col])<1e-9) continue;
+    for(var r2=0;r2<n;r2++){
+      if(r2===col) continue;
+      var f=M[r2][col]/M[col][col];
+      for(var c=col;c<=n;c++) M[r2][c]-=f*M[col][c];
+    }
+  }
+  var x=[]; for(var i2=0;i2<n;i2++) x.push(Math.abs(M[i2][i2])<1e-9?0:M[i2][n]/M[i2][i2]);
+  return x;
+}
+function solveDamped(A,b,lambda){
+  // ⚠ **특이(singular) 자세 근처에서 직접 풀이가 터진다.** 팔꿈치가 거의 편
+  //   자세(elbow_flex≈0, 대기자세가 정확히 이렇다) 근처는 이 4x4가 거의
+  //   특이행렬이라, np.linalg.solve든 손으로 짠 가우스 소거든 1e14 같은
+  //   말도 안 되는 해를 낸다(실측). tool_jog.py는 lstsq(SVD)라 안 이러는데,
+  //   여기서는 SVD 없이 감쇠 최소자승(A^T A + λI)으로 같은 안정성을 얻는다 —
+  //   미리보기라 픽셀/각도 정밀도보다 "터지지 않는 것"이 우선이다.
+  var n=A.length, m=A[0].length, AtA=[], Atb=[];
+  for(var i=0;i<m;i++){
+    AtA.push(new Array(m).fill(0));
+    var s=0; for(var k=0;k<n;k++) s+=A[k][i]*b[k];
+    Atb.push(s);
+  }
+  for(var i2=0;i2<m;i2++) for(var j=0;j<m;j++){
+    var s2=0; for(var k2=0;k2<n;k2++) s2+=A[k2][i2]*A[k2][j];
+    AtA[i2][j]=s2+(i2===j?lambda:0);
+  }
+  return solve4x4(AtA,Atb);
+}
+function jogPreviewTarget(cur,kind,amount,freePitch){
+  // 조그 버튼이 실제로 보내기 **전에** 어디로 향하는지 미리 계산한다 —
+  // tool_jog.py의 step_keep()/move_base()(피치 고정 4관절 풀이)를 그대로 옮긴 것.
+  var j=Object.assign({},cur);
+  if(kind==='pitch'){ j.wrist_flex=cur.wrist_flex+amount; return j; }
+  var p0=kinForward(cur), want=[0,0,0];
+  if(kind==='dz'){ want=[0,0,amount]; }
+  else if(kind==='along' || kind==='horiz'){
+    var th=Math.atan2(p0.y,p0.x), ph=p0.pitch*Math.PI/180;
+    var appr=[Math.cos(ph)*Math.cos(th), Math.cos(ph)*Math.sin(th), Math.sin(ph)];
+    if(kind==='horiz'){
+      var n=Math.hypot(appr[0],appr[1]);
+      if(n<1e-6) return j;
+      appr=[appr[0]/n, appr[1]/n, 0];
+    }
+    want=[appr[0]*amount, appr[1]*amount, appr[2]*amount];
+  } else return j;
+  var cols=['shoulder_pan','shoulder_lift','elbow_flex','wrist_flex'];
+  var A=[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,1,1,1]];
+  for(var ci=0; ci<4; ci++){
+    var e=Object.assign({},cur); e[cols[ci]]=cur[cols[ci]]+0.5;
+    var p1=kinForward(e);
+    A[0][ci]=(p1.x-p0.x)/0.5; A[1][ci]=(p1.y-p0.y)/0.5; A[2][ci]=(p1.z-p0.z)/0.5;
+  }
+  var b=[want[0],want[1],want[2],0];
+  var sol=freePitch ? solveDamped([A[0],A[1],A[2]],[want[0],want[1],want[2]],0.5)
+                    : solveDamped(A,b,0.5);
+  cols.forEach(function(c,i){ j[c]=cur[c]+sol[i]; });
+  return j;
+}
+function jointBad(name, deg){
+  var l=KIN.joints[name]; if(!l) return false;
+  var span=(l.max-l.min)||1;
+  return deg < l.min + span*0.03 || deg > l.max - span*0.03;
+}
+
+var k3dScene,k3dCam,k3dRenderer,curGroup,tgtGroup,k3dVecLine,k3dReady=false;
+var k3dRotX=-0.35,k3dRotY=0.8,k3dDist=750;
+function k3dSeg(A,B,color){
+  var dir=new THREE.Vector3().subVectors(B,A); var len=dir.length()||0.001;
+  var m=new THREE.Mesh(new THREE.CylinderGeometry(6,6,len,10),
+    new THREE.MeshStandardMaterial({color:color}));
+  m.position.copy(A).addScaledVector(dir,0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+  return m;
+}
+function k3dJoint(P,color){
+  var m=new THREE.Mesh(new THREE.SphereGeometry(11,12,10),
+    new THREE.MeshStandardMaterial({color:color}));
+  m.position.copy(P); return m;
+}
+function k3dBuild(group,j,base,bad){
+  while(group.children.length) group.remove(group.children[0]);
+  var pts=fk(j), jn=["shoulder_pan","shoulder_lift","elbow_flex","wrist_flex"];
+  for(var i=0;i<pts.length-1;i++)
+    group.add(k3dSeg(pts[i],pts[i+1], jointBad(jn[i],j[jn[i]])?bad:base));
+  for(var k=1;k<pts.length;k++)
+    group.add(k3dJoint(pts[k], jointBad(jn[k-1],j[jn[k-1]])?bad:base));
+  group.add(k3dJoint(pts[0],0x555f6b));
+  return pts[pts.length-1];
+}
+function k3dCamUpdate(){
+  var cx=Math.sin(k3dRotY)*Math.cos(k3dRotX)*k3dDist;
+  var cz=Math.cos(k3dRotY)*Math.cos(k3dRotX)*k3dDist;
+  var cy=Math.sin(k3dRotX)*k3dDist+150;
+  k3dCam.position.set(cx,cy,cz); k3dCam.lookAt(0,150,0);
+}
+function k3dWhy(){
+  var msgs=[];
+  JNAMES.slice(0,4).forEach(function(n){
+    var bad=jointBad(n,tgtJ[n]);
+    var el=document.getElementById('tl_'+n);
+    if(el) el.className='lim'+(bad?' jbad':'');
+    if(bad){var l=KIN.joints[n];
+      msgs.push(JLABELS[n]+' 한계 근처('+tgtJ[n].toFixed(0)+'° / 한계 '+l.min.toFixed(0)+'~'+l.max.toFixed(0)+'°)');}
+  });
+  var tp=fk(tgtJ)[4];
+  if(tp.y < KIN.floor+5) msgs.push('목표 손끝이 바닥 근처/아래 (높이 '+tp.y.toFixed(0)+'mm)');
+  document.getElementById('k3dWhy').textContent = msgs.length? ('⚠ 이래서 그쪽으로 안 된다 — '+msgs.join(' · '))
+    : '목표가 관절 한계 안입니다 — 이 방향은 갈 수 있습니다.';
+}
+function k3dRenderOnce(){
+  if(!k3dReady) return;
+  k3dCamUpdate();
+  var curTip=k3dBuild(curGroup,curJ,0x4a9eff,0xff3b3b);
+  var tgtTip=k3dBuild(tgtGroup,tgtJ,0xff9a3d,0xff3b3b);
+  if(k3dVecLine) k3dScene.remove(k3dVecLine);
+  var lg=new THREE.BufferGeometry().setFromPoints([curTip,tgtTip]);
+  k3dVecLine=new THREE.Line(lg,new THREE.LineBasicMaterial({color:0xffe066}));
+  k3dScene.add(k3dVecLine);
+  k3dRenderer.render(k3dScene,k3dCam);
+  k3dWhy();
+}
+function k3dParseLog(text){
+  var re=/shoulder=\s*(-?[\d.]+)\s+shoulder=\s*(-?[\d.]+)\s+elbow=\s*(-?[\d.]+)\s+wrist=\s*(-?[\d.]+)\s+wrist=\s*(-?[\d.]+)/g;
+  var m,last=null; while((m=re.exec(text))!==null){last=m;}
+  if(last){curJ.shoulder_pan=parseFloat(last[1]);curJ.shoulder_lift=parseFloat(last[2]);
+    curJ.elbow_flex=parseFloat(last[3]);curJ.wrist_flex=parseFloat(last[4]);curJ.wrist_roll=parseFloat(last[5]);
+    k3dRenderOnce();}
+}
+function k3dInitRows(){
+  var host=document.getElementById('jrows'), html='';
+  JNAMES.forEach(function(n){
+    var l=KIN.joints[n]||{min:-100,max:100};
+    html+='<div class="jrow"><span>'+JLABELS[n]+'</span>'+
+      '<input type="number" step="1" id="tj_'+n+'" value="'+tgtJ[n].toFixed(1)+'">'+
+      '<span class="lim" id="tl_'+n+'">'+l.min.toFixed(0)+'°~'+l.max.toFixed(0)+'°</span></div>';
+  });
+  host.innerHTML=html;
+  JNAMES.forEach(function(n){
+    document.getElementById('tj_'+n).addEventListener('input',function(){
+      tgtJ[n]=parseFloat(this.value)||0; k3dRenderOnce();});
+  });
+}
+function k3dLoadCurrent(){
+  JNAMES.forEach(function(n){tgtJ[n]=curJ[n];
+    var el=document.getElementById('tj_'+n); if(el) el.value=curJ[n].toFixed(1);});
+  k3dRenderOnce();
+}
+function k3dSend(){
+  var t=[tgtJ.shoulder_pan,tgtJ.shoulder_lift,tgtJ.elbow_flex,tgtJ.wrist_flex,tgtJ.wrist_roll]
+    .map(function(v){return v.toFixed(1);}).join(',');
+  run('stage',{target:t});
+}
+function k3dInit(){
+  var cv=document.getElementById('k3d');
+  k3dScene=new THREE.Scene();
+  k3dCam=new THREE.PerspectiveCamera(45,(cv.clientWidth||300)/(cv.clientHeight||300),1,5000);
+  k3dRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+  function resize(){var w=cv.clientWidth||300,h=cv.clientHeight||300;
+    k3dRenderer.setSize(w,h,false); k3dCam.aspect=w/h; k3dCam.updateProjectionMatrix(); k3dRenderOnce();}
+  window.addEventListener('resize',resize);
+  k3dScene.add(new THREE.AmbientLight(0xffffff,0.65));
+  var dl=new THREE.DirectionalLight(0xffffff,0.7); dl.position.set(300,600,400); k3dScene.add(dl);
+  var grid=new THREE.GridHelper(800,16,0x3a4550,0x232a33); grid.position.y=KIN.floor; k3dScene.add(grid);
+  var fm=new THREE.Mesh(new THREE.PlaneGeometry(800,800),
+    new THREE.MeshBasicMaterial({color:0x2a323d,transparent:true,opacity:0.25,side:THREE.DoubleSide}));
+  fm.rotation.x=-Math.PI/2; fm.position.y=KIN.floor; k3dScene.add(fm);
+  k3dScene.add(new THREE.AxesHelper(120));
+  curGroup=new THREE.Group(); tgtGroup=new THREE.Group();
+  k3dScene.add(curGroup); k3dScene.add(tgtGroup);
+  var dragging=false,lastX=0,lastY=0;
+  cv.addEventListener('pointerdown',function(e){dragging=true;lastX=e.clientX;lastY=e.clientY;});
+  window.addEventListener('pointerup',function(){dragging=false;});
+  window.addEventListener('pointermove',function(e){
+    if(!dragging) return;
+    k3dRotY+=(e.clientX-lastX)*0.01; k3dRotX+=(e.clientY-lastY)*0.01;
+    k3dRotX=Math.max(-1.3,Math.min(1.3,k3dRotX));
+    lastX=e.clientX; lastY=e.clientY; k3dRenderOnce();
+  });
+  cv.addEventListener('wheel',function(e){e.preventDefault();
+    k3dDist=Math.max(200,Math.min(2500,k3dDist+e.deltaY)); k3dRenderOnce();},{passive:false});
+  resize(); k3dReady=true; k3dRenderOnce();
+}
+k3dInit(); k3dInitRows();
+
 setInterval(tick,400); setInterval(state,1200); setInterval(log,900); tick(); state(); log();
 </script></body></html>"""
+PAGE = PAGE.replace("__KIN_JSON__", json.dumps(KIN))
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -50,10 +50,11 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 from tomato_picker.hardware import kinematics as kin      # noqa: E402
+import arm_calib                                            # noqa: E402
 import grasp_probe as gp                                   # noqa: E402
 import visual_servo as vs                                  # noqa: E402
 
-DEG_PER_TICK = 360.0 / 4096.0
+DEG_PER_TICK = arm_calib.DEG_PER_TICK
 CAL = gp.CAL
 CART = gp.CART
 MOUNT_Z_MM = gp.MOUNT_Z_MM
@@ -69,17 +70,6 @@ AIM = ("shoulder_pan", "shoulder_lift", "elbow_flex")
 GRIP_OPEN, GRIP_SHUT = 78.0, 4.0
 
 
-def load_cart():
-    cal = json.load(open(CAL))
-    spans = {}
-    for name, c in cal.items():
-        try:
-            spans[name] = abs(int(c["range_max"]) - int(c["range_min"])) * DEG_PER_TICK
-        except (KeyError, TypeError, ValueError):
-            pass
-    return spans, json.load(open(CART))
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="움직이지 않고 지금 겨냥만 본다")
@@ -91,7 +81,8 @@ def main() -> int:
     ap.add_argument("--max-turn", type=float, default=6.0, help="한 걸음에 한 관절 최대 도수")
     ap.add_argument("--probe", type=float, default=2.5, help="야코비안을 잴 때 흔드는 도수")
     ap.add_argument("--rejacobian", type=int, default=4, help="몇 걸음마다 다시 재는가")
-    ap.add_argument("--aim", choices=("click", "mark", "top", "stem", "fruit"), default="top")
+    ap.add_argument("--aim", choices=("click", "mark", "top", "stem", "fruit", "auto"),
+                     default="top")
     ap.add_argument("--mark", default="", help="줄기를 화면에서 여기라고 알려 준다 u,v")
     ap.add_argument("--click-file", default=os.path.expanduser("~/click_target.json"),
                     help="클릭 페이지(click_server.py)가 남긴 표적")
@@ -115,41 +106,13 @@ def main() -> int:
             pass
     print("겨눌 자리 = 화면 (%.0f, %.0f)  [집게가 무는 자리, 여닫아 실측]" % (tu, tv))
 
-    spans, cart = load_cart()
-    zero, ref, signs = cart["zero"], cart["ref_deg"], cart.get("signs", {})
-    over = cart.get("deg_per_norm") or {}
-    geom = kin.ArmGeometry()
-
-    def sign(j):
-        v = signs.get(j)
-        return -1.0 if (v is not None and float(v) < 0) else 1.0
-
-    def per(j):
-        v = over.get(j)
-        if v:
-            return abs(float(v))
-        s = spans.get(j)
-        return abs(s) / 200.0 if s else (1.8 if j == "wrist_roll" else 0.9)
-
-    def to_deg(n):
-        return {j: ref.get(j, 0.0) + sign(j) * (float(n.get(j, 0.0)) - zero.get(j, 0.0)) * per(j)
-                for j in kin.JOINTS}
-
-    def to_norm(d):
-        return {j: zero.get(j, 0.0) + (float(d[j]) - ref.get(j, 0.0)) / (sign(j) * per(j))
-                for j in d if j in kin.JOINTS}
-
-    def legal(d, cur):
-        """⚠ 한계는 **지금 자세를 가두지 않게** 잡는다 — 정규화 범위는
-           교시자세를 중심으로 대칭이 아니라서 98을 그냥 쓰면 못 움직인다."""
-        nm, cm = to_norm(d), to_norm(cur)
-        for j, v in nm.items():
-            if abs(v) > max(98.0, abs(cm.get(j, 0.0))) + 1e-6:
-                return False, "%s 한계" % j
-        floor = min(-MOUNT_Z_MM + FLOOR_MARGIN_MM, kin.forward(cur, geom).z - 1.0)
-        if kin.forward(d, geom).z < floor:
-            return False, "바닥"
-        return True, ""
+    # ⚠ 한계 판정은 arm_calib.Calib 하나뿐이다(자세한 이유는 arm_calib.py
+    #   머리말) — 정규값 ±98 같은 임의 숫자 대신 서보 캘리브레이션에서 나온
+    #   진짜 물리 가동범위를 쓰므로, "교시자세를 중심으로 대칭이 아니라서
+    #   98을 그냥 쓰면 못 움직인다"는 예전 문제 자체가 없다.
+    calib = arm_calib.Calib()
+    geom = calib.geom
+    to_deg, to_norm, legal = calib.to_deg, calib.to_norm, calib.legal
 
     def fruit_box(prev):
         """빨간 열매의 (넓이, 중심u, 윗변v, 너비, 깊이) — 테두리까지 필요하다."""
@@ -212,20 +175,96 @@ def main() -> int:
                 best = (score, a, u, top, w, z, top <= 2.0)
         return None if best is None else best[1:]
 
+    def tape_point(prev):
+        """**노란 테이프 아래 지점** — 열매가 없어질 때의 대체 표적.
+
+        ⚠ 무인 반복 중 열매가 떨어지거나 다 땄으면 `fruit_box`가 계속 None을
+          준다. 그러면 서보가 매번 "겨눌 것을 못 찾았다"로 멈춰야 하는데,
+          사람이 없으면 그걸 다시 살릴 수 없다. 노란 테이프를 표식으로 남겨
+          두면 **테이프 아래 지점**을 계속 겨눌 수 있다 — 열매 대신 쓰는
+          고정 표적이다. 둥글기 조건은 안 건다(테이프는 안 둥글다).
+        """
+        import cv2
+        bgr = cv2.imread(vs.COLOR)
+        if bgr is None:
+            return None
+        try:
+            dep = np.load(vs.DEPTH).astype(float)
+            meta = json.load(open(vs.META))
+        except Exception:                              # noqa: BLE001
+            return None
+        sc = float(meta.get("depth_scale_mm", 1.0))
+        fxv = float(meta["intrinsics"]["fx"])
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        m = ((hsv[:, :, 0] > 18) & (hsv[:, :, 0] < 40)
+             & (hsv[:, :, 1] > 60) & (hsv[:, :, 2] > 80)).astype(np.uint8)
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+        n, lab, st, cen = cv2.connectedComponentsWithStats(m, 8)
+        best = None
+        for i in range(1, n):
+            a = int(st[i, cv2.CC_STAT_AREA])
+            if a < 200:
+                continue
+            u, v = float(cen[i][0]), float(cen[i][1])
+            if prev is not None and math.hypot(u - prev[0], v - prev[1]) > 260.0:
+                continue
+            if best is None or a > st[best, cv2.CC_STAT_AREA]:
+                best = i
+        if best is None:
+            return None
+        bottom = float(st[best, cv2.CC_STAT_TOP] + st[best, cv2.CC_STAT_HEIGHT])
+        u = float(cen[best][0])
+        d = dep[lab == best] * sc
+        d = d[d > 0]
+        z = float(np.percentile(d, 30)) if d.size >= 10 else 200.0
+        below_px = args.above_mm * fxv / max(z, 60.0)
+        return u, bottom + below_px, z, int(st[best, cv2.CC_STAT_AREA]), False
+
+    def red_nearby(uu, vv, radius=55, min_frac=0.08):
+        """**물기 직전 마지막 확인** — 겨눈 자리 둘레가 정말 빨간가.
+
+        ⚠ 색·모양만으로 고른 표적이 오래 추적하는 동안 화분틀 지지대 같은
+          고정 구조물로 새어나갈 수 있다 — 2026-09-03 실측: 화소오차가
+          330→15까지 아주 매끄럽게 줄어(추적 자체는 멀쩡해 보였다) "물었다"고
+          했는데, 바깥 카메라로 보니 열매 둘 다 자리·방향이 그대로였고
+          팔은 화분 받침 높이(z≈118mm)까지 내려가 있었다 — 지지대를 문
+          것이다. **이동은 문제가 없었다. 처음부터·도중에 겨눈 자리가 틀렸을
+          뿐이다.** 그래서 이동이 아니라 "닫기 직전"에 마지막으로 색을 본다 —
+          거기 빨간 게 없으면 안 닫는다.
+        """
+        import cv2
+        bgr = cv2.imread(vs.COLOR)
+        if bgr is None:
+            return True, 1.0               # 못 읽으면 판단 불가 — 기존 동작 유지
+        h, w = bgr.shape[:2]
+        y0, y1 = max(0, int(vv) - radius), min(h, int(vv) + radius)
+        x0, x1 = max(0, int(uu) - radius), min(w, int(uu) + radius)
+        if y1 <= y0 or x1 <= x0:
+            return True, 1.0
+        hsv = cv2.cvtColor(bgr[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
+        m = ((hsv[:, :, 1] > 80) & (hsv[:, :, 2] > 50)
+             & ((hsv[:, :, 0] < 14) | (hsv[:, :, 0] > 165)))
+        frac = float(m.mean())
+        return frac >= min_frac, frac
+
     def clamp(d, cur):
         """한계를 **거부하지 말고 잘라라** — 막힌 축 하나 때문에 멈추면
         나머지 자유로운 축까지 얼어붙는다(2026-09-02: 14걸음 내리 0mm).
-        정규화 한계로 각 관절을 자른 뒤, 바닥만 통째로 확인한다."""
-        cm = to_norm(cur)
-        nm = to_norm(d)
+        진짜 물리 범위(arm_calib.Calib.joint_range — legal()과 같은 기준)로
+        각 관절을 자른 뒤, 바닥만 통째로 확인한다."""
         cut = {}
-        for j, v in nm.items():
-            lim = max(98.0, abs(cm.get(j, 0.0)))
-            nv = max(-lim, min(lim, v))
+        out = dict(d)
+        for j, v in d.items():
+            lim = calib.joint_range(j)
+            if lim is None:
+                continue
+            lo, hi = lim
+            m = (hi - lo) * arm_calib.LIMIT_MARGIN
+            nv = max(lo + m, min(hi - m, v))
             if abs(nv - v) > 1e-9:
                 cut[j] = nv - v
-            nm[j] = nv
-        out = to_deg(nm)
+            out[j] = nv
         floor = min(-MOUNT_Z_MM + FLOOR_MARGIN_MM, kin.forward(cur, geom).z - 1.0)
         for k in (1.0, 0.6, 0.3):
             trial = {j: cur[j] + (out[j] - cur[j]) * k for j in kin.JOINTS}
@@ -353,7 +392,13 @@ def main() -> int:
             if best is None or mx > best[0]:
                 best = (float(mx), ml[0] + tt.shape[1] / 2.0 + x0,
                         ml[1] + tt.shape[0] / 2.0 + y0, tt.shape[1])
-        if best is None or best[0] < 0.45:
+        if best is None or best[0] < 0.60:
+            # ⚠ 0.45는 너무 헐거웠다 — 2026-09-03 실측: 애매한 매칭(0.45~0.6)을
+            #   그대로 받아 엉뚱한 자리(배경·화분틀)를 "확신"하며 쫓아갔고,
+            #   그 뒤로 걸음마다 깊이가 64→3405→64mm로 널뛰면서도 멈추지
+            #   않았다. 애매하면 **놓친 것으로 치고 안전하게 실패**하는 편이
+            #   허공에서 계속 겨누는 것보다 낫다 — 그러면 재시도 경로
+            #   (반경을 넓혀 다시 찾기)로 간다.
             return None
         score, u2, v2, tw2 = best
         if score > 0.80:                       # 잘 맞았을 때만 조각을 새로 뜬다
@@ -384,7 +429,7 @@ def main() -> int:
         if args.aim == "top":
             fb = fruit_box(prev)
             if fb is None:
-                return None
+                return tape_point(prev)          # 열매가 없다 — 노란 테이프로
             a, fu, ftop, fw, fz, clipped = fb
             try:
                 fx = json.load(open(vs.META))["intrinsics"]["fx"]
@@ -427,6 +472,37 @@ def main() -> int:
         mark0 = (c[0], c[1])
         click_stamp[0] = c[2]
         print("클릭한 자리 화면 (%.0f, %.0f)  [%s]" % (c[0], c[1], c[2]))
+    if args.aim == "auto":
+        # ⚠ **"top"을 걸음마다 다시 쓰지 않는다.** top은 매 프레임 색으로
+        #   다시 찾는데, 겨냥 걸음이 크면(2~3도씩) 하이라이트·자세 변화로
+        #   한두 걸음 만에 놓친다(2026-09-03 실측: step 2~3에서 놓침).
+        #   그래서 **처음 한 번만** 색으로 찾고, 그 다음부터는 이미 사람이
+        #   찍은 것과 똑같이 **그림 조각을 따라간다**(track_mark) — 사람이
+        #   클릭하는 대신 이 첫 검출이 클릭을 대신할 뿐이다.
+        fb = fruit_box(None)
+        if fb is not None:
+            a, fu, ftop, _fw, fz, _clipped = fb
+            try:
+                fx = json.load(open(vs.META))["intrinsics"]["fx"]
+            except Exception:                              # noqa: BLE001
+                fx = 438.0
+            up = args.above_mm * fx / max(fz, 60.0)
+            # ⚠ 아주 가까우면(열매가 화면을 거의 채우면) 계산한 줄기 자리가
+            #   화면 밖(음수)으로 나간다 — mm→화소 환산이 거리에 반비례해서
+            #   커지기 때문이다. 화면 안으로 잘라야 track_mark가 조각을 뜰 수
+            #   있다(2026-09-03: 굽힌 자세에서 깊이 87mm일 때 v=-42가 나왔다).
+            mark0 = (min(846.0, max(1.0, fu)), min(478.0, max(2.0, ftop - up)))
+            print("스스로 찾았다 — 열매 화면(%.0f,%.0f) 깊이%.0fmm 넓이%d → 줄기(%.0f,%.0f)"
+                  % (fu, ftop, fz, a, mark0[0], mark0[1]))
+        else:
+            tp = tape_point(None)
+            if tp is None:
+                print("아무것도 못 찾았다 — 열매도 노란 테이프도 안 보인다.")
+                return 1
+            mark0 = (tp[0], tp[1])
+            print("열매를 못 찾아 노란 테이프 아래로 겨눈다 — 화면(%.0f,%.0f) 깊이%.0fmm"
+                  % (mark0[0], mark0[1], tp[2]))
+        args.aim = "mark"          # 이후는 이미 검증된 추적을 그대로 쓴다
     if args.aim == "mark" and mark0 is None:
         print("--aim mark 에는 --mark u,v 가 필요하다")
         return 1
@@ -488,9 +564,20 @@ def main() -> int:
                     if r is not None:
                         return r
                 return None
-            return see(None) if prev is not None else None
+            if prev is None:
+                return None
+            # ⚠ **한 프레임 실패로 포기하지 않는다.** D405 컬러는 이따금 찢어진
+            #   JPEG를 낸다(이 저장소가 라인 검출에서 이미 겪은 병) — 그러면
+            #   실제로 열매가 그대로 있어도 그 한 장만 못 찾는다. 새 프레임을
+            #   몇 번 다시 읽어 본 뒤에만 진짜로 놓친 것으로 친다.
+            for _ in range(3):
+                time.sleep(0.25)
+                r = see(None)
+                if r is not None:
+                    return r
+            return None
 
-        gone, JI, prev, locked, stall = 0.0, None, (u, v), False, 0
+        gone, JI, prev, locked, stall, miss_streak = 0.0, None, (u, v), False, 0, 0
         best_dir = [None, None]      # 실측으로 고른 전진 방향과 그 효과
         print("\n 걸음   겨냥       화소   깊이    나아감   한 일")
         for step in range(args.steps):
@@ -509,7 +596,9 @@ def main() -> int:
             err = np.array([tu - u, tv - v])
             en = float(np.linalg.norm(err))
             if en <= args.tol:
-                locked = True
+                locked, miss_streak = True, 0
+            elif locked:
+                miss_streak += 1
             if locked:
                 zr = ray_depth_med(tu, tv)
                 if zr is not None:
@@ -519,8 +608,19 @@ def main() -> int:
 
             cur = to_deg(io.read())
 
+            # ⚠ **한 번 놓친 프레임에 잘 가던 접근을 통째로 버리지 않는다.**
+            #   2026-09-03: 깊이 351→136mm까지 순조롭게 좁혀 놓고, 딱 한 프레임
+            #   추적이 튀자(en 8→191) 그 자리에서 겨냥으로 되돌아갔고, 그 뒤로
+            #   회복을 못 해 실패했다. 깊이는 추적(u,v)과 무관하게 겨눈 자리
+            #   (tu,tv)에서 **따로** 재므로(위의 ray_depth_med) 이미 믿을 만하다
+            #   — 그러니 튄 게 2연속을 넘기 전까지는 겨냥으로 돌아가지 않고
+            #   그 깊이를 믿고 계속 나아간다.
+            trust_advance = locked and miss_streak <= 2
+
             # ── 1. 겨냥이 틀어졌으면 먼저 화면을 맞춘다 (깊이는 안 쓴다) ──
-            if clipped and en > args.tol:
+            if trust_advance and en > args.tol:
+                print("(놓침 %d/2 — 깊이를 믿고 계속 나아간다) " % miss_streak, end="")
+            elif clipped and en > args.tol:
                 # 윗변이 화면 밖이면 겨냥점을 알 수 없다 — 이미 맞춰 놓았으니
                 # 여기서 다시 겨누면 없는 오차를 쫓는다. 나아가기만 한다.
                 print("(윗변 잘림 — 겨냥 보류) ", end="")
@@ -579,6 +679,11 @@ def main() -> int:
             if args.stop_z and locked and z <= args.stop_z:
                 print("줄기가 %.0fmm — 무는 거리(%.0fmm)에 들어왔다. 총 %.0fmm 나아갔다"
                       % (z, args.stop_z, gone))
+                ok_red, frac = red_nearby(tu, tv)
+                if not ok_red:
+                    print("⚠ 물기 직전 확인 — 그 자리 둘레가 빨갛지 않다(빨간 비율 %.0f%%,"
+                          " 열매가 아닌 것 같다). **안 닫는다.**" % (frac * 100))
+                    return 1
                 if not args.no_close:
                     n = to_norm(to_deg(io.read()))
                     n["gripper"] = GRIP_SHUT
@@ -720,6 +825,11 @@ def main() -> int:
                 print("\n🍅 **닿았다** — %.0fmm를 명령했는데 깊이는 %.0fmm밖에 안 줄었다."
                       % (want, dz))
                 print("   ⇒ 카메라에서 손끝까지 = **%.0f mm** (이번 실측)" % r[2])
+                ok_red, frac = red_nearby(tu, tv)
+                if not ok_red:
+                    print("⚠ 물기 직전 확인 — 그 자리 둘레가 빨갛지 않다(빨간 비율 %.0f%%,"
+                          " 열매가 아닌 것 같다). **안 닫는다.**" % (frac * 100))
+                    return 1
                 if not args.no_close:
                     n = to_norm(to_deg(io.read()))
                     n["gripper"] = GRIP_SHUT

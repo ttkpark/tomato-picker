@@ -50,15 +50,19 @@ sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
 from tomato_picker.hardware.handeye import Intrinsics  # noqa: E402
+import arm_calib                                        # noqa: E402
 
-DEG_PER_TICK = 360.0 / 4096.0
-CAL = os.path.expanduser(
-    "~/.cache/huggingface/lerobot/calibration/robots/so_follower/tomato_follower.json")
-CART = os.path.expanduser("~/arm_cartesian.json")
+# ⚠ 이 파일을 `import grasp_probe as gp`로 끌어다 쓰는 다른 도구들이 많아
+#   (tool_jog.py, stem_grasp.py, cam_frame.py, arm_stage.py) 이름은 남겨
+#   두되, 값은 arm_calib.py **하나**에서만 가져온다 — 두 곳에 따로 적으면
+#   또 어긋난다(2026-09-03 교훈).
+DEG_PER_TICK = arm_calib.DEG_PER_TICK
+CAL = arm_calib.CAL
+CART = arm_calib.CART
+MOUNT_Z_MM = arm_calib.MOUNT_Z_MM
+FLOOR_MARGIN_MM = arm_calib.FLOOR_MARGIN_MM
 COLOR, DEPTH, META = ("/dev/shm/d405_color.jpg", "/dev/shm/d405_depth.npy",
                       "/dev/shm/d405_meta.json")
-MOUNT_Z_MM = 76.5
-FLOOR_MARGIN_MM = 10.0
 TOUCH_ERR_DEG = 2.5        # 이만큼 못 따라가면 무언가에 닿은 것이다
 STEP_MM = 4.0              # 한 걸음에 벽에 이만큼 다가간다
 MAX_STEPS = 70
@@ -190,44 +194,15 @@ def main() -> int:
     ap.add_argument("--dry", action="store_true", help="누르지 않고 지금 화면만 본다")
     args = ap.parse_args()
 
-    cal = json.load(open(CAL))
-    spans = {}
-    for name, c in cal.items():
-        try:
-            spans[name] = abs(int(c["range_max"]) - int(c["range_min"])) * DEG_PER_TICK
-        except (KeyError, TypeError, ValueError):
-            pass
-    cart = json.load(open(CART))
-    zero, ref, signs = cart["zero"], cart["ref_deg"], cart.get("signs", {})
-    over = cart.get("deg_per_norm") or {}
-    geom = kin.ArmGeometry()
-
-    def sign(j):
-        v = signs.get(j)
-        return -1.0 if (v is not None and float(v) < 0) else 1.0
-
-    def per(j):
-        v = over.get(j)
-        if v:
-            return abs(float(v))
-        s = spans.get(j)
-        return abs(s) / 200.0 if s else (1.8 if j == "wrist_roll" else 0.9)
-
-    def to_deg(n):
-        return {j: ref.get(j, 0.0) + sign(j) * (float(n.get(j, 0.0)) - zero.get(j, 0.0)) * per(j)
-                for j in kin.JOINTS}
-
-    def to_norm(d):
-        return {j: zero.get(j, 0.0) + (float(d[j]) - ref.get(j, 0.0)) / (sign(j) * per(j))
-                for j in d if j in kin.JOINTS}
+    # ⚠ 한계 판정은 arm_calib.Calib 하나뿐이다 — 자세한 이유는 arm_calib.py
+    #   머리말. 이 함수의 legal()은 (그동안 호출부가 그렇게 써 왔으므로) 이유
+    #   문자열 없이 bool만 돌려준다.
+    calib = arm_calib.Calib()
+    geom = calib.geom
+    to_deg, to_norm = calib.to_deg, calib.to_norm
 
     def legal(d, cur):
-        nm, cm = to_norm(d), to_norm(cur)
-        for j, v in nm.items():
-            if abs(v) > max(98.0, abs(cm.get(j, 0.0))) + 1e-6:
-                return False
-        floor = min(-MOUNT_Z_MM + FLOOR_MARGIN_MM, kin.forward(cur, geom).z - 1.0)
-        return kin.forward(d, geom).z >= floor
+        return calib.legal(d, cur)[0]
 
     from tomato_bridge.follower_io import FollowerIO
     io = FollowerIO(hold_torque=True)

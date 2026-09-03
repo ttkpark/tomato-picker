@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -34,9 +33,9 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 from tomato_picker.hardware import kinematics as kin      # noqa: E402
+import arm_calib                                            # noqa: E402
 import grasp_probe as gp                                   # noqa: E402
 
-DEG_PER_TICK = 360.0 / 4096.0
 JOINTS4 = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex")
 
 
@@ -59,46 +58,14 @@ def main() -> int:
     ap.add_argument("--dry", action="store_true")
     args = ap.parse_args()
 
-    cal = json.load(open(gp.CAL))
-    spans = {}
-    for name, c in cal.items():
-        try:
-            spans[name] = abs(int(c["range_max"]) - int(c["range_min"])) * DEG_PER_TICK
-        except (KeyError, TypeError, ValueError):
-            pass
-    cart = json.load(open(gp.CART))
-    zero, ref, signs = cart["zero"], cart["ref_deg"], cart.get("signs", {})
-    over = cart.get("deg_per_norm") or {}
-    geom = kin.ArmGeometry()
-
-    def sign(j):
-        v = signs.get(j)
-        return -1.0 if (v is not None and float(v) < 0) else 1.0
-
-    def per(j):
-        v = over.get(j)
-        if v:
-            return abs(float(v))
-        s = spans.get(j)
-        return abs(s) / 200.0 if s else (1.8 if j == "wrist_roll" else 0.9)
-
-    def to_deg(n):
-        return {j: ref.get(j, 0.0) + sign(j) * (float(n.get(j, 0.0)) - zero.get(j, 0.0)) * per(j)
-                for j in kin.JOINTS}
-
-    def to_norm(d):
-        return {j: zero.get(j, 0.0) + (float(d[j]) - ref.get(j, 0.0)) / (sign(j) * per(j))
-                for j in d if j in kin.JOINTS}
-
-    def legal(d, cur):
-        nm, cm = to_norm(d), to_norm(cur)
-        for j, v in nm.items():
-            if abs(v) > max(98.0, abs(cm.get(j, 0.0))) + 1e-6:
-                return False, "%s 한계" % j
-        floor = min(-gp.MOUNT_Z_MM + gp.FLOOR_MARGIN_MM, kin.forward(cur, geom).z - 1.0)
-        if kin.forward(d, geom).z < floor:
-            return False, "바닥"
-        return True, ""
+    # ⚠ 한계 판정은 arm_calib.Calib **하나뿐**이다 — 조작대 오른쪽 패널(3D
+    #   미리보기·관절값 직접편집)도 같은 계산을 쓴다. 예전엔 여기서 따로
+    #   정규값 ±98(게다가 "지금 자리를 이미 넘었으면 한 발짝도 더 못 감")을
+    #   썼는데, 그러면 오른쪽 패널은 "갈 수 있다"는데 조그는 거절하는 일이
+    #   생긴다(2026-09-03) — 자세한 이유는 arm_calib.py 머리말.
+    calib = arm_calib.Calib()
+    geom = calib.geom
+    to_deg, to_norm, legal = calib.to_deg, calib.to_norm, calib.legal
 
     from tomato_bridge.follower_io import FollowerIO
     io = FollowerIO(hold_torque=True)
@@ -165,10 +132,14 @@ def main() -> int:
         if args.dry:
             return 0
 
-        n = max(1, int(round(total / args.piece)))
-        unit = want / n
-        for k in range(n):
-            cur = to_deg(io.read())
+        def solve(cur, target_vec, mode):
+            """4관절 야코비안. mode="keep"이면 피치(lift+elbow+wrist 합)를 고정 —
+            위치 3식에 관절 4개라 남는 자유도 하나가 실제로 쓰이면 손목 카메라가
+            돈다(2026-09-02: 70mm 올리는 동안 32° 돌아 열매가 화면 위로 사라진
+            사례가 있었다). "free"는 그 여유를 풀어 위치만 맞춘다 — **살짝의
+            피치 변화는 감수한다**는 게 지금 기본값이다(2026-09-03, 사람이
+            보면서 확인: 그 정도 드리프트는 상관없다). 자세를 꼭 지켜야 하는
+            특수한 경우에만 --hold-pitch로 켠다."""
             b0 = np.array([kin.forward(cur, geom).x, kin.forward(cur, geom).y,
                            kin.forward(cur, geom).z])
             J, cols = [], []
@@ -178,21 +149,28 @@ def main() -> int:
                 p1 = kin.forward(e, geom)
                 J.append((np.array([p1.x, p1.y, p1.z]) - b0) / 0.5)
                 cols.append(j)
-            # ⚠ **자세를 함께 묶는다.** 위치 3식에 관절 4개면 자유도가 하나
-            #   남고, 그 자유도가 실제로 쓰이면 손목 카메라가 확 돈다 —
-            #   2026-09-02: 70mm 올리는 동안 카메라가 32° 아래로 돌아
-            #   열매가 화면 위로 사라졌다. 피치(lift+elbow+wrist)를 고정하면
-            #   미지수 4·식 4로 답이 하나가 된다.
-            if args.free_pitch:
-                A = np.array(J).T
-                rhs = unit
+            if mode == "free":
+                A, rhs = np.array(J).T, target_vec
             else:
                 A = np.vstack([np.array(J).T, np.array([[0.0, 1.0, 1.0, 1.0]])])
-                rhs = np.append(unit, 0.0)
+                rhs = np.append(target_vec, 0.0)
             sol, *_ = np.linalg.lstsq(A, rhs, rcond=None)
             nxt = dict(cur)
             for j, w in zip(cols, sol):
                 nxt[j] += float(w)
+            return nxt, float(np.linalg.norm(A @ sol - rhs))
+
+        n = max(1, int(round(total / args.piece)))
+        unit = want / n
+        # ⚠ 기본은 위치부터 맞춘다(free) — 피치를 지키려고 자유도를 하나
+        #   묶으면(keep) 한계 근처 관절 하나 때문에 통짜 스텝이 거절되고
+        #   그걸로 끝이기 쉽다(직접 관절 편집으로는 더 갈 수 있는데 조그는
+        #   한 발짝도 못 뗐다). 살짝의 피치 드리프트는 감수해도
+        #   된다고 확인했다(2026-09-03) — 자세를 꼭 지켜야 하면 --hold-pitch.
+        mode = "keep" if args.hold_pitch else "free"
+        for k in range(n):
+            cur = to_deg(io.read())
+            nxt, resid = solve(cur, unit, mode)
             ok, why = legal(nxt, cur)
             if not ok:
                 print("  %d/%d  갈 수 없다 (%s) — 멈춘다" % (k + 1, n, why))
@@ -200,7 +178,7 @@ def main() -> int:
             got = press_to(nxt)
             p = kin.forward(got, geom)
             print("  %d/%d  TCP (%.1f, %.1f, %.1f)  잔차 %.1fmm"
-                  % (k + 1, n, p.x, p.y, p.z, float(np.linalg.norm(A @ sol - rhs))))
+                  % (k + 1, n, p.x, p.y, p.z, resid))
         p = kin.forward(to_deg(io.read()), geom)
         print("끝  TCP (%.1f, %.1f, %.1f)  — 처음에서 (%+.1f, %+.1f, %+.1f)"
               % (p.x, p.y, p.z, p.x - p0.x, p.y - p0.y, p.z - p0.z))

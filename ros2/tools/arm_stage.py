@@ -30,7 +30,6 @@ wrist_flex 순으로 나누면 최대 r이 **277 → 222mm**로 줄어든다.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import os
 import sys
@@ -41,20 +40,21 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
+import arm_calib                                        # noqa: E402
 
-DEG_PER_TICK = 360.0 / 4096.0
-CAL = os.path.expanduser(
-    "~/.cache/huggingface/lerobot/calibration/robots/so_follower/tomato_follower.json")
-CART = os.path.expanduser("~/arm_cartesian.json")
-
+# ⚠ 경로·상수는 arm_calib.py 하나에서 가져온다(자세한 이유는 그 파일 머리말) —
+#   DEG_PER_TICK/CAL/CART/MOUNT_Z_MM/FLOOR_MARGIN_MM을 여기 따로 안 둔다.
+DEG_PER_TICK = arm_calib.DEG_PER_TICK
+CAL = arm_calib.CAL
+CART = arm_calib.CART
 # 바닥은 팔 base(마운트)보다 이만큼 아래에 있다 — 실측 76.5mm
 # (`ros2/src/tomato_description/config/so101_geometry.yaml` 의 mount.z 와 같은 값).
 # ⚠ 예전에는 "지금 자리보다 1mm 아래"를 바닥으로 삼았다. 그러면 팔이 낮게
 #   늘어져 있을 때 **1.8mm 내려갔다 다시 오르는 정상 경로까지 막혀** 빠져나올
 #   수가 없다(2026-09-01, 복구 불가 상태로 두 번 갇혔다). 바닥은 팔이 어디
 #   있느냐와 무관한 값이다.
-MOUNT_Z_MM = 76.5
-FLOOR_MARGIN_MM = 10.0
+MOUNT_Z_MM = arm_calib.MOUNT_Z_MM
+FLOOR_MARGIN_MM = arm_calib.FLOOR_MARGIN_MM
 STEP_DEG = 8.0
 SECS = 1.0
 MAX_TRACK_ERR = 12.0
@@ -75,41 +75,13 @@ def main() -> int:
     ap.add_argument("--hold", action="store_true", default=True)
     args = ap.parse_args()
 
-    cal = json.load(open(CAL))
-    spans = {}
-    for name, c in cal.items():
-        try:
-            spans[name] = abs(int(c["range_max"]) - int(c["range_min"])) * DEG_PER_TICK
-        except (KeyError, TypeError, ValueError):
-            pass
-    cart = json.load(open(CART))
-    zero, ref, signs = cart["zero"], cart["ref_deg"], cart.get("signs", {})
-    geom = kin.ArmGeometry()
-
-    def sign(j):
-        v = signs.get(j)
-        return -1.0 if (v is not None and float(v) < 0) else 1.0
-
-    # ⚠ **실측 눈금이 보정표를 이긴다** (`~/arm_cartesian.json`의 deg_per_norm).
-    #   2026-09-01: `wrist_roll`은 계산한 각도의 0.56배만 실제로 돌았다 —
-    #   관절축 측정 잔차가 24.8mm에서 2.6mm로 떨어졌고, 화면회전 실측
-    #   0.549와도 맞는다. 손목 굴림에 감속이 있어 틱→도(360/4096)가 안 통한다.
-    over = cart.get("deg_per_norm") or {}
-
-    def dpn(j):
-        v = over.get(j)
-        if v:
-            return abs(float(v))
-        s = spans.get(j)
-        return abs(s) / 200.0 if s else (1.8 if j == "wrist_roll" else 0.9)
-
-    def to_deg(n):
-        return {j: ref.get(j, 0.0) + sign(j) * (float(n.get(j, 0.0)) - zero.get(j, 0.0)) * dpn(j)
-                for j in kin.JOINTS}
-
-    def to_norm(d):
-        return {j: zero.get(j, 0.0) + (float(d[j]) - ref.get(j, 0.0)) / (sign(j) * dpn(j))
-                for j in d if j in kin.JOINTS}
+    # ⚠ 도(度)↔정규값 변환은 arm_calib.Calib 하나뿐이다(자세한 이유는
+    #   arm_calib.py 머리말). **실측 눈금이 보정표를 이긴다**는 원칙(예:
+    #   2026-09-01 wrist_roll 0.56배 감속 실측)도 Calib.per()에 그대로 있다 —
+    #   `~/arm_cartesian.json`의 deg_per_norm을 span/200보다 우선한다.
+    calib = arm_calib.Calib()
+    geom = calib.geom
+    to_deg, to_norm = calib.to_deg, calib.to_norm
 
     from tomato_bridge.follower_io import FollowerIO
     io = FollowerIO(hold_torque=True)
@@ -158,7 +130,10 @@ def main() -> int:
                 #   넘어 있으면 "≤98"을 고집하는 순간 어느 경로도 못 만든다 —
                 #   2026-09-02, elbow가 -101.8에서 팔이 통째로 갇혔다. 바닥 가드에
                 #   넣었던 같은 원칙을 관절 한계에도 적용한다: **더 나빠지지만
-                #   않으면** 통과.
+                #   않으면** 통과. arm_calib.Calib.legal()(진짜 물리범위 기준)을
+                #   안 쓰는 게 바로 이 조항 때문이다 — 여긴 시작 자세(now_norm)
+                #   보다 나빠지지만 않으면 지나가야 하는데, 그 조건은 legal()에
+                #   없다(있으면 -101.8에서 그대로 다시 갇힌다).
                 if abs(nm[j]) > max(98.0, abs(now_norm.get(j, 0.0))) + 1e-6:
                     bad.append(f"{j}한계")
             pts.append((mid, p, abs(kin.signed_radius(mid, geom)), bad))

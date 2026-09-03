@@ -50,11 +50,11 @@ sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 from tomato_picker.hardware import kinematics as kin      # noqa: E402
 from tomato_picker.hardware.handeye import Intrinsics     # noqa: E402
+import arm_calib                                            # noqa: E402
 import grasp_probe as gp                                   # noqa: E402
 import visual_servo as vs                                  # noqa: E402
 
 OUT = os.path.expanduser("~/cam_frame.json")
-DEG_PER_TICK = 360.0 / 4096.0
 PATCH = 48                 # 추적할 조각의 반 크기
 SETTLE = 1.0
 
@@ -136,46 +136,12 @@ def main() -> int:
     ap.add_argument("--reuse", action="store_true", help="다시 재지 않고 저장된 값을 쓴다")
     args = ap.parse_args()
 
-    cal = json.load(open(gp.CAL))
-    spans = {}
-    for name, c in cal.items():
-        try:
-            spans[name] = abs(int(c["range_max"]) - int(c["range_min"])) * DEG_PER_TICK
-        except (KeyError, TypeError, ValueError):
-            pass
-    cart = json.load(open(gp.CART))
-    zero, ref, signs = cart["zero"], cart["ref_deg"], cart.get("signs", {})
-    over = cart.get("deg_per_norm") or {}
-    geom = kin.ArmGeometry()
-
-    def sign(j):
-        v = signs.get(j)
-        return -1.0 if (v is not None and float(v) < 0) else 1.0
-
-    def per(j):
-        v = over.get(j)
-        if v:
-            return abs(float(v))
-        s = spans.get(j)
-        return abs(s) / 200.0 if s else (1.8 if j == "wrist_roll" else 0.9)
-
-    def to_deg(n):
-        return {j: ref.get(j, 0.0) + sign(j) * (float(n.get(j, 0.0)) - zero.get(j, 0.0)) * per(j)
-                for j in kin.JOINTS}
-
-    def to_norm(d):
-        return {j: zero.get(j, 0.0) + (float(d[j]) - ref.get(j, 0.0)) / (sign(j) * per(j))
-                for j in d if j in kin.JOINTS}
-
-    def legal(d, cur):
-        nm, cm = to_norm(d), to_norm(cur)
-        for j, v in nm.items():
-            if abs(v) > max(96.0, abs(cm.get(j, 0.0))) + 1e-6:
-                return False, "%s 한계" % j
-        floor = min(-gp.MOUNT_Z_MM + gp.FLOOR_MARGIN_MM, kin.forward(cur, geom).z - 1.0)
-        if kin.forward(d, geom).z < floor:
-            return False, "바닥"
-        return True, ""
+    # ⚠ 한계 판정은 arm_calib.Calib 하나뿐이다(자세한 이유는 arm_calib.py
+    #   머리말) — 이 파일은 예전에 정규값 한계로 96을 썼고 다른 도구들은
+    #   98을 썼다. 그런 어긋남이 다시 생기지 않게 여기서 만들지 않는다.
+    calib = arm_calib.Calib()
+    geom = calib.geom
+    to_deg, to_norm, legal = calib.to_deg, calib.to_norm, calib.legal
 
     def solve(cur, want):
         """피치를 묶고 want(base, mm)만큼 병진하는 관절 변화."""
