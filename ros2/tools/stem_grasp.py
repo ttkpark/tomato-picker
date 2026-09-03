@@ -521,6 +521,7 @@ def main() -> int:
           걸린다. 그래서 모자란 만큼을 명령에 더해 다시 보낸다."""
         cmd = dict(d)
         got = to_deg(io.read())
+        worst = max(abs(got[j] - d[j]) for j in kin.JOINTS)
         for _ in range(max(1, tries)):
             n = to_norm(cmd)
             n["gripper"] = grip[0]
@@ -530,12 +531,17 @@ def main() -> int:
             miss = {j: d[j] - got[j] for j in kin.JOINTS}
             worst = max(abs(v) for v in miss.values())
             if worst <= tol:
-                return got, worst
+                break
             for j in kin.JOINTS:
                 cmd[j] = max(min(cmd[j] + miss[j], d[j] + cap), d[j] - cap)
             if not legal(cmd, got)[0]:
                 break
-        return got, max(abs(got[j] - d[j]) for j in kin.JOINTS)
+        # ⚠ 조작대 3D 미리보기(click_server.py의 k3dParseLog)가 이 형식을
+        #   찾아 "지금"을 실시간으로 갱신한다 — arm_stage.py의 show()와 같은
+        #   문자열이어야 한다. 그게 없으면 잡기가 도는 동안 미리보기가
+        #   멈춰 있다(2026-09-03).
+        print("  자세  " + " ".join("%s=%7.1f" % (j.split("_")[0], got[j]) for j in kin.JOINTS))
+        return got, worst
 
     try:
         cur = to_deg(io.read())
