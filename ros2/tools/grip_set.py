@@ -15,7 +15,9 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "src", "tomato_bridge"))
+REPO = os.path.join(HERE, "..", "..")
+sys.path.insert(0, os.path.join(REPO, "src"))
+sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 
 def main() -> int:
