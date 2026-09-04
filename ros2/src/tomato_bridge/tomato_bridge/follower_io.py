@@ -172,7 +172,12 @@ class FollowerIO:
         old, self._follower = self._follower, None
         try:
             if old is not None:
-                old.disconnect()
+                # ⚠ `old.disconnect()`가 아니다 — 그건 토크를 **끈다**(hold_close의
+                #   주석과 같은 함정). 2026-09-05: wrist_roll이 과부하 잠금에 걸려
+                #   핸드셰이크가 실패하자 이 경로가 나머지 관절의 토크까지 풀어
+                #   팔이 바닥으로 떨어졌다. 재연결은 "다시 붙는다"이지 "놓는다"가
+                #   아니다 — 통신이 끊긴 것과 팔을 놓아도 되는 것은 별개다.
+                old.bus.disconnect(disable_torque=False)
         except Exception:  # noqa: BLE001 - 이미 죽은 연결이라 실패가 정상
             pass
         self._connect()
