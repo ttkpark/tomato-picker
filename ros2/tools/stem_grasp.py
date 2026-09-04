@@ -61,6 +61,7 @@ CART = gp.CART
 MOUNT_Z_MM = gp.MOUNT_Z_MM
 FLOOR_MARGIN_MM = gp.FLOOR_MARGIN_MM
 FRUIT_MM = 70.0          # 실측: 134.6mm에서 폭 227화소, fx 438 → 69.8mm
+FAR_MM = 600.0           # 이보다 먼 빨간 덩이는 열매 후보에서 뺀다 (팔 사거리 420mm)
 SETTLE = 0.8
 
 # ⚠ 겨냥에 wrist_flex를 쓰지 않는다 — 이 자세에서 −97(한계 −98)로 박혀 있고,
@@ -158,6 +159,12 @@ def main() -> int:
             edge = (x0 <= 1 or x0 + w >= bgr.shape[1] - 2)
             if d.size >= 25:
                 z = float(np.percentile(d, 20))
+                # ⚠ **팔이 닿지도 않는 거리의 빨간 것은 열매가 아니다.** 2026-09-05
+                #   사전점검(열매를 아직 안 놓은 상태): 선반의 주황 조끼 조각이
+                #   1052mm에서 "열매"로 잡혔다 — 둥글기 조건은 통과했다. 팔 사거리는
+                #   420mm, D405 유효거리는 500mm다. 그 밖은 볼 것도 없다.
+                if z > FAR_MM:
+                    continue
             elif not edge and w > 8:
                 z = fxv * FRUIT_MM / w
             else:
