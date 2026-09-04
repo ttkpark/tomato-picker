@@ -220,6 +220,70 @@ def solve_global(samples, geom, roll_sign: float, dots, tries: int = 40000, seed
     return (rms, Rx, tx, P, res)
 
 
+def solve_fixed_t(samples, geom, roll_sign: float, dots, tx, tries: int = 20000, seed: int = 0):
+    """`t_x`를 **자로 잰 값으로 고정**하고 회전(R_x) 3자유도만 훑는다.
+
+    ⚠ 왜 필요한가 — 2026-09-04~05: 회전은 여러 번 깨끗하게(벽 법선 어긋남
+      2.6~3.7°) 나오는데 `|t_x|`가 매번 실측(75~80mm)의 4~6배로 나오는 문제가
+      재현됐다. 카메라 내부파라미터·링크 길이·`d0`·기하 전체 스케일을 다
+      배제했는데도 안 풀렸다 — 미지수 6개(R_x 3 + t_x 3)를 전부 데이터에만
+      맡기면 이렇게 다른 곳(회전)이 좋아 보여도 t_x 쪽으로 오차가 몰릴 수
+      있다는 뜻이다. `l1`·`l2`·`l3`처럼 **자로 직접 잰 t_x**를 상수로 박으면
+      미지수가 3개(R_x)로 줄어 훨씬 덜 degenerate하다.
+
+    t_x는 도구 좌표(approach, lateral, up) — 즉 TCP에서 카메라 렌즈 중심까지의
+    변위를 "집게가 찌르는 방향/왼쪽/위" 축으로 잰 값이다(l1·l2·l3와 같은
+    축-축 벡터 관례).
+    """
+    frames = [tool_frame(s["joints_deg"], geom, roll_sign) for s in samples]
+    obs = np.array([sum((marker_points(s, k) for k in dots), []) for s in samples])
+    n, K = obs.shape[0], obs.shape[1]
+    tx = np.asarray(tx, dtype=float)
+
+    def residual_for(Rx):
+        # pred[i,k] = 그 자세에서 R_x·(관측점 k) + t_x를 base 좌표로 옮긴 것.
+        pred = np.einsum("nij,nkj->nki", np.array([f[0] for f in frames]),
+                         obs @ Rx.T + tx) + np.array([f[1] for f in frames])[:, None, :]
+        P = pred.mean(axis=0)                      # 마커 위치 — 표본 평균이 최소자승 해
+        res = np.linalg.norm(pred - P[None, :, :], axis=2)
+        return float(np.sqrt((res ** 2).mean())), P, res.reshape(-1)
+
+    rng = np.random.default_rng(seed)
+    q = rng.normal(size=(tries, 4))
+    q /= np.linalg.norm(q, axis=1, keepdims=True)
+    best = None
+    for a, b_, c, d in q:
+        Rx = np.array([
+            [1 - 2 * (c * c + d * d), 2 * (b_ * c - d * a), 2 * (b_ * d + c * a)],
+            [2 * (b_ * c + d * a), 1 - 2 * (b_ * b_ + d * d), 2 * (c * d - b_ * a)],
+            [2 * (b_ * d - c * a), 2 * (c * d + b_ * a), 1 - 2 * (b_ * b_ + c * c)]])
+        rms, P, res = residual_for(Rx)
+        if best is None or rms < best[0]:
+            best = (rms, Rx, P, res)
+    rms, Rx, P, res = best
+
+    # ⚠ 전역 탐색(무작위 사원수)은 **기초를 찾는 용도**다 — 3자유도 회전
+    #   공간을 2만 개 표본으로 훑으면 올바른 부호는 확실히 갈리지만(합성
+    #   시험: 틀린 부호 38mm vs 맞는 부호 7mm), 정밀도는 잡음 수준(0.3mm)
+    #   근처까지 못 간다. 그 자리에서 국소 흔들기로 다듬는다.
+    rng2 = np.random.default_rng(seed + 1)
+    step = 0.2
+    for _ in range(400):
+        pert = rng2.normal(scale=step, size=3)
+        ang = np.linalg.norm(pert)
+        if ang < 1e-9:
+            continue
+        axis = pert / ang
+        Kx = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        dR = np.eye(3) + np.sin(ang) * Kx + (1 - np.cos(ang)) * (Kx @ Kx)
+        r2, P2, res2 = residual_for(dR @ Rx)
+        if r2 < rms:
+            rms, Rx, P, res = r2, dR @ Rx, P2, res2
+        else:
+            step *= 0.985
+    return (rms, Rx, tx, P, res)
+
+
 def rpy(R):
     return (math.degrees(math.atan2(R[2, 1], R[2, 2])),
             math.degrees(-math.asin(max(-1.0, min(1.0, R[2, 0])))),
@@ -267,6 +331,14 @@ def main() -> int:
                          "1~2mm 더 낮은데 |t|=250~310mm라는, 팔 길이보다 긴 자리에 "
                          "카메라가 있다는 답을 냈다). 이 범위를 주면 그런 답을 "
                          "자동으로 버린다.")
+    ap.add_argument("--fix-t", type=float, nargs=3, default=None,
+                    metavar=("APPROACH", "LATERAL", "UP"),
+                    help="T_tool_cam(mm)을 자로 잰 값으로 **고정**하고 회전(R_x) "
+                         "3자유도만 훑는다. l1·l2·l3와 같은 축-축 벡터 관례 — "
+                         "TCP에서 카메라 렌즈 중심까지, (집게가 찌르는 방향, "
+                         "그 왼쪽, 위) 순서로 mm. 2026-09-05: 회전은 여러 번 "
+                         "깨끗하게 나오는데 |t_x|가 매번 실측의 4~6배로 나와서 "
+                         "6자유도를 전부 데이터에 맡기는 걸 포기하고 만든 경로다.")
     args = ap.parse_args()
 
     data = json.load(open(args.path, encoding="utf-8"))
@@ -380,37 +452,52 @@ def main() -> int:
         print("")
 
     results, tmags, gots = {}, {}, {}
-    for sign in (+1.0, -1.0):
-        for name, dots in (("무게중심", ("mid",)), ("네 점", DOTS)):
-            a = solve(samples, geom, sign, dots)
-            b = solve_global(samples, geom, sign, dots, tries=args.tries)
-            got = b if b[0] < a[0] else a
-            tag = "전역" if got is b else "교대"
-            results[(sign, name)] = report(
-                f"roll부호 {sign:+.0f} · {name} · {tag}"
-                f" (교대 {a[0]:.1f} / 전역 {b[0]:.1f}mm)", got, expect)
+    if args.fix_t:
+        # ── t_x 고정 경로 — 회전 3자유도만 훑는다 ─────────────────────────
+        # "네 점"은 안 쓴다 — 지금까지 늘 "무게중심"보다 훨씬 나빴고(마커 넷을
+        # 독립으로 풀 만큼 표본이 넉넉한 적이 없었다), t_x가 고정이면 그 격차가
+        # 줄어들 이유가 없다.
+        print(f"\n[t_x 고정] {tuple(args.fix_t)} mm 로 고정하고 회전만 훑는다")
+        name = "무게중심(t고정)"
+        for sign in (+1.0, -1.0):
+            got = solve_fixed_t(samples, geom, sign, ("mid",), args.fix_t, tries=args.tries)
+            results[(sign, name)] = report(f"roll부호 {sign:+.0f} · {name}", got, expect)
             tmags[(sign, name)] = float(np.linalg.norm(got[2]))
             gots[(sign, name)] = got
-
-    naive_key, naive_rms = min(results.items(), key=lambda kv: kv[1])
-    if args.expect_t_mm:
-        lo, hi = args.expect_t_mm
-        plausible = {k: v for k, v in results.items() if lo <= tmags[k] <= hi}
-        if not plausible:
-            print(f"\n⚠ 넷 다 |t_tool_cam|이 기대 범위({lo:.0f}~{hi:.0f}mm) 밖이다 — "
-                  "잔차만으로는 답을 못 고른다. 표본을 더 넓게 흩어 다시 채집하라.")
-            (sign, name), rms = naive_key, naive_rms
-        else:
-            (sign, name), rms = min(plausible.items(), key=lambda kv: kv[1])
-            if (sign, name) != naive_key:
-                print(f"\n⚠ 잔차만 보면 roll{naive_key[0]:+.0f}·{naive_key[1]}이 이긴다"
-                      f"(잔차 {naive_rms:.2f}mm) — 그런데 |t_tool_cam| "
-                      f"{tmags[naive_key]:.0f}mm로 기대 범위({lo:.0f}~{hi:.0f}mm) 밖이다. "
-                      f"범위 안에서 가장 낮은 roll{sign:+.0f}·{name}"
-                      f"(|t| {tmags[(sign, name)]:.0f}mm, 잔차 {rms:.2f}mm)를 대신 쓴다 — "
-                      "잔차가 낮다고 그 부호가 맞는 것은 아니다.")
+        (sign, name), rms = min(results.items(), key=lambda kv: kv[1])
     else:
-        (sign, name), rms = naive_key, naive_rms
+        for sign in (+1.0, -1.0):
+            for name, dots in (("무게중심", ("mid",)), ("네 점", DOTS)):
+                a = solve(samples, geom, sign, dots)
+                b = solve_global(samples, geom, sign, dots, tries=args.tries)
+                got = b if b[0] < a[0] else a
+                tag = "전역" if got is b else "교대"
+                results[(sign, name)] = report(
+                    f"roll부호 {sign:+.0f} · {name} · {tag}"
+                    f" (교대 {a[0]:.1f} / 전역 {b[0]:.1f}mm)", got, expect)
+                tmags[(sign, name)] = float(np.linalg.norm(got[2]))
+                gots[(sign, name)] = got
+
+        naive_key, naive_rms = min(results.items(), key=lambda kv: kv[1])
+        if args.expect_t_mm:
+            lo, hi = args.expect_t_mm
+            plausible = {k: v for k, v in results.items() if lo <= tmags[k] <= hi}
+            if not plausible:
+                print(f"\n⚠ 넷 다 |t_tool_cam|이 기대 범위({lo:.0f}~{hi:.0f}mm) 밖이다 — "
+                      "잔차만으로는 답을 못 고른다. 표본을 더 넓게 흩어 다시 채집하라.")
+                (sign, name), rms = naive_key, naive_rms
+            else:
+                (sign, name), rms = min(plausible.items(), key=lambda kv: kv[1])
+                if (sign, name) != naive_key:
+                    print(f"\n⚠ 잔차만 보면 roll{naive_key[0]:+.0f}·{naive_key[1]}이 이긴다"
+                          f"(잔차 {naive_rms:.2f}mm) — 그런데 |t_tool_cam| "
+                          f"{tmags[naive_key]:.0f}mm로 기대 범위({lo:.0f}~{hi:.0f}mm) 밖이다. "
+                          f"범위 안에서 가장 낮은 roll{sign:+.0f}·{name}"
+                          f"(|t| {tmags[(sign, name)]:.0f}mm, 잔차 {rms:.2f}mm)를 대신 쓴다 — "
+                          "잔차가 낮다고 그 부호가 맞는 것은 아니다.")
+        else:
+            (sign, name), rms = naive_key, naive_rms
+
     print(f"\n▶ 가장 잘 맞는 조합: roll부호 {sign:+.0f} · {name} (잔차 {rms:.2f}mm, "
           f"|t_tool_cam| {tmags[(sign, name)]:.0f}mm)")
     other = results[(-sign, name)]
