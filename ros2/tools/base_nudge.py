@@ -35,6 +35,8 @@ def main() -> int:
     ap.add_argument("--w", type=int, default=0, help="회전 (README: 시계+, 실기 확인 필요)")
     ap.add_argument("--secs", type=float, default=0.5)
     ap.add_argument("--boot-wait", type=float, default=8.0)
+    ap.add_argument("--dither", type=int, default=0,
+                    help="정지마찰 깨기: 지령 동안 vy를 ±이 크기로 4Hz 흔든다(메모리 stiction-is-the-lever)")
     args = ap.parse_args()
     if not (args.vx or args.vy or args.w):
         print("지령이 전부 0이다 — 안 움직인다.")
@@ -60,7 +62,11 @@ def main() -> int:
     print(f"보드 준비 {time.monotonic() - t0:.1f}s · 지령 vx={args.vx} vy={args.vy} w={args.w} · {args.secs:.2f}s")
     t1 = time.monotonic()
     while time.monotonic() - t1 < args.secs:
-        link.set_velocity(args.vx, args.vy, args.w)   # STALE_SEC(0.5s) 안에 계속 갱신해야 간다
+        vy = args.vy
+        if args.dither:
+            # 4Hz 사각파 — 직각축을 흔들어 정지마찰을 깬다(크기를 키우면 오버슈트로 실패)
+            vy += args.dither if int((time.monotonic() - t1) * 8) % 2 == 0 else -args.dither
+        link.set_velocity(args.vx, max(-255, min(255, vy)), args.w)   # STALE_SEC(0.5s) 안에 계속 갱신해야 간다
         time.sleep(0.05)
     link.stop()
     time.sleep(0.4)
