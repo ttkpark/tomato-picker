@@ -94,6 +94,9 @@ def main() -> int:
     ap.add_argument("--stop-z", type=float, default=84.0,
                     help="겨눈 자리가 이 mm까지 오면 문다 — 집게가 무는 거리(실측 75~80mm)")
     ap.add_argument("--no-close", action="store_true", help="닿아도 닫지 않는다")
+    ap.add_argument("--no-red-check", action="store_true",
+                    help="닫기 직전 '둘레가 빨간가' 확인을 건너뛴다 — 열매가 아닌 표적"
+                         "(면봉·테이프 등)으로 잡기 시늉을 연습할 때. 2026-09-09")
     args = ap.parse_args()
 
     if args.target:
@@ -728,7 +731,7 @@ def main() -> int:
             if args.stop_z and locked and z <= args.stop_z:
                 print("줄기가 %.0fmm — 무는 거리(%.0fmm)에 들어왔다. 총 %.0fmm 나아갔다"
                       % (z, args.stop_z, gone))
-                ok_red, frac = red_nearby(tu, tv)
+                ok_red, frac = (True, 1.0) if args.no_red_check else red_nearby(tu, tv)
                 if not ok_red:
                     print("⚠ 물기 직전 확인 — 그 자리 둘레가 빨갛지 않다(빨간 비율 %.0f%%,"
                           " 열매가 아닌 것 같다). **안 닫는다.**" % (frac * 100))
@@ -874,7 +877,7 @@ def main() -> int:
                 print("\n🍅 **닿았다** — %.0fmm를 명령했는데 깊이는 %.0fmm밖에 안 줄었다."
                       % (want, dz))
                 print("   ⇒ 카메라에서 손끝까지 = **%.0f mm** (이번 실측)" % r[2])
-                ok_red, frac = red_nearby(tu, tv)
+                ok_red, frac = (True, 1.0) if args.no_red_check else red_nearby(tu, tv)
                 if not ok_red:
                     print("⚠ 물기 직전 확인 — 그 자리 둘레가 빨갛지 않다(빨간 비율 %.0f%%,"
                           " 열매가 아닌 것 같다). **안 닫는다.**" % (frac * 100))
