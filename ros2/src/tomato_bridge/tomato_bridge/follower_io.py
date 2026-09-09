@@ -162,9 +162,29 @@ class FollowerIO:
         )
         require_live_bus(port)
         follower = SOFollower(SOFollowerRobotConfig(port=port, id=self._arm_id))
-        follower.connect(calibrate=False)
         if not self._hold_torque:
+            follower.connect(calibrate=False)
             follower.bus.disable_torque()
+        else:
+            # ⚠ `follower.connect()`는 안에서 `configure()`를 부르고, 그게
+            #   `with bus.torque_disabled():`로 **전 관절 토크를 잠깐 끈다**(EPROM 쓰기).
+            #   그 순간 팔이 중력에 몇 도 처지고, 다시 켜진 토크는 **처진 자리**를 붙든다.
+            #   도구를 연달아 부르면(2026-09-09: roll_step 20회) 매번 몇 도씩 내려앉아
+            #   lift 72° → 완전히 늘어진 자세까지 갔다 — 어느 호출도 "떨어뜨리진" 않았는데
+            #   합쳐서 떨어졌다. 그래서 connect를 풀어서 쓴다: 버스 → **자세 읽기** →
+            #   configure(처짐) → 토크 → **읽어 둔 자세로 되돌리기**.
+            #   되돌릴 자리는 **토크가 켜져 있던 관절은 옛 Goal**, 꺼져 있던 관절은 지금
+            #   자리다 — 켜진 채 붙들던 관절은 이미 Goal보다 몇 도 처져 있고(P=16, 부하
+            #   -20에서 lift가 1.5°/회씩 밀렸다), 그 처진 자리를 다시 Goal로 주면 같은
+            #   래칫이 된다. 꺼져 있던 관절의 Goal은 옛 값이라 그리로 보내면 튄다.
+            follower.bus.connect()
+            present = follower.bus.sync_read("Present_Position")
+            goal = follower.bus.sync_read("Goal_Position")
+            torque = follower.bus.sync_read("Torque_Enable", normalize=False)
+            before = {m: (goal[m] if torque.get(m) else present[m]) for m in present}
+            follower.configure()
+            follower.bus.enable_torque()
+            follower.bus.sync_write("Goal_Position", before)
         self._follower = follower
         self._port = port
 
