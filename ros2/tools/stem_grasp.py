@@ -83,8 +83,10 @@ def main() -> int:
     ap.add_argument("--max-turn", type=float, default=6.0, help="한 걸음에 한 관절 최대 도수")
     ap.add_argument("--probe", type=float, default=2.5, help="야코비안을 잴 때 흔드는 도수")
     ap.add_argument("--rejacobian", type=int, default=4, help="몇 걸음마다 다시 재는가")
-    ap.add_argument("--aim", choices=("click", "mark", "top", "stem", "fruit", "auto"),
+    ap.add_argument("--aim", choices=("click", "mark", "top", "stem", "fruit", "auto", "white"),
                      default="top")
+    ap.add_argument("--white-s", type=float, default=80.0, help="흰 표적 채도 상한(--aim white)")
+    ap.add_argument("--white-v", type=float, default=150.0, help="흰 표적 명도 하한(--aim white)")
     ap.add_argument("--mark", default="", help="줄기를 화면에서 여기라고 알려 준다 u,v")
     ap.add_argument("--click-file", default=os.path.expanduser("~/click_target.json"),
                     help="클릭 페이지(click_server.py)가 남긴 표적")
@@ -453,6 +455,59 @@ def main() -> int:
         markz[0] = z2
         return u2, v2, z2, int(score * 1000), False
 
+    def white_point(prev, R=110):
+        """**흰 덩이를 매 걸음 다시 찾는다** — 조각을 안 쓴다.
+
+        ⚠ 조각 정합(`track_mark`)은 **가는 표적에서 배경을 따라간다** — 52×52 조각이
+          폭 10화소짜리 면봉에서는 거의 전부 벽이라, 점수는 높은 채 벽 무늬를 쫓는다
+          (2026-09-10: 7회 시도 전부 실패, 화소 오차는 오히려 줄어 "성공처럼 보이는
+          실패"). 그래서 열매(`fruit_box`)와 같은 길로 간다 — **색 → 모양 → 직전 자리와
+          가까운 것**. 표적이 화면에서 커지든 돌든 매번 새로 찾으니 미끄러질 데가 없다.
+        ⚠ 문턱은 이 방 조명 실측: 솜은 V≈142로 "흰색"치고 어둡다(V>190이면 못 잡는다).
+          가늘고 긴 조각(화분 테두리·전선)은 채움률·종횡비로 뺀다.
+        """
+        import cv2
+        bgr = cv2.imread(vs.COLOR)
+        if bgr is None:
+            return None
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        m = ((hsv[:, :, 1] < args.white_s) & (hsv[:, :, 2] > args.white_v)).astype(np.uint8)
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        n, _lab, st, cen = cv2.connectedComponentsWithStats(m, 8)
+        best = None
+        for i in range(1, n):
+            a = int(st[i, cv2.CC_STAT_AREA])
+            w = float(st[i, cv2.CC_STAT_WIDTH])
+            hgt = float(st[i, cv2.CC_STAT_HEIGHT])
+            if not (120 <= a <= 6000) or w > 120 or hgt > 120:
+                continue
+            if a < 0.45 * w * hgt or min(w, hgt) / max(w, hgt) < 0.5:
+                continue
+            u, v = float(cen[i][0]), float(cen[i][1])
+            if prev is not None:
+                d = math.hypot(u - prev[0], v - prev[1])
+                if d > R:
+                    continue
+                score = -d
+            else:
+                score = -math.hypot(u - mark0[0], v - mark0[1]) if mark0 else a
+            if best is None or score > best[0]:
+                best = (score, u, v, a)
+        if best is None:
+            return None
+        _sc, u, v, a = best
+        z = ray_depth_med(u, v) or (markz[0] if markz[0] > 0 else -1.0)
+        # ⚠ 색·모양만으로는 **다른 흰 덩이로 건너뛰는 것**을 못 막는다 — 2026-09-10 실측:
+        #   6걸음까지 깨끗이 따라가다(깊이 84→115mm) 7걸음째에 (515,291)→(283,468)로
+        #   화분 테두리로 갈아탔다. 반경(R)만으론 부족해서 조각 정합과 같은 깊이 연속성을
+        #   같이 본다 — 걸음 사이 팔은 몇 도만 움직이니 깊이는 그만큼 못 뛴다.
+        if markz[0] > 0 and z > 0 and abs(z - markz[0]) > MAX_DZ:
+            print("   ⚠ 깊이가 %.0f→%.0fmm로 뛰었다 — 다른 흰 것을 잡았다, 다시 찾는다"
+                  % (markz[0], z))
+            return None
+        markz[0] = z
+        return u, v, z, a, False
+
     def see(prev):
         """(u, v, z, 넓이) — 겨눌 것.
 
@@ -464,6 +519,8 @@ def main() -> int:
         열매와 같은 깊이다** — 그 두 가지면 자리가 정해진다. 열매는 크고 빨개서
         놓칠 일이 없으니, 못 믿을 검출을 못 믿을 검출로 받치지 않는다.
         """
+        if args.aim == "white":
+            return white_point(prev)
         if args.aim in ("mark", "click"):
             return track_mark(prev if prev is not None else mark0)
         if args.aim == "top":

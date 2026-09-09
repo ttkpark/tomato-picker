@@ -99,6 +99,7 @@ def main() -> int:
     ap.add_argument("--trials", type=int, default=3)
     ap.add_argument("--keep", action="store_true", help="마지막 시도 뒤 놓지 않는다")
     ap.add_argument("--stop-z", type=float, default=84.0)
+    ap.add_argument("--aim", default="white", help="stem_grasp 겨냥 방식 — white(색 재검출) / mark(조각 정합)")
     ap.add_argument("--max-dz", type=float, default=70.0, help="stem_grasp에 넘길 깊이 도약 문턱")
     ap.add_argument("--max-adv", type=float, default=45.0, help="이보다 더 나아가야 하면 겨냥이 틀린 것")
     args = ap.parse_args()
@@ -140,7 +141,7 @@ def main() -> int:
         #   면봉을 쓰러뜨렸다. 시작자세에서 솜 끝까지는 50mm 안쪽이어야 정상이므로 그
         #   이상 나아가는 건 겨냥이 틀렸다는 뜻이다 — 실패로 끝내는 편이 무대를 부수는
         #   것보다 낫다(무인 반복은 무대를 스스로 못 고친다).
-        rc, out = tool("stem_grasp.py", "--aim", "mark", "--mark", f"{u:.0f},{v:.0f}",
+        rc, out = tool("stem_grasp.py", "--aim", args.aim, "--mark", f"{u:.0f},{v:.0f}",
                        "--no-red-check", "--stop-z", str(args.stop_z),
                        "--max-adv", str(args.max_adv), "--thin",
                        "--max-dz", str(args.max_dz), timeout=420)
