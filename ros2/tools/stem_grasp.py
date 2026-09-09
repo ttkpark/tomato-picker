@@ -94,10 +94,18 @@ def main() -> int:
     ap.add_argument("--stop-z", type=float, default=84.0,
                     help="겨눈 자리가 이 mm까지 오면 문다 — 집게가 무는 거리(실측 75~80mm)")
     ap.add_argument("--no-close", action="store_true", help="닿아도 닫지 않는다")
+    ap.add_argument("--thin", action="store_true",
+                    help="가는 표적(면봉·줄기) — 깊이 창을 좁히고 가까운 쪽을 읽는다")
+    ap.add_argument("--depth-pct", type=float, default=None,
+                    help="깊이 창의 백분위(기본: 보통 25, --thin이면 10)")
+    ap.add_argument("--max-dz", type=float, default=70.0,
+                    help="걸음 사이 깊이가 이보다 뛰면 표적을 놓친 것으로 본다(가는 표적일수록 작게)")
     ap.add_argument("--no-red-check", action="store_true",
                     help="닫기 직전 '둘레가 빨간가' 확인을 건너뛴다 — 열매가 아닌 표적"
                          "(면봉·테이프 등)으로 잡기 시늉을 연습할 때. 2026-09-09")
     args = ap.parse_args()
+    if args.depth_pct is None:
+        args.depth_pct = 10.0 if args.thin else 25.0
 
     if args.target:
         tu, tv = (float(x) for x in args.target.split(","))
@@ -322,7 +330,7 @@ def main() -> int:
         res = float(np.linalg.norm(A @ sol - want))
         return dict(zip(cols, sol)), res, float(np.max(np.abs(sol)))
 
-    def ray_depth(uu, vv, half=9):
+    def ray_depth(uu, vv, half=None):
         """겨눈 자리 **바로 그 광선**의 거리 — 무엇이든 거기 있는 것까지.
 
         정렬이 끝나면 열매는 화면 아래로 빠져 안 보인다(줄기를 집게 자리에
@@ -340,13 +348,20 @@ def main() -> int:
             return None
         sc = float(meta.get("depth_scale_mm", 1.0))
         h, w = dep.shape[:2]
+        # ⚠ **가는 표적은 창을 키우면 배경을 잰다.** 19×19 창의 25백분위는 굵은 열매엔
+        #   맞지만, 면봉처럼 폭이 10화소도 안 되는 것은 창의 대부분이 뒤쪽 벽·바닥이라
+        #   깊이가 64mm와 410mm 사이를 널뛴다(2026-09-10 실측). 그러면 "닿았다"도
+        #   "놓쳤다"도 그 튐이 만든다. `--thin`은 창을 좁히고(9×9) **가까운 쪽 백분위**를
+        #   써서 그 화소에 실제로 있는 것을 재게 한다 — 앞에 있는 것이 표적이다.
+        half = (4 if args.thin else 9) if half is None else half
         y0, y1 = max(0, int(vv) - half), min(h, int(vv) + half + 1)
         x0, x1 = max(0, int(uu) - half), min(w, int(uu) + half + 1)
         if y1 <= y0 or x1 <= x0:
             return None
         d = dep[y0:y1, x0:x1].reshape(-1) * sc
         d = d[d > 0]
-        return None if d.size < 12 else float(np.percentile(d, 25))
+        need = 12 if half is None else 5
+        return None if d.size < need else float(np.percentile(d, args.depth_pct))
 
     def ray_depth_med(uu, vv, n=3):
         """⚠ 한 장으로 판단하지 않는다 — 줄기는 가늘어서 한 프레임이 배경을
@@ -362,6 +377,7 @@ def main() -> int:
 
     markz = [0.0]
     tpl = [None]                 # (회색조 조각, 반크기)
+    MAX_DZ = args.max_dz         # 걸음 사이 허용 깊이 변화(mm)
 
     def track_mark(prev, R=70):
         """**찍어 준 점을 그림으로 따라간다** — 조각 정합(다중 배율).
@@ -421,6 +437,19 @@ def main() -> int:
         z2 = ray_depth(u2, v2)
         if z2 is None:
             z2 = markz[0] if markz[0] > 0 else -1.0
+        # ⚠ **깊이가 갑자기 뛰면 조각이 미끄러진 것이다.** 2026-09-10(면봉): 조각 정합
+        #   점수는 계속 높았는데 7걸음째에 표적이 (508,348)→(424,418)로 건너뛰었고 깊이가
+        #   132→292mm가 됐다 — 가는 면봉을 놓치고 **뒤쪽 화분 테두리**를 잡은 것이다.
+        #   그런데 겨냥 오차는 오히려 줄었다(61→24px): 목표 화소가 화면 아래쪽이라
+        #   배경으로 미끄러지는 방향과 같았기 때문이다. 그래서 **화소만 보면 성공처럼
+        #   보이는 실패**가 된다. 걸음 사이 팔은 몇 도만 움직이니 깊이는 그만큼 못 뛴다 —
+        #   MAX_DZ를 넘으면 놓친 것으로 치고(None) 재탐색 경로로 보낸다. 가는 표적일수록
+        #   ray_depth의 19×19 창에 배경이 섞여서 이 미끄러짐이 잘 난다.
+        if markz[0] > 0 and z2 > 0 and abs(z2 - markz[0]) > MAX_DZ:
+            print("   ⚠ 깊이가 %.0f→%.0fmm로 뛰었다 — 조각이 미끄러졌다, 다시 찾는다"
+                  % (markz[0], z2))
+            tpl[0] = None
+            return None
         markz[0] = z2
         return u2, v2, z2, int(score * 1000), False
 
