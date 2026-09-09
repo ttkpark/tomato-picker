@@ -7,7 +7,9 @@
 ⚠ `tomato-voice`·`controller-drive`는 내린 채로(주행 보드 포트는 한 프로세스).
 ⚠ 포트를 열면 Uno가 리셋된다(DTR) — 첫 하트비트를 기다린 뒤에만 지령을 낸다.
 ⚠ 정지마찰 문턱(실측 ≈90)보다 작은 지령은 물리적으로 0이다 — 게인 말고 크기부터.
-⚠ 회전 부호는 펌웨어 README가 "w=시계+"라 하지만 실기 미확정 — 사진으로 확인할 것.
+⚠ 회전 부호: 2026-09-09 실측 **w=+가 반시계(왼쪽)**, w=−가 시계 — README("시계+")와 반대.
+⚠ 실측 9/9: w=±160·0.8s는 0, ±255·1.0s는 ~40°이되 **가끔 0**(정지마찰·케이블 장력).
+   0.6s는 안 움직인다(슬루 램프가 다 못 올라간다). 안 움직이면 --max-pwm 4095로 한 번.
 """
 
 from __future__ import annotations
@@ -35,6 +37,8 @@ def main() -> int:
     ap.add_argument("--w", type=int, default=0, help="회전 (README: 시계+, 실기 확인 필요)")
     ap.add_argument("--secs", type=float, default=0.5)
     ap.add_argument("--boot-wait", type=float, default=8.0)
+    ap.add_argument("--max-pwm", type=int, default=0,
+                    help="이 펄스 동안만 듀티 상한(P n, ≤4095)을 올린다 — 하트비트 뒤에 보낸다")
     ap.add_argument("--dither", type=int, default=0,
                     help="정지마찰 깨기: 지령 동안 vy를 ±이 크기로 4Hz 흔든다(메모리 stiction-is-the-lever)")
     args = ap.parse_args()
@@ -59,6 +63,11 @@ def main() -> int:
             link.close()
             return 1
         time.sleep(0.1)
+    if args.max_pwm:
+        n = max(500, min(4095, args.max_pwm))
+        ok = link.send_raw(f"P {n}")
+        print(f"듀티 상한 P {n} → {'보냄' if ok else '실패'}")
+        time.sleep(0.15)
     print(f"보드 준비 {time.monotonic() - t0:.1f}s · 지령 vx={args.vx} vy={args.vy} w={args.w} · {args.secs:.2f}s")
     t1 = time.monotonic()
     while time.monotonic() - t1 < args.secs:
