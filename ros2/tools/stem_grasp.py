@@ -115,6 +115,9 @@ def main() -> int:
                          "(면봉은 위쪽 솜 머리가 굵고 눌려서 잘 물린다. 0=덩이 전체 중심)")
     ap.add_argument("--grip-shut", type=float, default=4.0,
                     help="닫을 때 보낼 집게 값 — 작을수록 더 세게 문다")
+    ap.add_argument("--aim-only", action="store_true",
+                    help="**겨냥만 하고 멈춘다** — 맞은 순간의 깊이를 ~/tip_depth.json에 남긴다. "
+                         "나아가기·물기는 부르는 쪽이 기구학으로 한다(가는 표적에서 더 안전하다)")
     ap.add_argument("--trust-first-z", action="store_true",
                     help="겨냥이 처음 맞은 순간의 깊이를 믿고 **그만큼만 나아간 뒤** 닫는다 "
                          "— 가는 표적은 나아가는 동안 깊이가 못 믿게 튄다")
@@ -915,6 +918,7 @@ def main() -> int:
 
         gone, JI, prev, locked, stall, miss_streak = 0.0, None, (u, v), False, 0, 0
         plan = [None]            # --trust-first-z: 나아갈 총 거리(mm)
+        planz = [None]           # 계획을 세운 순간의 깊이(mm) — 띠를 여기 맞춰 끌고 간다
         best_dir = [None, None]      # 실측으로 고른 전진 방향과 그 효과
         print("\n 걸음   겨냥       화소   깊이    나아감   한 일")
         for step in range(args.steps):
@@ -1029,8 +1033,22 @@ def main() -> int:
             #   표적이 화면 한가운데 광선 위에 있다. 그러면 남은 일은 기구학이다:
             #   (그 깊이 − 무는 거리)만큼 접근축을 따라 가면 손가락 사이에 온다.
             #   사람도 그렇게 한다 — 한 번 보고, 그만큼 손을 뻗는다.
+            if args.aim_only and locked and 0 < z < args.near_max:
+                # ⚠ **겨냥과 전진을 나눈다.** 2026-09-10 22:00: 계획 전진을 넣었더니 이번엔
+                #   나아가는 동안 겨냥이 80화소까지 벌어진 채로 끝까지 가서 허공을 물었다.
+                #   나아가는 동안 화면으로 표적을 계속 좇으려니, 표적이 커지고 손이 가리고
+                #   깊이가 튀는 세 가지가 한꺼번에 온다. 겨냥이 맞은 그 순간이 가장 믿을 만한
+                #   순간이므로 **거기서 멈추고**, 나아가는 일은 잡음 없는 기구학에 맡긴다.
+                print("겨냥 완료 — 남은 화소 %.0f, 깊이 %.0fmm (여기서 멈춘다)" % (en, z))
+                json.dump({"cam_to_tip_mm": float(z), "tip_uv": [tu, tv], "aim": args.aim,
+                           "err_px": float(en), "how": "aim_only",
+                           "when": time.strftime("%Y-%m-%d %H:%M:%S")},
+                          open(os.path.expanduser("~/tip_depth.json"), "w"), indent=1)
+                io.hold_close()
+                return 0
             if args.trust_first_z and locked and plan[0] is None and 0 < z < args.near_max:
                 plan[0] = max(0.0, z - args.stop_z)
+                planz[0] = float(z)
                 print("계획: %.0fmm 나아가면 무는 거리다 (지금 %.0fmm)" % (plan[0], z))
             reached = (args.trust_first_z and plan[0] is not None
                        and gone >= plan[0] - 1.0)
@@ -1169,11 +1187,23 @@ def main() -> int:
             dz = z - z2
             gone += want
             print("나아감 %.0fmm → 깊이 %.0f→%.0f (%+.0f)" % (want, z, z2, -dz))
+            # ⚠ **계획 전진 중에는 추적 띠를 잰 깊이가 아니라 '가야 할 깊이'에 맞춘다.**
+            #   2026-09-10 21:43: 계획을 세운 다음 걸음에 깊이가 139→423mm로 튀자 띠가
+            #   그 값을 따라가 **벽에 눌러앉았고**, 그 뒤로는 벽을 표적으로 쫓았다.
+            #   나아간 거리는 기구학이라 잡음이 없다 — 표적은 (계획 깊이 − 나아간 거리)에
+            #   있어야 한다. 그 자리에 띠를 두면 표적을 놓칠 이유가 없다.
+            if args.trust_first_z and planz[0] is not None:
+                markz[0] = max(NEAR_FLOOR, planz[0] - gone)
             # ⚠ 가는 줄기는 판독이 ±30mm 튄다(2026-09-03: 130→142, 122→152).
             #   그걸 곧바로 "놓쳤다"로 읽으면 걸음마다 겨냥으로 되돌아가
             #   20mm 가는 데 스무 걸음을 쓴다. **추세**만 보고, 정말로 크게
             #   어긋날 때만 되돌린다.
-            if dz > 3.0 * want or z2 > z + 2.5 * want:
+            # ⚠ **계획 전진 중에는 깊이로 되돌리지 않는다.** `--trust-first-z`는 애초에
+            #   "나아가는 동안 깊이를 못 믿는다"는 판단에서 나온 경로다. 그런데 이 검사가
+            #   그대로 남아 있어서, 계획을 세운 바로 다음 걸음에 깊이가 144→431mm로 튀자
+            #   "놓쳤다"며 겨냥으로 되돌아갔다(2026-09-10 21:00) — 계획이 매번 무효가 됐다.
+            #   믿기로 한 값과 의심하는 값이 같으면 아무 데도 못 간다.
+            if (not args.trust_first_z) and (dz > 3.0 * want or z2 > z + 2.5 * want):
                 # 걸음보다 크게 줄거나 **오히려 멀어졌으면** 겨눈 광선이 대상을
                 # 놓친 것이다. 그것을 접촉으로 읽으면 허공에서 집게가 닫힌다.
                 print("   ⚠ 깊이가 걸음과 안 맞는다 — 대상을 놓쳤다, 다시 겨눈다")

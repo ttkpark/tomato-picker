@@ -32,20 +32,42 @@ PY = sys.executable
 # 250화소가 벌어져 있었고, 22걸음을 다 써도 못 좁혔다(11회 0성공). wrist_flex를 75→56으로
 # 내려(카메라를 위로 들어) 솜을 화면 아래로 내리고 pan을 −6→−3으로 맞추자 **10화소**가 됐다.
 # 겨냥이 거의 끝난 자리에서 시작하면 남은 일은 접근축을 따라 나아가는 것뿐이다.
-# ⚠ 9/10 11시: 면봉 하나가 바닥으로 떨어지고 남은 하나는 **왼쪽 지지대**에 섰다.
-#   이 자세에서 솜 머리가 (531,282), 집게 무는 자리는 (492,408) — 머리가 그 바로 위다.
-START = "-20,10,120,58,0"
-TIP_NEAR = (531, 282)
+# ⚠ 9/10 저녁: 사용자가 면봉 둘을 지지대에 다시 꽂았다. 네 자세를 재 보니 pan −30에서
+#   표적이 집게 자리에서 52화소로 가장 가깝다. 이 자세에서 솜 머리는 (483,275) 근처다.
+#   ⚠ 자세를 바꾸면 이 두 값을 **같이** 다시 재라 — 하나만 고치면 표적을 못 찾는다.
+# ⚠ 9/10 23시: 집게 무는 자리를 다시 재고(407,350) 남은 면봉(오른쪽 지지대)에 맞춘 자세.
+#   여기서 솜 머리가 (392,298) — 무는 자리 바로 위 54화소다.
+START = "45,10,120,62,0"
+TIP_NEAR = (392, 320)
 COLOR = "/dev/shm/d405_color.jpg"
 DEPTH = "/dev/shm/d405_depth.npy"
 META = "/dev/shm/d405_meta.json"
 GRIP_EMPTY = 4.8        # 빈 집게가 닫히는 자리(실측 9/10). 물면 이보다 벌어진 채 선다.
+GRIPF = os.path.expanduser("~/grip_uv.json")
+
+
+def bite_uv(default=(407, 350)):
+    """집게가 **실제로 무는 화면 자리**. `~/grip_uv.json`이 이긴다.
+
+    ⚠ 이 값이 틀리면 겨냥이 아무리 정확해도 허공을 문다 — 2026-09-10 22:30에
+      그것 때문에 여섯 번을 헛집었다. 옛 값 (492,408)은 9/3에 잰 것인데, 그 뒤
+      wrist_roll을 두 번 재중심하면서 화면이 돌아 **그 화소는 배경(180mm)**이 됐다.
+      지금 값은 닫은 집게의 검은 패드 끝을 깊이로 찾아 잰 것(76mm, 실거리 79mm).
+      ⚠ 롤을 다시 만지면 **반드시 다시 재라**.
+    """
+    try:
+        g = json.load(open(GRIPF))
+        return float(g["u"]), float(g["v"])
+    except Exception:                                      # noqa: BLE001
+        return default
 # ⚠ 실측 9/10: 빈 집게 4.8, **면봉 자루(지름 2mm)를 물었을 때 6.2**. 그래서 문턱은 5.5다.
 #   처음엔 7.0으로 뒀다가 **실제로 집어 올린 시도를 실패로 찍었다**(사진으로 확인).
 #   자루가 얇아 여유가 1.4단위뿐이니, 판정은 넓이(lifted_near)로 한 번 더 받친다.
 # 실측 9/10: --grip-shut 0 · 토크 상한 900으로 **빈손**을 닫으면 2.81에 선다.
 # 솜 머리(지름 5mm)를 물면 그보다 훨씬 벌어진 채 서므로 문턱은 4.5로 넉넉히 둔다.
-GRIP_HELD = 4.5   # 빈손 2.81 · 솜 머리를 물면 훨씬 벌어진 채 선다
+# 실측 9/10 23:15 (--grip-shut 0 · 토크 900): **빈손 2.81 · 솜 머리를 물면 3.7~3.9.**
+# 여유가 1단위뿐이라 문턱은 3.3. (4.5로 뒀더니 실제로 물어 올린 것을 놓쳤다.)
+GRIP_HELD = 3.3
 OUT = os.path.expanduser("~/swab_trials")
 LOG = os.path.join(OUT, "trials.jsonl")
 
@@ -75,7 +97,7 @@ def snap(tag):
     return dst
 
 
-def near_target(tag=None, max_mm=200.0, min_mm=95.0, max_area=4000, near_uv=(492, 408)):
+def near_target(tag=None, max_mm=200.0, min_mm=95.0, max_area=4000, near_uv=None):
     """**집을 수 있는 거리에 있는 덩이 중 집게 자리에 가장 가까운 것** (u, v, z, 넓이).
 
     ⚠ 처음엔 "가장 가까운 것"을 골랐는데, 화분 테두리 한 귀퉁이가 면봉보다 가까우면
@@ -86,6 +108,8 @@ def near_target(tag=None, max_mm=200.0, min_mm=95.0, max_area=4000, near_uv=(492
     """
     import cv2
     import numpy as np
+    if near_uv is None:
+        near_uv = bite_uv()
     dp = os.path.join(OUT, tag + ".npy") if tag else DEPTH
     mp = os.path.join(OUT, tag + ".json") if tag else META
     cp = os.path.join(OUT, tag + ".jpg") if tag else COLOR
@@ -137,9 +161,14 @@ def grip_now(shut=0.0, torque=900):
     ⚠ 예전엔 여기서 `grip_set.py 4`(약한 기본 토크)를 썼다. 그러면 기준선이 잡을 때와
       달라져(빈손 4.8 vs 2.8) **닫지도 않은 시도를 성공으로 찍었다**(9/10 10:33).
       판정과 실제 동작은 같은 조건이어야 한다."""
-    rc, out = tool("grip_set.py", "%.0f" % shut, "--torque", "%d" % torque)
+    rc, out = tool("grip_set.py", "%.0f" % shut, "--torque", "%d" % torque, timeout=240)
     m = re.search(r"지금\s+([0-9.]+)", out)
-    return float(m.group(1)) if m else None
+    if m:
+        return float(m.group(1))
+    # ⚠ 못 읽으면 **모른다고 말한다** — 예전엔 조용히 None을 돌려주고 판정이
+    #   "unknown"으로 끝나, 실제로 물어 올린 시도를 아무도 성공으로 못 셌다(9/10 23:13).
+    print("  ⚠ 집게 값을 못 읽었다 (rc=%d): %s" % (rc, " ".join(out.split())[-120:]))
+    return None
 
 
 def white_blobs(path, y_min=0, y_max=480):
@@ -251,7 +280,12 @@ def main() -> int:
         #   면봉을 쓰러뜨렸다. 시작자세에서 솜 끝까지는 50mm 안쪽이어야 정상이므로 그
         #   이상 나아가는 건 겨냥이 틀렸다는 뜻이다 — 실패로 끝내는 편이 무대를 부수는
         #   것보다 낫다(무인 반복은 무대를 스스로 못 고친다).
+        # ── 1) 겨냥만 한다 ─────────────────────────────────────────────────
+        # ⚠ 나아가는 일을 화면에 맡기면 표적이 커지고·손이 가리고·깊이가 튀는 셋이 한꺼번에
+        #   와서 겨냥이 벌어진다(9/10 22:00: 80화소인 채로 끝까지 가 허공을 물었다).
+        #   겨냥이 맞은 그 순간이 가장 믿을 만하니 거기서 멈추고, 나아가기는 기구학으로 한다.
         rc, out = tool("stem_grasp.py", "--aim", args.aim, "--mark", f"{u:.0f},{v:.0f}",
+                       "--aim-only",
                        "--no-red-check", "--stop-z", str(args.stop_z),
                        "--max-adv", str(args.max_adv), "--thin",
                        "--max-dz", str(args.max_dz), "--gain", str(args.gain),
@@ -263,7 +297,28 @@ def main() -> int:
         rec["grasp_rc"] = rc
         tail = [l for l in out.splitlines() if l.strip()][-3:]
         rec["grasp_tail"] = tail
-        print("  stem_grasp rc=%d  %s" % (rc, " | ".join(tail)))
+        print("  겨냥 rc=%d  %s" % (rc, " | ".join(tail)))
+
+        # ── 2) 겨냥이 맞았으면 그 깊이만큼 뻗어서 문다 ─────────────────────
+        if rc == 0:
+            try:
+                tip = json.load(open(os.path.expanduser("~/tip_depth.json")))
+                z_aim = float(tip["cam_to_tip_mm"])
+                rec["aim_z"] = round(z_aim)
+                rec["aim_err_px"] = round(float(tip.get("err_px", -1)), 1)
+            except Exception:                              # noqa: BLE001
+                z_aim = -1.0
+            reach = max(0.0, min(args.max_adv, z_aim - args.stop_z)) if z_aim > 0 else 0.0
+            rec["reach_mm"] = round(reach)
+            print("  뻗기: %.0fmm (겨냥 깊이 %.0fmm − 무는 거리 %.0fmm)"
+                  % (reach, z_aim, args.stop_z))
+            if reach > 3.0:
+                rc2, out2 = tool("tool_jog.py", "--along", "%.0f" % reach,
+                                 "--piece", "12", timeout=240)
+                rec["jog_rc"] = rc2
+                last = [l for l in out2.splitlines() if l.strip()][-1:]
+                print("  뻗기 rc=%d  %s" % (rc2, " ".join(last)))
+            tool("grip_set.py", "%.0f" % args.grip_shut, "--torque", "%d" % args.grip_torque)
         snap(tag + "-1closed")
         with open(os.path.join(OUT, tag + "-grasp.log"), "w") as f:
             f.write(out)
