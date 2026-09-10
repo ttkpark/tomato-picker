@@ -1,0 +1,21 @@
+{
+  "zero": {
+    "shoulder_pan": -11.516483516483516,
+    "shoulder_lift": -18.24175824175824,
+    "elbow_flex": -60.35164835164835,
+    "wrist_flex": -1.7582417582417582,
+    "wrist_roll": 0.0
+  },
+  "ref_deg": {
+    "shoulder_pan": 0.0,
+    "shoulder_lift": 90.0,
+    "elbow_flex": 0.0,
+    "wrist_flex": 0.0,
+    "wrist_roll": 0.0
+  },
+  "signs": {},
+  "deg_per_norm": {
+    "wrist_roll": 0.999
+  },
+  "geometry": {}
+}
