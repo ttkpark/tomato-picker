@@ -121,6 +121,8 @@ CALIB_VIEW = os.path.expanduser("~/target_view.json")
 # 같은 이유로, SSH로 도는 팔 자세도 여기로 — 조작대의 "일" 체계를 안 거치는
 # 스크립트는 로그(k3dParseLog)로 3D 미리보기가 안 따라오므로 파일로 남긴다.
 ARM_POSE_VIEW = os.path.expanduser("~/arm_pose_view.json")
+# 잡기(stem_grasp.py)가 매 걸음 남기는 **살아 있는 겨냥 상태** — 화면에 겹쳐 그린다.
+SERVO_VIEW = os.path.expanduser("~/servo_view.json")
 GRIP_UV = (471, 395)              # 집게를 여닫아 실측한 기본값
 PARK = "60,65,0,-100,6"           # 열매가 보이던 대기 자세(도)
 
@@ -464,7 +466,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
   </div>
 </div>
 </div><script>
-var W=848,H=480,live=true,pt=null,gp={u:471,v:395},mode='target',since=0,calibView=null;
+var W=848,H=480,live=true,pt=null,gp={u:471,v:395},mode='target',since=0,calibView=null,servo=null;
 var im=document.getElementById('im'),ov=document.getElementById('ov'),stage=document.getElementById('stage');
 function draw(){
   var s='<line x1="'+(gp.u-16)+'" y1="'+gp.v+'" x2="'+(gp.u+16)+'" y2="'+gp.v+'" stroke="#2f6fb0" stroke-width="3"/>'
@@ -492,6 +494,32 @@ function draw(){
       s+='<text x="10" y="26" fill="#e4572e" font-size="15" '
         +'style="paint-order:stroke;stroke:#000;stroke-width:3px">보정 표적: '
         +(calibView.why||'안 보임')+'</text>';
+    }
+  }
+  // ── 잡기가 도는 동안: 지금 쫓는 표적과 가야 할 자리를 겹쳐 그린다 ──────
+  // ⚠ 이게 없을 땐 로그 줄만 보였다. 엉뚱한 것을 표적으로 잡은 실패를 끝나고
+  //   사진을 봐야 알았고, 그 사이 팔이 화분을 넘어뜨렸다(2026-09-10).
+  if(servo){
+    var tu=servo.tu, tv=servo.tv;
+    if(servo.lost){
+      s+='<text x="10" y="'+(H-14)+'" fill="#e4572e" font-size="16" '
+        +'style="paint-order:stroke;stroke:#000;stroke-width:3px">겨냥 '+servo.step
+        +'걸음 — 표적을 놓쳤다</text>';
+      if(servo.u!=null)
+        s+='<circle cx="'+servo.u+'" cy="'+servo.v+'" r="16" fill="none" stroke="#e4572e" '
+          +'stroke-width="2" stroke-dasharray="5 4"/>';
+    } else {
+      // 지금 쫓는 것(노랑) → 가야 할 자리(집게 자리)까지 선을 긋는다
+      s+='<line x1="'+servo.u+'" y1="'+servo.v+'" x2="'+tu+'" y2="'+tv+'" stroke="#f0c040" '
+        +'stroke-width="2" stroke-dasharray="6 4"/>'
+        +'<circle cx="'+servo.u+'" cy="'+servo.v+'" r="15" fill="none" stroke="#f0c040" stroke-width="3"/>'
+        +'<circle cx="'+servo.u+'" cy="'+servo.v+'" r="3" fill="#f0c040"/>';
+      var txt='겨냥 '+servo.step+'걸음 · 남은 '+Math.round(servo.err)+'화소 · 깊이 '
+             +(servo.z>0?Math.round(servo.z)+'mm':'없음')
+             +(servo.stop_z?(' (물기 '+Math.round(servo.stop_z)+'mm)'):'')
+             +' · 나아감 '+Math.round(servo.gone)+'mm'+(servo.locked?' · 겨냥맞음':'');
+      s+='<text x="10" y="'+(H-14)+'" fill="#f0c040" font-size="16" '
+        +'style="paint-order:stroke;stroke:#000;stroke-width:3px">'+txt+'</text>';
     }
   }
   ov.innerHTML=s;
@@ -547,6 +575,8 @@ function state(){
       JNAMES.forEach(function(n){ if(j.arm_pose[n]!=null) curJ[n]=j.arm_pose[n]; });
       k3dRenderOnce();
     }
+    servo=j.servo||null;
+    if(servo) live=true;            // 잡기가 도는 동안엔 화면을 멈춰 두지 않는다
     if(j.gu!=null) gp={u:j.gu,v:j.gv};
     if(j.u!=null){pt={u:j.u,v:j.v};
       document.getElementById('cur').textContent='표적 ('+j.u+', '+j.v+')  깊이 '+(j.z>0?j.z.toFixed(0)+'mm':'없음');}
@@ -860,7 +890,9 @@ function k3dInit(){
 }
 k3dInit(); k3dInitRows();
 
-setInterval(tick,400); setInterval(state,1200); setInterval(log,900); tick(); state(); log();
+// ⚠ 잡기가 도는 동안엔 더 자주 본다 — 걸음이 1초 안쪽이라 1.2초로는 건너뛴다.
+setInterval(tick,400); setInterval(function(){ if(servo) state(); },400);
+setInterval(state,1200); setInterval(log,900); tick(); state(); log();
 </script></body></html>"""
 PAGE = PAGE.replace("__KIN_JSON__", json.dumps(KIN))
 
@@ -913,6 +945,13 @@ class Handler(BaseHTTPRequestHandler):
                     cv_ = json.load(open(CALIB_VIEW))
                     if time.time() - float(cv_.get("ts", 0)) < 5.0:
                         out["calib_view"] = cv_
+                except Exception:                          # noqa: BLE001
+                    pass
+            if os.path.exists(SERVO_VIEW):
+                try:
+                    sv = json.load(open(SERVO_VIEW))
+                    if time.time() - float(sv.get("ts", 0)) < 5.0:
+                        out["servo"] = sv
                 except Exception:                          # noqa: BLE001
                     pass
             if os.path.exists(ARM_POSE_VIEW):

@@ -38,7 +38,10 @@ COLOR = "/dev/shm/d405_color.jpg"
 DEPTH = "/dev/shm/d405_depth.npy"
 META = "/dev/shm/d405_meta.json"
 GRIP_EMPTY = 4.8        # 빈 집게가 닫히는 자리(실측 9/10). 물면 이보다 벌어진 채 선다.
-GRIP_HELD = 7.0         # 이보다 벌어져 있으면 **뭔가 물고 있다**
+# ⚠ 실측 9/10: 빈 집게 4.8, **면봉 자루(지름 2mm)를 물었을 때 6.2**. 그래서 문턱은 5.5다.
+#   처음엔 7.0으로 뒀다가 **실제로 집어 올린 시도를 실패로 찍었다**(사진으로 확인).
+#   자루가 얇아 여유가 1.4단위뿐이니, 판정은 넓이(lifted_near)로 한 번 더 받친다.
+GRIP_HELD = 5.5
 OUT = os.path.expanduser("~/swab_trials")
 LOG = os.path.join(OUT, "trials.jsonl")
 
@@ -68,50 +71,54 @@ def snap(tag):
     return dst
 
 
-def near_target(tag=None, max_mm=200.0, band=25.0, max_area=8000):
-    """**카메라에 가장 가까운 덩이** (u, v, z, 넓이) — 집으려는 것은 늘 가까운 쪽이다.
+def near_target(tag=None, max_mm=200.0, min_mm=75.0, max_area=4000, near_uv=(492, 408)):
+    """**집을 수 있는 거리에 있는 덩이 중 집게 자리에 가장 가까운 것** (u, v, z, 넓이).
 
-    ⚠ 색으로 찾던 것을 깊이로 바꿨다. 흰 면봉이 **흰 화분 테두리와 겹치면** 색으로는
-      한 덩이가 되어 둥글기 검사에 떨어진다(9/10: 6mm 나아가자마자 표적이 사라졌다).
-      깊이로 보면 면봉 90mm, 테두리·벽은 150mm 넘는다 — 겹쳐도 갈린다.
+    ⚠ 처음엔 "가장 가까운 것"을 골랐는데, 화분 테두리 한 귀퉁이가 면봉보다 가까우면
+      띠가 그쪽에 열려 엉뚱한 데를 겨눴다(9/10 09:47: (252,451) 97mm를 표적으로 골라
+      팔이 반대로 갔다). 가까움은 **표적을 고르는 기준이 아니라 배경을 거르는 기준**이다.
+      실제 기준은 "집게가 무는 자리에 가까운 것" — 시작자세를 표적에 붙여 뒀기 때문이다.
+    ⚠ 보라색 집게(자기 손)는 깊이에서 지운다. D405 하한 70mm 아래 값도 안 믿는다.
     """
     import cv2
     import numpy as np
     dp = os.path.join(OUT, tag + ".npy") if tag else DEPTH
     mp = os.path.join(OUT, tag + ".json") if tag else META
+    cp = os.path.join(OUT, tag + ".jpg") if tag else COLOR
     try:
         dep = np.load(dp).astype(float) * json.load(open(mp))["depth_scale_mm"]
     except Exception:                                      # noqa: BLE001
         return None
-    # ⚠ 자기 손가락을 표적으로 고르지 않게 **보라색 집게를 지운다**(9/10: 63mm짜리
-    #   덩이를 매번 표적으로 골랐다). 그리고 D405 하한(70mm) 아래 값은 안 믿는다.
-    cp = os.path.join(OUT, tag + ".jpg") if tag else COLOR
     bgr = cv2.imread(cp)
     if bgr is not None and bgr.shape[:2] == dep.shape[:2]:
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
         own = ((hsv[:, :, 0] > 115) & (hsv[:, :, 0] < 165) & (hsv[:, :, 1] > 55)).astype(np.uint8)
         dep = np.where(cv2.dilate(own, np.ones((9, 9), np.uint8)) > 0, 0.0, dep)
-    lower = dep[dep.shape[0] // 3:, :]
-    vals = lower[(lower > 75.0) & (lower < max_mm)]
-    if vals.size < 200:
-        return None
-    z0 = float(np.percentile(vals, 2)) + band * 0.5
-    m = ((dep > max(75.0, z0 - band)) & (dep < z0 + band)).astype(np.uint8)
+    m = ((dep > min_mm) & (dep < max_mm)).astype(np.uint8)
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     n, lab, st, cen = cv2.connectedComponentsWithStats(m, 8)
-    best = None
+    cand = []
     for i in range(1, n):
         a = int(st[i, cv2.CC_STAT_AREA])
-        if a < 60 or a > max_area:
+        if a < 100 or a > max_area:
             continue
-        if best is None or a > best[0]:
-            best = (a, float(cen[i][0]), float(cen[i][1]), i)
-    if best is None:
+        u, v = float(cen[i][0]), float(cen[i][1])
+        d = (u - near_uv[0]) ** 2 + (v - near_uv[1]) ** 2
+        cand.append((d, u, v, a, i))
+    if not cand:
         return None
-    a, u, v, idx = best
-    d = dep[lab == idx]
-    d = d[d > 0]
-    return u, v, (float(np.percentile(d, 20)) if d.size else z0), a
+    # 집게 자리 근처(220화소)를 먼저 본다. 거기 아무것도 없으면(놓은 면봉이 굴러갔을 때)
+    # **가장 가까운 것**으로 물러선다 — 표적이 아예 없다고 말하는 것보다 낫다.
+    near = [c for c in cand if c[0] <= 220.0 ** 2]
+    if near:
+        best = min(near, key=lambda c: c[0])
+    else:
+        best = min(cand, key=lambda c: float(np.percentile(dep[lab == c[4]][dep[lab == c[4]] > 0], 20))
+                   if (dep[lab == c[4]] > 0).any() else 9e9)
+    _d, u, v, a, idx = best
+    dd = dep[lab == idx]
+    dd = dd[dd > 0]
+    return u, v, (float(np.percentile(dd, 20)) if dd.size else -1.0), a
 
 
 def grip_now():
@@ -237,8 +244,9 @@ def main() -> int:
         held = near_target(tag + "-2lifted", max_mm=150.0)
         rec["lifted_near"] = None if held is None else [round(held[0]), round(held[1]),
                                                        round(held[2]), held[3]]
+        area = (rec["lifted_near"] or [0, 0, 0, 0])[3]
         if grip is not None and grip >= GRIP_HELD:
-            verdict = "success"
+            verdict = "success" if area >= 400 else "success_weak"
         elif rc != 0:
             verdict = "fail_grasp_rc"
         elif grip is not None:
@@ -259,7 +267,7 @@ def main() -> int:
             snap(tag + "-3released")
 
     n = len(results)
-    ok = sum(1 for r in results if r.get("verdict") == "success")
+    ok = sum(1 for r in results if str(r.get("verdict", "")).startswith("success"))
     print(f"\n합계: {ok}/{n} 성공  ({', '.join(r.get('verdict', r.get('why', '?')) for r in results)})")
     print(f"사진·로그: {OUT}")
     return 0

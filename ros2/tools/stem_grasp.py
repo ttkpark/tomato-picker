@@ -63,6 +63,24 @@ FLOOR_MARGIN_MM = gp.FLOOR_MARGIN_MM
 FRUIT_MM = 70.0          # 실측: 134.6mm에서 폭 227화소, fx 438 → 69.8mm
 FAR_MM = 600.0           # 이보다 먼 빨간 덩이는 열매 후보에서 뺀다 (팔 사거리 420mm)
 NEAR_FLOOR = 75.0        # D405 유효 하한(70mm) 아래 값은 못 믿는다 — 표적으로 안 본다
+
+# 조작대(click_server.py)가 읽어 화면에 겹쳐 그리는 **살아 있는 겨냥 상태**.
+# ⚠ 이걸 만들기 전에는 잡기가 도는 동안 사람이 볼 수 있는 게 로그 줄뿐이었다 —
+#   "지금 무엇을 표적으로 보고 어디로 가려는가"가 안 보이니, 엉뚱한 것을 쫓는 실패를
+#   끝나고 사진을 봐야 알았다(2026-09-10에 그 때문에 화분을 두 번 넘어뜨렸다).
+SERVO_VIEW = os.path.expanduser("~/servo_view.json")
+
+
+def publish_view(**kw):
+    """겨냥 한 걸음의 상태를 파일 하나로 — 실패해도 잡기를 막지 않는다."""
+    try:
+        kw["ts"] = time.time()
+        tmp = SERVO_VIEW + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(kw, fh)
+        os.replace(tmp, SERVO_VIEW)
+    except Exception:                                      # noqa: BLE001
+        pass
 SETTLE = 0.8
 
 # ⚠ 겨냥에 wrist_flex를 쓰지 않는다 — 이 자세에서 −97(한계 −98)로 박혀 있고,
@@ -497,7 +515,8 @@ def main() -> int:
                     continue
                 score = -d
             else:
-                score = -math.hypot(u - mark0[0], v - mark0[1]) if mark0 else a
+                seed_uv = mark0 if mark0 else (tu, tv)
+                score = -math.hypot(u - seed_uv[0], v - seed_uv[1])
             if best is None or score > best[0]:
                 best = (score, u, v, a)
         if best is None:
@@ -570,8 +589,17 @@ def main() -> int:
                 if vals.size < 200:
                     return None
                 z0 = float(np.percentile(vals, 2)) + args.near_band * 0.5
-        band = args.near_band
-        m = ((dep > max(NEAR_FLOOR, z0 - band)) & (dep < z0 + band)).astype(np.uint8)
+        # ⚠ 첫 프레임은 **띠를 열어 두고** 찍어 준 자리에 가까운 덩이를 고른다 — 씨앗
+        #   깊이가 배경을 물면 띠가 통째로 엉뚱한 데 열린다(9/10 09:47). 한 번 표적을
+        #   잡은 뒤에는 좁은 띠로 따라간다.
+        if prev is None:
+            # 첫 프레임은 **띠를 열어 둔다** — 씨앗 깊이가 배경을 물면(가는 표적에서 흔하다)
+            # 좁은 띠가 통째로 엉뚱한 데 열린다. 고르는 일은 아래의 "집게 앞"이 한다.
+            lo, hi = NEAR_FLOOR, args.near_max
+        else:
+            band = args.near_band
+            lo, hi = max(NEAR_FLOOR, z0 - band), z0 + band
+        m = ((dep > lo) & (dep < hi)).astype(np.uint8)
         m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
         n, lab, st, cen = cv2.connectedComponentsWithStats(m, 8)
         best = None
@@ -587,7 +615,12 @@ def main() -> int:
                     continue
                 score = -d
             else:
-                score = -math.hypot(u - mark0[0], v - mark0[1]) if mark0 else a
+                # ⚠ 처음 고를 때 "가장 큰 것"은 기준이 못 된다 — 2026-09-10: 화면
+                #   왼쪽의 260화소짜리 조각을 표적으로 잡고 팔이 그리로 갔다.
+                #   찍어 준 자리가 있으면 그쪽, 없으면 **집게가 무는 자리**에 가까운 것이다.
+                #   집으려는 것은 늘 집게 앞에 있다.
+                seed_uv = mark0 if mark0 else (tu, tv)
+                score = -math.hypot(u - seed_uv[0], v - seed_uv[1])
             if best is None or score > best[0]:
                 best = (score, u, v, a, i)
         if best is None:
@@ -835,6 +868,9 @@ def main() -> int:
                     print("  ↻ 사람이 다시 찍었다 → (%.0f, %.0f)" % (c[0], c[1]))
             s = see2(prev)
             if s is None:
+                publish_view(step=step, aim=args.aim, lost=True, tu=tu, tv=tv,
+                             gone=gone, u=(prev[0] if prev else None),
+                             v=(prev[1] if prev else None))
                 print("  %3d    (놓쳤다)" % step)
                 break
             u, v, z, a, clipped = s
@@ -853,6 +889,10 @@ def main() -> int:
                   end="")
 
             cur = to_deg(io.read())
+            publish_view(step=step, aim=args.aim, lost=False, u=u, v=v, z=z,
+                         tu=tu, tv=tv, err=en, gone=gone, locked=locked,
+                         stop_z=args.stop_z, max_adv=args.max_adv,
+                         pose={j: round(cur[j], 1) for j in kin.JOINTS})
 
             # ⚠ **한 번 놓친 프레임에 잘 가던 접근을 통째로 버리지 않는다.**
             #   2026-09-03: 깊이 351→136mm까지 순조롭게 좁혀 놓고, 딱 한 프레임
