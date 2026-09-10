@@ -62,6 +62,7 @@ MOUNT_Z_MM = gp.MOUNT_Z_MM
 FLOOR_MARGIN_MM = gp.FLOOR_MARGIN_MM
 FRUIT_MM = 70.0          # 실측: 134.6mm에서 폭 227화소, fx 438 → 69.8mm
 FAR_MM = 600.0           # 이보다 먼 빨간 덩이는 열매 후보에서 뺀다 (팔 사거리 420mm)
+NEAR_FLOOR = 75.0        # D405 유효 하한(70mm) 아래 값은 못 믿는다 — 표적으로 안 본다
 SETTLE = 0.8
 
 # ⚠ 겨냥에 wrist_flex를 쓰지 않는다 — 이 자세에서 −97(한계 −98)로 박혀 있고,
@@ -83,8 +84,14 @@ def main() -> int:
     ap.add_argument("--max-turn", type=float, default=6.0, help="한 걸음에 한 관절 최대 도수")
     ap.add_argument("--probe", type=float, default=2.5, help="야코비안을 잴 때 흔드는 도수")
     ap.add_argument("--rejacobian", type=int, default=4, help="몇 걸음마다 다시 재는가")
-    ap.add_argument("--aim", choices=("click", "mark", "top", "stem", "fruit", "auto", "white"),
+    ap.add_argument("--aim", choices=("click", "mark", "top", "stem", "fruit", "auto", "white", "near"),
                      default="top")
+    ap.add_argument("--near-band", type=float, default=25.0,
+                    help="--aim near의 깊이 띠 반폭(mm) — 표적과 배경이 이보다 가까우면 못 가른다")
+    ap.add_argument("--near-max", type=float, default=200.0,
+                    help="--aim near가 표적으로 볼 최대 거리(mm) — 그 밖은 배경이다")
+    ap.add_argument("--near-max-area", type=int, default=8000,
+                    help="--aim near가 표적으로 볼 최대 넓이(화소) — 그보다 크면 벽·바닥")
     ap.add_argument("--white-s", type=float, default=80.0, help="흰 표적 채도 상한(--aim white)")
     ap.add_argument("--white-v", type=float, default=150.0, help="흰 표적 명도 하한(--aim white)")
     ap.add_argument("--mark", default="", help="줄기를 화면에서 여기라고 알려 준다 u,v")
@@ -499,12 +506,96 @@ def main() -> int:
         z = ray_depth_med(u, v) or (markz[0] if markz[0] > 0 else -1.0)
         # ⚠ 색·모양만으로는 **다른 흰 덩이로 건너뛰는 것**을 못 막는다 — 2026-09-10 실측:
         #   6걸음까지 깨끗이 따라가다(깊이 84→115mm) 7걸음째에 (515,291)→(283,468)로
-        #   화분 테두리로 갈아탔다. 반경(R)만으론 부족해서 조각 정합과 같은 깊이 연속성을
-        #   같이 본다 — 걸음 사이 팔은 몇 도만 움직이니 깊이는 그만큼 못 뛴다.
+        #   화분 테두리로 갈아탔다. 그래서 깊이 연속성도 같이 본다.
+        # ⚠ 그런데 **깊이가 뛰었다고 무조건 버리면 안 된다.** 가는 면봉은 같은 자리에
+        #   있어도 깊이가 100→231mm로 튄다(9×9 창에 뒤쪽 화분 벽이 섞인다). 그때 표적을
+        #   버리면 같은 판정이 매 걸음 반복돼 **30걸음을 통째로 소모한다**(9/10 08:47:
+        #   1걸음째부터 끝까지 "놓쳤다"). 판별은 이것이다 — **자리가 그대로면 같은 물체다.**
+        #   자리가 붙어 있으면 깊이만 잡음으로 보고 직전 값을 쓰고, 자리까지 멀어졌을
+        #   때만 갈아탄 것으로 친다.
         if markz[0] > 0 and z > 0 and abs(z - markz[0]) > MAX_DZ:
-            print("   ⚠ 깊이가 %.0f→%.0fmm로 뛰었다 — 다른 흰 것을 잡았다, 다시 찾는다"
-                  % (markz[0], z))
+            moved = math.hypot(u - prev[0], v - prev[1]) if prev is not None else 999.0
+            if moved <= 40.0:
+                z = markz[0]                       # 같은 자리 — 깊이만 잡음이다
+            else:
+                print("   ⚠ 깊이가 %.0f→%.0fmm이고 자리도 %.0f화소 옮겼다 — "
+                      "다른 흰 것을 잡았다, 다시 찾는다" % (markz[0], z, moved))
+                return None
+        markz[0] = z
+        return u, v, z, a, False
+
+    def near_point(prev, R=110):
+        """**깊이로 표적을 오려낸다** — 색이 배경과 같아도 거리는 다르다.
+
+        ⚠ 색 검출(`--aim white`)은 흰 면봉이 **흰 화분 테두리와 겹치는 순간** 하나로
+          뭉쳐 둥글기 검사에 떨어진다(2026-09-10: 6mm 나아가자마자 표적이 사라졌다).
+          그런데 깊이로 보면 둘은 명백히 다르다 — 면봉 92mm, 테두리·벽은 150mm 넘는다.
+          D405를 여기 쓰라고 단 것이다: **집으려는 것은 늘 카메라에 가장 가까운 것**이다.
+        같은 깊이 띠(±`--near-band`)에 붙어 있는 덩이만 남기고, 직전 자리에서 가장
+        가까운 것을 고른다. 색·모양은 아예 안 본다.
+        ⚠ 띠의 기준은 직전 걸음의 깊이다 — 처음 한 번만 `mark0` 자리의 깊이로 연다.
+        """
+        try:
+            dep = np.load(vs.DEPTH).astype(float)
+            meta = json.load(open(vs.META))
+        except Exception:                                  # noqa: BLE001
             return None
+        import cv2
+        sc = float(meta.get("depth_scale_mm", 1.0))
+        dep = dep * sc
+        # ⚠ **가장 가까운 것은 자기 손가락이다.** 2026-09-10: 깊이 띠가 매번 63mm짜리
+        #   덩이(넓이 3900)를 표적으로 골랐는데, 그건 화면 아래를 채운 **보라색 집게**였다
+        #   (D405 유효 하한 70mm보다 가까워 값도 못 믿는다). 집게는 3D 프린트 보라색이라
+        #   색으로 지울 수 있다 — 자기 몸은 표적이 아니다.
+        bgr = cv2.imread(vs.COLOR)
+        if bgr is not None and bgr.shape[:2] == dep.shape[:2]:
+            hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+            own = ((hsv[:, :, 0] > 115) & (hsv[:, :, 0] < 165)
+                   & (hsv[:, :, 1] > 55)).astype(np.uint8)
+            own = cv2.dilate(own, np.ones((9, 9), np.uint8))
+            dep = np.where(own > 0, 0.0, dep)
+        z0 = markz[0]
+        if z0 <= 0:
+            # 씨앗 깊이: 찍어 준 자리를 먼저 보고, 그게 못 미더우면(잡을 수 없는 거리)
+            # **화면 아래쪽에서 가장 가까운 것**으로 연다.
+            # ⚠ 찍어 준 화소 하나를 그대로 믿으면 안 된다 — 표적이 조금만 흔들려도 그
+            #   광선이 뒤쪽 벽을 물고, 그 벽 깊이로 띠를 열면 **벽 전체가 표적이 된다**
+            #   (2026-09-10: 넓이 66860화소, 371mm). 집으려는 것은 늘 가까운 쪽이다.
+            seed = prev if prev is not None else mark0
+            if seed is not None:
+                z0 = ray_depth_med(seed[0], seed[1]) or 0.0
+            if not (NEAR_FLOOR < z0 < args.near_max):
+                lower = dep[dep.shape[0] // 3:, :]
+                vals = lower[(lower > NEAR_FLOOR) & (lower < args.near_max)]
+                if vals.size < 200:
+                    return None
+                z0 = float(np.percentile(vals, 2)) + args.near_band * 0.5
+        band = args.near_band
+        m = ((dep > max(NEAR_FLOOR, z0 - band)) & (dep < z0 + band)).astype(np.uint8)
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        n, lab, st, cen = cv2.connectedComponentsWithStats(m, 8)
+        best = None
+        for i in range(1, n):
+            a = int(st[i, cv2.CC_STAT_AREA])
+            # ⚠ 너무 큰 덩이는 표적이 아니라 벽·바닥이다(면봉은 수백 화소).
+            if a < 60 or a > args.near_max_area:
+                continue
+            u, v = float(cen[i][0]), float(cen[i][1])
+            if prev is not None:
+                d = math.hypot(u - prev[0], v - prev[1])
+                if d > R:
+                    continue
+                score = -d
+            else:
+                score = -math.hypot(u - mark0[0], v - mark0[1]) if mark0 else a
+            if best is None or score > best[0]:
+                best = (score, u, v, a, i)
+        if best is None:
+            return None
+        _sc, u, v, a, idx = best
+        d = dep[lab == idx]
+        d = d[d > 0]
+        z = float(np.percentile(d, 20)) if d.size else z0
         markz[0] = z
         return u, v, z, a, False
 
@@ -519,6 +610,8 @@ def main() -> int:
         열매와 같은 깊이다** — 그 두 가지면 자리가 정해진다. 열매는 크고 빨개서
         놓칠 일이 없으니, 못 믿을 검출을 못 믿을 검출로 받치지 않는다.
         """
+        if args.aim == "near":
+            return near_point(prev)
         if args.aim == "white":
             return white_point(prev)
         if args.aim in ("mark", "click"):
@@ -699,6 +792,21 @@ def main() -> int:
                 # 표적을 버리면 서보가 두 걸음 만에 끝난다(2026-09-02).
                 for rr in (140, 220):
                     r = track_mark(prev, rr)
+                    if r is not None:
+                        return r
+                return None
+            if args.aim == "near":
+                for rr in (170, 240):
+                    r = near_point(prev, rr)
+                    if r is not None:
+                        return r
+                return None
+            if args.aim == "white":
+                # ⚠ white도 같은 대접 — 2026-09-10: 놓친 걸음이 그냥 소모돼(22걸음 중 여러
+                #   번) 겨냥이 끝내 수렴하지 못했다. 반경만 넓혀 다시 찾는다. 넓혀도 못
+                #   찾으면 그때 진짜 놓친 것이다.
+                for rr in (170, 240):
+                    r = white_point(prev, rr)
                     if r is not None:
                         return r
                 return None

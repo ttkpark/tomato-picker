@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,11 +27,18 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
-# 도 틀 (arm_stage.py). 9/10 01시: 시도 1이 화분을 밀어 자리가 바뀌었고, 면봉은 **오른쪽**
-# 지지대에 서 있다. 이 자세에서 솜 끝이 화면 (540,150) 근처, TCP z≈160.
-START = "-6,10,120,75,0"
-TIP_NEAR = (540, 150)
+# 도 틀 (arm_stage.py). ⚠ **시작자세는 표적이 집게 자리에 이미 가깝도록 고른다** —
+# 9/10 새벽엔 솜이 화면 위(v≈150)에 있고 집게 무는 자리는 (492,408)이라 처음부터
+# 250화소가 벌어져 있었고, 22걸음을 다 써도 못 좁혔다(11회 0성공). wrist_flex를 75→56으로
+# 내려(카메라를 위로 들어) 솜을 화면 아래로 내리고 pan을 −6→−3으로 맞추자 **10화소**가 됐다.
+# 겨냥이 거의 끝난 자리에서 시작하면 남은 일은 접근축을 따라 나아가는 것뿐이다.
+START = "-3,10,120,56,0"
+TIP_NEAR = (497, 399)
 COLOR = "/dev/shm/d405_color.jpg"
+DEPTH = "/dev/shm/d405_depth.npy"
+META = "/dev/shm/d405_meta.json"
+GRIP_EMPTY = 4.8        # 빈 집게가 닫히는 자리(실측 9/10). 물면 이보다 벌어진 채 선다.
+GRIP_HELD = 7.0         # 이보다 벌어져 있으면 **뭔가 물고 있다**
 OUT = os.path.expanduser("~/swab_trials")
 LOG = os.path.join(OUT, "trials.jsonl")
 
@@ -48,10 +56,69 @@ def tool(name, *args, timeout=120):
 
 
 def snap(tag):
+    """컬러와 **깊이까지** 함께 남긴다 — 판정이 깊이로 바뀌었기 때문이다."""
     time.sleep(1.2)
     dst = os.path.join(OUT, tag + ".jpg")
     shutil.copy(COLOR, dst)
+    try:
+        shutil.copy(DEPTH, os.path.join(OUT, tag + ".npy"))
+        shutil.copy(META, os.path.join(OUT, tag + ".json"))
+    except Exception:                                      # noqa: BLE001
+        pass
     return dst
+
+
+def near_target(tag=None, max_mm=200.0, band=25.0, max_area=8000):
+    """**카메라에 가장 가까운 덩이** (u, v, z, 넓이) — 집으려는 것은 늘 가까운 쪽이다.
+
+    ⚠ 색으로 찾던 것을 깊이로 바꿨다. 흰 면봉이 **흰 화분 테두리와 겹치면** 색으로는
+      한 덩이가 되어 둥글기 검사에 떨어진다(9/10: 6mm 나아가자마자 표적이 사라졌다).
+      깊이로 보면 면봉 90mm, 테두리·벽은 150mm 넘는다 — 겹쳐도 갈린다.
+    """
+    import cv2
+    import numpy as np
+    dp = os.path.join(OUT, tag + ".npy") if tag else DEPTH
+    mp = os.path.join(OUT, tag + ".json") if tag else META
+    try:
+        dep = np.load(dp).astype(float) * json.load(open(mp))["depth_scale_mm"]
+    except Exception:                                      # noqa: BLE001
+        return None
+    # ⚠ 자기 손가락을 표적으로 고르지 않게 **보라색 집게를 지운다**(9/10: 63mm짜리
+    #   덩이를 매번 표적으로 골랐다). 그리고 D405 하한(70mm) 아래 값은 안 믿는다.
+    cp = os.path.join(OUT, tag + ".jpg") if tag else COLOR
+    bgr = cv2.imread(cp)
+    if bgr is not None and bgr.shape[:2] == dep.shape[:2]:
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        own = ((hsv[:, :, 0] > 115) & (hsv[:, :, 0] < 165) & (hsv[:, :, 1] > 55)).astype(np.uint8)
+        dep = np.where(cv2.dilate(own, np.ones((9, 9), np.uint8)) > 0, 0.0, dep)
+    lower = dep[dep.shape[0] // 3:, :]
+    vals = lower[(lower > 75.0) & (lower < max_mm)]
+    if vals.size < 200:
+        return None
+    z0 = float(np.percentile(vals, 2)) + band * 0.5
+    m = ((dep > max(75.0, z0 - band)) & (dep < z0 + band)).astype(np.uint8)
+    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    n, lab, st, cen = cv2.connectedComponentsWithStats(m, 8)
+    best = None
+    for i in range(1, n):
+        a = int(st[i, cv2.CC_STAT_AREA])
+        if a < 60 or a > max_area:
+            continue
+        if best is None or a > best[0]:
+            best = (a, float(cen[i][0]), float(cen[i][1]), i)
+    if best is None:
+        return None
+    a, u, v, idx = best
+    d = dep[lab == idx]
+    d = d[d > 0]
+    return u, v, (float(np.percentile(d, 20)) if d.size else z0), a
+
+
+def grip_now():
+    """집게를 닫으라고 한 번 더 시키고 **선 자리**를 읽는다 — 물면 덜 닫힌다."""
+    rc, out = tool("grip_set.py", "4")
+    m = re.search(r"지금\s+([0-9.]+)", out)
+    return float(m.group(1)) if m else None
 
 
 def white_blobs(path, y_min=0, y_max=480):
@@ -99,8 +166,12 @@ def main() -> int:
     ap.add_argument("--trials", type=int, default=3)
     ap.add_argument("--keep", action="store_true", help="마지막 시도 뒤 놓지 않는다")
     ap.add_argument("--stop-z", type=float, default=84.0)
-    ap.add_argument("--aim", default="white", help="stem_grasp 겨냥 방식 — white(색 재검출) / mark(조각 정합)")
+    ap.add_argument("--aim", default="near",
+                    help="stem_grasp 겨냥 방식 — near(깊이 띠, 기본) / white(색) / mark(조각 정합). "
+                         "흰 면봉이 흰 화분 테두리와 겹쳐 색으로는 못 가르기에 깊이를 기본으로 둔다")
     ap.add_argument("--max-dz", type=float, default=70.0, help="stem_grasp에 넘길 깊이 도약 문턱")
+    ap.add_argument("--gain", type=float, default=0.8, help="겨냥 게인 — 기본 0.55는 수렴이 느렸다")
+    ap.add_argument("--steps", type=int, default=30)
     ap.add_argument("--max-adv", type=float, default=45.0, help="이보다 더 나아가야 하면 겨냥이 틀린 것")
     args = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
@@ -125,16 +196,17 @@ def main() -> int:
             rec["why"] = "stage"
             results.append(rec)
             continue
-        before = snap(tag + "-0start")
-        tip = pick_tip(white_blobs(before, y_min=60))
+        snap(tag + "-0start")
+        tip = near_target(tag + "-0start")
         if tip is None:
-            print("  ❌ 시작자세에서 솜 끝이 안 보인다")
+            print("  ❌ 시작자세에서 가까운 표적이 안 보인다")
             rec["why"] = "no_tip"
             results.append(rec)
             continue
-        u, v = tip[0], tip[1]
+        u, v, z_before, a0 = tip
         rec["tip_uv"] = [round(u), round(v)]
-        print(f"  솜 끝 화면 ({u:.0f},{v:.0f}) 넓이 {tip[4]}")
+        rec["tip_z"] = round(z_before)
+        print(f"  표적 화면 ({u:.0f},{v:.0f}) 깊이 {z_before:.0f}mm 넓이 {a0}")
 
         # ⚠ --max-adv를 짧게 준다. 2026-09-10 시도 1: 솜 끝(약 100mm 앞)의 깊이가 배경
         #   값(239mm)으로 읽혀 stem_grasp가 120mm를 밀고 들어갔고, 화분을 밀고 지지대와
@@ -144,7 +216,8 @@ def main() -> int:
         rc, out = tool("stem_grasp.py", "--aim", args.aim, "--mark", f"{u:.0f},{v:.0f}",
                        "--no-red-check", "--stop-z", str(args.stop_z),
                        "--max-adv", str(args.max_adv), "--thin",
-                       "--max-dz", str(args.max_dz), timeout=420)
+                       "--max-dz", str(args.max_dz), "--gain", str(args.gain),
+                       "--steps", str(args.steps), timeout=420)
         rec["grasp_rc"] = rc
         tail = [l for l in out.splitlines() if l.strip()][-3:]
         rec["grasp_tail"] = tail
@@ -153,32 +226,34 @@ def main() -> int:
         with open(os.path.join(OUT, tag + "-grasp.log"), "w") as f:
             f.write(out)
 
-        # ── 들어 올려 확인 ──
+        # ── 물었는가: **집게가 선 자리**가 가장 정직하다 ──
+        # ⚠ 사진 속 흰 덩이로 판정하던 것을 버렸다(9/10 09:01: 실제로 집어 올렸는데
+        #   화분 테두리를 "화분에 남은 면봉"으로 세어 실패로 찍었다). 빈 집게는 4.8에
+        #   서고, 면봉 자루를 물면 그보다 벌어진 채 선다 — 그건 카메라가 아니라 물리다.
+        grip = grip_now()
+        rec["grip"] = grip
         tool("tool_jog.py", "--dz", "70", "--piece", "20")
-        tool("tool_jog.py", "--pitch", "25")
-        look = snap(tag + "-2lifted")
-        in_pot = [b for b in white_blobs(look, y_min=200, y_max=360)]
-        in_jaw = [b for b in white_blobs(look, y_min=360) if 360 <= b[0] <= 540]
-        rec["in_pot"] = [[round(b[0]), round(b[1]), b[4]] for b in in_pot]
-        rec["in_jaw"] = [[round(b[0]), round(b[1]), b[4]] for b in in_jaw]
-        if rc == 0 and not in_pot and in_jaw:
+        snap(tag + "-2lifted")
+        held = near_target(tag + "-2lifted", max_mm=150.0)
+        rec["lifted_near"] = None if held is None else [round(held[0]), round(held[1]),
+                                                       round(held[2]), held[3]]
+        if grip is not None and grip >= GRIP_HELD:
             verdict = "success"
-        elif in_pot:
-            verdict = "fail_left_in_pot"
         elif rc != 0:
             verdict = "fail_grasp_rc"
+        elif grip is not None:
+            verdict = "fail_empty_close"
         else:
             verdict = "unknown"
         rec["verdict"] = verdict
         rec["secs"] = round(time.time() - t0, 1)
-        print(f"  판정: {verdict}   (화분에 흰 덩이 {len(in_pot)}, 집게 근처 {len(in_jaw)})")
+        print(f"  판정: {verdict}   (집게 {grip}, 빈집게 {GRIP_EMPTY} · 든 뒤 가까운 것 {rec['lifted_near']})")
         results.append(rec)
         with open(LOG, "a") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
         # ── 놓기: 내려서 열고 ──
         if not (args.keep and k == args.trials):
-            tool("tool_jog.py", "--pitch", "-25")
             tool("tool_jog.py", "--dz", "-70", "--piece", "20")
             tool("grip_set.py", "78")
             snap(tag + "-3released")
