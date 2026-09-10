@@ -32,8 +32,10 @@ PY = sys.executable
 # 250화소가 벌어져 있었고, 22걸음을 다 써도 못 좁혔다(11회 0성공). wrist_flex를 75→56으로
 # 내려(카메라를 위로 들어) 솜을 화면 아래로 내리고 pan을 −6→−3으로 맞추자 **10화소**가 됐다.
 # 겨냥이 거의 끝난 자리에서 시작하면 남은 일은 접근축을 따라 나아가는 것뿐이다.
-START = "-3,10,120,56,0"
-TIP_NEAR = (497, 399)
+# ⚠ 9/10 11시: 면봉 하나가 바닥으로 떨어지고 남은 하나는 **왼쪽 지지대**에 섰다.
+#   이 자세에서 솜 머리가 (531,282), 집게 무는 자리는 (492,408) — 머리가 그 바로 위다.
+START = "-20,10,120,58,0"
+TIP_NEAR = (531, 282)
 COLOR = "/dev/shm/d405_color.jpg"
 DEPTH = "/dev/shm/d405_depth.npy"
 META = "/dev/shm/d405_meta.json"
@@ -41,7 +43,9 @@ GRIP_EMPTY = 4.8        # 빈 집게가 닫히는 자리(실측 9/10). 물면 �
 # ⚠ 실측 9/10: 빈 집게 4.8, **면봉 자루(지름 2mm)를 물었을 때 6.2**. 그래서 문턱은 5.5다.
 #   처음엔 7.0으로 뒀다가 **실제로 집어 올린 시도를 실패로 찍었다**(사진으로 확인).
 #   자루가 얇아 여유가 1.4단위뿐이니, 판정은 넓이(lifted_near)로 한 번 더 받친다.
-GRIP_HELD = 5.5
+# 실측 9/10: --grip-shut 0 · 토크 상한 900으로 **빈손**을 닫으면 2.81에 선다.
+# 솜 머리(지름 5mm)를 물면 그보다 훨씬 벌어진 채 서므로 문턱은 4.5로 넉넉히 둔다.
+GRIP_HELD = 4.5   # 빈손 2.81 · 솜 머리를 물면 훨씬 벌어진 채 선다
 OUT = os.path.expanduser("~/swab_trials")
 LOG = os.path.join(OUT, "trials.jsonl")
 
@@ -71,7 +75,7 @@ def snap(tag):
     return dst
 
 
-def near_target(tag=None, max_mm=200.0, min_mm=75.0, max_area=4000, near_uv=(492, 408)):
+def near_target(tag=None, max_mm=200.0, min_mm=95.0, max_area=4000, near_uv=(492, 408)):
     """**집을 수 있는 거리에 있는 덩이 중 집게 자리에 가장 가까운 것** (u, v, z, 넓이).
 
     ⚠ 처음엔 "가장 가까운 것"을 골랐는데, 화분 테두리 한 귀퉁이가 면봉보다 가까우면
@@ -92,7 +96,9 @@ def near_target(tag=None, max_mm=200.0, min_mm=75.0, max_area=4000, near_uv=(492
     bgr = cv2.imread(cp)
     if bgr is not None and bgr.shape[:2] == dep.shape[:2]:
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-        own = ((hsv[:, :, 0] > 115) & (hsv[:, :, 0] < 165) & (hsv[:, :, 1] > 55)).astype(np.uint8)
+        # 보라색 몸통 + 검은 고무 패드 = 자기 손. 9/10: 검은 패드(75mm)를 표적으로 골랐다.
+        own = (((hsv[:, :, 0] > 115) & (hsv[:, :, 0] < 165) & (hsv[:, :, 1] > 55))
+               | (hsv[:, :, 2] < 55)).astype(np.uint8)
         dep = np.where(cv2.dilate(own, np.ones((9, 9), np.uint8)) > 0, 0.0, dep)
     m = ((dep > min_mm) & (dep < max_mm)).astype(np.uint8)
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
@@ -109,9 +115,13 @@ def near_target(tag=None, max_mm=200.0, min_mm=75.0, max_area=4000, near_uv=(492
         return None
     # 집게 자리 근처(220화소)를 먼저 본다. 거기 아무것도 없으면(놓은 면봉이 굴러갔을 때)
     # **가장 가까운 것**으로 물러선다 — 표적이 아예 없다고 말하는 것보다 낫다.
-    near = [c for c in cand if c[0] <= 220.0 ** 2]
+    near = [c for c in cand if c[0] <= 240.0 ** 2]
     if near:
-        best = min(near, key=lambda c: c[0])
+        # ⚠ **면봉의 윗 팁을 잡아야 한다**(사용자 요청). 집게 앞 240화소 안에는 보통
+        #   화분 테두리(아래·넓다)와 솜 머리(위·작다)가 같이 잡히는데, 자루 한가운데나
+        #   테두리를 물면 미끄러진다 — 솜 머리는 지름 5mm에 눌려서 잘 물린다.
+        #   그래서 **화면에서 가장 위에 있는 것**을 고른다. 서 있는 면봉의 머리가 늘 위다.
+        best = min(near, key=lambda c: c[2])
     else:
         best = min(cand, key=lambda c: float(np.percentile(dep[lab == c[4]][dep[lab == c[4]] > 0], 20))
                    if (dep[lab == c[4]] > 0).any() else 9e9)
@@ -121,9 +131,13 @@ def near_target(tag=None, max_mm=200.0, min_mm=75.0, max_area=4000, near_uv=(492
     return u, v, (float(np.percentile(dd, 20)) if dd.size else -1.0), a
 
 
-def grip_now():
-    """집게를 닫으라고 한 번 더 시키고 **선 자리**를 읽는다 — 물면 덜 닫힌다."""
-    rc, out = tool("grip_set.py", "4")
+def grip_now(shut=0.0, torque=900):
+    """집게를 **잡을 때와 같은 힘으로** 다시 닫고 선 자리를 읽는다 — 물면 덜 닫힌다.
+
+    ⚠ 예전엔 여기서 `grip_set.py 4`(약한 기본 토크)를 썼다. 그러면 기준선이 잡을 때와
+      달라져(빈손 4.8 vs 2.8) **닫지도 않은 시도를 성공으로 찍었다**(9/10 10:33).
+      판정과 실제 동작은 같은 조건이어야 한다."""
+    rc, out = tool("grip_set.py", "%.0f" % shut, "--torque", "%d" % torque)
     m = re.search(r"지금\s+([0-9.]+)", out)
     return float(m.group(1)) if m else None
 
@@ -177,8 +191,25 @@ def main() -> int:
                     help="stem_grasp 겨냥 방식 — near(깊이 띠, 기본) / white(색) / mark(조각 정합). "
                          "흰 면봉이 흰 화분 테두리와 겹쳐 색으로는 못 가르기에 깊이를 기본으로 둔다")
     ap.add_argument("--max-dz", type=float, default=70.0, help="stem_grasp에 넘길 깊이 도약 문턱")
-    ap.add_argument("--gain", type=float, default=0.8, help="겨냥 게인 — 기본 0.55는 수렴이 느렸다")
-    ap.add_argument("--steps", type=int, default=30)
+    # ⚠ 큰 걸음은 가는 표적을 추적창 밖으로 던진다(9/10: 한 걸음에 118화소 이동).
+    ap.add_argument("--max-turn", type=float, default=3.0, help="한 걸음에 한 관절 최대 도수")
+    ap.add_argument("--gain", type=float, default=0.6, help="겨냥 게인 — 기본 0.55는 수렴이 느렸다")
+    # ⚠ 문턱을 열매 기본값(28화소)으로 두면 **빈 채로 닫는다.** 79mm에서 14화소는 옆으로
+    #   2.5mm인데 면봉 자루는 지름 2mm다 — 집게 사이로 안 들어온다(9/10 10:22 실측:
+    #   겨냥 14화소·79mm에서 닫았으나 집게 4.9=빈손). 가는 것을 물려면 화소도 가늘게.
+    # ⚠ 문턱 8화소는 **너무 좁아 영영 겨냥만 한다**(9/10: 30걸음 내내 17화소에서 맴돌다
+    #   무는 거리에 못 닿았다). 솜 머리는 지름 5mm라 95mm에서 12화소(≈2.6mm)면 집게 안에
+    #   들어온다 — 자루(2mm)를 물 때와 달리 여유가 있다.
+    ap.add_argument("--tol", type=float, default=12.0, help="이 화소 안이면 겨냥이 됐다")
+    # ⚠ 사용자 관찰(9/10): "잡긴 했는데 접지력이 작아 못 올렸어." 가는 자루(2mm) 대신
+    #   **위쪽 솜 머리**(5mm, 눌린다)를 물고, 더 깊이 닫고, 집게 토크 상한을 그 순간만 올린다.
+    ap.add_argument("--near-top", type=float, default=0.3, help="표적 덩이의 윗부분 이 비율을 겨눈다")
+    ap.add_argument("--grip-shut", type=float, default=0.0, help="닫을 때 집게 값 — 작을수록 세게")
+    ap.add_argument("--grip-torque", type=int, default=900, help="닫는 순간 집게 토크 상한(0=그대로)")
+    ap.add_argument("--steps", type=int, default=45)
+    # ⚠ 한 걸음이 9초쯤이라 45걸음이면 7분을 넘긴다 — 예전 420초 제한이 **다 되기 전에
+    #   잘라 버려** 무는 순간을 못 봤다(9/10 11:01).
+    ap.add_argument("--timeout", type=int, default=700, help="stem_grasp 한 번의 제한(초)")
     ap.add_argument("--max-adv", type=float, default=45.0, help="이보다 더 나아가야 하면 겨냥이 틀린 것")
     args = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
@@ -224,7 +255,11 @@ def main() -> int:
                        "--no-red-check", "--stop-z", str(args.stop_z),
                        "--max-adv", str(args.max_adv), "--thin",
                        "--max-dz", str(args.max_dz), "--gain", str(args.gain),
-                       "--steps", str(args.steps), timeout=420)
+                       "--tol", str(args.tol), "--near-top", str(args.near_top),
+                       "--max-turn", str(args.max_turn),
+                       "--grip-shut", str(args.grip_shut),
+                       "--grip-torque", str(args.grip_torque), "--trust-first-z",
+                       "--steps", str(args.steps), timeout=args.timeout)
         rec["grasp_rc"] = rc
         tail = [l for l in out.splitlines() if l.strip()][-3:]
         rec["grasp_tail"] = tail
@@ -237,11 +272,11 @@ def main() -> int:
         # ⚠ 사진 속 흰 덩이로 판정하던 것을 버렸다(9/10 09:01: 실제로 집어 올렸는데
         #   화분 테두리를 "화분에 남은 면봉"으로 세어 실패로 찍었다). 빈 집게는 4.8에
         #   서고, 면봉 자루를 물면 그보다 벌어진 채 선다 — 그건 카메라가 아니라 물리다.
-        grip = grip_now()
+        grip = grip_now(args.grip_shut, args.grip_torque)
         rec["grip"] = grip
         tool("tool_jog.py", "--dz", "70", "--piece", "20")
         snap(tag + "-2lifted")
-        held = near_target(tag + "-2lifted", max_mm=150.0)
+        held = near_target(tag + "-2lifted", max_mm=150.0, min_mm=60.0)
         rec["lifted_near"] = None if held is None else [round(held[0]), round(held[1]),
                                                        round(held[2]), held[3]]
         area = (rec["lifted_near"] or [0, 0, 0, 0])[3]

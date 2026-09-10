@@ -88,7 +88,7 @@ SETTLE = 0.8
 #   (2026-09-02). 어깨를 올리면 카메라가 올라가 장면이 아래로 내려온다 —
 #   같은 일을 여유가 60 넘게 남은 관절로 한다.
 AIM = ("shoulder_pan", "shoulder_lift", "elbow_flex")
-GRIP_OPEN, GRIP_SHUT = 78.0, 4.0
+GRIP_OPEN, GRIP_SHUT = 78.0, 4.0   # 기본값 — 닫는 값은 --grip-shut 으로 바꾼다
 
 
 def main() -> int:
@@ -106,8 +106,20 @@ def main() -> int:
                      default="top")
     ap.add_argument("--near-band", type=float, default=25.0,
                     help="--aim near의 깊이 띠 반폭(mm) — 표적과 배경이 이보다 가까우면 못 가른다")
+    ap.add_argument("--near-min", type=float, default=95.0,
+                    help="**첫 표적**을 고를 때의 최소 거리(mm) — 집게 자신(75~85mm)을 뺀다")
     ap.add_argument("--near-max", type=float, default=200.0,
                     help="--aim near가 표적으로 볼 최대 거리(mm) — 그 밖은 배경이다")
+    ap.add_argument("--near-top", type=float, default=0.0,
+                    help="--aim near: 표적 덩이의 **윗부분** 이 비율만 보고 겨눈다"
+                         "(면봉은 위쪽 솜 머리가 굵고 눌려서 잘 물린다. 0=덩이 전체 중심)")
+    ap.add_argument("--grip-shut", type=float, default=4.0,
+                    help="닫을 때 보낼 집게 값 — 작을수록 더 세게 문다")
+    ap.add_argument("--trust-first-z", action="store_true",
+                    help="겨냥이 처음 맞은 순간의 깊이를 믿고 **그만큼만 나아간 뒤** 닫는다 "
+                         "— 가는 표적은 나아가는 동안 깊이가 못 믿게 튄다")
+    ap.add_argument("--grip-torque", type=int, default=0,
+                    help="닫기 전에 집게 토크 상한(Max_Torque_Limit)을 이 값으로. 0=그대로")
     ap.add_argument("--near-max-area", type=int, default=8000,
                     help="--aim near가 표적으로 볼 최대 넓이(화소) — 그보다 크면 벽·바닥")
     ap.add_argument("--white-s", type=float, default=80.0, help="흰 표적 채도 상한(--aim white)")
@@ -569,8 +581,10 @@ def main() -> int:
         bgr = cv2.imread(vs.COLOR)
         if bgr is not None and bgr.shape[:2] == dep.shape[:2]:
             hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-            own = ((hsv[:, :, 0] > 115) & (hsv[:, :, 0] < 165)
-                   & (hsv[:, :, 1] > 55)).astype(np.uint8)
+            # 보라색 몸통 + **검은 고무 패드**(집게 끝). 둘 다 자기 손이라 표적이 아니다.
+            # ⚠ 9/10: 보라색만 지웠더니 75mm짜리 검은 패드를 표적으로 골랐다.
+            own = (((hsv[:, :, 0] > 115) & (hsv[:, :, 0] < 165) & (hsv[:, :, 1] > 55))
+                   | (hsv[:, :, 2] < 55)).astype(np.uint8)
             own = cv2.dilate(own, np.ones((9, 9), np.uint8))
             dep = np.where(own > 0, 0.0, dep)
         z0 = markz[0]
@@ -595,20 +609,41 @@ def main() -> int:
         if prev is None:
             # 첫 프레임은 **띠를 열어 둔다** — 씨앗 깊이가 배경을 물면(가는 표적에서 흔하다)
             # 좁은 띠가 통째로 엉뚱한 데 열린다. 고르는 일은 아래의 "집게 앞"이 한다.
-            lo, hi = NEAR_FLOOR, args.near_max
+            lo, hi = args.near_min, args.near_max
         else:
             band = args.near_band
             lo, hi = max(NEAR_FLOOR, z0 - band), z0 + band
         m = ((dep > lo) & (dep < hi)).astype(np.uint8)
         m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
         n, lab, st, cen = cv2.connectedComponentsWithStats(m, 8)
+        def rep_point(i):
+            """이 덩이에서 **실제로 겨눌 점** — near_top이면 윗부분 중심.
+
+            ⚠ 겨눌 점과 거리를 재는 점이 다르면 스스로 반경 밖으로 밀려난다.
+              2026-09-10: 윗부분(솜 머리)을 겨눠 놓고 거리는 덩이 전체 중심으로 재니,
+              길쭉한 면봉에서 그 둘이 100화소 넘게 벌어져 한 걸음 만에 "놓쳤다"가 났다.
+              **고르는 점과 반환하는 점은 같아야 한다.**
+            """
+            u0, v0 = float(cen[i][0]), float(cen[i][1])
+            if args.near_top <= 0:
+                return u0, v0
+            ys, xs = np.nonzero(lab == i)
+            if not ys.size:
+                return u0, v0
+            y0, y1 = ys.min(), ys.max()
+            cut = y0 + max(4.0, (y1 - y0 + 1) * args.near_top)
+            sel = ys <= cut
+            if sel.sum() < 12:
+                return u0, v0
+            return float(xs[sel].mean()), float(ys[sel].mean())
+
         best = None
         for i in range(1, n):
             a = int(st[i, cv2.CC_STAT_AREA])
             # ⚠ 너무 큰 덩이는 표적이 아니라 벽·바닥이다(면봉은 수백 화소).
             if a < 60 or a > args.near_max_area:
                 continue
-            u, v = float(cen[i][0]), float(cen[i][1])
+            u, v = rep_point(i)
             if prev is not None:
                 d = math.hypot(u - prev[0], v - prev[1])
                 if d > R:
@@ -625,6 +660,9 @@ def main() -> int:
                 best = (score, u, v, a, i)
         if best is None:
             return None
+        # ⚠ **가는 자루 한가운데를 물면 미끄러진다**(2026-09-10 사용자: "잡긴 했는데
+        #   접지력이 작아 못 올렸어"). 위쪽 솜 머리는 지름 5mm에 눌리기까지 해서 훨씬
+        #   잘 물린다 — rep_point가 이미 그 자리를 골라 두었다.
         _sc, u, v, a, idx = best
         d = dep[lab == idx]
         d = d[d > 0]
@@ -733,6 +771,25 @@ def main() -> int:
     from tomato_bridge.follower_io import FollowerIO
     io = FollowerIO(hold_torque=True)
     grip = [GRIP_OPEN]
+    grip_torque_was = [None]
+
+    def set_grip_torque(v):
+        """집게 토크 상한을 잠깐 올린다 — 되돌릴 수 있게 옛 값을 기억한다.
+
+        ⚠ lerobot이 집게만 50%(500)로 낮춰 둔다(타는 것을 막으려고). 그 힘으로는
+          면봉을 물고도 들지 못했다(2026-09-10 사용자 관찰). 올리되 **잡는 순간만**
+          올리고 끝나면 돌려놓는다 — 계속 세게 물고 있으면 서보가 탄다.
+        """
+        try:
+            bus = io._follower.bus                          # noqa: SLF001
+            if grip_torque_was[0] is None:
+                grip_torque_was[0] = int(bus.read("Max_Torque_Limit", "gripper",
+                                                  normalize=False))
+            bus.write("Max_Torque_Limit", "gripper", int(v))
+            return True
+        except Exception as exc:                            # noqa: BLE001
+            print("   ⚠ 집게 토크 상한을 못 바꿨다: %s" % str(exc)[:60])
+            return False
 
     def go(d, secs=0.9, tries=3, tol=0.6, cap=5.0):
         """**도착할 때까지 밀어 넣는다** — 중력 처짐을 적분으로 갚는다.
@@ -857,6 +914,7 @@ def main() -> int:
             return None
 
         gone, JI, prev, locked, stall, miss_streak = 0.0, None, (u, v), False, 0, 0
+        plan = [None]            # --trust-first-z: 나아갈 총 거리(mm)
         best_dir = [None, None]      # 실측으로 고른 전진 방향과 그 효과
         print("\n 걸음   겨냥       화소   깊이    나아감   한 일")
         for step in range(args.steps):
@@ -962,17 +1020,38 @@ def main() -> int:
             #   이미 줄기가 손가락 사이에 있는 것이다. 2026-09-02에 첫 걸음의
             #   깊이가 이미 82mm였는데도 "닿을 때까지" 더 밀어서 열매를
             #   떨어뜨렸다 — 두 번.
-            if args.stop_z and locked and z <= args.stop_z:
-                print("줄기가 %.0fmm — 무는 거리(%.0fmm)에 들어왔다. 총 %.0fmm 나아갔다"
-                      % (z, args.stop_z, gone))
+            # ── 계획 전진: 겨냥이 맞은 순간의 거리를 믿는다 ──────────────────
+            # ⚠ **가는 표적은 나아가는 동안 깊이를 못 믿는다.** 2026-09-10 실측:
+            #   면봉 솜 머리를 8화소까지 겨눠 놓고도 깊이가 139→367→119→353mm로
+            #   튀어, "닿았다"도 "놓쳤다"도 그 튐이 만들었다(9화소인데 45걸음을 다
+            #   쓰고 못 물었다). 창을 좁혀도 5mm짜리 표적 뒤에는 늘 벽이 있다.
+            #   그런데 **겨냥이 맞은 순간의 깊이 한 번은 믿을 만하다** — 그때는
+            #   표적이 화면 한가운데 광선 위에 있다. 그러면 남은 일은 기구학이다:
+            #   (그 깊이 − 무는 거리)만큼 접근축을 따라 가면 손가락 사이에 온다.
+            #   사람도 그렇게 한다 — 한 번 보고, 그만큼 손을 뻗는다.
+            if args.trust_first_z and locked and plan[0] is None and 0 < z < args.near_max:
+                plan[0] = max(0.0, z - args.stop_z)
+                print("계획: %.0fmm 나아가면 무는 거리다 (지금 %.0fmm)" % (plan[0], z))
+            reached = (args.trust_first_z and plan[0] is not None
+                       and gone >= plan[0] - 1.0)
+            if reached:
+                print("계획한 %.0fmm를 다 갔다 — 문다 (마지막으로 읽은 깊이 %.0fmm)"
+                      % (plan[0], z))
+            if reached or (not args.trust_first_z and args.stop_z and locked
+                           and z <= args.stop_z):
+                if not reached:
+                    print("줄기가 %.0fmm — 무는 거리(%.0fmm)에 들어왔다. 총 %.0fmm 나아갔다"
+                          % (z, args.stop_z, gone))
                 ok_red, frac = (True, 1.0) if args.no_red_check else red_nearby(tu, tv)
                 if not ok_red:
                     print("⚠ 물기 직전 확인 — 그 자리 둘레가 빨갛지 않다(빨간 비율 %.0f%%,"
                           " 열매가 아닌 것 같다). **안 닫는다.**" % (frac * 100))
                     return 1
                 if not args.no_close:
+                    if args.grip_torque:
+                        set_grip_torque(args.grip_torque)
                     n = to_norm(to_deg(io.read()))
-                    n["gripper"] = GRIP_SHUT
+                    n["gripper"] = args.grip_shut
                     io.write(n, 1.2)
                     time.sleep(1.2)
                     print("🍅 집게를 닫았다.")
@@ -985,7 +1064,9 @@ def main() -> int:
                 print("⚠ %.0fmm까지 갔다 — 더 안 간다" % gone)
                 break
             want = min(args.adv, args.max_adv - gone)
-            if args.stop_z and locked and z > args.stop_z:
+            if args.trust_first_z and plan[0] is not None:
+                want = min(want, max(2.0, plan[0] - gone))
+            elif args.stop_z and locked and z > args.stop_z:
                 # 남은 거리보다 큰 걸음은 **줄기를 밀어낸다**. 딱 그만큼만 간다.
                 want = min(want, max(2.0, z - args.stop_z))
             # ⚠ 전진에서는 **자르면 안 된다.** 병진은 세 관절의 합으로만
@@ -1117,8 +1198,10 @@ def main() -> int:
                           " 열매가 아닌 것 같다). **안 닫는다.**" % (frac * 100))
                     return 1
                 if not args.no_close:
+                    if args.grip_torque:
+                        set_grip_torque(args.grip_torque)
                     n = to_norm(to_deg(io.read()))
-                    n["gripper"] = GRIP_SHUT
+                    n["gripper"] = args.grip_shut
                     io.write(n, 1.2)
                     time.sleep(1.2)
                     print("   집게를 닫았다.")

@@ -27,9 +27,20 @@ def main() -> int:
         print("쓰기: grip_set.py <0~100>")
         return 2
     v = max(0.0, min(100.0, v))
+    # ⚠ 집게 토크 상한을 그 순간만 올릴 수 있게 한다 — lerobot이 50%(500)로 낮춰 두는데
+    #   그 힘으로는 면봉을 물고도 들지 못했다(2026-09-10). `grip_set.py 0 --torque 900`.
+    torque = 0
+    if "--torque" in sys.argv:
+        torque = int(float(sys.argv[sys.argv.index("--torque") + 1]))
     from tomato_bridge.follower_io import FollowerIO
     io = FollowerIO(hold_torque=True)
     try:
+        if torque:
+            io._connect()                                   # noqa: SLF001
+            try:
+                io._follower.bus.write("Max_Torque_Limit", "gripper", torque)  # noqa: SLF001
+            except Exception as exc:                        # noqa: BLE001
+                print("⚠ 토크 상한 실패:", str(exc)[:60])
         n = io.read()
         n["gripper"] = v
         io.write(n, 0.9)

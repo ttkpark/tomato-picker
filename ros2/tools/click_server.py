@@ -283,6 +283,25 @@ def build(job, args):
         if args.get("dry"):
             a += ["--dry"]
         return a
+    if job == "swab":
+        # **면봉 잡기 한 벌** — 시작자세 → 깊이로 표적 찾기 → 잡기 → 들어 확인 → 놓기.
+        # ⚠ 버튼과 터미널이 같은 스크립트를 쓴다(이 저장소 규칙) — 화면에서만 되는
+        #   조작을 남기지 않는다. `swab_trials.py`가 그 한 벌 전부를 갖고 있으므로
+        #   여기서 다시 구현하지 않는다.
+        a = [PY, T("swab_trials.py"),
+             "--trials", "%d" % int(num(args, "trials", 1, 1, 20)),
+             "--aim", str(args.get("aim", "near")),
+             "--stop-z", "%.0f" % num(args, "stop_z", 84, 0, 400),
+             "--max-adv", "%.0f" % num(args, "max_adv", 90, 20, 500),
+             "--max-dz", "%.0f" % num(args, "max_dz", 45, 10, 300),
+             "--gain", "%.2f" % num(args, "gain", 0.8, 0.05, 1.0),
+             "--tol", "%.0f" % num(args, "tol", 8, 3, 60),
+             "--near-top", "%.2f" % num(args, "near_top", 0.3, 0.0, 1.0),
+             "--grip-shut", "%.0f" % num(args, "grip_shut", 0, 0, 60),
+             "--grip-torque", "%d" % int(num(args, "grip_torque", 900, 0, 1000))]
+        if args.get("keep"):
+            a += ["--keep"]        # 잡은 채로 둔다(사람이 눈으로 확인하려고)
+        return a
     raise ValueError("모르는 일: %s" % job)
 
 
@@ -413,6 +432,30 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     </div>
   </div>
 
+  <div class="card"><h2>면봉 잡기</h2>
+    <div class="k">화분 지지대에 꽂은 면봉을 잡는 연습 한 벌 — 시작자세로 가서, <b>깊이로</b>
+      집게 앞의 표적을 찾고(흰 면봉이 흰 화분 테두리와 겹쳐도 갈린다), 잡고, 70mm 들어
+      물었는지 확인하고, 놓는다. 물었는지는 <b>집게가 선 자리</b>로 본다(빈 집게 4.8, 자루를
+      물면 6.2 언저리).</div>
+    <div class="row" style="margin-top:8px">
+      <button class="go" onclick="run('swab',swab({trials:1,keep:1}))">면봉 한 번 잡기 (잡은 채로)</button>
+      <button onclick="run('swab',swab({trials:1}))">한 번 잡고 놓기</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label>반복<input id="w_n" value="3" style="width:60px"></label>
+      <button onclick="run('swab',swab({trials:val('w_n',3)}))">그만큼 반복해서 성공률 재기</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label>무는거리<input id="w_stop" value="84" style="width:70px"></label>
+      <label>믿는거리<input id="w_adv" value="90" style="width:70px"></label>
+      <label>겨냥px<input id="w_tol" value="8" style="width:60px"></label>
+      <button onclick="run('stage',{target:'-20,10,120,58,0'})">시작자세로만</button>
+    </div>
+    <div class="k" style="margin-top:6px">⚠ 놓으면 면봉이 지지대에 다시 안 꽂힌다 — 여러 번
+      돌리면 표적이 사라진다. 그때는 사람이 다시 꽂아야 한다. 도는 동안 위 화면에
+      <b>노란 원(쫓는 표적)</b>과 <b>점선(집게 자리까지)</b>이 겹쳐 그려진다.</div>
+  </div>
+
   <div class="card"><h2 class="h2tgl" onclick="toggleCard(this)">무인 반복 <span class="tgl">▸</span></h2>
     <div class="cbody" id="cb_loop" hidden>
     <div class="row">
@@ -524,6 +567,8 @@ function draw(){
   }
   ov.innerHTML=s;
 }
+function swab(o){ o=o||{};
+  o.stop_z=val('w_stop',84); o.max_adv=val('w_adv',90); o.tol=val('w_tol',8); return o; }
 function tick(){ if(live) im.src='/frame.jpg?t='+Date.now(); }
 function post(p,b){return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify(b||{})}).then(function(r){return r.json();});}
