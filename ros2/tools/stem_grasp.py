@@ -936,6 +936,7 @@ def main() -> int:
                 print("  %3d    (놓쳤다)" % step)
                 break
             u, v, z, a, clipped = s
+            z_track = z          # 표적 **덩이**에서 잰 깊이 — 아래에서 덮이기 전 값
             prev = (u, v)
             err = np.array([tu - u, tv - v])
             en = float(np.linalg.norm(err))
@@ -1033,7 +1034,13 @@ def main() -> int:
             #   표적이 화면 한가운데 광선 위에 있다. 그러면 남은 일은 기구학이다:
             #   (그 깊이 − 무는 거리)만큼 접근축을 따라 가면 손가락 사이에 온다.
             #   사람도 그렇게 한다 — 한 번 보고, 그만큼 손을 뻗는다.
-            if args.aim_only and locked and 0 < z < args.near_max:
+            if args.aim_only and locked and 0 < (z_track if 0 < z_track < args.near_max else z) < args.near_max:
+                # ⚠ **무는 자리에서 잰 깊이를 쓰면 안 된다.** locked가 되면 위에서 z를
+                #   (tu,tv) 둘레 9×9 창으로 다시 재는데, 가는 면봉에서는 그 창의 대부분이
+                #   **턱 사이로 보이는 배경**이라 깊이가 부풀어 오른다(2026-09-11 실측:
+                #   덩이 깊이 102mm인데 무는 자리 창은 126mm). 그 값으로 뻗으면 16mm를
+                #   더 가서 면봉을 밀어내고 빈손으로 닫는다. 표적의 깊이는 **표적에서** 잰다.
+                z = z_track if 0 < z_track < args.near_max else z
                 # ⚠ **겨냥과 전진을 나눈다.** 2026-09-10 22:00: 계획 전진을 넣었더니 이번엔
                 #   나아가는 동안 겨냥이 80화소까지 벌어진 채로 끝까지 가서 허공을 물었다.
                 #   나아가는 동안 화면으로 표적을 계속 좇으려니, 표적이 커지고 손이 가리고

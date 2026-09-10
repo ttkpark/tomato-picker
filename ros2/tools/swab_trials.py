@@ -37,8 +37,8 @@ PY = sys.executable
 #   ⚠ 자세를 바꾸면 이 두 값을 **같이** 다시 재라 — 하나만 고치면 표적을 못 찾는다.
 # ⚠ 9/10 23시: 집게 무는 자리를 다시 재고(407,350) 남은 면봉(오른쪽 지지대)에 맞춘 자세.
 #   여기서 솜 머리가 (392,298) — 무는 자리 바로 위 54화소다.
-START = "45,10,120,62,0"
-TIP_NEAR = (392, 320)
+START = "-25,10,120,64,0"
+TIP_NEAR = (424, 333)
 COLOR = "/dev/shm/d405_color.jpg"
 DEPTH = "/dev/shm/d405_depth.npy"
 META = "/dev/shm/d405_meta.json"
@@ -238,6 +238,8 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=45)
     # ⚠ 한 걸음이 9초쯤이라 45걸음이면 7분을 넘긴다 — 예전 420초 제한이 **다 되기 전에
     #   잘라 버려** 무는 순간을 못 봤다(9/10 11:01).
+    ap.add_argument("--probe-tries", type=int, default=5, help="물어보기 되풀이 횟수")
+    ap.add_argument("--probe-step", type=float, default=8.0, help="한 번 더듬을 때 더 갈 mm")
     ap.add_argument("--timeout", type=int, default=700, help="stem_grasp 한 번의 제한(초)")
     ap.add_argument("--max-adv", type=float, default=45.0, help="이보다 더 나아가야 하면 겨냥이 틀린 것")
     args = ap.parse_args()
@@ -308,17 +310,38 @@ def main() -> int:
                 rec["aim_err_px"] = round(float(tip.get("err_px", -1)), 1)
             except Exception:                              # noqa: BLE001
                 z_aim = -1.0
-            reach = max(0.0, min(args.max_adv, z_aim - args.stop_z)) if z_aim > 0 else 0.0
+            # ⚠ **겨냥하는 동안 깊이가 부푼다.** 2026-09-11 실측: 시작 프레임에서 솜 머리를
+            #   105mm로 깨끗이 쟀는데, 겨냥이 끝난 순간엔 같은 표적이 125mm로 읽혔다(가는
+            #   자루라 창에 배경이 섞인다). 그 값으로 뻗으면 20mm를 더 가 면봉을 밀어내고
+            #   빈손으로 닫는다 — 실제로 두 번 그랬다. 성공한 시도(23:13)는 111mm/32mm였다.
+            #   그래서 **둘 중 가까운 쪽**을 믿는다: 멀리 잡아 밀어내느니 짧게 가서 다시 본다.
+            z_use = min(z_aim, z_before) if (z_aim > 0 and z_before > 0) else max(z_aim, z_before)
+            rec["z_used"] = round(z_use)
+            reach = max(0.0, min(args.max_adv, z_use - args.stop_z)) if z_use > 0 else 0.0
             rec["reach_mm"] = round(reach)
-            print("  뻗기: %.0fmm (겨냥 깊이 %.0fmm − 무는 거리 %.0fmm)"
-                  % (reach, z_aim, args.stop_z))
-            if reach > 3.0:
-                rc2, out2 = tool("tool_jog.py", "--along", "%.0f" % reach,
-                                 "--piece", "12", timeout=240)
-                rec["jog_rc"] = rc2
-                last = [l for l in out2.splitlines() if l.strip()][-1:]
-                print("  뻗기 rc=%d  %s" % (rc2, " ".join(last)))
-            tool("grip_set.py", "%.0f" % args.grip_shut, "--torque", "%d" % args.grip_torque)
+            # ⚠ **깊이 하나로 거리를 맞히려다 계속 헛집었다.** 가는 면봉은 겨냥이 끝난
+            #   순간에도 깊이가 103~129mm로 흔들려(창에 배경이 섞인다) 뻗는 거리가
+            #   24~47mm까지 벌어졌다. 성공한 한 번(23:13)은 32mm였다 — 즉 **정답은 좁은
+            #   구간에 있는데 추정이 그보다 넓게 흔들린다.**
+            #   그래서 맞히려 하지 않고 **더듬는다**: 조금 못 미치게 간 뒤 물어 보고,
+            #   빈손이면 열고 8mm 더 가서 다시 물어 본다. 집게가 물었는지는 즉시 알 수
+            #   있으니(빈손 2.8 · 물면 3.7+) 이 되풀이는 싸다. 사람이 하는 것도 이것이다.
+            first = max(4.0, reach * 0.6)
+            print("  더듬기 시작: 먼저 %.0fmm (추정 %.0fmm의 60%%)" % (first, reach))
+            if first > 3.0:
+                tool("tool_jog.py", "--along", "%.0f" % first, "--piece", "12", timeout=240)
+            grip = None
+            for k in range(args.probe_tries):
+                grip = grip_now(args.grip_shut, args.grip_torque)
+                print("    물어보기 %d: 집게 %s" % (k + 1, grip))
+                if grip is not None and grip >= GRIP_HELD:
+                    print("    → 물었다")
+                    break
+                tool("grip_set.py", "78")
+                if k + 1 < args.probe_tries:
+                    tool("tool_jog.py", "--along", "%.0f" % args.probe_step,
+                         "--piece", "%.0f" % args.probe_step, timeout=180)
+            rec["probe_grip"] = grip
         snap(tag + "-1closed")
         with open(os.path.join(OUT, tag + "-grasp.log"), "w") as f:
             f.write(out)
@@ -327,7 +350,8 @@ def main() -> int:
         # ⚠ 사진 속 흰 덩이로 판정하던 것을 버렸다(9/10 09:01: 실제로 집어 올렸는데
         #   화분 테두리를 "화분에 남은 면봉"으로 세어 실패로 찍었다). 빈 집게는 4.8에
         #   서고, 면봉 자루를 물면 그보다 벌어진 채 선다 — 그건 카메라가 아니라 물리다.
-        grip = grip_now(args.grip_shut, args.grip_torque)
+        if rc != 0:
+            grip = grip_now(args.grip_shut, args.grip_torque)
         rec["grip"] = grip
         tool("tool_jog.py", "--dz", "70", "--piece", "20")
         snap(tag + "-2lifted")
