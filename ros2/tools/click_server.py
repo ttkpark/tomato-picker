@@ -291,16 +291,22 @@ def build(job, args):
         a = [PY, T("swab_trials.py"),
              "--trials", "%d" % int(num(args, "trials", 1, 1, 20)),
              "--aim", str(args.get("aim", "near")),
-             "--stop-z", "%.0f" % num(args, "stop_z", 84, 0, 400),
-             "--max-adv", "%.0f" % num(args, "max_adv", 90, 20, 500),
+             # ⚠ 기본값은 **실제로 물어 올린 설정**이다(2026-09-10 23:05 · 09-11 15:21).
+             #   예전 기본(무는거리 84·믿는거리 90·게인 0.8·문턱 8화소)은 검증 전 값이라
+             #   버튼과 터미널이 서로 다른 조건으로 돌았다 — 같은 경로를 쓰기로 한 이상
+             #   **같은 숫자**를 써야 한다.
+             "--stop-z", "%.0f" % num(args, "stop_z", 79, 0, 400),
+             "--max-adv", "%.0f" % num(args, "max_adv", 130, 20, 500),
              "--max-dz", "%.0f" % num(args, "max_dz", 45, 10, 300),
-             "--gain", "%.2f" % num(args, "gain", 0.8, 0.05, 1.0),
-             "--tol", "%.0f" % num(args, "tol", 8, 3, 60),
+             "--gain", "%.2f" % num(args, "gain", 0.6, 0.05, 1.0),
+             "--tol", "%.0f" % num(args, "tol", 12, 3, 60),
              "--near-top", "%.2f" % num(args, "near_top", 0.3, 0.0, 1.0),
              "--grip-shut", "%.0f" % num(args, "grip_shut", 0, 0, 60),
              "--grip-torque", "%d" % int(num(args, "grip_torque", 900, 0, 1000))]
         if args.get("keep"):
             a += ["--keep"]        # 잡은 채로 둔다(사람이 눈으로 확인하려고)
+        if args.get("no_find"):
+            a += ["--no-find"]     # 자세 찾기를 끄고 스크립트의 START 고정값을 쓴다
         return a
     raise ValueError("모르는 일: %s" % job)
 
@@ -433,27 +439,27 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
   </div>
 
   <div class="card"><h2>면봉 잡기</h2>
-    <div class="k">화분 지지대에 꽂은 면봉을 잡는 연습 한 벌 — 시작자세로 가서, <b>깊이로</b>
-      집게 앞의 표적을 찾고(흰 면봉이 흰 화분 테두리와 겹쳐도 갈린다), 잡고, 70mm 들어
-      물었는지 확인하고, 놓는다. 물었는지는 <b>집게가 선 자리</b>로 본다(빈 집게 4.8, 자루를
-      물면 6.2 언저리).</div>
+    <div class="k">면봉을 지지대에 <b>세워 두기만</b> 하면 된다. 버튼을 누르면 팔이
+      <b>스스로 자세를 찾고</b>(pan을 훑어 표적이 집게 앞에 오는 자리를 고른다, 약 2분)
+      깊이로 표적을 오려내 겨냥한 뒤, <b>조금 가서 물어보고 아니면 8mm 더</b> 가며 문다.
+      물었는지는 집게가 선 자리로 본다(빈손 2.8 · 솜 머리를 물면 3.7~3.9).</div>
     <div class="row" style="margin-top:8px">
-      <button class="go" onclick="run('swab',swab({trials:1,keep:1}))">면봉 한 번 잡기 (잡은 채로)</button>
-      <button onclick="run('swab',swab({trials:1}))">한 번 잡고 놓기</button>
+      <button class="go" onclick="run('swab',swab({trials:1,keep:1}))">면봉 잡기 (잡은 채로 둔다)</button>
+      <button onclick="run('swab',swab({trials:1}))">잡고 놓기</button>
     </div>
     <div class="row" style="margin-top:6px">
       <label>반복<input id="w_n" value="3" style="width:60px"></label>
-      <button onclick="run('swab',swab({trials:val('w_n',3)}))">그만큼 반복해서 성공률 재기</button>
+      <button onclick="run('swab',swab({trials:val('w_n',3)}))">그만큼 반복</button>
+      <label><input type="checkbox" id="w_nofind"> 자세 찾기 끔</label>
     </div>
     <div class="row" style="margin-top:6px">
-      <label>무는거리<input id="w_stop" value="84" style="width:70px"></label>
-      <label>믿는거리<input id="w_adv" value="90" style="width:70px"></label>
-      <label>겨냥px<input id="w_tol" value="8" style="width:60px"></label>
-      <button onclick="run('stage',{target:'-20,10,120,58,0'})">시작자세로만</button>
+      <label>무는거리<input id="w_stop" value="79" style="width:70px"></label>
+      <label>믿는거리<input id="w_adv" value="130" style="width:70px"></label>
+      <label>겨냥px<input id="w_tol" value="12" style="width:60px"></label>
     </div>
-    <div class="k" style="margin-top:6px">⚠ 놓으면 면봉이 지지대에 다시 안 꽂힌다 — 여러 번
-      돌리면 표적이 사라진다. 그때는 사람이 다시 꽂아야 한다. 도는 동안 위 화면에
-      <b>노란 원(쫓는 표적)</b>과 <b>점선(집게 자리까지)</b>이 겹쳐 그려진다.</div>
+    <div class="k" style="margin-top:6px">⚠ 놓으면 면봉이 지지대에 <b>다시 안 꽂힌다</b> —
+      반복하려면 그때마다 사람이 세워야 한다. 도는 동안 위 화면에 <b>노란 원(쫓는 표적)</b>과
+      <b>점선(집게 자리까지)</b>이 겹쳐 그려진다.</div>
   </div>
 
   <div class="card"><h2 class="h2tgl" onclick="toggleCard(this)">무인 반복 <span class="tgl">▸</span></h2>
@@ -568,7 +574,9 @@ function draw(){
   ov.innerHTML=s;
 }
 function swab(o){ o=o||{};
-  o.stop_z=val('w_stop',84); o.max_adv=val('w_adv',90); o.tol=val('w_tol',8); return o; }
+  o.stop_z=val('w_stop',79); o.max_adv=val('w_adv',130); o.tol=val('w_tol',12);
+  if(document.getElementById('w_nofind').checked) o.no_find=1;
+  return o; }
 function tick(){ if(live) im.src='/frame.jpg?t='+Date.now(); }
 function post(p,b){return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify(b||{})}).then(function(r){return r.json();});}
