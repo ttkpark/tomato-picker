@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -211,9 +212,50 @@ def pick_tip(blobs, near=TIP_NEAR, max_px=220.0):
     return b
 
 
+def look(target):
+    """그 자세로 가서 지금 보이는 표적을 돌려준다 — (u, v, z, 넓이) 또는 None."""
+    rc, _ = tool("arm_stage.py", "--target=" + target, timeout=120)
+    if rc != 0:
+        return None
+    time.sleep(1.3)
+    return near_target()
+
+
+def find_pose(cands, verbose=True):
+    """**면봉이 어디 서 있든 자세를 스스로 찾는다.**
+
+    ⚠ 지금까지는 START를 손으로 재서 박아 뒀다. 그런데 면봉은 한 번 집을 때마다
+      자리가 바뀌고(놓기가 되꽂지 못한다) 사람이 다시 세우면 또 달라진다 — 그때마다
+      사람이 `--dry`로 자세를 재는 것이 가장 큰 마찰이었다(9/10 하루 종일).
+      그래서 후보 자세들을 훑어보고 **표적이 집게 무는 자리에 가장 가까운** 자세를
+      고른다. 겨냥이 거의 끝난 자리에서 시작해야 남은 일이 "나아가기"뿐이 된다.
+    ⚠ 깊이가 95~200mm인 표적만 센다 — 그 밖은 배경이거나 자기 손이다.
+    """
+    bu, bv = bite_uv()
+    best = None
+    for t in cands:
+        r = look(t)
+        if r is None:
+            if verbose:
+                print("    %-22s 표적 없음" % t)
+            continue
+        u, v, z, a = r
+        d = math.hypot(u - bu, v - bv)
+        if verbose:
+            print("    %-22s (%3.0f,%3.0f) %3.0fmm 넓이%-5d 겨냥거리 %3.0f" % (t, u, v, z, a, d))
+        if best is None or d < best[0]:
+            best = (d, t, u, v, z, a)
+    return best
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--trials", type=int, default=3)
+    ap.add_argument("--find", action="store_true", default=True,
+                    help="시작자세를 스스로 찾는다(기본). --no-find 로 START 고정")
+    ap.add_argument("--no-find", dest="find", action="store_false")
+    ap.add_argument("--pans", default="-45,-30,-15,0,15,30,45", help="훑어볼 pan(도)")
+    ap.add_argument("--wfs", default="56,62,68", help="고른 pan에서 훑어볼 wrist_flex(도)")
     ap.add_argument("--keep", action="store_true", help="마지막 시도 뒤 놓지 않는다")
     ap.add_argument("--stop-z", type=float, default=84.0)
     ap.add_argument("--aim", default="near",
@@ -257,9 +299,29 @@ def main() -> int:
         rec = {"tag": tag, "trial": k}
         print(f"\n═══ 시도 {k}/{args.trials}  {tag}")
 
-        rc, out = tool("grip_set.py", "78")
-        rc, out = tool("arm_stage.py", "--target=" + START, timeout=90)
+        tool("grip_set.py", "78")
+        start = START
+        if args.find:
+            print("  자세 찾는 중 (면봉이 어디 서 있든)")
+            cands = ["%s,10,120,62,0" % p.strip() for p in args.pans.split(",") if p.strip()]
+            b = find_pose(cands)
+            if b is not None:
+                pan = b[1].split(",")[0]
+                cands2 = ["%s,10,120,%s,0" % (pan, w.strip())
+                          for w in args.wfs.split(",") if w.strip() and w.strip() != "62"]
+                b2 = find_pose(cands2)
+                if b2 is not None and b2[0] < b[0]:
+                    b = b2
+                start = b[1]
+                print("  → 고른 자세 %s (겨냥거리 %.0f화소, 깊이 %.0fmm)" % (start, b[0], b[4]))
+            else:
+                print("  ❌ 어느 자세에서도 표적을 못 찾았다 — 면봉이 보이는 데 있나?")
+                rec["why"] = "no_pose"
+                results.append(rec)
+                continue
+        rc, out = tool("arm_stage.py", "--target=" + start, timeout=120)
         rec["stage_rc"] = rc
+        rec["start"] = start
         if rc != 0:
             print("  ❌ 시작자세로 못 갔다:", out.strip().splitlines()[-1:])
             rec["why"] = "stage"
