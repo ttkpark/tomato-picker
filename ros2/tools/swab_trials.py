@@ -41,6 +41,9 @@ PY = sys.executable
 START = "-25,10,120,64,0"
 TIP_NEAR = (424, 333)
 COLOR = "/dev/shm/d405_color.jpg"
+ASTRA_DEPTH = "/dev/shm/astra_depth.npy"
+ASTRA_META = "/dev/shm/astra_meta.json"
+ASTRA_COLOR = "/dev/shm/astra_color.jpg"      # Astra는 컬러가 없을 수 있다(has_color)
 DEPTH = "/dev/shm/d405_depth.npy"
 META = "/dev/shm/d405_meta.json"
 GRIP_EMPTY = 4.8        # 빈 집게가 닫히는 자리(실측 9/10). 물면 이보다 벌어진 채 선다.
@@ -71,6 +74,7 @@ def bite_uv(default=(407, 350)):
 GRIP_HELD = 3.3
 OUT = os.path.expanduser("~/swab_trials")
 LOG = os.path.join(OUT, "trials.jsonl")
+REPORTS = os.path.join(OUT, "reports")
 
 
 def run(argv, timeout):
@@ -96,6 +100,77 @@ def snap(tag):
     except Exception:                                      # noqa: BLE001
         pass
     return dst
+
+
+def astra_snap(tag):
+    """**전경(Astra Pro)** 한 장 — 컬러가 있으면 컬러, 없으면 깊이를 색으로 칠해 남긴다.
+
+    ⚠ 사용자가 "성공했는지 내가 보고 판단하게 전경도 남겨 달라"고 했다(2026-09-12).
+      손목 카메라는 집게 코앞만 보여서 **정말 들렸는지**는 사람이 판단하기 어렵다.
+      Astra는 로봇에 달린 유일한 넓은 시야다(하한 600mm라 팔 전체와 화분이 다 들어온다).
+    ⚠ Astra 컬러는 깊이와 정렬되어 있지 않고 아예 없을 때도 있다 — 그래서 **판단용
+      사진**으로만 쓰고 좌표 계산에는 절대 쓰지 않는다(CLAUDE.md의 경고와 같다).
+    """
+    import cv2
+    import numpy as np
+    out = os.path.join(OUT, tag + "-astra.jpg")
+    if os.path.exists(ASTRA_COLOR):
+        try:
+            shutil.copy(ASTRA_COLOR, out)
+            return out
+        except Exception:                                  # noqa: BLE001
+            pass
+    try:
+        meta = json.load(open(ASTRA_META))
+        d = np.load(ASTRA_DEPTH).astype(float) * meta["depth_scale_mm"]
+    except Exception:                                      # noqa: BLE001
+        return None
+    v = d[d > 0]
+    if v.size < 100:
+        return None
+    lo, hi = np.percentile(v, 2), np.percentile(v, 98)
+    img = np.clip((d - lo) / max(1.0, hi - lo), 0, 1)
+    img[d <= 0] = 0
+    cv2.imwrite(out, cv2.applyColorMap((img * 255).astype(np.uint8), cv2.COLORMAP_TURBO))
+    return out
+
+
+def make_report(rec, tag):
+    """시도 하나를 **사람이 보고 판단할 수 있는 한 장**으로 — 손목 3장 + 전경 1장.
+
+    ⚠ 숫자만 남기면 "집게가 3.4에 섰다"가 무슨 뜻인지 사람이 못 본다. 실제로 오늘까지
+      **판정이 세 번 바뀌었고 그때마다 과거 성공/실패가 뒤집혔다.** 사진을 같이 남기면
+      나중에 기준이 또 바뀌어도 사람이 다시 판단할 수 있다.
+    """
+    import cv2
+    tiles = []
+    for suffix, label in (("-0start", "1 시작"), ("-1closed", "2 닫은 뒤"),
+                          ("-2lifted", "3 들어 올림"), ("-astra", "4 전경(Astra)")):
+        f = os.path.join(OUT, tag + suffix + ".jpg")
+        im = cv2.imread(f) if os.path.exists(f) else None
+        if im is None:
+            import numpy as np
+            im = np.zeros((480, 848, 3), np.uint8)
+            label += " (없음)"
+        im = cv2.resize(im, (560, 360))
+        cv2.rectangle(im, (0, 0), (560, 30), (0, 0, 0), -1)
+        cv2.putText(im, label, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        tiles.append(im)
+    grid = cv2.vconcat([cv2.hconcat(tiles[:2]), cv2.hconcat(tiles[2:])])
+    head = "%s  %s   집게 %s (빈손 %.1f)  겨냥 %s화소  뻗기 %smm" % (
+        tag, rec.get("verdict", "?"), rec.get("grip"), GRIP_EMPTY,
+        rec.get("aim_err_px", "-"), rec.get("reach_mm", "-"))
+    cv2.rectangle(grid, (0, 0), (grid.shape[1], 34), (30, 30, 30), -1)
+    cv2.putText(grid, head, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+    path = os.path.join(REPORTS, tag + ".jpg")
+    cv2.imwrite(path, grid)
+    with open(os.path.join(REPORTS, "index.md"), "a", encoding="utf-8") as fh:
+        fh.write("- **%s** %s / grip %s / aim %s px / reach %s mm / start `%s`"
+                 " -> ![%s](%s.jpg)\n"
+                 % (tag, rec.get("verdict", "?"), rec.get("grip"),
+                    rec.get("aim_err_px", "-"), rec.get("reach_mm", "-"),
+                    rec.get("start", "-"), tag, tag))
+    return path
 
 
 def near_target(tag=None, max_mm=200.0, min_mm=95.0, max_area=4000, near_uv=None):
@@ -286,6 +361,7 @@ def main() -> int:
     ap.add_argument("--max-adv", type=float, default=45.0, help="이보다 더 나아가야 하면 겨냥이 틀린 것")
     args = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
+    os.makedirs(REPORTS, exist_ok=True)
 
     r = subprocess.run(["systemctl", "is-active", "tomato-voice"], capture_output=True, text=True)
     if r.stdout.strip() == "active":
@@ -417,6 +493,7 @@ def main() -> int:
         rec["grip"] = grip
         tool("tool_jog.py", "--dz", "70", "--piece", "20")
         snap(tag + "-2lifted")
+        astra_snap(tag)                    # 전경 — 사람이 보고 판단하라고
         held = near_target(tag + "-2lifted", max_mm=150.0, min_mm=60.0)
         rec["lifted_near"] = None if held is None else [round(held[0]), round(held[1]),
                                                        round(held[2]), held[3]]
