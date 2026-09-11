@@ -144,22 +144,23 @@ def make_report(rec, tag):
     """
     import cv2
     tiles = []
-    for suffix, label in (("-0start", "1 시작"), ("-1closed", "2 닫은 뒤"),
-                          ("-2lifted", "3 들어 올림"), ("-astra", "4 전경(Astra)")):
+    # ⚠ OpenCV putText는 **한글을 못 그린다**(전부 ?로 나온다, 9/12 실측). 라벨은 ASCII로.
+    for suffix, label in (("-0start", "1 START"), ("-1closed", "2 CLOSED"),
+                          ("-2lifted", "3 LIFTED"), ("-astra", "4 FRONT (Astra)")):
         f = os.path.join(OUT, tag + suffix + ".jpg")
         im = cv2.imread(f) if os.path.exists(f) else None
         if im is None:
             import numpy as np
             im = np.zeros((480, 848, 3), np.uint8)
-            label += " (없음)"
+            label += " (none)"
         im = cv2.resize(im, (560, 360))
         cv2.rectangle(im, (0, 0), (560, 30), (0, 0, 0), -1)
         cv2.putText(im, label, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         tiles.append(im)
     grid = cv2.vconcat([cv2.hconcat(tiles[:2]), cv2.hconcat(tiles[2:])])
-    head = "%s  %s   집게 %s (빈손 %.1f)  겨냥 %s화소  뻗기 %smm" % (
+    head = "%s  %s   grip %s (empty %.1f)  aim %spx  reach %smm  pose_err %spx" % (
         tag, rec.get("verdict", "?"), rec.get("grip"), GRIP_EMPTY,
-        rec.get("aim_err_px", "-"), rec.get("reach_mm", "-"))
+        rec.get("aim_err_px", "-"), rec.get("reach_mm", "-"), rec.get("pose_err_px", "-"))
     cv2.rectangle(grid, (0, 0), (grid.shape[1], 34), (30, 30, 30), -1)
     cv2.putText(grid, head, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
     path = os.path.join(REPORTS, tag + ".jpg")
@@ -330,6 +331,10 @@ def main() -> int:
                     help="시작자세를 스스로 찾는다(기본). --no-find 로 START 고정")
     ap.add_argument("--no-find", dest="find", action="store_false")
     ap.add_argument("--pans", default="-45,-30,-15,0,15,30,45", help="훑어볼 pan(도)")
+    ap.add_argument("--pose-max-px", type=float, default=110.0,
+                    help="고른 자세의 겨냥거리가 이보다 멀면 표적이 아니라고 본다")
+    ap.add_argument("--pose-max-mm", type=float, default=150.0,
+                    help="고른 자세의 표적 깊이가 이보다 멀면 배경이라고 본다")
     ap.add_argument("--wfs", default="56,62,68", help="고른 pan에서 훑어볼 wrist_flex(도)")
     ap.add_argument("--keep", action="store_true", help="마지막 시도 뒤 놓지 않는다")
     ap.add_argument("--stop-z", type=float, default=84.0)
@@ -389,7 +394,19 @@ def main() -> int:
                 if b2 is not None and b2[0] < b[0]:
                     b = b2
                 start = b[1]
+                rec["pose_err_px"] = round(b[0])
+                rec["pose_z"] = round(b[4])
                 print("  → 고른 자세 %s (겨냥거리 %.0f화소, 깊이 %.0fmm)" % (start, b[0], b[4]))
+                # ⚠ **못 찾았으면 시도하지 말아야 한다.** 2026-09-12 07:42: 가장 좋은 자세가
+                #   163화소·166mm였는데 그대로 밀고 들어가 **화분을 물고 "성공"(집게 8.4)으로
+                #   찍혔다** — 사진을 보고서에 넣지 않았으면 그대로 성공으로 셌을 것이다.
+                #   잘 고른 자세는 늘 20~60화소·100~130mm였다. 그 밖이면 표적이 아니다.
+                if b[0] > args.pose_max_px or not (90.0 <= b[4] <= args.pose_max_mm):
+                    print("  ❌ 쓸 만한 자세가 없다(겨냥거리 %.0f화소, 깊이 %.0fmm) — "
+                          "면봉이 서 있는지 보고 다시 부르라." % (b[0], b[4]))
+                    rec["why"] = "pose_bad"
+                    results.append(rec)
+                    continue
             else:
                 print("  ❌ 어느 자세에서도 표적을 못 찾았다 — 면봉이 보이는 데 있나?")
                 rec["why"] = "no_pose"
@@ -512,6 +529,10 @@ def main() -> int:
         results.append(rec)
         with open(LOG, "a") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        try:
+            print("  보고서: %s" % make_report(rec, tag))
+        except Exception as exc:                           # noqa: BLE001
+            print("  ⚠ 보고서를 못 만들었다: %s" % str(exc)[:120])
 
         # ── 놓기: 내려서 열고 ──
         if not (args.keep and k == args.trials):
