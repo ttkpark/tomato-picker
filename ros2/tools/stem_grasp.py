@@ -106,6 +106,8 @@ def main() -> int:
                      default="top")
     ap.add_argument("--near-band", type=float, default=25.0,
                     help="--aim near의 깊이 띠 반폭(mm) — 표적과 배경이 이보다 가까우면 못 가른다")
+    ap.add_argument("--aim-band", type=float, default=40.0,
+                    help="겨냥 중 표적 거리가 처음 값에서 이보다 벗어나면 다른 것으로 본다(mm)")
     ap.add_argument("--near-min", type=float, default=95.0,
                     help="**첫 표적**을 고를 때의 최소 거리(mm) — 집게 자신(75~85mm)을 뺀다")
     ap.add_argument("--near-max", type=float, default=200.0,
@@ -418,6 +420,7 @@ def main() -> int:
         return float(np.median(vals)) if vals else None
 
     markz = [0.0]
+    zfirst = [None]          # 겨냥을 시작할 때 잰 표적 거리 — 여기서 크게 벗어나면 놓친 것
     tpl = [None]                 # (회색조 조각, 반크기)
     MAX_DZ = args.max_dz         # 걸음 사이 허용 깊이 변화(mm)
 
@@ -670,6 +673,17 @@ def main() -> int:
         d = dep[lab == idx]
         d = d[d > 0]
         z = float(np.percentile(d, 20)) if d.size else z0
+        # ⚠ **겨냥하는 동안 표적의 거리는 거의 안 변한다** — 팔이 도는 것뿐이다.
+        #   그런데 2026-09-12 10:51: 111mm에서 시작한 표적이 걸음마다 조금씩 멀어져
+        #   172mm(배경)까지 흘러갔고, 한 걸음의 변화는 매번 --max-dz(45mm)보다 작아서
+        #   아무 가드에도 안 걸렸다. **누적**을 봐야 한다 — 처음 잰 거리에서 이만큼
+        #   벗어나면 그건 다른 것이다.
+        if zfirst[0] is None:
+            zfirst[0] = z
+        elif z > 0 and abs(z - zfirst[0]) > args.aim_band:
+            print("   ⚠ 표적 거리가 처음 %.0fmm에서 %.0fmm로 흘렀다 — 다른 것을 쫓고 있다"
+                  % (zfirst[0], z))
+            return None
         markz[0] = z
         return u, v, z, a, False
 
