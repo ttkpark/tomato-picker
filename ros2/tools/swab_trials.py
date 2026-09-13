@@ -331,18 +331,33 @@ def look(target):
     return near_target()
 
 
-def find_pose(cands, verbose=True):
-    """**면봉이 어디 서 있든 자세를 스스로 찾는다.**
+GOOD_Z = (100.0, 136.0)      # 잘 잡힌 시도들의 표적 깊이(9/11~9/14 실측 대부분 이 안)
 
-    ⚠ 지금까지는 START를 손으로 재서 박아 뒀다. 그런데 면봉은 한 번 집을 때마다
-      자리가 바뀌고(놓기가 되꽂지 못한다) 사람이 다시 세우면 또 달라진다 — 그때마다
-      사람이 `--dry`로 자세를 재는 것이 가장 큰 마찰이었다(9/10 하루 종일).
-      그래서 후보 자세들을 훑어보고 **표적이 집게 무는 자리에 가장 가까운** 자세를
-      고른다. 겨냥이 거의 끝난 자리에서 시작해야 남은 일이 "나아가기"뿐이 된다.
-    ⚠ 깊이가 95~200mm인 표적만 센다 — 그 밖은 배경이거나 자기 손이다.
+
+def pose_score(u, v, z, a, bu, bv):
+    """자세 후보의 점수(작을수록 좋다) — **깊이·넓이 기반이라 조명에 흔들리지 않는다.**
+
+    ⚠ 예전엔 겨냥거리 하나로만 골랐다. 그러면 가까이 있는 **화분 테두리나 배경**이
+      면봉보다 집게 자리에 가까우면 그쪽을 골랐다. 겨냥거리에 더해
+      · 깊이가 잘 잡히는 띠(100~136mm) 밖이면 mm당 3점,
+      · 넓이가 면봉답지 않으면(120 미만 · 3000 초과) 벌점
+      을 더한다. 색은 쓰지 않는다 — 환경(조명·배경색)이 바뀌어도 같은 답이 나오게.
     """
+    d = math.hypot(u - bu, v - bv)
+    lo, hi = GOOD_Z
+    dz = (lo - z) if z < lo else ((z - hi) if z > hi else 0.0)
+    pen = 3.0 * dz
+    if a < 120:
+        pen += 150.0
+    elif a > 3000:
+        pen += 100.0
+    return d + pen, d
+
+
+def find_pose(cands, verbose=True):
+    """후보 자세들을 **모두** 보고 점수를 매겨 돌려준다 — [(점수, 겨냥거리, 자세, u, v, z, 넓이)]."""
     bu, bv = bite_uv()
-    best = None
+    out = []
     for t in cands:
         r = look(t)
         if r is None:
@@ -350,12 +365,43 @@ def find_pose(cands, verbose=True):
                 print("    %-22s 표적 없음" % t)
             continue
         u, v, z, a = r
-        d = math.hypot(u - bu, v - bv)
+        sc, d = pose_score(u, v, z, a, bu, bv)
         if verbose:
-            print("    %-22s (%3.0f,%3.0f) %3.0fmm 넓이%-5d 겨냥거리 %3.0f" % (t, u, v, z, a, d))
-        if best is None or d < best[0]:
-            best = (d, t, u, v, z, a)
-    return best
+            print("    %-22s (%3.0f,%3.0f) %3.0fmm 넓이%-5d 겨냥거리 %3.0f 점수 %4.0f"
+                  % (t, u, v, z, a, d, sc))
+        out.append((sc, d, t, u, v, z, a))
+    return out
+
+
+def search_pose(args, offset=0.0):
+    """**국소해에 빠지지 않는 자세 탐색.**
+
+    ⚠ 예전(9/11~9/14)엔 팬을 훑고 **가장 좋은 팬 하나에서만** 손목을 다시 훑었다. 욕심쟁이
+      선택이라, 다른 팬에서 손목을 바꾸면 더 좋은 자세가 있어도 영영 못 봤다(9/14 07:15
+      로그: −30°만 파고들어 55화소에 멈췄다). 지금은 거친 훑기에서 **상위 K개 팬**을 모두
+      손목까지 훑고, 전체에서 가장 좋은 것을 고른다.
+    `offset`은 팬 격자를 반 칸 비켜 다시 훑을 때 쓴다 — 격자 사이에 표적이 걸려 두 이웃
+    팬 모두에서 애매하게 보이는 경우를 벗어나기 위해서다(재시도에서 쓴다).
+    """
+    pans = [float(p) + offset for p in args.pans.split(",") if p.strip()]
+    pans = [max(-60.0, min(60.0, p)) for p in pans]
+    coarse = find_pose(["%.1f,10,120,62,0" % p for p in pans])
+    if not coarse:
+        return None
+    coarse.sort()
+    top = []
+    for c in coarse:
+        pan = c[2].split(",")[0]
+        if pan not in top:
+            top.append(pan)
+        if len(top) >= args.top_k:
+            break
+    allc = list(coarse)
+    for pan in top:
+        wfs = [w.strip() for w in args.wfs.split(",") if w.strip() and w.strip() != "62"]
+        allc += find_pose(["%s,10,120,%s,0" % (pan, w) for w in wfs])
+    allc.sort()
+    return allc[0]
 
 
 def main() -> int:
@@ -370,6 +416,9 @@ def main() -> int:
     ap.add_argument("--pose-max-mm", type=float, default=150.0,
                     help="고른 자세의 표적 깊이가 이보다 멀면 배경이라고 본다")
     ap.add_argument("--wfs", default="56,62,68", help="고른 pan에서 훑어볼 wrist_flex(도)")
+    ap.add_argument("--top-k", type=int, default=3, help="손목까지 다시 훑을 상위 팬 개수")
+    ap.add_argument("--retries", type=int, default=1,
+                    help="겨냥 실패·빈손이면 팬 격자를 반 칸 비켜 처음부터 다시 찾는 횟수")
     ap.add_argument("--keep", action="store_true", help="마지막 시도 뒤 놓지 않는다")
     ap.add_argument("--stop-z", type=float, default=84.0)
     ap.add_argument("--aim", default="near",
@@ -408,25 +457,26 @@ def main() -> int:
         return 1
 
     results = []
-    for k in range(1, args.trials + 1):
+    k, attempt = 0, 0
+    while True:
+        if attempt == 0:
+            k += 1
+            if k > args.trials:
+                break
+        # 재시도마다 팬 격자를 반 칸씩 번갈아 비킨다: 0 → +7.5 → −7.5 → +15 …
+        offset = 0.0 if attempt == 0 else 7.5 * ((attempt + 1) // 2) * (1 if attempt % 2 else -1)
         t0 = time.time()
-        tag = time.strftime("%m%d-%H%M%S") + f"-t{k}"
-        rec = {"tag": tag, "trial": k}
-        print(f"\n═══ 시도 {k}/{args.trials}  {tag}")
+        tag = time.strftime("%m%d-%H%M%S") + f"-t{k}" + (f"r{attempt}" if attempt else "")
+        rec = {"tag": tag, "trial": k, "attempt": attempt, "grid_offset": offset}
+        print(f"\n═══ 시도 {k}/{args.trials}" + (f" (재시도 {attempt})" if attempt else "") + f"  {tag}")
 
         tool("grip_set.py", "78")
         start = START
         if args.find:
-            print("  자세 찾는 중 (면봉이 어디 서 있든)")
-            cands = ["%s,10,120,62,0" % p.strip() for p in args.pans.split(",") if p.strip()]
-            b = find_pose(cands)
+            print("  자세 찾는 중 (면봉이 어디 서 있든 · 격자 오프셋 %.1f°)" % offset)
+            best = search_pose(args, offset)
+            b = None if best is None else (best[1], best[2], best[3], best[4], best[5], best[6])
             if b is not None:
-                pan = b[1].split(",")[0]
-                cands2 = ["%s,10,120,%s,0" % (pan, w.strip())
-                          for w in args.wfs.split(",") if w.strip() and w.strip() != "62"]
-                b2 = find_pose(cands2)
-                if b2 is not None and b2[0] < b[0]:
-                    b = b2
                 start = b[1]
                 rec["pose_err_px"] = round(b[0])
                 rec["pose_z"] = round(b[4])
@@ -440,11 +490,13 @@ def main() -> int:
                           "면봉이 서 있는지 보고 다시 부르라." % (b[0], b[4]))
                     rec["why"] = "pose_bad"
                     results.append(rec)
+                    attempt = 0
                     continue
             else:
                 print("  ❌ 어느 자세에서도 표적을 못 찾았다 — 면봉이 보이는 데 있나?")
                 rec["why"] = "no_pose"
                 results.append(rec)
+                attempt = 0
                 continue
         rc, out = tool("arm_stage.py", "--target=" + start, timeout=120)
         rec["stage_rc"] = rc
@@ -453,6 +505,7 @@ def main() -> int:
             print("  ❌ 시작자세로 못 갔다:", out.strip().splitlines()[-1:])
             rec["why"] = "stage"
             results.append(rec)
+            attempt = 0
             continue
         snap(tag + "-0start")
         tip = near_target(tag + "-0start")
@@ -460,6 +513,7 @@ def main() -> int:
             print("  ❌ 시작자세에서 가까운 표적이 안 보인다")
             rec["why"] = "no_tip"
             results.append(rec)
+            attempt = 0
             continue
         u, v, z_before, a0 = tip
         rec["tip_uv"] = [round(u), round(v)]
@@ -520,14 +574,17 @@ def main() -> int:
             if first > 3.0:
                 tool("tool_jog.py", "--along", "%.0f" % first, "--piece", "12", timeout=240)
             grip = None
-            for k in range(args.probe_tries):
+            # ⚠ 변수 이름을 `k`로 쓰면 **바깥 시도 번호를 덮어쓴다** — 그러면 끝의
+            #   "마지막 시도면 --keep로 들고 있기" 판정이 물어보기 횟수로 바뀌어 엉뚱하게
+            #   놓거나 들고 있었다(2026-09-14 발견). 그래서 `pi`.
+            for pi in range(args.probe_tries):
                 grip = grip_now(args.grip_shut, args.grip_torque)
-                print("    물어보기 %d: 집게 %s" % (k + 1, grip))
+                print("    물어보기 %d: 집게 %s" % (pi + 1, grip))
                 if grip is not None and grip >= GRIP_HELD:
                     print("    → 물었다")
                     break
                 tool("grip_set.py", "78")
-                if k + 1 < args.probe_tries:
+                if pi + 1 < args.probe_tries:
                     tool("tool_jog.py", "--along", "%.0f" % args.probe_step,
                          "--piece", "%.0f" % args.probe_step, timeout=180)
             rec["probe_grip"] = grip
@@ -578,6 +635,17 @@ def main() -> int:
             print("  보고서: %s" % make_report(rec, tag))
         except Exception as exc:                           # noqa: BLE001
             print("  ⚠ 보고서를 못 만들었다: %s" % str(exc)[:120])
+
+        # ── 국소해 탈출: 겨냥이 안 됐거나 빈손이면 **처음부터 다시 찾는다** ──
+        # ⚠ 같은 자세에서 같은 겨냥을 되풀이하면 같은 곳에 다시 빠진다. 팬 격자를 비켜
+        #   전역 탐색부터 다시 한다. 면봉을 쓰러뜨렸으면 새 탐색이 "쓸 만한 자세 없음"으로
+        #   스스로 멈추므로 무대를 더 망가뜨리지 않는다.
+        if verdict in ("fail_grasp_rc", "fail_empty_close") and attempt < args.retries:
+            print("  ↻ 비켜서 처음부터 다시 찾는다 (재시도 %d/%d)" % (attempt + 1, args.retries))
+            tool("grip_set.py", "78")
+            attempt += 1
+            continue
+        attempt = 0
 
         # ── 놓기: 내려서 열고 ──
         if not (args.keep and k == args.trials):
