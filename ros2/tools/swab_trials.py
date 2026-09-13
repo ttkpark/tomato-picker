@@ -158,11 +158,18 @@ def make_report(rec, tag):
         cv2.putText(im, label, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         tiles.append(im)
     grid = cv2.vconcat([cv2.hconcat(tiles[:2]), cv2.hconcat(tiles[2:])])
-    head = "%s  %s   grip %s (empty %.1f)  aim %spx  reach %smm  pose_err %spx" % (
-        tag, rec.get("verdict", "?"), rec.get("grip"), GRIP_EMPTY,
-        rec.get("aim_err_px", "-"), rec.get("reach_mm", "-"), rec.get("pose_err_px", "-"))
-    cv2.rectangle(grid, (0, 0), (grid.shape[1], 34), (30, 30, 30), -1)
-    cv2.putText(grid, head, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+    hc = rec.get("held_color") or {}
+    head = "%s  %s  grip %s  aim %spx  reach %smm  pose %spx  white %s green %s" % (
+        tag, rec.get("verdict", "?"), rec.get("grip"),
+        rec.get("aim_err_px", "-"), rec.get("reach_mm", "-"), rec.get("pose_err_px", "-"),
+        hc.get("white", "-"), hc.get("green", "-"))
+    if rec.get("check_photo") and str(rec.get("verdict", "")).startswith("success"):
+        head += "   << CHECK PHOTO >>"
+    bar = (30, 30, 30)
+    if str(rec.get("verdict", "")).startswith("success"):
+        bar = (0, 90, 0) if not rec.get("check_photo") else (0, 110, 170)   # 초록=확실, 주황=확인 필요
+    cv2.rectangle(grid, (0, 0), (grid.shape[1], 34), bar, -1)
+    cv2.putText(grid, head, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2)
     path = os.path.join(REPORTS, tag + ".jpg")
     cv2.imwrite(path, grid)
     with open(os.path.join(REPORTS, "index.md"), "a", encoding="utf-8") as fh:
@@ -198,9 +205,11 @@ def near_target(tag=None, max_mm=200.0, min_mm=95.0, max_area=4000, near_uv=None
     if bgr is not None and bgr.shape[:2] == dep.shape[:2]:
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
         # 보라색 몸통 + 검은 고무 패드 = 자기 손. 9/10: 검은 패드(75mm)를 표적으로 골랐다.
-        own = (((hsv[:, :, 0] > 115) & (hsv[:, :, 0] < 165) & (hsv[:, :, 1] > 55))
-               | (hsv[:, :, 2] < 55)).astype(np.uint8)
-        dep = np.where(cv2.dilate(own, np.ones((9, 9), np.uint8)) > 0, 0.0, dep)
+        # 초록 지지대도 뺀다(9/14: 지지대를 물고 성공으로 찍혔다).
+        hand = (((hsv[:, :, 0] > 115) & (hsv[:, :, 0] < 165) & (hsv[:, :, 1] > 55))
+                | (hsv[:, :, 2] < 55)).astype(np.uint8)
+        green = ((hsv[:, :, 0] > 35) & (hsv[:, :, 0] < 90) & (hsv[:, :, 1] > 60)).astype(np.uint8)
+        dep = np.where((cv2.dilate(hand, np.ones((9, 9), np.uint8)) | green) > 0, 0.0, dep)
     m = ((dep > min_mm) & (dep < max_mm)).astype(np.uint8)
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     n, lab, st, cen = cv2.connectedComponentsWithStats(m, 8)
@@ -230,6 +239,31 @@ def near_target(tag=None, max_mm=200.0, min_mm=95.0, max_area=4000, near_uv=None
     dd = dep[lab == idx]
     dd = dd[dd > 0]
     return u, v, (float(np.percentile(dd, 20)) if dd.size else -1.0), a
+
+
+def held_color(tag):
+    """**집게 사이에 물린 것이 무슨 색인가** — 흰(면봉) / 초록(지지대) 비율.
+
+    ⚠ 집게값만으로는 **무엇을** 물었는지 모른다. 2026-09-14 06:38: 면봉 옆의 초록
+      지지대를 물고 4.7(빈손 2.8보다 벌어짐)이 나와 "성공"으로 찍혔다 — 보고서 사진을
+      보고서야 알았다. 무는 자리 둘레를 보면 흰색인지 초록인지 바로 갈린다.
+    """
+    import cv2
+    import numpy as np
+    im = cv2.imread(os.path.join(OUT, tag + ".jpg"))
+    if im is None:
+        return None
+    bu, bv = bite_uv()
+    # ⚠ 창은 **무는 자리 위쪽**이다. 닫힌 집게에서 면봉은 턱 위로 솟아 보인다 — 무는 자리를
+    #   가운데 둔 좁은 창(9/14 첫 판)은 사진으로 확인한 진짜 성공 7건 중 4건을 "지지대"로
+    #   틀리게 찍었다(창이 벽을 보고 있었다). 위쪽 150화소로 옮기자 대부분 갈렸다.
+    y0, y1 = max(0, int(bv) - 150), min(im.shape[0], int(bv))
+    x0, x1 = max(0, int(bu) - 35), min(im.shape[1], int(bu) + 35)
+    hsv = cv2.cvtColor(im[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
+    n = float(hsv.shape[0] * hsv.shape[1]) or 1.0
+    white = float(((hsv[:, :, 1] < 60) & (hsv[:, :, 2] > 150)).sum()) / n
+    green = float(((hsv[:, :, 0] > 35) & (hsv[:, :, 0] < 90) & (hsv[:, :, 1] > 60)).sum()) / n
+    return {"white": round(white, 3), "green": round(green, 3)}
 
 
 def grip_now(shut=0.0, torque=900):
@@ -515,7 +549,18 @@ def main() -> int:
         rec["lifted_near"] = None if held is None else [round(held[0]), round(held[1]),
                                                        round(held[2]), held[3]]
         area = (rec["lifted_near"] or [0, 0, 0, 0])[3]
-        if grip is not None and grip >= GRIP_HELD:
+        hc = held_color(tag + "-1closed")
+        rec["held_color"] = hc
+        # ⚠ 색으로는 **확실한 경우만** 뒤집는다. 사진으로 확인한 9건으로 재 보니 어떤 창도
+        #   진짜 성공과 가짜를 완벽히 가르지 못했다(조명에 따라 솜이 회색·분홍으로 보인다).
+        #   그래서: 흰색이 거의 없고 초록이 뚜렷하면 → 지지대를 문 것(자동 실패).
+        #   흰색이 적지만 초록도 아니면 → 성공으로 두되 **사진 확인** 표시(check_photo).
+        #   진짜 성공을 버리는 것보다, 애매한 것을 사람에게 넘기는 편이 낫다.
+        support = bool(hc and hc["white"] < 0.02 and hc["green"] > 0.10)
+        rec["check_photo"] = bool(hc is None or hc["white"] < 0.05)
+        if grip is not None and grip >= GRIP_HELD and support:
+            verdict = "fail_grabbed_support"     # 물긴 물었는데 초록 지지대다
+        elif grip is not None and grip >= GRIP_HELD:
             verdict = "success" if area >= 400 else "success_weak"
         elif rc != 0:
             verdict = "fail_grasp_rc"
