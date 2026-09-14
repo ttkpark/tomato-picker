@@ -373,33 +373,78 @@ def find_pose(cands, verbose=True):
     return out
 
 
-def search_pose(args, offset=0.0):
-    """**국소해에 빠지지 않는 자세 탐색.**
+# 화면 기울기(실측): pan +1° → 표적 u −7.7화소 · wrist_flex +1° → 표적 v −13화소.
+#   (9/10: pan −6→−3에서 u 520→497 · wrist_flex 75→56에서 v 150→399)
+DU_DPAN = -7.7
+DV_DWF = -13.0
 
-    ⚠ 예전(9/11~9/14)엔 팬을 훑고 **가장 좋은 팬 하나에서만** 손목을 다시 훑었다. 욕심쟁이
-      선택이라, 다른 팬에서 손목을 바꾸면 더 좋은 자세가 있어도 영영 못 봤다(9/14 07:15
-      로그: −30°만 파고들어 55화소에 멈췄다). 지금은 거친 훑기에서 **상위 K개 팬**을 모두
-      손목까지 훑고, 전체에서 가장 좋은 것을 고른다.
-    `offset`은 팬 격자를 반 칸 비켜 다시 훑을 때 쓴다 — 격자 사이에 표적이 걸려 두 이웃
-    팬 모두에서 애매하게 보이는 경우를 벗어나기 위해서다(재시도에서 쓴다).
+
+def refine_pose(pan, wf, bu, bv, tries=3, verbose=True):
+    """**격자에 기대지 않고** 보이는 표적 쪽으로 자세를 직접 옮긴다.
+
+    ⚠ 9/14 07:28: 면봉이 기울어 화면 위쪽(v≈200)에 보였는데 손목 후보가 56/62/68뿐이라
+      끝까지 내려오지 못했다 — 모든 후보가 겨냥거리 100화소 언저리였고, 재시도로 격자를
+      반 칸 비켜도 같았다. **격자가 좁으면 격자 안의 최선이 곧 국소해다.**
+    그래서 표적이 화면에서 벗어난 만큼 위의 기울기로 pan·wrist_flex를 계산해 옮기고,
+    다시 보고, 되풀이한다(최대 `tries`번, 40화소 안이면 멈춤). 면봉이 어디에 어떻게 서
+    있든 — 격자의 칸 크기와 무관하게 — 거기로 수렴한다.
     """
+    best = None
+    for i in range(tries):
+        t = "%.1f,10,120,%.1f,0" % (pan, wf)
+        r = look(t)
+        if r is None:
+            if verbose:
+                print("      정밀화 %d: %-22s 표적 없음" % (i, t))
+            break
+        u, v, z, a = r
+        sc, d = pose_score(u, v, z, a, bu, bv)
+        if verbose:
+            print("      정밀화 %d: %-22s (%3.0f,%3.0f) %3.0fmm 겨냥거리 %3.0f 점수 %4.0f"
+                  % (i, t, u, v, z, d, sc))
+        if best is None or sc < best[0]:
+            best = (sc, d, t, u, v, z, a)
+        if d < 40.0:
+            break
+        dpan = max(-12.0, min(12.0, (bu - u) / DU_DPAN))
+        dwf = max(-12.0, min(12.0, (bv - v) / DV_DWF))
+        pan = max(-60.0, min(60.0, pan + dpan))
+        wf = max(40.0, min(80.0, wf + dwf))
+    return best
+
+
+def search_pose(args, offset=0.0):
+    """**국소해에 빠지지 않는 자세 탐색** — 거친 훑기 → 상위 K개를 각각 정밀화 → 전체 최선.
+
+    ⚠ 9/11~9/14엔 가장 좋은 팬 하나에서만 손목을 훑었다(욕심쟁이 선택). 9/14 오전엔
+      상위 K개 팬에서 손목 격자(56/62/68)를 훑게 바꿨지만, **격자 자체가 좁아** 여전히
+      국소해였다(위 refine_pose의 사례). 지금은 상위 K개 출발점 각각에서 **표적을 향해
+      직접 옮겨 가며**(refine_pose) 수렴시키고, 그중 최선을 고른다.
+    `offset`은 거친 훑기의 팬 격자를 비킬 때 쓴다(재시도).
+    """
+    bu, bv = bite_uv()
     pans = [float(p) + offset for p in args.pans.split(",") if p.strip()]
     pans = [max(-60.0, min(60.0, p)) for p in pans]
     coarse = find_pose(["%.1f,10,120,62,0" % p for p in pans])
     if not coarse:
         return None
     coarse.sort()
-    top = []
+    starts, seen = [], set()
     for c in coarse:
         pan = c[2].split(",")[0]
-        if pan not in top:
-            top.append(pan)
-        if len(top) >= args.top_k:
+        if pan in seen:
+            continue
+        seen.add(pan)
+        starts.append((float(pan), 62.0))
+        if len(starts) >= args.top_k:
             break
     allc = list(coarse)
-    for pan in top:
-        wfs = [w.strip() for w in args.wfs.split(",") if w.strip() and w.strip() != "62"]
-        allc += find_pose(["%s,10,120,%s,0" % (pan, w) for w in wfs])
+    for pan, wf in starts:
+        if args.verbose_search:
+            print("    출발 pan %.1f 에서 정밀화" % pan)
+        r = refine_pose(pan, wf, bu, bv, tries=args.refine_tries)
+        if r is not None:
+            allc.append(r)
     allc.sort()
     return allc[0]
 
@@ -411,12 +456,18 @@ def main() -> int:
                     help="시작자세를 스스로 찾는다(기본). --no-find 로 START 고정")
     ap.add_argument("--no-find", dest="find", action="store_false")
     ap.add_argument("--pans", default="-45,-30,-15,0,15,30,45", help="훑어볼 pan(도)")
-    ap.add_argument("--pose-max-px", type=float, default=110.0,
+    ap.add_argument("--pose-max-px", type=float, default=90.0,
                     help="고른 자세의 겨냥거리가 이보다 멀면 표적이 아니라고 본다")
-    ap.add_argument("--pose-max-mm", type=float, default=150.0,
+    # ⚠ 150 → 175mm (2026-09-14): 기울어 선 면봉이 정밀화 끝에 155mm·16화소로 잡혔는데
+    #   150mm 가드에 걸려 시도조차 못 했다. 이 가드가 막으려던 화분 테두리(9/12, 166mm)는
+    #   겨냥거리가 163화소였으므로 --pose-max-px(90)로 이미 걸러진다. 두 가드는 **함께** 볼 때
+    #   의미가 있다 — 깊이 하나만 조이면 멀리 선 진짜 면봉을 버린다.
+    ap.add_argument("--pose-max-mm", type=float, default=175.0,
                     help="고른 자세의 표적 깊이가 이보다 멀면 배경이라고 본다")
     ap.add_argument("--wfs", default="56,62,68", help="고른 pan에서 훑어볼 wrist_flex(도)")
-    ap.add_argument("--top-k", type=int, default=3, help="손목까지 다시 훑을 상위 팬 개수")
+    ap.add_argument("--top-k", type=int, default=3, help="정밀화할 상위 출발점 개수")
+    ap.add_argument("--refine-tries", type=int, default=3, help="출발점마다 표적 쪽으로 옮겨 볼 횟수")
+    ap.add_argument("--verbose-search", action="store_true", default=True)
     ap.add_argument("--retries", type=int, default=1,
                     help="겨냥 실패·빈손이면 팬 격자를 반 칸 비켜 처음부터 다시 찾는 횟수")
     ap.add_argument("--keep", action="store_true", help="마지막 시도 뒤 놓지 않는다")
