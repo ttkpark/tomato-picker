@@ -305,6 +305,10 @@ def build(job, args):
              "--grip-torque", "%d" % int(num(args, "grip_torque", 900, 0, 1000))]
         if args.get("keep"):
             a += ["--keep"]        # 잡은 채로 둔다(사람이 눈으로 확인하려고)
+        if args.get("stop_voice"):
+            a += ["--stop-voice"]  # 부팅 때 되살아난 tomato-voice를 내린다(버튼 한 번으로)
+        if args.get("no_clear"):
+            a += ["--no-clear"]    # 들고 있는 것을 옆에 놓는 손 비우기를 끈다
         if args.get("no_find"):
             a += ["--no-find"]     # 자세 찾기를 끄고 스크립트의 START 고정값을 쓴다
         return a
@@ -439,17 +443,18 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
   </div>
 
   <div class="card"><h2>면봉 잡기</h2>
-    <div class="k">면봉을 지지대에 <b>세워 두기만</b> 하면 된다. 버튼을 누르면 팔이
-      <b>스스로 자세를 찾고</b>(pan을 훑어 표적이 집게 앞에 오는 자리를 고른다, 약 2분)
-      깊이로 표적을 오려내 겨냥한 뒤, <b>조금 가서 물어보고 아니면 8mm 더</b> 가며 문다.
-      물었는지는 집게가 선 자리로 본다(빈손 2.8 · 솜 머리를 물면 3.7~3.9).</div>
+    <div class="k">면봉을 지지대에 <b>세워 두기만</b> 하면 된다. <b>버튼 한 번</b>이면
+      tomato-voice가 켜져 있으면 내리고, <b>앞서 든 면봉이 있으면 들어 올려 옆(pan ±45°)에 놓은 뒤</b>,
+      스스로 자세를 찾고(약 2분) 깊이로 표적을 오려내 겨냥해 <b>조금 가서 물어보고 아니면 8mm 더</b>
+      가며 물고 70mm 들어 올린 채 둔다. 물었는지는 집게가 선 자리로 본다(빈손 2.8 · 물면 3.3 이상).</div>
     <div class="row" style="margin-top:8px">
-      <button class="go" onclick="run('swab',swab({trials:1,keep:1}))">면봉 잡기 (잡은 채로 둔다)</button>
-      <button onclick="run('swab',swab({trials:1}))">잡고 놓기</button>
+      <button class="go" style="font-size:1.25em;padding:14px 22px"
+        onclick="run('swab',swab({trials:1,keep:1,stop_voice:1}))">면봉 잡아 올리기</button>
+      <button onclick="run('swab',swab({trials:1,stop_voice:1}))">잡고 놓기</button>
     </div>
     <div class="row" style="margin-top:6px">
       <label>반복<input id="w_n" value="3" style="width:60px"></label>
-      <button onclick="run('swab',swab({trials:val('w_n',3)}))">그만큼 반복</button>
+      <button onclick="run('swab',swab({trials:val('w_n',3),stop_voice:1}))">그만큼 반복</button>
       <label><input type="checkbox" id="w_nofind"> 자세 찾기 끔</label>
     </div>
     <div class="row" style="margin-top:6px">

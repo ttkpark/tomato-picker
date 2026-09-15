@@ -266,6 +266,75 @@ def held_color(tag):
     return {"white": round(white, 3), "green": round(green, 3)}
 
 
+def grip_read():
+    """움직이지 않고 집게 자리만 읽는다. 못 읽으면 None."""
+    rc, out = tool("grip_set.py", "--read", timeout=60)
+    m = re.search(r"지금\s+(-?[0-9.]+)", out)
+    return float(m.group(1)) if (rc == 0 and m) else None
+
+
+def pose_read():
+    """지금 관절(도) 5개 [pan, lift, elbow, wrist_flex, roll]. 못 읽으면 None.
+    `arm_stage.py --dry`의 "지금" 줄을 읽는다 — 목표는 아무 값이나 줘도 된다(안 움직인다)."""
+    rc, out = tool("arm_stage.py", "--dry", "--target=" + START, timeout=60)
+    for ln in out.splitlines():
+        if ln.strip().startswith("지금"):
+            vals = re.findall(r"=\s*(-?[0-9.]+)", ln.split("TCP")[0])
+            if len(vals) >= 5:
+                return [float(x) for x in vals[:5]]
+    return None
+
+
+GRIP_CLOSED_BELOW = 40.0    # 이보다 닫혀 있으면 무언가 들고 있다고 본다(열림 78 · 물면 3~9)
+
+
+def clear_hand():
+    """**든 것을 비켜 놓는다** — 한 번 누르기로 잡으려면 앞 시도의 면봉을 들고 있어도 돼야 한다.
+
+    ⚠ 그 자리에서 열면 안 된다: 화분 안·다음 표적 옆에 떨어져 자세 찾기가 **그것을 표적으로
+      고른다.** 그래서 들어 올린 뒤 옆(pan ±45°)으로 돌려 연다(2026-09-15 22:3x 손으로 해 본 순서).
+    ⚠ 곧게 더 올리기(`tool_jog --dz`)는 잡은 자세 근처에서 shoulder_lift 여유 한계(≈12°)에
+      막힌다. 팔꿈치 −30° → 손목 +20°를 **관절별로 따로** 주면 +61mm·피치 −10°이고 화분에서
+      멀어진다. 손목을 먼저 굽히면 끝이 50mm 내려가 화분을 칠 수 있어 순서를 지킨다.
+    한 걸음이라도 거절되면 **열지 않고** 멈춘다(False) — 떨어뜨릴 자리를 모르면 안 떨어뜨린다."""
+    g = grip_read()
+    if g is None:
+        print("  ❌ 집게 값을 못 읽었다 — 들고 있는지 몰라 시작하지 않는다")
+        return False
+    if g >= GRIP_CLOSED_BELOW:
+        return True
+    print("  손 비우기: 집게 %.1f (닫힘) — 들어 올려 옆에 놓는다" % g)
+    p = pose_read()
+    if p is None:
+        print("  ❌ 지금 자세를 못 읽었다 — 열지 않고 멈춘다")
+        return False
+    # 비켜 놓는 동작은 **잡은 자세 계열**(시작자세 lift 10·elbow 120에서 나아간 자리)에서만
+    #   재 봤다. 접힌 자세 등 그 밖에서는 팔꿈치 −30°가 무엇을 할지 모르므로 그 자리에서 연다 —
+    #   거기는 화분 위가 아니다.
+    if not (p[1] <= 30.0 and p[2] >= 90.0):
+        print("  잡은 자세가 아니다(lift %.1f · elbow %.1f) — 그 자리에서 연다" % (p[1], p[2]))
+        tool("grip_set.py", "78")
+        return True
+    fmt = lambda q: ",".join("%.1f" % x for x in q)          # noqa: E731
+    steps = []
+    q = list(p)
+    q[2] -= 30.0
+    steps.append(("팔꿈치 −30°", list(q)))
+    q[3] += 20.0
+    steps.append(("손목 +20°", list(q)))
+    q[0] = 45.0 if p[0] >= 0 else -45.0
+    steps.append(("pan %+.0f°" % q[0], list(q)))
+    for name, t in steps:
+        rc, out = tool("arm_stage.py", "--target=" + fmt(t), timeout=120)
+        if rc != 0:
+            print("  ❌ %s 거절 — 열지 않고 멈춘다: %s" % (name, " ".join(out.split())[-120:]))
+            return False
+        print("    %s → %s" % (name, fmt(t)))
+    tool("grip_set.py", "78")
+    print("  → 옆에 놓았다")
+    return True
+
+
 def grip_now(shut=0.0, torque=900):
     """집게를 **잡을 때와 같은 힘으로** 다시 닫고 선 자리를 읽는다 — 물면 덜 닫힌다.
 
@@ -471,6 +540,10 @@ def main() -> int:
     ap.add_argument("--retries", type=int, default=1,
                     help="겨냥 실패·빈손이면 팬 격자를 반 칸 비켜 처음부터 다시 찾는 횟수")
     ap.add_argument("--keep", action="store_true", help="마지막 시도 뒤 놓지 않는다")
+    ap.add_argument("--stop-voice", action="store_true",
+                    help="tomato-voice가 켜져 있으면 내린다(팔 포트를 쥐고 있어서)")
+    ap.add_argument("--no-clear", dest="clear", action="store_false", default=True,
+                    help="시작 전 손 비우기(들고 있으면 옆에 놓기)를 끈다")
     ap.add_argument("--stop-z", type=float, default=84.0)
     ap.add_argument("--aim", default="near",
                     help="stem_grasp 겨냥 방식 — near(깊이 띠, 기본) / white(색) / mark(조각 정합). "
@@ -504,7 +577,19 @@ def main() -> int:
 
     r = subprocess.run(["systemctl", "is-active", "tomato-voice"], capture_output=True, text=True)
     if r.stdout.strip() == "active":
-        print("❌ tomato-voice가 켜져 있다 — 팔 포트를 못 연다. sudo systemctl stop tomato-voice")
+        # ⚠ 젯슨을 켜면 tomato-voice가 부팅 자동실행으로 되살아나 버튼이 조용히 실패한다
+        #   (2026-09-15 재부팅 직후). 버튼 한 번으로 되려면 여기서 내려야 한다.
+        if args.stop_voice:
+            s = subprocess.run(["sudo", "-n", "systemctl", "stop", "tomato-voice"],
+                               capture_output=True, text=True)
+            r = subprocess.run(["systemctl", "is-active", "tomato-voice"],
+                               capture_output=True, text=True)
+            print("tomato-voice 내림 (rc=%d, 지금 %s)" % (s.returncode, r.stdout.strip()))
+        if r.stdout.strip() == "active":
+            print("❌ tomato-voice가 켜져 있다 — 팔 포트를 못 연다. sudo systemctl stop tomato-voice")
+            return 1
+
+    if args.clear and not clear_hand():
         return 1
 
     results = []

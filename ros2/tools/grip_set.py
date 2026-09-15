@@ -21,10 +21,20 @@ sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 
 def main() -> int:
+    # `--read`: 움직이지 않고 지금 집게 자리만 읽는다 — 무엇을 들고 있는지 먼저 알아야
+    #   다음 일을 시작할 수 있다(swab_trials의 손 비우기).
+    if sys.argv[1:2] == ["--read"]:
+        from tomato_bridge.follower_io import FollowerIO
+        io = FollowerIO(hold_torque=True)
+        try:
+            print("집게 지금 %.1f" % float(io.read().get("gripper", -1)))
+        finally:
+            io.hold_close()
+        return 0
     try:
         v = float(sys.argv[1])
     except (IndexError, ValueError):
-        print("쓰기: grip_set.py <0~100>")
+        print("쓰기: grip_set.py <0~100> [--torque N] | grip_set.py --read")
         return 2
     v = max(0.0, min(100.0, v))
     # ⚠ 집게 토크 상한을 그 순간만 올릴 수 있게 한다 — lerobot이 50%(500)로 낮춰 두는데
