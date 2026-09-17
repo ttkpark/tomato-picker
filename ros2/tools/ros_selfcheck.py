@@ -613,6 +613,60 @@ def test_handeye_gate() -> None:
           "if args.save and not ok and not args.save_anyway:" in src,
           "경고만 하고 파일은 갱신하면, 다음 사람은 파일이 있다는 것만 보고 믿는다")
 
+    # ⚠ **--fix-t의 원점이 무엇인가** (2026-09-18 사람 지시). 사람이 자로 재는
+    #   세 숫자는 "TCP(집게가 무는 지점) → 카메라 렌즈 중심"이지 "손목(wrist_roll)
+    #   축 → 렌즈 중심"이 아니다. 두 도구의 t가 **둘 다 kin.forward()의 (x,y,z)**
+    #   에서 오기 때문이다 — 손목축에서 재면 접근축 성분이 l3(=168mm)만큼 틀리고,
+    #   그 한 번의 착각이 15mm 문턱을 열 배로 넘긴다. 문서만으로는 다음 사람이
+    #   또 손목축을 잰다(작업판 T10의 제목이 실제로 그렇게 적혀 있었다).
+    import numpy as np  # noqa: E402
+    from tomato_picker.hardware import kinematics as kin  # noqa: E402
+    sys.path.insert(0, os.path.join(ROS2, "tools"))
+    import handeye_collect as hc  # noqa: E402
+
+    probe = {"shoulder_pan": 12.0, "shoulder_lift": 47.0, "elbow_flex": -31.0,
+             "wrist_flex": -22.0, "wrist_roll": 0.0}
+    g = kin.ArmGeometry()
+    tcp = kin.forward(probe, g)
+    _, t_res = hr.tool_frame(probe, g, hc.ROLL_SIGN)
+    t_col = hc.tool_frame_from_joints(probe, g).t
+    check("handeye_resolve의 원점이 TCP다 (kin.forward)",
+          float(np.max(np.abs(t_res - np.array([tcp.x, tcp.y, tcp.z])))) < 1e-9,
+          f"{np.round(t_res, 3).tolist()} vs TCP({tcp.x:.1f},{tcp.y:.1f},{tcp.z:.1f})")
+    check("handeye_collect의 원점도 같은 함수에서 온다",
+          float(np.max(np.abs(np.asarray(t_col) - t_res))) < 1e-9,
+          f"{np.round(np.asarray(t_col), 3).tolist()}")
+    # 원점이 손목축이었다면 접근축으로 l3만큼 떨어져 있어야 한다 — 이 검사가
+    # 무엇을 막는지. (l3=168mm이니 착각 한 번에 15mm 문턱을 열 배로 넘긴다)
+    wrist = t_res - hr.tool_frame(probe, g, hc.ROLL_SIGN)[0][:, 0] * g.l3
+    check("손목축 원점과 TCP 원점은 l3만큼 다르다",
+          abs(float(np.linalg.norm(t_res - wrist)) - g.l3) < 1e-6,
+          f"l3={g.l3}mm — 어느 쪽에서 쟀는지가 이만큼을 가른다")
+    check("--fix-t 도움말이 원점을 TCP라고 말한다",
+          "TCP에서 카메라 렌즈 중심까지" in src)
+
+    # ⚠ lateral·up 축은 wrist_roll과 **함께 돈다** — 그래서 자로 재는 자세는
+    #   반드시 roll=0이어야 하고, 사람이 그 자세를 만들 길이 **조작대에** 있어야
+    #   한다(터미널에서만 되는 조작을 남기지 않는다는 이 저장소의 규칙).
+    rolled = dict(probe, wrist_roll=90.0)
+    R0 = hr.tool_frame(probe, g, hc.ROLL_SIGN)[0]
+    R90 = hr.tool_frame(rolled, g, hc.ROLL_SIGN)[0]
+    check("wrist_roll이 lateral·up 축을 돌린다 (재는 자세가 roll=0이라야 하는 이유)",
+          float(np.max(np.abs(R0[:, 0] - R90[:, 0]))) < 1e-9
+          and float(np.max(np.abs(R0[:, 1] - R90[:, 1]))) > 0.5,
+          "approach는 그대로고 lateral/up만 돈다")
+    cs = open(os.path.join(ROS2, "tools", "click_server.py"), encoding="utf-8").read()
+    st = open(os.path.join(ROS2, "tools", "arm_stage.py"), encoding="utf-8").read()
+    check("조작대에 손목 롤 0 경로가 있다",
+          'if job == "roll0":' in cs and "run('roll0'" in cs,
+          "버튼과 curl과 에이전트가 같은 경로를 쓴다")
+    check("그 경로가 나머지 관절을 건드리지 않는다",
+          '"--set", "wrist_roll=0"' in cs and '"--set"' not in st.split("def main")[0],
+          "넷을 받아적으면 받아적는 사이에 처진 자리가 목표가 된다")
+    check("arm_stage가 --set으로 관절 일부만 받는다",
+          'dest="set_joints"' in st and "j not in kin.JOINTS" in st,
+          "없는 관절 이름은 거절해야 한다 — 조용히 무시하면 팔이 안 움직인다")
+
 
 def _synthetic_handeye(t_x, R_x=None, target=None, noise_mm=0.0, seed=11,
                        geom=None, dot_scale=1.0):
@@ -1506,6 +1560,73 @@ def test_sample_within_limits() -> None:
     check("기록 줄에 load_limits가 들어간다",
           m5_body.count('"load_limits": load_tag') >= 2,
           "dry-run과 실기 둘 다 남겨야 한다")
+
+    # ⑤c **뽑는 기하와 재는 기하가 같은 함수에서 오는가**(T53, 2026-09-18).
+    #     T37은 재는 쪽(run_real)만 `_arm_node_geometry()`로 옮겼고 `main()`은
+    #     `kin.ArmGeometry()` 기본값으로 표적을 뽑고 있었다. `~/arm_cartesian.json`이
+    #     geometry를 채우는 날(링크를 다시 재면 그렇게 된다) **표적을 뽑은 팔과
+    #     성공을 재는 팔이 다른 길이**가 되고, 기준3의 점수 자체가 못 믿을 것이 된다.
+    #     말없이 갈라지는 종류라 소스와 동작 양쪽에서 못 박는다.
+    geom_fn, geom_tag = m5._arm_node_geometry()
+    check("_arm_node_geometry()가 기하와 출처를 함께 준다",
+          isinstance(geom_fn, kin.ArmGeometry) and isinstance(geom_tag, str)
+          and len(geom_tag) > 0, f"{geom_tag}")
+
+    # 파일이 다른 길이를 말하면 **그 길이가 그대로 쓰여야** 한다. FrameConfig는
+    # 경로가 기본인자로 굳어 있어(정의 시점 평가) 가짜 설정을 끼워 넣어 본다.
+    class _FakeCfg:
+        path = "/가짜/arm_cartesian.json"
+
+        def geometry(self):
+            return kin.ArmGeometry(l2=200.0)
+
+    real_fc = m5.cart.FrameConfig
+    try:
+        m5.cart.FrameConfig = lambda *a, **k: _FakeCfg()
+        got, tag = m5._arm_node_geometry()
+        check("파일의 링크 길이가 코드 기본값을 이긴다",
+              abs(got.l2 - 200.0) < 1e-9 and tag.startswith("file:"), f"{tag} l2={got.l2}")
+        # 뽑는 쪽이 정말 그 길이를 쓰는지 — 사거리가 달라지면 표적도 달라진다.
+        near = m5.sample_points(5, kin.ArmGeometry(), 0)
+        far = m5.sample_points(5, got, 0)
+        check("기하가 달라지면 뽑히는 표적도 달라진다",
+              any(abs(a["x"] - b["x"]) + abs(a["z"] - b["z"]) > 1e-6
+                  for a, b in zip(near, far)),
+              "같으면 이 검사가 아무것도 안 지키고 있는 것이다")
+    finally:
+        m5.cart.FrameConfig = real_fc
+
+    # 파일이 없거나 geometry 칸이 비면 arm_node와 **같은 폴백**이다.
+    class _EmptyCfg(_FakeCfg):
+        def geometry(self):
+            return kin.ArmGeometry()
+
+    try:
+        m5.cart.FrameConfig = lambda *a, **k: _EmptyCfg()
+        got, tag = m5._arm_node_geometry()
+        check("geometry 칸이 비면 config 기본값이라고 말한다",
+              got == kin.ArmGeometry() and tag == "config.ARM_GEOM_*", tag)
+        m5.cart.FrameConfig = lambda *a, **k: (_ for _ in ()).throw(OSError("없다"))
+        got, tag = m5._arm_node_geometry()
+        check("파일을 못 읽어도 arm_node와 같은 기본값으로 떨어진다",
+              got == kin.ArmGeometry() and tag == "config.ARM_GEOM_*", tag)
+    finally:
+        m5.cart.FrameConfig = real_fc
+
+    # 소스에서도 막는다 — 기하를 만드는 자리가 둘이면 언젠가 또 갈린다.
+    body_m5 = m5_source()
+    head, _, rest = body_m5.partition("def _arm_node_geometry(")
+    _, _, tail = rest.partition("def main(")
+    check("main()이 _arm_node_geometry()로 표적을 뽑는다",
+          "geom, geom_tag = _arm_node_geometry()" in tail
+          and "geom = kin.ArmGeometry()" not in tail,
+          "뽑는 쪽이 기본값을 따로 만들면 재는 쪽과 갈린다")
+    check("기하를 만드는 자리는 _arm_node_geometry() 하나뿐이다",
+          "kin.ArmGeometry()" not in head and "kin.ArmGeometry()" not in tail,
+          "폴백 규칙이 두 군데면 한쪽만 고치고 끝난다")
+    check("기록 줄에 geometry 출처가 들어간다",
+          body_m5.count('"geometry": geom_tag') >= 2,
+          "dry-run과 실기 둘 다 남겨야 한다 — 어떤 팔 길이로 쟀는지가 점수의 전제다")
 
     # ⑥ **노드가 붙으면서 팔을 놓지 않는가.** 2026-09-18: `arm_extend`로 z=+423mm
     #    까지 세워 둔 팔이 arm_node가 뜨자 z=−66mm로 주저앉았다 —

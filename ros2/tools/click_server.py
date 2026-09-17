@@ -246,6 +246,12 @@ def build(job, args):
         return [PY, T("arm_stage.py"), "--target=" + ",".join(parts)]
     if job == "pose":
         return [PY, T("arm_stage.py"), "--dry", "--target=0,0,0,0,0"]
+    if job == "roll0":
+        # **손목 롤만 0으로.** 손-눈 실측(TCP → D405 렌즈 중심)의 lateral·up 축은
+        # wrist_roll과 함께 돈다 — 그래서 자로 재는 자세는 반드시 roll=0이어야 하고,
+        # 사람이 그 자세를 만들 길이 화면에 있어야 한다(2026-09-18 사람 지시).
+        # 나머지 넷을 받아적지 않는 이유는 arm_stage.py의 --set 주석에 있다.
+        return [PY, T("arm_stage.py"), "--set", "wrist_roll=0"]
     if job == "grip":
         return [PY, T("grip_set.py"), "%.0f" % num(args, "value", 78, 0, 100)]
     if job == "jog":
@@ -506,6 +512,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button onclick="run('grip',{value:4})">집게 닫는다</button>
       <button onclick="run('pose',{})">자세 읽기</button>
       <button onclick="run('park',{})">대기 자세</button>
+      <button onclick="run('roll0',{})">손목 롤 0</button>
     </div>
     <div class="row" style="margin-top:8px">
       <input id="s_t" style="width:190px" placeholder="60,65,0,-100,6">

@@ -65,8 +65,17 @@ ORDER = (("shoulder_pan",), ("shoulder_lift",), ("elbow_flex",),
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--target", required=True,
+    ap.add_argument("--target", default="",
                     help="목표 관절각(도) pan,lift,elbow,wflex,wroll")
+    # ⚠ **관절 하나만 옮기고 싶을 때** 나머지 넷을 받아적게 하면, 받아적는 사이에
+    #   팔이 처져(중력) 그 낡은 숫자가 목표가 된다 — 지금 자리로 돌아가라는 지령이
+    #   아니라 1~5° 전 자리로 가라는 지령이 된다. 그래서 "나머지는 지금 그대로"를
+    #   도구가 직접 말하게 한다. 손-눈 실측이 요구하는 wrist_roll=0 자세가 바로
+    #   이 꼴이다(2026-09-18 사람 지시, docs/인수인계-2026-09-04.md §10).
+    ap.add_argument("--set", default="", dest="set_joints",
+                    metavar="j=deg[,j=deg]",
+                    help="관절 일부만 목표로 준다(나머지는 지금 자리 그대로). "
+                         "예: --set wrist_roll=0")
     ap.add_argument("--dry", action="store_true")
     ap.add_argument("--order", default="",
                     help="관절 순서를 손으로 지정한다(쉼표). 비우면 |r|이 작은 쪽부터 자동. "
@@ -88,8 +97,21 @@ def main() -> int:
     now = to_deg(io.read())
     io.write(to_norm(now), 0.4)          # 붙자마자 지금 자리를 붙든다 (안 그러면 처진다)
 
+    if bool(args.target) == bool(args.set_joints):
+        print("❌ --target 과 --set 중 정확히 하나를 줘라")
+        return 2
     target = dict(now)
-    target.update(dict(zip(kin.JOINTS, [float(v) for v in args.target.split(",")])))
+    if args.target:
+        target.update(dict(zip(kin.JOINTS,
+                               [float(v) for v in args.target.split(",")])))
+    else:
+        for part in args.set_joints.split(","):
+            j, _, v = part.partition("=")
+            j = j.strip()
+            if j not in kin.JOINTS:
+                print(f"❌ 그런 관절이 없다: {j!r} (있는 것: {', '.join(kin.JOINTS)})")
+                return 2
+            target[j] = float(v)
 
     def show(tag, d):
         p = kin.forward(d, geom)

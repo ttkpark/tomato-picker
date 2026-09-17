@@ -400,14 +400,16 @@ def record(path: str, row: dict) -> None:
 
 
 def run_dry(points: list[dict], geom: kin.ArmGeometry, out_path: str,
-            limits_tag: str = "none", load_tag: str = "none") -> int:
+            limits_tag: str = "none", load_tag: str = "none",
+            geom_tag: str = "config.ARM_GEOM_*") -> int:
     """ROS 없이 — 같은 IK를 로컬에서 돌려 도구 자체를 검증한다."""
     ok_count = 0
     for i, p in enumerate(points, 1):
         standoff_mm = STANDOFF_MM
         target_pose = standoff_pose(p, standoff_mm)
         row = {"trial": i, "dry_run": True, "commanded": p, "standoff_mm": standoff_mm,
-               "limits": limits_tag, "load_limits": load_tag}
+               "limits": limits_tag, "load_limits": load_tag,
+               "geometry": geom_tag}
         try:
             joints = kin.inverse(target_pose, geom)
             reached = kin.forward(joints, geom)
@@ -425,7 +427,7 @@ def run_dry(points: list[dict], geom: kin.ArmGeometry, out_path: str,
     return ok_count
 
 
-def _arm_node_geometry() -> kin.ArmGeometry:
+def _arm_node_geometry() -> tuple[kin.ArmGeometry, str]:
     """arm_node._geometry()와 **같은 규칙**으로 기하를 고른다 (T37 감사, 2026-09-18).
 
     arm_node.py는 `~/arm_cartesian.json`의 `geometry` 키가 있으면 그걸 쓰고
@@ -434,11 +436,27 @@ def _arm_node_geometry() -> kin.ArmGeometry:
     도구가 재는 자와 arm_node가 계획하는 자가 다른 팔 길이를 믿게 된다** —
     말없이 갈라진다. arm_node.py를 직접 import할 수 없어(rclpy가 든다) 같은
     폴백 규칙을 여기서도 그대로 편다.
+
+    ⚠ **뽑는 쪽도 이 함수를 써야 한다**(T53). T37은 재는 쪽(run_real)만 고쳤고
+    `main()`은 `kin.ArmGeometry()` 기본값으로 표적을 뽑고 있었다 — 그러면 그
+    파일이 채워지는 날 표적을 뽑은 팔과 성공을 재는 팔이 다른 길이가 된다.
+    기준3의 점수 자체가 못 믿을 것이 되므로 **이 파일에 기하를 만드는 자리는
+    여기 하나뿐**이고, ros_selfcheck [표적]이 그것을 강제한다.
+
+    되돌려 주는 둘째 값은 **어디서 왔는지**다. 기록 줄에 그대로 남는다 —
+    limits·load_limits와 같은 이유로, 뒤에서 읽는 사람이 "어떤 팔 길이로 뽑고
+    쟀는지"를 짐작하지 않아도 되게.
     """
     try:
-        return cart.FrameConfig().geometry()
+        cfg = cart.FrameConfig()
+        geom = cfg.geometry()
+        if geom != kin.ArmGeometry():
+            return geom, f"file:{cfg.path}"
+        # 파일은 있어도 geometry 칸이 비면 코드 기본값과 같다 — 같은 숫자를
+        # 두 이름으로 부르지 않는다.
+        return geom, "config.ARM_GEOM_*"
     except Exception:  # noqa: BLE001 - 파일이 없으면 코드 기본값(arm_node와 동일)
-        return kin.ArmGeometry()
+        return kin.ArmGeometry(), "config.ARM_GEOM_*"
 
 
 def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
@@ -573,7 +591,7 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
         print(f"  prep: {out['detail']}")
         return out
 
-    geom = _arm_node_geometry()
+    geom, geom_tag = _arm_node_geometry()
     if prep:
         prep_row = run_prep()
     else:
@@ -605,6 +623,9 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
                # 뽑을 때 **들 수 있는 자리인지 알고 있었나**(T41). none이면 그
                # 실패는 팔의 실패가 아니라 도구가 고른 자리의 실패일 수 있다.
                "load_limits": load_tag,
+               # **어떤 팔 길이로** 뽑고 쟀는지(T53). 뽑는 쪽과 재는 쪽이 갈리면
+               # 점수 자체가 못 믿을 것이 되므로 그 사실이 줄에 남아야 한다.
+               "geometry": geom_tag,
                # 이 시험이 **어떤 시작 자세에서** 출발했는지 남긴다 — 기준3의
                # 0/5가 팔의 0인지 시작 자세의 0인지 나중에 가릴 수 있어야 한다.
                "prep": prep_row}
@@ -629,7 +650,7 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
             print(f"  trial {i}: FAIL[joint] /joint_states 없음")
             continue
         degs = {n: math.degrees(v) for n, v in zip(js.name, js.position)}
-        pose = kin.forward(degs, _arm_node_geometry())
+        pose = kin.forward(degs, geom)   # 뽑을 때와 같은 기하다 (T53)
         target_reached_mm = (res.reached.x * 1000.0, res.reached.y * 1000.0,
                               res.reached.z * 1000.0)
         err = math.dist((pose.x, pose.y, pose.z), target_reached_mm)
@@ -659,7 +680,10 @@ def main() -> int:
                          "자세에서 그냥 돌리면 5/5가 거절되고 거짓 0/5가 기록된다)")
     args = ap.parse_args()
 
-    geom = kin.ArmGeometry()
+    # 표적을 뽑는 기하는 **재는 기하와 같은 함수에서 와야 한다**(T53) —
+    # arm_node가 믿는 길이로 뽑지 않으면 우리가 고른 자리가 그 팔의 자리가 아니다.
+    geom, geom_tag = _arm_node_geometry()
+    print(f"팔 기하: {geom_tag} (l1={geom.l1} l2={geom.l2} l3={geom.l3})")
     # 이 팔이 **실제로 갈 수 있는 범위**. 팔을 열지 않고 파일에서 읽는다
     # (포트는 ROS가 쥐고 있다). 못 읽으면 None이고, 그 사실이 기록에 남는다.
     limits, limits_note = cart.load_norm_limits()
@@ -722,7 +746,7 @@ def main() -> int:
         print(f"⚠ 이 기록은 커밋되지 않는다 — {RECORD_HOME_WHY}")
 
     if args.dry_run:
-        ok = run_dry(points, geom, out_path, limits_tag, load_tag)
+        ok = run_dry(points, geom, out_path, limits_tag, load_tag, geom_tag)
     else:
         ok = run_real(points, out_path, limits_tag, limits=limits,
                       prep=not args.no_prep, load_tag=load_tag)
