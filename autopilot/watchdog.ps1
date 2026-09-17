@@ -1,4 +1,4 @@
-# 자동운전 감시견 — 러너가 죽었으면 되살린다.
+﻿# 자동운전 감시견 — 러너가 죽었으면 되살린다.
 # 작업 스케줄러가 10분마다 부른다(install-task.ps1). 살아 있으면 아무것도 안 한다.
 $ErrorActionPreference = 'SilentlyContinue'
 
