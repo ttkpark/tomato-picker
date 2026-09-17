@@ -49,6 +49,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 import time
 
@@ -106,23 +107,48 @@ SAMPLE_JOINT_DEG = {
 #   timeout  응답이 없다 (서비스가 돌려주지 않았다 — 단계를 알 수 없다)
 #   step     한 걸음 상한 (cartesian._check_step) — 쪼개면 되는 거절 → T30
 #   tf       좌표계 변환 실패 (arm_node._to_arm_base_mm)
+#   path     **목표는 멀쩡한데 가는 길이 막혔다** (cartesian._walk/_run_path)
 #   pose     **지금 자세**가 좌표 이동을 못 받는다 (cartesian._require_state)
 #   ik       그 밖 — 사거리·관절한계·너무 작은 지령 등 목표 자체의 문제
 # ⚠ 'pose'와 'ik'를 가르는 것은 **'목표'라는 낱말**이다. 같은 "수평거리"가
 # 자세 가드(지금 자세)에도 사거리 초과(목표)에도 나오므로, 목표를 가리키는
 # 문장은 ik로 보낸다.
-STAGES = ("timeout", "step", "tf", "pose", "ik", "joint")
+# ⚠ 'path'를 따로 둔 이유(T34) — 사이클20 실기 9줄이 전부 stage=ik로 적혔는데
+# ik는 "목표가 무리"라는 뜻이고 **목표는 멀쩡했다**(사전검사 5/5 통과). 막힌
+# 것은 첫 걸음이다. 같은 문장이 자세 가드의 낱말("수평거리")을 그대로 물고
+# 오기도 해서 pose로도 샜다(감사 사이클40 재현). 걸음 표지를 ik/pose보다
+# **먼저** 보면 둘 다 막힌다 — 고칠 곳이 목표가 아니라 경로임을 기록이 말한다.
+# 다만 **한 걸음 상한만은 그대로 step**이다(걸음 안에서 나기에 문구가 겹치지만,
+# 고치는 방법이 "쪼개라"로 다르다 → T30).
+STAGES = ("timeout", "step", "tf", "path", "pose", "ik", "joint")
+
+# `cartesian`이 경로 실패에 붙이는 표지들. **살아 있는 문장에서 그대로 따왔고**
+# ros_selfcheck [단계]가 그 문장이 아직 이 모양인지 지킨다.
+#   _walk      "{N}걸음 중 {i}번째에서 막힌다 — …"        (걷기 전에 막힘)
+#   _run_path  "{N}걸음 중 {i}번째에서 멈췄습니다 — …"    (걷다가 막힘)
+#   _run_path  "{n}걸음에서 더 안 갑니다 — …"             (서보가 안 따라옴)
+#   _run_path  "{budget}걸음을 걷고도 목표에 못 닿았습니다 — …"
+#   travel_to  "갈 길이 없습니다 — 직선 경로: … / 관절공간 경로: …"
+PATH_STEP_RE = re.compile(r"\d+\s*걸음\s*중\s*\d+\s*번째")
+PATH_MARKERS = ("걸음에서 더 안 갑니다", "걸음을 걷고도", "갈 길이 없습니다")
+
+# `_run_path`가 성공 문장 **끝에** 붙이는 해설 — " [직선 경로가 막혀 관절공간으로
+# 돌아갔다(3걸음 중 1번째에서 막힌다 — …)]". 이미 버리고 딴 길로 간 경로의
+# 이야기라 실패 이유가 아니다. 안 떼면 성공 줄까지 path로 읽힌다.
+_WHY_TAIL_RE = re.compile(r"\s*\[[^\[\]]*\]\s*$")
 
 
 def classify_stage(detail: str | None) -> str:
     """거절 문장 하나를 실패 단계 이름으로 바꾼다. 위 표의 순서대로 본다."""
-    text = (detail or "").strip()
+    text = _WHY_TAIL_RE.sub("", (detail or "").strip()).strip()
     if not text or "응답 없음" in text or "타임아웃" in text:
         return "timeout"
     if "한 번에" in text and "상한" in text:
         return "step"
     if "TF" in text or "transform" in text.lower():
         return "tf"
+    if PATH_STEP_RE.search(text) or any(m in text for m in PATH_MARKERS):
+        return "path"
     if "목표" not in text and ("몸통 뒤로" in text or "거의 수직" in text
                               or "수평거리" in text):
         return "pose"

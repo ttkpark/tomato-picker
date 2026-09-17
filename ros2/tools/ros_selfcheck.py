@@ -889,6 +889,25 @@ STEP_DETAIL_2026_09_18 = (
 TF_DETAIL = ("목표를 arm_base 좌표로 못 옮겼다: lookup failed. "
              "손-눈 보정을 했는지, 그 static TF가 떠 있는지 확인하라.")
 
+# 2026-09-18 사이클20 실기에서 **실제로 기록된** 경로 실패 문장 2종(T34).
+# 둘 다 stage=ik로 적혔고 둘 다 목표는 멀쩡했다 — 막힌 것은 첫 걸음이다
+# (docs/시험기록/move-to-point-2026-09-18.jsonl). ik는 "목표가 무리"라는 뜻이라
+# 이 오분류는 다음 사이클을 표적 뽑기로 보낸다(고칠 곳은 경로다).
+PATH_FLOOR_2026_09_18 = (
+    "이동 실패 — 9걸음 중 1번째에서 멈췄습니다 — z=-19mm는 바닥 아래입니다"
+    "(하한 15mm) — 무대를 긁습니다."
+)
+PATH_ELBOW_2026_09_18 = (
+    "이동 실패 — 6걸음 중 1번째에서 멈췄습니다 — 관절 가동범위를 벗어납니다: "
+    "elbow_flex -124(한계 ±98, -66°) — 그 방향으로는 더 못 갑니다."
+)
+# 감사 사이클40이 재현한 세 번째 얼굴 — 걸음 **도중**의 수평거리 하락이 자세
+# 가드(pose)로 읽혔다. 같은 낱말("수평거리")을 쓰기 때문이다.
+PATH_RADIUS_2026_09_18 = (
+    "이동 실패 — 3걸음 중 2번째에서 멈췄습니다 — 도중에 수평거리가 45mm로 "
+    "떨어진다(하한 90mm)"
+)
+
 
 def _escape_limits():
     """실측 프레임(2026-09-18)으로 만든 NormLimits — 팔도 파일도 안 건드린다."""
@@ -897,6 +916,28 @@ def _escape_limits():
     return cart.NormLimits(zero=f["zero"], ref=f["ref"],
                            signs={j: 1.0 for j in f["zero"]},
                            deg_per_norm=f["dpn"], source="ros_selfcheck 고정표")
+
+
+# 경로 막힘을 **살아 있는 코드가 실제로 만드는 문장**으로 확인할 자리.
+# 실측 프레임(위 ESCAPE_FRAME)에 가짜 팔을 물린다 — 파일도 장치도 안 건드린다.
+PATH_START_DEG = {"shoulder_pan": 0.0, "shoulder_lift": 55.0, "elbow_flex": -70.0,
+                  "wrist_flex": 10.0, "wrist_roll": 0.0}
+# 이 자리는 **끝점 둘 다 갈 수 있는데 그 사이가 막히는** 목표다(사이클20이 실기
+# 5/5로 겪은 것과 같은 모양). 좌표를 바꾸면 전제가 깨지니 아래 검사가 그 전제를
+# 먼저 확인한다.
+PATH_TARGET = (100.0, 0.0, 360.0, 0.0)
+
+
+def _sim_escape_arm():
+    """실측 프레임으로 영점을 잡은 **가짜 팔**. 기하·가드·경로가 전부 진짜다."""
+    import tempfile  # noqa: E402  (여기서만 쓴다)
+    from tomato_picker.hardware import cartesian as cart  # noqa: E402
+    f = ESCAPE_FRAME_2026_09_18
+    spans = {j: 200.0 * f["dpn"][j] for j in f["dpn"]}
+    io_ = cart.SimJointIO(joints=_escape_norm(PATH_START_DEG), spans=spans)
+    arm = cart.CartesianArm(io_, path=os.path.join(tempfile.mkdtemp(), "frame.json"))
+    arm.config.set_zero(_escape_norm(f["ref"]), f["ref"])
+    return arm
 
 
 def test_prep_autoextend() -> None:
@@ -1017,6 +1058,36 @@ def test_stage_classify() -> None:
           and m5.classify_stage("응답 없음(타임아웃)") == "timeout")
     check("IK 실패 → ik", m5.classify_stage("IK가 안 풀린다 — 사거리 밖") == "ik")
 
+    # --- 경로 실패는 path다 (T34) — 목표가 아니라 **가는 길**이 막힌 것 ---
+    for name, detail in (("z 바닥", PATH_FLOOR_2026_09_18),
+                         ("elbow 한계", PATH_ELBOW_2026_09_18),
+                         ("도중 수평거리", PATH_RADIUS_2026_09_18)):
+        check(f"걸음 중 막힘({name}) → path (실기 기록 그대로)",
+              m5.classify_stage(detail) == "path", m5.classify_stage(detail))
+    check("걷기 전 막힘('막힌다')도 같은 표지로 읽는다",
+          m5.classify_stage("5걸음 중 1번째에서 막힌다 — elbow_flex 한계") == "path")
+    check("두 길이 다 막히면 path다 ('갈 길이 없습니다')",
+          m5.classify_stage(
+              "갈 길이 없습니다 — 직선 경로: 3걸음 중 1번째에서 막힌다 — a "
+              "/ 관절공간 경로: 17걸음이 필요하다(상한 16걸음)") == "path")
+    check("서보가 안 따라와 선 것도 path다 ('더 안 갑니다')",
+          m5.classify_stage(
+              "4걸음에서 더 안 갑니다 — 목표에서 111mm 떨어진 자리에 섰고 "
+              "2걸음째 남은 길이 2.0mm도 안 줄었습니다. 도착 x=339") == "path")
+    # ⚠ 문구가 겹치는 자리 — 한 걸음 상한은 걸음 **안에서** 나지만 고치는 법이
+    #   다르다(쪼개라 → T30). 그래서 step이 path를 이긴다.
+    check("걸음 안에서 난 한 걸음 상한은 그대로 step이다 (path가 안 먹는다)",
+          m5.classify_stage(
+              "이동 실패 — 3걸음 중 2번째에서 멈췄습니다 — 한 번에 110mm는 "
+              "너무 큽니다(상한 80mm).") == "step")
+    # ⚠ 성공 문장 끝의 " [직선 경로가 막혀 …]"는 **이미 버린 길**의 이야기다.
+    #   안 떼면 성공 줄까지 path로 읽혀 기록이 또 거짓말을 한다.
+    check("성공 문장에 달린 '직선이 막혔다' 해설은 실패 이유가 아니다",
+          m5.classify_stage(
+              "11걸음으로 이동 완료 → x=241 y=166 z=348 · 되먹임 2회 "
+              "[직선 경로가 막혀 관절공간으로 돌아갔다(5걸음 중 1번째에서 "
+              "막힌다 — elbow_flex 한계)]") != "path")
+
     # **살아 있는 코드가 만드는 문장**으로 확인한다 — 문구를 다듬다가 분류가
     # 조용히 틀어지는 것이 이 병의 발생 경로였다. self는 안 쓰이므로 None.
     step_msg = ""
@@ -1041,11 +1112,39 @@ def test_stage_classify() -> None:
     check("사거리 초과는 pose가 아니라 ik다 ('수평거리'가 겹쳐도)",
           reach_msg and m5.classify_stage(reach_msg) == "ik", reach_msg[:60])
 
+    # **살아 있는 코드가 만드는 경로 문장** — 상수만 박아 두면 cartesian이 문구를
+    # 다듬는 순간 분류가 조용히 ik로 돌아간다(이 병의 발생 경로가 그것이었다).
+    arm = _sim_escape_arm()
+    geom = arm.config.geometry()
+    now = arm.pose()
+    target = kin.ToolPose(x=PATH_TARGET[0], y=PATH_TARGET[1],
+                          z=PATH_TARGET[2], pitch=PATH_TARGET[3])
+    ends_ok = True
+    try:
+        arm._check_workspace(target, geom)                      # noqa: SLF001
+        end_degs = kin.inverse(target, geom, elbow_up=cart.ARM_CART_ELBOW_UP,
+                               seed_pan=0.0)
+        arm._check_joint_limits(arm._to_norm(end_degs), end_degs)   # noqa: SLF001
+    except Exception as exc:                                    # noqa: BLE001
+        ends_ok, end_degs = False, str(exc)
+    check("시험용 목표는 **목표로서는 멀쩡하다**(안 그러면 아래가 헛돈다)",
+          ends_ok, str(end_degs)[:70])
+    walk_msg = arm._walk(arm._io.read(), now,                   # noqa: SLF001
+                         cart.plan_steps(now, target), geom, joint_space=False)
+    check("지금 코드가 내는 경로 막힘 문장도 path다",
+          bool(walk_msg) and m5.classify_stage(walk_msg) == "path",
+          (walk_msg or "안 막혔다")[:70])
+
     src = open(os.path.join(REPO, "src", "tomato_picker", "hardware",
                             "cartesian.py"), encoding="utf-8").read()
     check("자세 가드가 기대하는 표지를 아직 쓰고 있다",
           all(w in src for w in ("몸통 뒤로", "거의 수직", "수평거리")),
           "문구를 바꾸면 이 검사가 먼저 터진다")
+    check("경로 실패가 기대하는 표지를 아직 쓰고 있다",
+          all(w in src for w in ("번째에서 막힌다", "번째에서 멈췄습니다",
+                                 "걸음에서 더 안 갑니다", "걸음을 걷고도",
+                                 "갈 길이 없습니다")),
+          "문구를 바꾸면 경로 실패가 다시 ik로 샌다")
 
     # ⚠ 감사 T39 실측: 이 파일이 없으면 아래 두 check()가 아예 안 불려
     # FAIL 없이 통과 수만 줄어든다(10개→8개, 조용히 사라짐). 그 파일이
@@ -1064,6 +1163,18 @@ def test_stage_classify() -> None:
         check("09-18 기록의 실패 줄은 지금 규칙으로 tf가 하나도 없다",
               redo and "tf" not in redo,
               f"{len(redo)}줄 → {sorted(set(redo))}")
+        # ⚠ stage="joint"로 적힌 줄은 **이동은 성공했고 오차가 컸던** 줄이라
+        #   detail이 성공 문장이다(분류기가 만든 값이 아니다). 여기서 빼지 않으면
+        #   성공 문장을 재분류하며 엉뚱한 것을 지키게 된다.
+        rejected = [r for r in fails if r.get("stage") != "joint"]
+        moved = [r for r in rejected
+                 if r.get("stage") == "ik" and m5.classify_stage(r["detail"]) == "path"]
+        check("사이클20의 '걸음 중 N번째' 줄이 ik에서 path로 옮겨 갔다",
+              len(moved) == 9, f"{len(moved)}줄 (기록에 9줄 있었다)")
+        check("걸음 표지를 단 거절 줄은 이제 하나도 ik/pose가 아니다",
+              not [r for r in rejected
+                   if m5.PATH_STEP_RE.search(r["detail"])
+                   and m5.classify_stage(r["detail"]) in ("ik", "pose")])
         check("그 기록에 정정 note가 남아 있다",
               any("note" in r for r in rows))
 
