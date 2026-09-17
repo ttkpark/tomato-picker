@@ -32,6 +32,24 @@ D405를 잡아 **컬러에 정렬된 깊이**를 계속 /dev/shm에 쓴다. 팔�
    (참고: depth→color 외부파라미터는 회전≈단위행렬, 평행이동≈0.01mm였다.
     D405는 같은 스테레오 모듈에서 컬러와 깊이가 나오기 때문이다.)
 
+⚠ **센서가 하나다 — 컬러와 깊이가 노출·게인을 공유한다** (2026-09-18 실측).
+   `query_devices()[0].query_sensors()`가 `Stereo Module` **하나**를 내놓고 그것이
+   color·depth·infrared를 전부 낸다. 그래서 "컬러만 밝게"가 없다 — 게인을 올리면
+   깊이 잡음도 같이 오른다. 공짜가 아니니 **손잡이를 기본값으로 켜 두지 않는다**.
+   같은 날 잰 사다리(어두운 무대, 848x480@30):
+
+       설정                       컬러 평균  최댓값  깊이 유효율
+       자동노출(기본)                  7.7     47      0.043
+       exp= 33000us gain= 16           0.3      3      0.009
+       exp= 33000us gain=248           7.8     52      0.040
+       exp=100000us gain=128          10.6     61      0.184
+       exp=165000us gain=248 (최대)   33.9    113      0.326
+
+   두 가지가 여기서 갈렸다. ① **컬러는 손잡이를 끝까지 올려도 평균 34가 한계다**
+   — 7.2가 나오는 것은 발행기 탓이 아니라 **무대가 정말 어둡기 때문**이다(조명을
+   켜야 한다). ② 그런데 **깊이 유효율은 0.043 → 0.326으로 7.6배**가 된다. 컬러를
+   포기하고 깊이만 쓰는 일(손-눈 표본 채집)에는 이 손잡이가 실제로 값을 한다.
+
 ⚠ **D405는 근거리 전용이다** — 이상 동작범위 7~50cm, 1m를 넘으면 급격히
    나빠진다. 2026-08-28 삼각대 위치에서는 장면의 **0%**가 50cm 안에 없었고
    전부 1~2m였다. 그 상태로는 보정을 아무리 잘해도 열매를 못 집는다.
@@ -48,7 +66,11 @@ import time
 
 import cv2
 import numpy as np
-import pyrealsense2 as rs
+
+# ⚠ pyrealsense2는 **함수 안에서** 불러온다 — 젯슨의 vision venv에만 있어서
+#   모듈 최상단에 두면 PC 자체검증(tools/eye_check.py)이 이 파일을 열지도 못한다.
+#   이 저장소의 규칙은 "숫자는 젯슨에 올리기 전에 PC에서 확인한다"이므로,
+#   순수 계산부(color_settings·clamp_option)는 카메라 없이 import돼야 한다.
 
 WIDTH = int(os.environ.get("D405_WIDTH", "848"))
 HEIGHT = int(os.environ.get("D405_HEIGHT", "480"))
@@ -71,6 +93,69 @@ VIEW_MAX_MM = float(os.environ.get("D405_VIEW_MAX_MM", "600"))
 # 틀린다. 깊이 단위가 그랬듯 **카메라가 스스로 말하게** 한다.
 MIN_MM = float(os.environ.get("D405_MIN_MM", "70"))
 MAX_MM = float(os.environ.get("D405_MAX_MM", "900"))
+# 노출·게인 손잡이 (2026-09-18 추가). 기본은 **건드리지 않음** — 지금까지의
+# 동작(자동노출)을 그대로 둔다. 어두운 무대에서 깊이 표본을 채집할 때만 켠다.
+#   D405_AUTO_EXPOSURE=0 D405_EXPOSURE_US=165000 D405_GAIN=248
+# ⚠ 이 손잡이는 깊이에도 걸린다(센서가 하나다 — 위 ⚠ 참고). 그리고 165ms 노출은
+#   스트림을 ~6fps로 떨어뜨리고 움직이는 것을 흐리게 만든다. 팔이 멎어 있는
+#   채집에는 괜찮지만 주행 중에는 쓰지 마라.
+AUTO_EXPOSURE = os.environ.get("D405_AUTO_EXPOSURE")
+EXPOSURE_US = os.environ.get("D405_EXPOSURE_US")
+GAIN = os.environ.get("D405_GAIN")
+
+
+def color_settings(env: dict | None = None) -> dict:
+    """환경변수 → 스테레오 모듈에 넣을 노출 설정. 아무것도 안 주면 빈 dict.
+
+    왜 순수 함수인가: 카메라가 있어야만 확인할 수 있는 코드는 젯슨에 올려 봐야
+    틀린 걸 안다. 값 해석은 PC에서 자른다(`tools/eye_check.py`).
+
+    규칙 하나만 기억하면 된다 — **노출이나 게인을 손으로 주면 자동노출은 꺼진다.**
+    켜 둔 채 값을 넣으면 자동노출이 곧바로 덮어써서 "지령은 나갔는데 아무 일도
+    안 일어나는" 이 저장소의 1번 병이 그대로 재현된다. `D405_AUTO_EXPOSURE=1`을
+    함께 주면 그건 모순이므로 **거절**한다(조용히 한쪽을 이기게 두지 않는다).
+    """
+    env = os.environ if env is None else env
+
+    def num(key: str) -> float | None:
+        raw = env.get(key)
+        if raw is None or raw == "":
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            raise ValueError(f"{key}={raw!r} — 숫자여야 한다") from None
+
+    out: dict = {}
+    exposure, gain = num("D405_EXPOSURE_US"), num("D405_GAIN")
+    raw_auto = env.get("D405_AUTO_EXPOSURE")
+    auto = None if raw_auto in (None, "") else raw_auto not in ("0", "false", "no")
+
+    if (exposure is not None or gain is not None) and auto:
+        raise ValueError("D405_AUTO_EXPOSURE=1과 수동 노출/게인은 같이 못 준다 — "
+                         "자동노출이 덮어써서 수동값이 무시된다")
+    if exposure is not None or gain is not None:
+        out["auto_exposure"] = False        # 수동값을 주면 자동은 꺼진다
+    elif auto is not None:
+        out["auto_exposure"] = auto
+    if exposure is not None:
+        out["exposure"] = exposure
+    if gain is not None:
+        out["gain"] = gain
+    return out
+
+
+def clamp_option(name: str, value: float, lo: float, hi: float) -> float:
+    """센서가 말한 범위로 자른다. 범위 밖을 그대로 넣으면 librealsense가 던진다.
+
+    자르되 **조용히 자르지 않는다** — 넣은 값과 실제 값이 다르면 그 자리에서
+    말해야, 나중에 "왜 안 밝지"로 반나절을 쓰지 않는다.
+    """
+    cut = min(hi, max(lo, value))
+    if cut != value:
+        print(f"⚠ {name}={value:g}가 범위 [{lo:g},{hi:g}] 밖이라 {cut:g}로 잘랐다",
+              file=sys.stderr, flush=True)
+    return cut
 
 
 def _atomic(path: str, data: bytes) -> None:
@@ -120,7 +205,56 @@ def _colormap(depth: np.ndarray, scale_mm: float) -> np.ndarray:
     return img
 
 
+def apply_color_settings(sensor, settings: dict, rs_mod) -> dict:
+    """설정을 센서에 넣고 **되읽은 값**을 돌려준다(넣은 값이 아니라).
+
+    되읽는 이유: 자동노출이 켜져 있으면 exposure는 카메라가 정하고, 범위 밖 값은
+    잘린다. meta.json에는 **실제로 걸린 값**이 가야 읽는 쪽이 속지 않는다.
+    """
+    opts = {"auto_exposure": rs_mod.option.enable_auto_exposure,
+            "exposure": rs_mod.option.exposure, "gain": rs_mod.option.gain}
+    # ⚠ 자동노출을 먼저 끈다 — 켜진 채 exposure를 넣으면 다음 프레임에 덮인다.
+    for key in ("auto_exposure", "exposure", "gain"):
+        if key not in settings:
+            continue
+        opt, value = opts[key], float(settings[key])
+        if not sensor.supports(opt):
+            print(f"⚠ 이 카메라는 {key}를 지원하지 않는다 — 건너뛴다",
+                  file=sys.stderr, flush=True)
+            continue
+        rng = sensor.get_option_range(opt)
+        sensor.set_option(opt, clamp_option(key, value, rng.min, rng.max))
+
+    out = {}
+    for key, opt in opts.items():
+        if sensor.supports(opt):
+            out[key] = sensor.get_option(opt)
+    out["auto_exposure"] = bool(out.get("auto_exposure", 0))
+    return out
+
+
+def color_stats(color: np.ndarray) -> dict:
+    """화면이 얼마나 밝은가 — meta에 실어 읽는 쪽이 "어둡다"를 말할 수 있게.
+
+    2026-09-18에 이걸 안 실어서 하루를 썼다: `target_check.find_dots`의 contrast
+    게이트가 0개를 내놓는 것을 "마커판이 시야 밖"으로 읽었는데, 실제로는 화면
+    평균이 7.2/255라 마커가 눈앞에 있어도 못 넘는 상태였다. 밝기를 숫자로 내보내면
+    그 둘이 갈린다. 임계는 여기에 박지 않는다 — 숫자만 주고 판단은 읽는 쪽이 한다.
+
+    ⚠ 최댓값만으로는 못 가른다 — 어두운 프레임에도 반짝이는 화소 하나는 있다
+      (2026-09-18 실측: 평균 7.2인 화면의 최댓값이 42였다). 그래서 **99백분위**를
+      함께 싣는다. 점 검출은 고리(밝은 종이)가 알맹이보다 30만큼 밝기를 요구하니,
+      화면의 1%도 30을 못 넘으면 마커 크기의 밝은 고리는 존재할 수 없다.
+    """
+    gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+    return {"color_mean": round(float(gray.mean()), 1),
+            "color_p99": int(np.percentile(gray, 99)),
+            "color_max": int(gray.max())}
+
+
 def main() -> None:
+    import pyrealsense2 as rs        # 젯슨 vision venv에만 있다(위 ⚠ 참고)
+
     pipe = rs.pipeline()
     cfg = rs.config()
     cfg.enable_stream(rs.stream.depth, WIDTH, HEIGHT, rs.format.z16, FPS)
@@ -134,9 +268,14 @@ def main() -> None:
     color_intr = _intrinsics_dict(
         profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics())
 
+    # ⚠ D405는 센서가 하나다 — 이 'depth sensor'가 컬러도 낸다(위 ⚠ 참고).
+    color_opts = apply_color_settings(dev.first_depth_sensor(), color_settings(), rs)
+
     serial = dev.get_info(rs.camera_info.serial_number)
     print(f"D405 {serial} fw={dev.get_info(rs.camera_info.firmware_version)} "
-          f"{WIDTH}x{HEIGHT}@{FPS} depth_scale={scale_m} ({scale_mm}mm/단위)",
+          f"{WIDTH}x{HEIGHT}@{FPS} depth_scale={scale_m} ({scale_mm}mm/단위) "
+          f"auto_exposure={color_opts.get('auto_exposure')} "
+          f"exposure={color_opts.get('exposure')} gain={color_opts.get('gain')}",
           flush=True)
 
     filters = []
@@ -207,6 +346,10 @@ def main() -> None:
             # 곧 깊이 격자의 같은 자리다. Astra는 여기가 false다.
             "color_aligned": True,
             "has_color": True,
+            # 실제로 걸린 노출 설정과 그 결과 밝기. 둘을 같이 실어야 "어둡다"의
+            # 원인이 무대인지 설정인지 읽는 쪽에서 갈린다.
+            **color_opts,
+            **color_stats(color),
             **_range_profile(z_mm),
         }
         _atomic(META_PATH, json.dumps(meta, ensure_ascii=False).encode("utf-8"))

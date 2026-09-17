@@ -500,6 +500,98 @@ def test_two_cameras() -> None:
           f"{st.get('min_mm')}~{st.get('max_mm')}mm")
 
 
+# ----------------------------------------------------------------------
+# 발행기의 노출 손잡이 (2026-09-18, D405)
+#
+# 여기서 지키려는 사고: **"밝게 해 뒀다"고 믿었는데 자동노출이 덮어쓰고 있는 것.**
+# 지령은 나갔는데 아무 일도 안 일어나는 이 저장소 1번 병의 카메라 판이다.
+# 그리고 발행기 코드가 PC에서 import조차 안 되면 이런 걸 젯슨에서야 알게 된다 —
+# 그래서 pyrealsense2를 지연 임포트로 두었고, 이 검사가 그걸 지킨다.
+# ----------------------------------------------------------------------
+
+def test_publisher_exposure() -> None:
+    print("\n[발행기 노출] 컬러를 밝히는 손잡이 — D405는 센서가 하나다")
+    import depth_cam as pub
+
+    check("카메라 없이도 발행기를 열 수 있다(pyrealsense2 지연 임포트)",
+          callable(pub.color_settings) and callable(pub.color_stats))
+    check("환경변수가 없으면 아무것도 안 건드린다 — 지금 동작을 안 바꾼다",
+          pub.color_settings({}) == {})
+
+    manual = pub.color_settings({"D405_EXPOSURE_US": "165000", "D405_GAIN": "248"})
+    check("수동값을 주면 자동노출이 꺼진다 — 안 끄면 다음 프레임에 덮인다",
+          manual == {"auto_exposure": False, "exposure": 165000.0, "gain": 248.0},
+          str(manual))
+    check("자동노출만 끌 수도 있다",
+          pub.color_settings({"D405_AUTO_EXPOSURE": "0"}) == {"auto_exposure": False})
+    check("자동노출을 켜라는 말도 그대로 전달된다",
+          pub.color_settings({"D405_AUTO_EXPOSURE": "1"}) == {"auto_exposure": True})
+
+    expect_error("자동노출 켜기 + 수동값은 모순이라 거절한다",
+                 lambda: pub.color_settings({"D405_AUTO_EXPOSURE": "1",
+                                             "D405_GAIN": "248"}), "같이 못 준다")
+    expect_error("숫자가 아닌 노출값은 0으로 삼키지 않고 거절한다",
+                 lambda: pub.color_settings({"D405_GAIN": "밝게"}), "숫자여야 한다")
+
+    check("센서가 말한 범위 밖은 잘린다 — 넣으면 librealsense가 던진다",
+          pub.clamp_option("gain", 999, 16, 248) == 248
+          and pub.clamp_option("gain", 1, 16, 248) == 16
+          and pub.clamp_option("gain", 64, 16, 248) == 64)
+
+    dark = np.full((8, 8, 3), 7, dtype=np.uint8)
+    bright = np.full((8, 8, 3), 200, dtype=np.uint8)
+    st_dark, st_bright = pub.color_stats(dark), pub.color_stats(bright)
+    check("밝기를 meta에 실을 숫자로 내놓는다(평균·99백분위·최댓값)",
+          set(st_dark) == {"color_mean", "color_p99", "color_max"}, str(st_dark))
+    check("어두운 화면과 밝은 화면이 숫자로 갈린다",
+          st_dark["color_mean"] < 20 < st_bright["color_mean"],
+          f"{st_dark['color_mean']} vs {st_bright['color_mean']}")
+    # 임계를 발행기에 박지 않는 것이 요점 — 숫자만 주고 판단은 읽는 쪽이 한다.
+    check("발행기는 '어둡다'를 스스로 판정하지 않는다 — 임계를 안 박는다",
+          "color_dark" not in st_dark and "dark" not in st_dark)
+
+    # --- 판단은 읽는 쪽이 한다: status()가 어두운 화면을 말하는가 ---
+    cam = FakeCam((0.0, -300.0, 300.0), (0.0, 0.0, 0.0), tag="_dark")
+    cam.bake([(0.0, 0.0, 0.0)])
+    view = cam.view()
+
+    def with_color(mean, p99, mx):
+        with open(cam.meta, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta.update({"color_mean": mean, "color_p99": p99, "color_max": mx})
+        with open(cam.meta, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        return view.status()
+
+    # 2026-09-18 젯슨에서 실제로 읽은 어두운 프레임의 숫자 그대로.
+    dark_st = with_color(7.2, 17, 42)
+    check("상태에 화면 밝기가 실린다 — 검출 0개의 원인을 가를 수 있게",
+          dark_st["color_mean"] == 7.2 and dark_st["color_p99"] == 17)
+    check("최댓값만으로는 안 갈린다 — 어두운 프레임의 최댓값도 42였다",
+          dark_st["color_max"] >= 30)
+    check("어두우면 '0개를 표적 없음으로 읽지 마라'고 말한다",
+          "원리상" in (dark_st.get("color_warn") or ""),
+          str(dark_st.get("color_warn"))[:60])
+    bright_st = with_color(34.8, 90, 113)
+    check("밝아지면 그 경고가 사라진다",
+          bright_st.get("color_warn") is None, str(bright_st.get("color_warn")))
+    check("밝기 경고는 거리 경고를 덮지 않는다 — 둘은 다른 병이다",
+          "color_warn" != "warn" and "warn" not in dark_st or
+          dark_st.get("warn") != dark_st.get("color_warn"))
+
+    # 옛 발행기가 돌고 있을 수도 있다 — 그때 죽지 말고 조용히 넘어가야 한다.
+    with open(cam.meta, encoding="utf-8") as f:
+        meta = json.load(f)
+    for key in ("color_mean", "color_p99", "color_max"):
+        meta.pop(key, None)
+    with open(cam.meta, "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    old_st = view.status()
+    check("밝기를 안 싣는 옛 발행기에도 상태가 돈다(None으로 통과)",
+          old_st["ok"] and old_st["color_p99"] is None
+          and "color_warn" not in old_st)
+
+
 def main() -> int:
     print(f"보정→통합 자체검증 — 하드웨어 없이 (임시폴더 {TMP})")
     try:
@@ -511,6 +603,7 @@ def main() -> int:
         test_mount_switch()
         test_snapshot()
         test_two_cameras()
+        test_publisher_exposure()
     finally:
         shutil.rmtree(TMP, ignore_errors=True)
 

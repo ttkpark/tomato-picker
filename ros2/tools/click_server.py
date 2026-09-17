@@ -638,7 +638,8 @@ function state(){
     if(j.gu!=null) gp={u:j.gu,v:j.gv};
     if(j.u!=null){pt={u:j.u,v:j.v};
       document.getElementById('cur').textContent='표적 ('+j.u+', '+j.v+')  깊이 '+(j.z>0?j.z.toFixed(0)+'mm':'없음');}
-    document.getElementById('age').textContent='프레임 '+j.age.toFixed(1)+'초 전'+(j.age>5?' ⚠ depth-cam 확인':'');
+    var dark=(j.cp99!=null&&j.cp99<30)?(' ⚠ 화면이 어둡다(평균 '+j.cmean+') — 점 검출이 원리상 0개다'):'';
+    document.getElementById('age').textContent='프레임 '+j.age.toFixed(1)+'초 전'+(j.age>5?' ⚠ depth-cam 확인':'')+dark;
     var wv=document.getElementById('warn');
     if(j.voice){wv.textContent='⚠ tomato-voice 가 켜져 있다 — 팔 포트를 뺏겨 여기서 시키는 일이 전부 실패한다. '
       +'젯슨에서 sudo systemctl stop tomato-voice';wv.style.display='';}
@@ -990,6 +991,14 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 out["age"] = time.time() - os.path.getmtime(COLOR)
             except OSError:
+                pass
+            # 화면 밝기 — 어두운 화면에서는 점 검출이 **원리상** 0개를 낸다
+            # (고리와 알맹이의 밝기 차 30을 요구한다). 그걸 모르고 0개를
+            # "표적이 없다"로 읽어 2026-09-17 하루를 썼다. 조작대가 먼저 말한다.
+            try:
+                m = json.load(open(META))
+                out["cmean"], out["cp99"] = m.get("color_mean"), m.get("color_p99")
+            except Exception:                              # noqa: BLE001
                 pass
             if os.path.exists(TARGET):
                 try:
