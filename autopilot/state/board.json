@@ -150,18 +150,23 @@
    "id": "T7",
    "title": "move_to_point 5회 시험을 한 명령으로 돌리고 기록까지 남기는 도구 만들기",
    "role": "tester",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "졸업 기준 3번을 매번 손으로 재면 매번 다르게 잰다. 눈금이 흔들리면 진전도 안 보인다.",
    "done_when": "ros2/tools/에 도구가 있고, docs/시험기록/에 시도마다 한 줄(jsonl)이 쌓인다. 젯슨 없이도 --dry-run으로 검증됨",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-17 21:44",
-   "updated": "2026-09-17 21:44",
+   "updated": "2026-09-17 22:17",
    "notes": [
     {
      "t": "2026-09-17 21:44",
      "by": "human",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-17 22:17",
+     "by": "tester",
+     "text": "완료: ros2/tools/move5_check.py 생성. --dry-run은 ROS 없이 kinematics.inverse/forward를 로컬에서 그대로 돌려 도구 자체(기록형식·성공판정·RC)를 검증한다(5/5 성공 1회, reachable+unreachable 혼합 1/2 성공 1회 모두 확인, RC 0/1 정확). 실기 경로(--points, rclpy/arm_node 연결)는 코드는 있으나 이 사이클에서 ROS2 스택을 젯슨에 못 띄워봐서 미검증 — 기록은 docs/시험기록/move-to-point-<날짜>.jsonl에 시도마다 한 줄, stage(tf/ik/joint)로 실패단계 구분."
     }
    ]
   },
@@ -202,14 +207,19 @@
    "priority": 1,
    "why": "손에 든 유일한 독립 해(|t|=119mm)는 젯슨 ~/joint_axes.json 2026-09-01자다 — 브래킷 재접착(09-04)·팔 재교시·wrist_roll 재영점 **전**이라 현재 하드웨어의 값이 아니다. 이걸 갱신해야 --fix-t에 넣을 숫자가 생긴다.",
    "done_when": "젯슨에서 joint_axis_check.py로 새 ~/joint_axes.json을 만들고(tomato-voice 내린 뒤, 끝나면 되돌림), PC에서 handeye_from_axes.py --home=<수집 홈자세>로 풀어 t_tool_cam 3성분·|t|·거리잔차RMS·회전 평균어긋남을 기록. 09-01 값(-98.2,33.5,57.8 / 119mm / 7.8mm / 0.68도)과 나란히 표로 남긴다",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-17 21:49",
+   "updated": "2026-09-17 22:17",
    "notes": [
     {
      "t": "2026-09-17 21:49",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-17 22:17",
+     "by": "tester",
+     "text": "실행 시도: tomato-voice 내리고 joint_axis_check.py 5축 전부 돌림 → 전부 '표본 부족 — 표적을 잃었다'(0표본). target_check.find_dots()는 흰 종이 위 검은 점 4개(체스판형 마커)를 찾는데, 현재 카메라 시야엔 그 마커가 없고 대신 면봉형 막대(다른 시험용 표적)만 보인다. 즉 이 검사용 4점 마커판을 사람이 D405 시야 안에 다시 놓아야 한다 — 사실상 [사람] 준비가 선행돼야 함. tomato-voice는 원상 복구(active)해 뒀다."
     }
    ]
   },
@@ -221,14 +231,19 @@
    "priority": 1,
    "why": "인수인계-2026-09-04 §8-1이 지목한 단 하나의 남은 수. 소프트웨어 가설은 다 썼고(§7.3-2), --fix-t 경로는 이미 코드에 있다(handeye_resolve.py:334). 넣을 숫자만 없다. 5분이면 끝나고 이게 졸업기준2·3을 동시에 푼다.",
    "done_when": "세 숫자를 mm로 적어 docs/인수인계-2026-09-04.md §10에 남긴다 — l1·l2·l3와 같은 축-축 벡터 관례로 (집게가 찌르는 방향 APPROACH, 그 왼쪽 LATERAL, 위 UP). 그 값으로 'python ros2/tools/handeye_resolve.py ~/handeye_samples.json --fix-t A L U'가 잔차 15mm 이하를 내는지까지 확인",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-17 21:49",
+   "updated": "2026-09-17 22:10",
    "notes": [
     {
      "t": "2026-09-17 21:49",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-17 22:10",
+     "by": "tester",
+     "text": "[사람] 캘리퍼스 실측이 필요해 자동 사이클(tester)에서 처리 불가 — todo로 되돌림. 대신 T9(joint_axis_check 재수집) 진행."
     }
    ]
   },
