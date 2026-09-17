@@ -53,6 +53,7 @@ from ..config import (
     ARM_GEOM_L2,
     ARM_GEOM_L3,
     ARM_GEOM_Z0,
+    ARM_ID,
 )
 from . import kinematics as kin
 from .kinematics import ArmGeometry, ToolPose, Unreachable
@@ -65,6 +66,11 @@ DEG_PER_TICK = 360.0 / 4096.0
 # 실제 팔에서는 아래 spans()가 진짜 값을 준다 — 여긴 순수 시뮬용 기본값이다.
 FALLBACK_DEG_PER_NORM = {"wrist_roll": 1.8}
 FALLBACK_DEG_PER_NORM_DEFAULT = 0.9
+# 정규화 ±100이 캘리브레이션된 가동 끝이고, 그 앞에서 멈출 여유를 남긴 값.
+NORM_LIMIT = 100.0 - ARM_CART_NORM_MARGIN
+# lerobot이 캘리브레이션(관절별 raw 구간)을 남기는 곳. **팔 포트를 열지 않고**
+# 정규화 1단위가 몇 도인지 아는 유일한 길이라, 포트를 남이 쥐고 있을 때 쓴다.
+LEROBOT_CALIBRATION_DIR = "~/.cache/huggingface/lerobot/calibration/robots"
 
 
 class JointIO(Protocol):
@@ -236,6 +242,170 @@ class FrameConfig:
 
 
 # ----------------------------------------------------------------------
+# 정규화값 ↔ 각도 — 팔이 없어도 되는 순수 계산
+# ----------------------------------------------------------------------
+# 식은 **여기 하나뿐이어야 한다.** 팔이 있을 때(CartesianArm)와 파일만 있을 때
+# (NormLimits)가 각자 식을 들고 있으면, 같은 팔을 두 도구가 다르게 믿는다 —
+# 이 저장소가 계통 경계에서 계속 경계하는 바로 그 병이다.
+#
+# 정규화값 ─→ 각도:  ref + 부호 × (지금 − 영점) × (도/단위)
+# ref가 0이 아닌 이유는 교시 자세가 "곧게 세운" 자세이기 때문이다
+# (그 자세에서 lift는 0°가 아니라 90°다). config.ARM_CART_ZERO_POSE_DEG 참고.
+
+
+def norms_to_degrees(norms: dict[str, float], *, zero: dict[str, float],
+                     ref: dict[str, float], signs: dict[str, float],
+                     deg_per_norm: dict[str, float]) -> dict[str, float]:
+    """정규화값 → 기구학 각도. 빠진 관절은 0으로 본다(kin.JOINTS 전부를 돌려준다)."""
+    return {
+        j: ref[j] + signs[j] * (float(norms.get(j, 0.0)) - zero[j]) * deg_per_norm[j]
+        for j in kin.JOINTS
+    }
+
+
+def degrees_to_norms(degs: dict[str, float], *, zero: dict[str, float],
+                     ref: dict[str, float], signs: dict[str, float],
+                     deg_per_norm: dict[str, float]) -> dict[str, float]:
+    """기구학 각도 → 정규화값(위의 역). **준 관절만** 돌려준다."""
+    out = {}
+    for j, deg in degs.items():
+        if j not in kin.JOINTS:
+            continue
+        out[j] = zero[j] + (float(deg) - ref[j]) / (signs[j] * deg_per_norm[j])
+    return out
+
+
+def calibration_path(arm_id: str = ARM_ID,
+                     root: str = LEROBOT_CALIBRATION_DIR) -> str | None:
+    """lerobot 캘리브레이션 파일을 찾는다. 없으면 None.
+
+    로봇 종류 디렉터리 이름(so_follower / so101_follower …)은 lerobot 판마다
+    달라서 **이름으로 짚지 않고 훑는다** — 판이 바뀔 때마다 상수를 고치게 두면
+    조용히 "못 읽었다"가 되고, 그러면 아래 load_norm_limits가 한계를 모른 채
+    돈다(그게 09-18에 못 가는 표적을 다섯 개 뽑은 원인이다).
+    """
+    base = os.path.expanduser(root)
+    try:
+        kinds = sorted(os.listdir(base))
+    except OSError:
+        return None
+    for kind in kinds:
+        path = os.path.join(base, kind, f"{arm_id}.json")
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def spans_deg_from_calibration(arm_id: str = ARM_ID,
+                               root: str = LEROBOT_CALIBRATION_DIR) -> dict[str, float]:
+    """정규화 -100..100이 실제 몇 도인지를 **파일에서** 읽는다.
+
+    JointIO.spans_deg()와 같은 식((range_max−range_min)×도/틱)이다. 다른 점은
+    팔을 안 연다는 것뿐 — 포트는 한 프로세스만 열 수 있으므로(CLAUDE.md),
+    ROS가 팔을 쥐고 도는 동안 바깥 도구가 이 숫자를 얻는 길은 이것뿐이다.
+    """
+    path = calibration_path(arm_id, root)
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, float] = {}
+    for name, c in (raw or {}).items():
+        try:
+            out[name] = abs(int(c["range_max"]) - int(c["range_min"])) * DEG_PER_TICK
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+class NormLimits:
+    """관절 가동범위 판정 — **팔을 열지 않고** 파일만 읽어서.
+
+    왜 있나: 2026-09-18 실기에서 `/arm/move_to_point` 5회가 5회 다
+    `elbow_flex` 정규화 −121~−138(한계 ±98)로 거절됐다. 표적을 뽑은 쪽이
+    **사거리만** 보고 있었기 때문이다 — 사거리는 링크 길이(기구학)가 정하고
+    가동범위는 캘리브레이션이 정한다. **다른 것이다.** 갈 수 없는 자리를
+    시험하면 0/5가 나오고, 그 0은 팔이 아니라 도구가 만든 0이다.
+    """
+
+    def __init__(self, *, zero: dict[str, float], ref: dict[str, float],
+                 signs: dict[str, float], deg_per_norm: dict[str, float],
+                 source: str, limit: float = NORM_LIMIT) -> None:
+        self.zero = dict(zero)
+        self.ref = dict(ref)
+        self.signs = dict(signs)
+        self.deg_per_norm = dict(deg_per_norm)
+        self.source = source
+        self.limit = float(limit)
+
+    def norms(self, degs: dict[str, float]) -> dict[str, float]:
+        return degrees_to_norms(degs, zero=self.zero, ref=self.ref,
+                                signs=self.signs, deg_per_norm=self.deg_per_norm)
+
+    def violations(self, degs: dict[str, float]) -> dict[str, float]:
+        """한계를 넘은 관절만 {이름: 정규화값}. `_check_joint_limits`와 같은 판정."""
+        return {j: v for j, v in self.norms(degs).items() if abs(v) > self.limit}
+
+    def degree_range(self, joint: str) -> tuple[float, float]:
+        """이 관절이 한계 안에서 취할 수 있는 **기구학 각도 구간**.
+
+        표적을 뽑는 쪽이 쓴다 — 못 가는 구간에서 던져 놓고 기각하면 영원히
+        안 뽑히는 수가 있다(이 팔의 elbow_flex가 실제로 그랬다: 뽑기 구간
+        −100~−20° 중 −38.9°까지만 살아 있다).
+        """
+        lo = self.ref[joint] + self.signs[joint] * (-self.limit - self.zero[joint])             * self.deg_per_norm[joint]
+        hi = self.ref[joint] + self.signs[joint] * (self.limit - self.zero[joint])             * self.deg_per_norm[joint]
+        return (min(lo, hi), max(lo, hi))
+
+    def describe(self, degs: dict[str, float]) -> str:
+        over = self.violations(degs)
+        if not over:
+            return ""
+        return ", ".join(f"{j} {v:+.0f}(한계 ±{self.limit:.0f})"
+                         for j, v in sorted(over.items()))
+
+
+def load_norm_limits(path: str = ARM_CART_FILE, arm_id: str = ARM_ID,
+                     root: str = LEROBOT_CALIBRATION_DIR,
+                     ) -> tuple[NormLimits | None, str]:
+    """영점 파일 + 캘리브레이션 파일로 NormLimits를 만든다. (limits, 한 줄 설명).
+
+    **짐작으로 채우지 않는다.** 영점이 없거나 관절 하나라도 도/단위를 모르면
+    None을 준다 — FALLBACK_DEG_PER_NORM(0.9)로 메우면 갈 수 있는 표적을
+    거절하거나 못 가는 표적을 통과시키는데, 둘 다 조용히 틀린다. 모르면
+    "모른다"고 말하는 편이 낫다(부르는 쪽이 기록에 limits=none을 남긴다).
+    """
+    config = FrameConfig(path)
+    if not config.has_zero:
+        return None, f"영점이 없다({config.path}) — 이 PC에서는 가동범위를 모른다"
+    spans = spans_deg_from_calibration(arm_id, root)
+    deg_per_norm: dict[str, float] = {}
+    unknown = []
+    for j in kin.JOINTS:
+        override = config.deg_per_norm_override(j)
+        if override:
+            deg_per_norm[j] = override
+            continue
+        span = spans.get(j)
+        if span:
+            deg_per_norm[j] = abs(float(span)) / 200.0
+            continue
+        unknown.append(j)
+    if unknown:
+        where = calibration_path(arm_id, root) or f"{root}/*/{arm_id}.json (없음)"
+        return None, f"도/단위를 모르는 관절: {', '.join(unknown)} — {where}"
+    cal = calibration_path(arm_id, root)
+    source = config.path + (f" + {cal}" if cal else " (deg_per_norm 전부 파일에 적혀 있다)")
+    limits = NormLimits(zero=config.zero(), ref=config.ref_deg(),
+                        signs={j: config.sign(j) for j in kin.JOINTS},
+                        deg_per_norm=deg_per_norm, source=source)
+    return limits, f"한계 ±{limits.limit:.0f} ← {source}"
+
+
+# ----------------------------------------------------------------------
 # 유닛 본체
 # ----------------------------------------------------------------------
 
@@ -273,27 +443,23 @@ class CartesianArm:
         """기구학 각도 → 정규화값(위의 역)."""
         return self._to_norm(degs)
 
-    # 정규화값 ─→ 각도:  ref + 부호 × (지금 − 영점) × (도/단위)
-    # ref가 0이 아닌 이유는 교시 자세가 "곧게 세운" 자세이기 때문이다
-    # (그 자세에서 lift는 0°가 아니라 90°다). config.ARM_CART_ZERO_POSE_DEG 참고.
+    # 식 자체는 모듈 함수(norms_to_degrees/degrees_to_norms)에 있다 — 팔이 없는
+    # 도구(NormLimits)와 **같은 줄**을 쓰게 하려고 밖으로 뺐다.
 
-    def _to_deg(self, norms: dict[str, float]) -> dict[str, float]:
-        zero, ref = self.config.zero(), self.config.ref_deg()
+    def _frame(self) -> dict:
+        """지금 팔의 정규화↔각도 변환표. 도/단위는 캘리브레이션에서 읽는다."""
         return {
-            j: ref[j] + self.config.sign(j)
-               * (float(norms.get(j, 0.0)) - zero[j]) * self._deg_per_norm(j)
-            for j in kin.JOINTS
+            "zero": self.config.zero(),
+            "ref": self.config.ref_deg(),
+            "signs": {j: self.config.sign(j) for j in kin.JOINTS},
+            "deg_per_norm": {j: self._deg_per_norm(j) for j in kin.JOINTS},
         }
 
+    def _to_deg(self, norms: dict[str, float]) -> dict[str, float]:
+        return norms_to_degrees(norms, **self._frame())
+
     def _to_norm(self, degs: dict[str, float]) -> dict[str, float]:
-        zero, ref = self.config.zero(), self.config.ref_deg()
-        out = {}
-        for j, deg in degs.items():
-            if j not in kin.JOINTS:
-                continue
-            out[j] = zero[j] + (float(deg) - ref[j]) / (self.config.sign(j)
-                                                        * self._deg_per_norm(j))
-        return out
+        return degrees_to_norms(degs, **self._frame())
 
     # --- 상태 ---
 
@@ -605,7 +771,7 @@ class CartesianArm:
         끝까지 밀어붙이면 서보가 Overload로 굳는다(이 팔에서 실제로 겪은 고장).
         그래서 여유(ARM_CART_NORM_MARGIN)를 남기고, 넘으면 어느 관절인지 말한다.
         """
-        limit = 100.0 - ARM_CART_NORM_MARGIN
+        limit = NORM_LIMIT
         over = {j: v for j, v in norms.items() if abs(v) > limit}
         if over:
             detail = ", ".join(

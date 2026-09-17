@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 33,
+ "next_id": 36,
  "tasks": [
   {
    "id": "T1",
@@ -846,13 +846,13 @@
    "id": "T31",
    "title": "move5_check의 표적이 이 팔의 **캘리브레이션 가동범위**를 모른다 — 기준3의 '임의의 자리'를 갈 수 있는 자리로 뽑아라",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 1,
    "why": "2026-09-18 T30 실기: 쪼개기를 넣어 한 걸음 상한을 없앴는데 5/5가 elbow_flex 정규화 -121~-138(한계 ±98)로 거절됐다. sample_points는 kinematics.forward의 사거리만 보고 elbow_flex를 -100~-20도에서 뽑는데, 이 팔은 ~/arm_cartesian.json(zero elbow_flex=-60.35, dpn=1.0332) 때문에 정규화 -98 = 각도 -38.9도까지만 굽는다. 즉 기준3이 지금 요구하는 표적의 상당수가 물리적으로 도달 불가다 — 도구가 '갈 수 없는 곳'을 시험하고 있다.",
    "done_when": "move5_check.sample_points가 관절 정규화 한계(±(100-ARM_CART_NORM_MARGIN))를 함께 지켜 표적을 뽑는다 — 영점·deg_per_norm은 cartesian.CartesianConfig/arm_cartesian.json에서 읽고 코드에 박지 않는다(팔마다 다르다). 한계 표를 못 읽는 환경(PC)에서는 그 사실을 말하고 기존대로 뽑되 기록에 limits=none을 남긴다. ros_selfcheck 또는 arm_cartesian_check에 '뽑은 표적의 IK 해가 정규화 한계 안'을 고정하는 검사 1종 이상. 4종 RC=0. 그 뒤 젯슨에서 실기 5회(arm_extend로 뻗은 뒤)를 다시 돌려 docs/시험기록에 남긴다 — 이번엔 stage가 ik가 아니어야 한다.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 01:36",
-   "updated": "2026-09-18 01:36",
+   "updated": "2026-09-18 02:01",
    "notes": [
     {
      "t": "2026-09-18 01:36",
@@ -863,6 +863,16 @@
      "t": "2026-09-18 01:36",
      "by": "builder",
      "text": "첫 명령: python autopilot/board.py next --role builder --claim. 젯슨 실기 절차는 T30이 쓴 그대로다 — ① sudo systemctl stop tomato-voice ② ~/lerobot/.venv/bin/python ros2/tools/arm_extend.py (뻗기, signed_r 238mm) ③ cd ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash -lc 'source /opt/ros/jazzy/setup.bash && cd /ws && source install/setup.bash && ros2 launch tomato_bringup stage1.launch.py arm:=true arm_mode:=direct camera:=false handeye:=false perception:=false >/tmp/launch.log 2>&1 & sleep 14; TOMATO_RECORD_DIR=/host-home/tomato-picker/ros2/tmp_records python3 /host-home/tomato-picker/ros2/tools/move5_check.py --n 5 --seed 0' ④ 복구: arm_extend.py --target 134.3,15.3,168.9,7.6,88.8 + grip_set.py 100 + systemctl start tomato-voice. 서비스 요청 타임아웃은 이미 90초로 올려 뒀다(쪼갠 이동은 오래 걸린다)."
+    },
+    {
+     "t": "2026-09-18 02:01",
+     "by": "builder",
+     "text": "완료: move5_check가 이제 **갈 수 있는 자리**를 뽑는다. ① cartesian에 NormLimits/load_norm_limits 신설 — 팔을 열지 않고 ~/arm_cartesian.json(영점)+lerobot 캘리브레이션에서 정규화↔각도 표를 읽는다(젯슨 실측 dpn 1.2173/1.0288/1.0332/1.0389 = T30이 live로 읽은 값과 일치, elbow_flex 허용각 -38.9~163.6도). 못 읽으면 None+이유, 기록에 limits=none(PC에서 실제로 그렇게 찍힌다). 정규화↔각도 식은 모듈 함수로 뽑아 CartesianArm과 공유(식이 둘이면 같은 팔을 다르게 믿는다). ② sample_points가 뽑기 구간 ∩ 가동범위에서 던지고, **팔이 설 자리(스탠드오프 지점)를 뽑아 표적을 그 앞에 둔다** — 반대로 하면 스탠드오프가 팔꿈치를 중앙값 -30.7도 더 굽혀 통과시킨 표적이 실기에서 거절된다. 옛 바닥필터(-z0+40, z=-33mm까지 통과시켰다)를 config의 ARM_CART_Z_MIN/R_MIN 실제 가드로 교체. ③ ros_selfcheck [표적] 21종 추가(135->156). ④ **자체검증 4종 RC=0: 45/90/156/53 (PC), 45/90/154/53 (젯슨).** ⑤ 젯슨 실기 5회 재시험(기록 docs/시험기록/move-to-point-2026-09-18.jsonl 11줄 추가): **목표에 대한 elbow_flex 거절은 사라졌다**(travel_to의 목표 사전검사 5/5 통과). 그러나 여전히 0/5이고 stage=ik다 — 실패가 목표에서 **첫 걸음(직선 보간 경로)**으로 옮겨갔다(elbow_flex -124~-133). done_when의 'stage가 ik가 아니어야 한다'는 **못 지켰다**: 남은 원인은 표적이 아니라 경로다 -> T34. 부수 발견이자 하루짜리 원인 하나를 같이 고쳤다: arm_source.DirectArm이 hold_torque=False로 팔을 열어 **노드가 뜨는 순간 팔을 떨어뜨리고 있었다**(arm_extend로 세운 TCP z=+416mm -> z=-66mm 실측). 도구 20개는 전부 True인데 팔의 주인만 아니었다. T21(signed_radius -136~-414)·T30(elbow -121~-138)의 '시작 자세가 무너져 있다'가 전부 이것으로 설명된다. 고치고 회귀검사 1종 추가."
+    },
+    {
+     "t": "2026-09-18 02:01",
+     "by": "builder",
+     "text": "정정: 위 result의 '-> T34'는 **T33**이다(경로 문제). T34는 stage 분류, T35는 컨테이너 UTC 날짜."
     }
    ]
   },
@@ -881,6 +891,68 @@
     {
      "t": "2026-09-18 01:42",
      "by": "auditor",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T33",
+   "title": "travel_to의 직선 보간 경로가 관절공간에서 불가능하다 — 목표는 갈 수 있는데 첫 걸음이 막힌다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 1,
+   "why": "2026-09-18 사이클20 실기: 표적 뽑기를 가동범위에 맞춘 뒤 목표 사전검사는 5/5 통과했는데, 5/5가 '6~8걸음 중 1번째에서 멈췄습니다 — elbow_flex -124~-133(한계 ±98)'로 거절됐다. 시작 자세(arm_extend가 세운 TCP -168,176,416 = 팔이 위/뒤로 뻗은 자세)에서 앞쪽 목표까지 **직선으로** 보간하면 중간 자세가 관절공간에서 불가능하다. 직교공간 직선은 관절공간 직선이 아니다. 기록=docs/시험기록/move-to-point-2026-09-18.jsonl(사이클20 6~10줄).",
+   "done_when": "plan_steps/travel_to가 '경로가 막히면 다른 길'을 가진다 — 예: 관절공간 보간으로 대체(첫 걸음이 IK/한계에 걸리면 관절 선형보간으로 바꾼다), 또는 arm_extend처럼 안전한 중간 자세를 거쳐 간다. 어느 쪽이든 (1) 걸음마다 바닥·몸통·사거리·관절한계 검사를 그대로 받고 (2) 선택한 이유를 docs/arm-cartesian.md §4에 한 줄 남기고 (3) ros_selfcheck 또는 arm_cartesian_check에 '시작 자세 (-168,176,416)에서 사이클20의 목표 5개로 갈 길이 있다'를 못 박는 검사 1종 이상. 4종 RC=0. 그 뒤 젯슨 실기 5회(절차는 이 작업 note)를 다시 돌려 기록에 남긴다.",
+   "attempts": 0,
+   "created": "2026-09-18 02:01",
+   "updated": "2026-09-18 02:01",
+   "notes": [
+    {
+     "t": "2026-09-18 02:01",
+     "by": "builder",
+     "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 02:01",
+     "by": "builder",
+     "text": "젯슨 실기 절차(사이클20에서 그대로 돌아간 것): ① sudo systemctl stop tomato-voice ② cd ~/tomato-picker && ~/lerobot/.venv/bin/python ros2/tools/arm_extend.py (뻗기, TCP -168,176,416 signed_r 243mm) ③ cd ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash -lc 'source /opt/ros/jazzy/setup.bash && cd /ws && source install/setup.bash && ros2 launch tomato_bringup stage1.launch.py arm:=true arm_mode:=direct camera:=false handeye:=false perception:=false >/tmp/launch.log 2>&1 & sleep 14; TOMATO_RECORD_DIR=/host-home/tomato-picker/ros2/tmp_records python3 /host-home/tomato-picker/ros2/tools/move5_check.py --n 5 --seed 0' ④ 복구: arm_extend.py --target 134.3,15.3,168.9,7.6,88.8 (시작자세) + grip_set.py 100 + sudo systemctl start tomato-voice. ⚠ install은 egg-link(symlink-install)라 src/를 scp하면 바로 먹는다(rebuild 불필요). ⚠ 기록은 컨테이너 UTC 때문에 09-17 파일에 쌓인다(T35)."
+    }
+   ]
+  },
+  {
+   "id": "T34",
+   "title": "classify_stage에 'path'(걸음 중 N번째에서 막힘)를 더한다 — 지금은 경로 실패가 ik로 적힌다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 3,
+   "why": "2026-09-18 사이클20: 목표는 통과했는데 첫 걸음이 막힌 5줄이 전부 stage=ik로 적혔다. ik는 '목표가 무리'라는 뜻인데 목표는 멀쩡했다 — 기록이 또 다음 사이클을 엉뚱한 데로 보낸다(T28이 고친 것과 같은 병의 3번째 판). 표지는 있다: travel_to가 붙이는 'N걸음 중 M번째에서 멈췄습니다'.",
+   "done_when": "classify_stage가 'N걸음 중 M번째' 표지를 보고 path(또는 합의된 이름)로 가른다. 단 한 걸음 상한(step)은 그대로 step이어야 한다(문구가 겹친다). ros_selfcheck [단계]에 사이클20의 실제 거절문장 2종(z 바닥 / elbow 한계)을 넣어 못 박는다. 4종 RC=0. 기록 파일은 고치지 말고 정정 note 한 줄을 붙인다.",
+   "attempts": 0,
+   "created": "2026-09-18 02:01",
+   "updated": "2026-09-18 02:01",
+   "notes": [
+    {
+     "t": "2026-09-18 02:01",
+     "by": "builder",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T35",
+   "title": "컨테이너가 UTC라 시험기록 파일이 하루 전 날짜로 찍힌다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 3,
+   "why": "2026-09-18 02:00(KST)에 젯슨 도커에서 돌린 move5_check가 move-to-point-2026-09-17.jsonl에 적었다. 날짜로 기록을 찾는 규약(docs/시험기록/move-to-point-<오늘>.jsonl)이 깨지고, 이번 사이클도 손으로 옮겨 붙였다.",
+   "done_when": "기록 파일 이름이 젯슨의 로컬 날짜를 따르거나(예: 컨테이너에 TZ=Asia/Seoul을 넣거나 docker-compose에 /etc/localtime을 물린다), 파일 이름에 UTC임을 드러낸다. 고친 뒤 컨테이너에서 date와 move5_check --dry-run 한 번으로 확인. 왜 그렇게 정했는지 ros2/docker/README.md에 한 줄.",
+   "attempts": 0,
+   "created": "2026-09-18 02:01",
+   "updated": "2026-09-18 02:01",
+   "notes": [
+    {
+     "t": "2026-09-18 02:01",
+     "by": "builder",
      "text": "만듦"
     }
    ]

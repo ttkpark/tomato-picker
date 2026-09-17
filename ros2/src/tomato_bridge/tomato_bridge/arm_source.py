@@ -86,7 +86,19 @@ class DirectArm:
     """
 
     def __init__(self, port: str | None = None) -> None:
-        self._io = FollowerIO(port or "")
+        # ⚠ **hold_torque=True** — 붙으면서 팔을 놓지 않는다.
+        #   기본값(False)은 connect 직후 `bus.disable_torque()`를 불러 **팔이
+        #   중력에 주저앉는다**. 젯슨의 도구 스무 개가 전부 True를 쓰는데
+        #   정작 "팔의 주인"인 이 노드만 False였고, 그래서 졸업기준 3번을
+        #   잴 때마다 시작 자세가 무너져 있었다 — 2026-09-18 실측: `arm_extend`로
+        #   TCP z=+423mm까지 세워 둔 팔이 노드가 뜨자 z=−66mm로 내려앉았고,
+        #   그 자리에서 출발한 5회가 전부 첫 걸음에서 "바닥 아래"로 거절됐다.
+        #   (T21 사이클14의 `signed_radius −136~−414mm`, T30 사이클18의
+        #    `elbow_flex −121~−138`도 같은 증상이다. 원인을 프리셋·표적 뽑기에서
+        #    찾고 있었는데, 팔을 떨어뜨린 것은 노드 자신이었다.)
+        #   True 경로는 follower_io가 래칫까지 막아 둔 길이라(present/goal을 읽고
+        #   configure 뒤 되돌린다) 그냥 켜는 것보다 안전하다.
+        self._io = FollowerIO(port or "", hold_torque=True)
         self._cartesian = None
 
     def describe(self) -> str:

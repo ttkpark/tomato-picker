@@ -987,6 +987,110 @@ def test_travel_split() -> None:
           "배선이 옛 길로 돌아가면 상한 거절이 그대로 재발한다")
 
 
+# ----------------------------------------------------------------------
+# ⑫ 표적 뽑기 (move5_check.sample_points ↔ 캘리브레이션 가동범위)
+# ----------------------------------------------------------------------
+
+def test_sample_within_limits() -> None:
+    """뽑은 표적이 **이 팔이 실제로 갈 수 있는 자리**인가.
+
+    2026-09-18(T30) 실기: `/arm/move_to_point` 5회가 5회 다 `elbow_flex`
+    정규화 −121~−138(한계 ±98)로 거절됐다. 그 0/5는 팔이 만든 0이 아니라
+    **도구가 만든 0**이다 — `sample_points`가 사거리(링크 길이)만 보고 뽑았고,
+    가동범위(캘리브레이션)는 다른 것이기 때문이다. 기준3의 "임의의 자리"는
+    갈 수 있는 자리라야 뜻이 있다. 그래서 여기서 못 박는다.
+    """
+    print("\n[표적] move5_check가 뽑는 표적이 가동범위 안인가")
+    sys.path.insert(0, os.path.join(REPO, "ros2", "tools"))
+    import move5_check as m5  # noqa: E402
+    from tomato_picker.hardware import cartesian as cart  # noqa: E402
+
+    f = ESCAPE_FRAME_2026_09_18          # 09-18 젯슨에서 읽은 진짜 보정표
+    limits = cart.NormLimits(zero=f["zero"], ref=f["ref"],
+                             signs={j: 1.0 for j in f["zero"]},
+                             deg_per_norm=f["dpn"], source="테스트(09-18 실측표)")
+    geom = kin.ArmGeometry()
+
+    check("한계는 ±(100−여유)다 (cartesian과 같은 값)",
+          abs(limits.limit - cart.NORM_LIMIT) < 1e-9, f"±{limits.limit}")
+
+    # ① 한계를 모르면 09-18의 병이 그대로 재현된다 — 이 검사가 무엇을 막는지.
+    blind = m5.sample_points(5, geom, 0)
+    bad = [p for p in blind if m5.limit_violations(p, geom, limits)]
+    check("한계를 모르면 못 가는 표적이 섞인다 (09-18 재현)",
+          len(bad) > 0, f"{len(bad)}/5개가 가동범위 밖")
+
+    # ② 한계를 주면 다섯 개가 전부 갈 수 있는 자리다.
+    for seed in (0, 7):
+        pts = m5.sample_points(5, geom, seed, limits=limits)
+        off = {i: v for i, v in
+               ((i, m5.limit_violations(p, geom, limits))
+                for i, p in enumerate(pts, 1)) if v}
+        check(f"seed={seed}: 뽑은 표적 5개의 IK 해가 전부 정규화 한계 안",
+              not off, f"밖={off}")
+
+    # ③ **스탠드오프까지 넣어 본다** — 팔이 가는 곳은 표적이 아니라 물러난 자리다
+    #    (arm_node._on_move). 표적만 보면 30mm 차이로 통과시켰다 다시 거절당한다.
+    pts = m5.sample_points(5, geom, 0, limits=limits)
+    moved = []
+    for p in pts:
+        q = m5.standoff_pose(p)
+        moved.append(math.dist((p["x"], p["y"], p["z"]), (q.x, q.y, q.z)))
+    check("standoff_pose가 표적에서 스탠드오프만큼 물러난다",
+          all(abs(d - m5.STANDOFF_MM) < 1e-6 for d in moved),
+          f"이동량={[round(d, 2) for d in moved]}")
+    check("한계 판정은 표적이 아니라 스탠드오프 자리를 본다",
+          not any(limits.violations(kin.inverse(m5.standoff_pose(p), geom))
+                  for p in pts))
+
+    # ③b 작업영역 가드(바닥·몸통·사거리)도 **뽑는 쪽이 같은 숫자를 본다**.
+    #    09-18 실기 5번째는 관절은 멀쩡했는데 표적 수평 76mm < 90mm로 거절됐다.
+    from tomato_picker.config import (ARM_CART_R_MIN,  # noqa: E402
+                                      ARM_CART_Z_MIN)
+    for p in m5.sample_points(8, geom, 3, limits=limits):
+        stand = m5.standoff_pose(p)
+        check("뽑은 자리가 바닥·몸통·사거리 가드를 지난다",
+              not m5.workspace_reject(stand, geom),
+              f"{m5.workspace_reject(stand, geom)} (z최소 {ARM_CART_Z_MIN}, "
+              f"r최소 {ARM_CART_R_MIN})")
+    check("가드 숫자는 config에서 온다 (도구에 박지 않는다)",
+          m5.ARM_CART_Z_MIN == ARM_CART_Z_MIN and m5.ARM_CART_R_MIN == ARM_CART_R_MIN)
+    check("바닥 아래는 거절한다",
+          "바닥" in m5.workspace_reject(
+              kin.ToolPose(x=250.0, y=0.0, z=ARM_CART_Z_MIN - 1.0, pitch=0.0), geom))
+    check("몸통 안쪽은 거절한다",
+          "몸통" in m5.workspace_reject(
+              kin.ToolPose(x=ARM_CART_R_MIN - 1.0, y=0.0, z=100.0, pitch=0.0), geom))
+
+    # ④ 한계를 모르면 **모른다고 말한다** — 짐작으로 메우면 조용히 틀린다.
+    nowhere = os.path.join(REPO, "ros2", "tools", "__없는파일__.json")
+    none_limits, note = cart.load_norm_limits(path=nowhere, root=nowhere)
+    check("영점이 없으면 NormLimits는 None이고 이유를 말한다",
+          none_limits is None and "영점" in note, note)
+
+    # ⑤ 정규화↔각도 식이 팔이 있을 때와 없을 때 **같은 줄**인가.
+    signs = {j: 1.0 for j in f["zero"]}
+    degs = cart.norms_to_degrees({"elbow_flex": -98.0}, zero=f["zero"], ref=f["ref"],
+                                 signs=signs, deg_per_norm=f["dpn"])
+    back = cart.degrees_to_norms(degs, zero=f["zero"], ref=f["ref"],
+                                 signs=signs, deg_per_norm=f["dpn"])
+    check("정규화 −98 = elbow_flex −38.9° (이 팔의 굽힘 끝)",
+          abs(degs["elbow_flex"] + 38.9) < 0.1, f"{degs['elbow_flex']:.2f}°")
+    check("각도→정규화가 왕복한다", abs(back["elbow_flex"] + 98.0) < 1e-9)
+
+    # ⑥ **노드가 붙으면서 팔을 놓지 않는가.** 2026-09-18: `arm_extend`로 z=+423mm
+    #    까지 세워 둔 팔이 arm_node가 뜨자 z=−66mm로 주저앉았다 —
+    #    `FollowerIO`의 기본값이 connect 직후 `disable_torque()`를 부르기 때문이다.
+    #    젯슨 도구 스무 개가 전부 hold_torque=True인데 정작 팔의 주인만 아니었고,
+    #    그래서 기준3을 잴 때마다 **시작 자세가 이미 무너져 있었다**.
+    src = open(os.path.join(REPO, "ros2", "src", "tomato_bridge", "tomato_bridge",
+                            "arm_source.py"), encoding="utf-8").read()
+    body = src.split("class DirectArm")[1].split("class ProxyArm")[0]
+    check("DirectArm이 팔을 hold_torque=True로 연다 (붙으면서 놓지 않는다)",
+          "hold_torque=True" in body,
+          "기본값은 connect 직후 토크를 끈다 — 팔이 주저앉는다")
+
+
 def test_selfcheck_deps() -> None:
     """자체검증 4종이 **빈 환경에서 무엇이 없는지 말하고** 죽는가.
 
@@ -1084,6 +1188,7 @@ def main() -> int:
     test_arm_extend_escape()
     test_stage_classify()
     test_travel_split()
+    test_sample_within_limits()
     test_selfcheck_deps()
 
     print()
