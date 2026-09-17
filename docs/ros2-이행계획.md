@@ -133,6 +133,16 @@ l2=135/l3=95, mount_z=180)를 그대로 두고 있었다 — `description.launch
 ✅ 전부 통과 (15개) → ✅ 0~2단 전부 통과
 ```
 
+**2026-09-18 (builder, T42) — 같은 명령이 이제 손질 없이 돈다.** 위 기록은 젯슨에서
+`sed -i 's/\r$//' ros2/tools/*.sh`를 먼저 걸어야 나왔다(그 파일들이 CRLF라 컨테이너
+bash가 통째로 못 읽었다). 입구를 막았다 — 저장소 루트 `.gitattributes`가 배포되는
+종류를 `text eol=lf`로 못 박고, `ros_selfcheck` **[줄끝]** 13종이 강제한다. 재확인:
+
+```
+$ sudo HOME=/home/server docker compose run --rm -T ros bash /ws/tools/bringup_check.sh
+✅ 전부 통과 (15개) → ✅ 0~2단 전부 통과   ·   RC=0   (손질 없음, 03:1x)
+```
+
 **그 검사가 진짜인지도 실기에서 확인했다**(돌연변이 시험). xacro의 마운트 z를
 `${($(arg mount_z_mm)+5.0)*mm}`로 5mm 틀어 URDF만 yaml과 어긋나게 만들고 같은
 명령을 돌렸더니 —

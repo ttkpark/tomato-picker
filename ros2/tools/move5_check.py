@@ -44,6 +44,23 @@ from tomato_picker.hardware import cartesian as cart  # noqa: E402
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
 
 RECORD_DIR = os.environ.get("TOMATO_RECORD_DIR") or os.path.join(REPO, "docs", "시험기록")
+
+
+def local_zone() -> str:
+    """지금 날짜를 어느 시각대로 셌는지 한 토막으로. 기록 이름이 날짜라서 중요하다.
+
+    도커 기본값은 UTC다 — 한국 자정~09시에 컨테이너에서 돌리면 파일이 **어제**
+    이름으로 열린다(2026-09-18 실측). compose가 호스트의 /etc/localtime을 물려
+    막았지만, `docker run`으로 직접 띄우면 다시 UTC가 된다. 그래서 고친 자리를
+    믿지 말고 **매 실행이 스스로 말하게** 한다.
+    """
+    off = -(time.altzone if time.daylight and time.localtime().tm_isdst
+            else time.timezone)
+    sign = "+" if off >= 0 else "-"
+    hours, mins = divmod(abs(off) // 60, 60)
+    return f"{time.strftime('%Z')} UTC{sign}{hours}" + (f":{mins:02d}" if mins else "")
+
+
 STANDOFF_MM = 30.0
 # 표적 뽑기가 포기하기까지 던져 보는 횟수. 가동범위가 좁으면 기각이 잦은데,
 # 무한히 도는 것보다 "이 한계로는 n개를 못 뽑는다"고 말하고 멈추는 편이 낫다.
@@ -375,7 +392,7 @@ def main() -> int:
     today = time.strftime("%Y-%m-%d")
     out_path = os.path.join(RECORD_DIR, f"move-to-point-{today}.jsonl")
 
-    print(f"{len(points)}개 표적, 기록: {out_path}")
+    print(f"{len(points)}개 표적, 기록: {out_path}  [{local_zone()}]")
     if args.dry_run:
         ok = run_dry(points, geom, out_path, limits_tag)
     else:

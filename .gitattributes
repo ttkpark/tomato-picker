@@ -1,0 +1,30 @@
+# 줄끝 — 왜 이 파일이 있나 (2026-09-18)
+#
+# 이 저장소는 Windows에서 고치고 **젯슨으로 그대로 scp**한다. core.autocrlf=true
+# 이면 작업트리에 CRLF로 체크아웃되고, scp는 바이트를 그대로 보내므로 리눅스에
+# CRLF 파일이 도착한다. 셸은 이걸 조용히 못 넘긴다 — 2026-09-18 사이클25에
+# 컨테이너 bash가 `/ws/tools/bringup_check.sh`를 통째로 못 읽었다
+# (`set: pipefail: invalid option name`). systemd 유닛도 같은 병을 앓는다
+# (ExecStart 값 끝에 \r이 붙어 실행 파일 이름이 틀린다).
+#
+# 그래서 **배포되는 종류는 작업트리에서도 LF**로 못 박는다. 강제 검사 =
+# ros2/tools/ros_selfcheck.py [줄끝] — 여기 패턴을 늘리면 검사 범위도 함께 는다.
+*.sh      text eol=lf
+*.py      text eol=lf
+*.service text eol=lf
+*.rules   text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.xacro   text eol=lf
+*.urdf    text eol=lf
+Dockerfile text eol=lf
+
+# 바이너리는 손대지 않는다(3D 모델·사진은 CR이 데이터다).
+*.stl binary
+*.ipt binary
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.apk binary
+*.bin binary
+*.hex binary

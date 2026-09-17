@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 43,
+ "next_id": 44,
  "tasks": [
   {
    "id": "T1",
@@ -987,18 +987,23 @@
    "id": "T35",
    "title": "컨테이너가 UTC라 시험기록 파일이 하루 전 날짜로 찍힌다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 3,
    "why": "2026-09-18 02:00(KST)에 젯슨 도커에서 돌린 move5_check가 move-to-point-2026-09-17.jsonl에 적었다. 날짜로 기록을 찾는 규약(docs/시험기록/move-to-point-<오늘>.jsonl)이 깨지고, 이번 사이클도 손으로 옮겨 붙였다.",
    "done_when": "기록 파일 이름이 젯슨의 로컬 날짜를 따르거나(예: 컨테이너에 TZ=Asia/Seoul을 넣거나 docker-compose에 /etc/localtime을 물린다), 파일 이름에 UTC임을 드러낸다. 고친 뒤 컨테이너에서 date와 move5_check --dry-run 한 번으로 확인. 왜 그렇게 정했는지 ros2/docker/README.md에 한 줄.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 02:01",
-   "updated": "2026-09-18 02:01",
+   "updated": "2026-09-18 03:13",
    "notes": [
     {
      "t": "2026-09-18 02:01",
      "by": "builder",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 03:13",
+     "by": "builder",
+     "text": "완료: 컨테이너 시각대 = 호스트(젯슨)의 것을 물린다. docker-compose.yml에 /etc/localtime:ro + /etc/timezone:ro 두 줄(TZ=Asia/Seoul 상수를 안 적은 이유: 젯슨이 이미 자기 존을 안다 — 베끼면 젯슨을 옮길 때 두 곳이 어긋난다). 더해서 move5_check가 local_zone()으로 '기록: <경로> [KST UTC+9]'를 찍는다 — docker run으로 직접 띄우면 마운트가 없어 다시 UTC이므로 고친 자리를 믿지 말고 매 실행이 스스로 말하게 했다. 실기 확인(젯슨 192.168.0.19, docker compose run --rm -T): 전 'Thu Sep 17 18:10 UTC' → 후 'Fri Sep 18 03:12:40 KST', dry-run 1회가 열은 파일 이름 move-to-point-2026-09-18.jsonl(전이라면 09-17), 찍힌 줄 '[KST UTC+9]'. ros_selfcheck [시각] 4종 신설(188->192), 돌연변이 2건으로 실패 가능 확인(localtime 마운트 줄 삭제 -> 1종 FAIL, print에서 local_zone() 제거 -> 1종 FAIL, 둘 다 복구 diff 동일). PC 4종 45/90/192/73 RC=0, 젯슨에서도 190(기록파일 2종은 배포트리에 docs/시험기록이 없어 빠진다 — T39에 적어 뒀다). 문서 = ros2/docker/README.md §시각대 + 증상표 1줄. ⚠ 함정 하나: move5_check --dry-run은 RECORD_DIR에 그대로 쓴다 — PC에서 연습 삼아 돌리면 진짜 기록에 dry_run 줄이 섞인다(이번에 2줄 섞였고 git checkout으로 되돌렸다). TOMATO_RECORD_DIR을 딴 데로 주고 돌려라."
     }
    ]
   },
@@ -1065,7 +1070,7 @@
    "done_when": "젯슨에서 cd ~/tomato-picker/ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash /host-home/tomato-picker/ros2/tools/bringup_check.sh (경로는 실제 마운트에 맞춰 조정) 를 돌려 통과/실패 줄을 그대로 받아, docs/ros2-이행계획.md 기준1 채점표 아래에 '2026-09-18 bringup_check 기준선' 블록으로 붙인다. 팔을 여는 검사가 섞여 있으면 tomato-voice를 먼저 내리고 끝나면 되살린다. 컨테이너는 --rm으로 지운다.",
    "attempts": 0,
    "created": "2026-09-18 02:09",
-   "updated": "2026-09-18 02:52",
+   "updated": "2026-09-18 03:09",
    "notes": [
     {
      "t": "2026-09-18 02:09",
@@ -1076,6 +1081,11 @@
      "t": "2026-09-18 02:52",
      "by": "builder",
      "text": "2026-09-18 사이클25 builder: 이 작업의 기준선을 내가 이미 받아 왔다 — docs/ros2-이행계획.md '기준1 채점표' 아래 'T32 이후' 절에 0~2단 전부 통과(15개) 로그를 붙였다. ⚠ 그 전에 막히는 것이 하나 있다: 젯슨의 ros2/tools/*.sh가 CRLF라 컨테이너 bash가 통째로 못 읽는다(T42). 이번엔 젯슨에서 sed -i 's/\\r$//'로 풀어 둬서 지금은 돈다. 명령은 'cd ~/tomato-picker/ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash /ws/tools/bringup_check.sh'(경로는 /ws/tools가 맞다, /host-home 아님)."
+    },
+    {
+     "t": "2026-09-18 03:09",
+     "by": "builder",
+     "text": "2026-09-18 03:2x builder(T42): 이 작업을 막던 CRLF가 입구에서 끊겼다 — 젯슨에 sed를 걸지 않고 명령 그대로 0~2단 15개 전부 통과·RC=0을 재확인했다(03:1x). 명령은 'cd ~/tomato-picker/ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash /ws/tools/bringup_check.sh'. 기준선 블록은 docs/ros2-이행계획.md '기준1 채점표 > T32 이후'에 이미 있고 그 아래 T42 재확인 줄도 붙였다 — 남은 몫은 3단 이후(팔)를 켠 판정이거나, 이 기준선을 tester가 직접 한 번 더 확인해 done 처리하는 것뿐이다."
     }
    ]
   },
@@ -1089,12 +1099,17 @@
    "done_when": "344종(45/90/156/53)을 훑어 다음 셋 중 하나에 해당하는 검사를 목록으로 만든다 — (가) 대상 코드가 무엇이든 통과한다(항등식·자기 자신 비교), (나) 검사가 말하는 것과 실제 assert가 다르다, (다) 예외를 삼켜 skip을 pass로 센다. 각 건마다 '일부러 코드를 1줄 틀리게 고쳐 보고 그 검사가 실패하는지' 실제로 확인한 뒤(고친 것은 되돌린다) docs/ros2-이행계획.md 기준4 절에 표로 남긴다. 한 건도 없으면 '없음'을 근거와 함께 적는다. 고칠 거리가 나오면 board에 작업으로 추가. 끝에 4종 RC=0.",
    "attempts": 0,
    "created": "2026-09-18 02:09",
-   "updated": "2026-09-18 02:09",
+   "updated": "2026-09-18 03:09",
    "notes": [
     {
      "t": "2026-09-18 02:09",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 03:09",
+     "by": "builder",
+     "text": "2026-09-18 builder(T42)에서 발견한 (다)류 한 건: ros_selfcheck가 PC에서 188종, 젯슨 배포트리에서 186종이다. 사라지는 2종은 '09-18 기록의 실패 줄은 지금 규칙으로 tf가 하나도 없다'·'그 기록에 정정 note가 남아 있다' — docs/시험기록/*.jsonl이 없으면 for 루프가 돌지 않아 검사 자체가 조용히 없어진다(실패가 아니라 소멸). 종수를 세는 눈에는 '통과'로 보인다. 기록이 없으면 그 사실을 FAIL로 말할지 정하는 것까지가 T39의 몫이다."
     }
    ]
   },
@@ -1140,16 +1155,40 @@
    "id": "T42",
    "title": "젯슨의 ros2/tools/*.sh가 CRLF라 컨테이너 bash가 못 읽는다 — 배포 경로에서 끊는다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "2026-09-18 사이클25 실측: bringup_check.sh를 도커에서 돌리니 'set: pipefail: invalid option name' / $'\\r': command not found / line 52 syntax error로 죽었다. 원인은 이 저장소를 Windows에서 작업해 git이 체크아웃할 때 CRLF로 바꾸는 것(git ls-files --eol = i/lf w/crlf)이고, 배포가 그 작업트리를 그대로 scp하기 때문이다. 이번엔 젯슨에서 sed -i 's/\\r$//'로 풀어 돌렸지만 다음 배포가 다시 덮으면 같은 자리에서 또 죽는다. T38(bringup_check 기준선)이 이것 때문에 통째로 막힌다.",
    "done_when": "저장소 루트 .gitattributes에 '*.sh text eol=lf'(필요하면 *.py도)를 넣어 Windows 작업트리에서도 LF로 체크아웃되게 하고, git add --renormalize로 기존 파일을 맞춘다. 배포 스크립트(deploy/ 또는 scp 경로)가 있으면 거기서도 .sh를 LF로 보내는지 확인. 젯슨에 다시 올린 뒤 'sudo HOME=$HOME docker compose run --rm -T ros bash /ws/tools/bringup_check.sh'가 0단~2단을 통과하는지로 확인(2026-09-18 기준선: 15개 전부 통과). PC 4종 RC=0.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 02:52",
-   "updated": "2026-09-18 02:52",
+   "updated": "2026-09-18 03:09",
    "notes": [
     {
      "t": "2026-09-18 02:52",
+     "by": "builder",
+     "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 03:09",
+     "by": "builder",
+     "text": "완료: 루트 .gitattributes 신설 — 배포되는 종류(*.sh *.py *.service *.rules *.yml *.yaml *.xacro *.urdf Dockerfile)를 text eol=lf로, 3D·사진(*.stl *.ipt *.jpg *.png *.apk *.bin *.hex)은 binary로 못 박았다. git add --renormalize . 는 내용 변화 0(index는 원래 LF였다 — 깨지던 것은 작업트리다). 작업트리 87개 파일을 LF로 변환. ros_selfcheck [줄끝] 13종 신설(175->188): .gitattributes 패턴을 읽어 오므로 종류를 더하면 검사 범위도 늘고, bringup_check.sh·entrypoint.sh·astra-install.sh는 이름으로도 못 박는다. 돌연변이 2건으로 '실패할 수 있음' 확인 — bringup_check.sh를 CRLF로 되돌리면 3종 FAIL, .gitattributes에서 *.sh 줄을 지우면 1종 FAIL(둘 다 복구 diff 동일). PC 4종 45/90/188/73 전부 RC=0. 젯슨: LF판 .sh 5개+ros_selfcheck.py+.gitattributes를 scp(도착 후 cr=0 확인 = 입구 수정이 scp를 타고 먹는다는 증거), 배포트리 CRLF 70개->0개, 컨테이너 bringup_check.sh가 sed 손질 없이 0~2단 15개 전부 통과 RC=0. 문서 = ros2/docker/README.md §줄끝 + 증상표 1줄, docs/ros2-이행계획.md 기준1 채점표 아래 재확인 블록, CLAUDE.md 알려진 함정 4줄. 발견: ros2/docker/entrypoint.sh는 이미지에 COPY되므로 CRLF로 빌드하면 컨테이너가 아예 안 뜬다(젯슨 배포본이 CR 30개였다 — 지금 LF)."
+    }
+   ]
+  },
+  {
+   "id": "T43",
+   "title": "move5_check --dry-run이 진짜 시험기록에 쓴다 — 연습과 기록이 같은 파일이다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 3,
+   "why": "2026-09-18 builder(T35): PC에서 --dry-run --n 2를 스모크 테스트로 돌렸더니 docs/시험기록/move-to-point-2026-09-18.jsonl에 dry_run 줄 2개가 섞였다(git checkout으로 되돌렸다). 기록은 다음 사이클이 사실로 믿는 물건인데, 기본값이 '진짜 기록에 쓰기'라 연습 한 번이 그것을 오염시킨다. TOMATO_RECORD_DIR이 있지만 기억해야 쓴다.",
+   "done_when": "--dry-run의 기본 기록 자리를 연습용으로 가르거나(예: docs/시험기록/dry/ 또는 임시 디렉터리), 진짜 기록에 쓸 때는 --record 같은 명시가 필요하게 한다. 어느 쪽이든 실기 판정(run_real)의 기본 동작은 그대로여야 한다. ros_selfcheck [기록]에 '--dry-run은 진짜 기록 파일을 건드리지 않는다' 1종. 4종 RC=0.",
+   "attempts": 0,
+   "created": "2026-09-18 03:13",
+   "updated": "2026-09-18 03:13",
+   "notes": [
+    {
+     "t": "2026-09-18 03:13",
      "by": "builder",
      "text": "만듦"
     }

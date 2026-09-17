@@ -180,6 +180,10 @@ behavior the task requires stay in.
   모터 시리얼 **자동재연결** 내장. 근본은 양품 케이블 + 안정 전원(전류제한 넉넉히).
 - **PS2X는 이 보드에서 `millis()`를 얼림**(timer0 간섭) → 주행 펌웨어에서 PS2 완전 배제, 안전은 HW워치독.
 - 게임패드 스틱 드리프트/latch 폭주 방지 위해 **데드맨(LT 홀드) 필수 설계**.
+- ⚠ **줄끝(CRLF)** — Windows에서 고쳐 젯슨으로 scp하는 저장소다. 셸 스크립트·systemd
+  유닛에 CR이 섞이면 **통째로** 안 돈다(2026-09-18: 컨테이너 bash가 `bringup_check.sh`를
+  못 읽어 하루 막혔다). 루트 [`.gitattributes`](.gitattributes)가 배포되는 종류를 LF로
+  못 박고 `ros_selfcheck` [줄끝]이 강제한다 — 받는 쪽에서 `sed`로 고치는 것은 임시다.
 
 ## ⚙ 자동운전이 돌고 있다 (2026-09-17 ~ 10-02)
 [`autopilot/`](autopilot/)가 `claude -p`를 **planner·builder·auditor·tester** 넷으로 번갈아

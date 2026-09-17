@@ -116,6 +116,41 @@ ros2 service call /arm/move_to_point tomato_msgs/srv/MoveToPoint \
 | 카메라를 못 연다 | `depth-cam.service`가 D405를 잡고 있다 |
 | 바퀴가 안 돈다 | `/cmd_vel`이 끊기면 0.3초 뒤 데드맨이 세운다. 계속 발행해야 한다 |
 | 보정 파일이 재시작마다 사라진다 | `HOME=/host-home` 마운트가 빠졌다 (compose 주석 참고) |
+| `bash /ws/tools/*.sh`가 `set: pipefail: invalid option name`으로 죽는다 | 그 파일이 CRLF다 — Windows 작업트리에서 그대로 scp됐다. 고치는 법은 아래 §줄끝 |
+| 시험기록이 **어제 날짜** 파일에 붙는다 | 컨테이너가 UTC였다 — `/etc/localtime` 마운트가 빠졌다. 아래 §시각대 |
+
+## 시각대 — 컨테이너는 UTC다, 기록 이름은 날짜다 (2026-09-18)
+
+`move5_check.py`는 매 시도를 `docs/시험기록/move-to-point-<날짜>.jsonl`에 남긴다.
+그런데 도커 기본 시각대는 UTC라서 **한국 자정~09시에 돌리면 어제 파일에 붙는다**
+(실측: 호스트 `Fri Sep 18 03:10 KST` ↔ 컨테이너 `Thu Sep 17 18:10 UTC`). 다음
+사이클은 파일 이름을 사실로 믿으므로, 하루치 실기가 어제 것으로 읽힌다.
+
+`TZ=Asia/Seoul`을 compose에 적는 대신 **호스트의 것을 물렸다**
+(`/etc/localtime`·`/etc/timezone` 읽기전용) — 젯슨이 이미 자기 시각대를 안다.
+존 이름을 베껴 두면 젯슨을 다른 곳으로 옮겼을 때 두 곳이 어긋난다. 그리고
+`docker run`으로 직접 띄우면 마운트가 없어 다시 UTC이므로, **실행이 스스로
+시각대를 말한다** — `1개 표적, 기록: …/move-to-point-2026-09-18.jsonl  [KST UTC+9]`.
+
+강제 검사 = `python ros2/tools/ros_selfcheck.py` **[시각]** 4종.
+
+## 줄끝 — 컨테이너에 CRLF를 들이면 셸이 통째로 죽는다 (2026-09-18)
+
+이 저장소는 Windows에서 고쳐 **젯슨으로 scp**한다. `core.autocrlf=true`면 작업트리에
+CRLF로 체크아웃되고 scp는 바이트를 그대로 보내므로, 리눅스에 CRLF 셸 스크립트가
+도착한다. bash는 그걸 한 줄도 못 읽는다(`set: pipefail: invalid option name` —
+2026-09-18 사이클25에 `bringup_check.sh`가 이렇게 막혀 졸업기준 1번 계측이 하루
+미뤄졌다). systemd 유닛도 같은 병을 앓는다(`ExecStart` 값 끝에 CR이 붙어 실행 파일
+이름이 틀린다). `entrypoint.sh`는 이미지에 `COPY`되므로 **CRLF로 빌드하면 컨테이너가
+아예 안 뜬다.**
+
+고친 자리는 배포 경로의 **입구**다 — 저장소 루트 `.gitattributes`가 배포되는 종류
+(`*.sh` `*.py` `*.service` `*.rules` `*.yml` `*.yaml` `*.xacro` `*.urdf` `Dockerfile`)를
+`text eol=lf`로 못 박는다. 그래서 Windows에서 체크아웃해도 LF다. 강제 검사 =
+`python ros2/tools/ros_selfcheck.py` **[줄끝]** 13종(패턴이 지워지거나 작업트리에
+CR이 섞이면 실패한다 — 돌연변이로 확인했다).
+
+받는 쪽에서 고치는 것(`sed -i 's/\r$//'`)은 **임시 처치**다. 다음 scp가 되돌려 놓는다.
 
 ## GPU가 필요해지면
 

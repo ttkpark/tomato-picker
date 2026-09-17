@@ -22,6 +22,8 @@
   ⑥ **TF 수학** — 쿼터니언 왕복, camera_link 재타깃
   ⑦ **손-눈 합격선** — 잔차 15mm 판정이 경고가 아니라 종료코드·저장차단으로
      이어지는가 (`handeye_resolve.gate`)
+  ⑦' **줄끝** — 배포되는 파일이 작업트리에서도 LF인가 (CRLF는 컨테이너 bash와
+     systemd 유닛을 *조용히* 깬다)
   ⑧ **의존성** — 빈 환경에서 4종이 *무엇이 없는지 말하고* 죽는가
      (`tools/selfcheck_deps.py`). 종료코드 2 = 환경이 없다, 1 = 검사 실패
 
@@ -31,6 +33,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import io
 import json
 import math
@@ -77,6 +80,10 @@ from tomato_perception.fruit3d import (  # noqa: E402
 
 FAILED: list[str] = []
 PASSED = 0
+
+# 줄끝 검사가 찾는 바이트. 소스에 날 CR을 적어 두면 편집기나 이 검사 자신이
+# 그것부터 고쳐 버린다 — 그래서 숫자로 쓴다.
+CR = bytes([13])
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -1253,6 +1260,128 @@ def test_mount_contract() -> None:
           "문구만 '같은가'이고 실제로는 존재만 보던 것이 감사 T29의 발견이다")
 
 
+def _eol_patterns() -> tuple[list[str], set[str]]:
+    """.gitattributes에서 **LF로 못 박은 패턴**과 바이너리 선언을 읽어 온다.
+
+    패턴을 여기 박지 않는 이유: .gitattributes에 종류를 하나 더하면 검사 범위도
+    같이 늘어야 한다. 두 곳에 적으면 한 곳만 늘어난다.
+    """
+    lf, binary = [], set()
+    path = os.path.join(REPO, ".gitattributes")
+    if not os.path.exists(path):
+        return lf, binary
+    for line in open(path, encoding="utf-8"):
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        pat, *attrs = line.split()
+        if "eol=lf" in attrs:
+            lf.append(pat)
+        if "binary" in attrs or "-text" in attrs:
+            binary.add(pat)
+    return lf, binary
+
+
+# 검사 대상이 아닌 곳 — 가상환경·빌드산출물, 그리고 3D(바이너리만 있다).
+EOL_SKIP_DIRS = {".git", ".venv", "__pycache__", ".work", "node_modules",
+                 "build", "install", "log", "3D"}
+
+
+def _worktree_files(patterns: list[str]) -> list[str]:
+    """작업트리에서 패턴에 걸리는 파일. git 없이 돈다(컨테이너·빈 체크아웃에서도)."""
+    hits = []
+    for root, dirs, names in os.walk(REPO):
+        dirs[:] = [d for d in dirs if d not in EOL_SKIP_DIRS]
+        for name in names:
+            if any(fnmatch.fnmatch(name, pat) for pat in patterns):
+                hits.append(os.path.join(root, name))
+    return hits
+
+
+def test_record_timezone() -> None:
+    """시험기록의 **날짜가 어느 시각대의 날짜인가** — 컨테이너 기본값은 UTC다.
+
+    이 검사가 있는 이유: 기록 이름이 `move-to-point-<날짜>.jsonl`인데 도커
+    컨테이너는 UTC로 돈다. 한국 자정~09시에 실기를 돌리면 **어제 파일**에
+    줄이 붙고, 다음 사이클은 그것을 어제 시험으로 읽는다(실측 2026-09-18
+    03:10 KST → 컨테이너 09-17 18:10 UTC). 고친 자리는 둘이다 —
+    compose가 호스트의 시각대를 물리고, 실행이 스스로 시각대를 말한다.
+    """
+    print("\n[시각] 시험기록 날짜가 젯슨의 날짜인가")
+    compose = open(os.path.join(ROS2, "docker", "docker-compose.yml"),
+                   encoding="utf-8").read()
+    # 존 이름을 적는 대신 호스트의 것을 물린다 — 젯슨을 옮기면 젯슨만 고친다.
+    check("compose가 /etc/localtime을 읽기전용으로 물린다",
+          "/etc/localtime:/etc/localtime:ro" in compose,
+          "없으면 컨테이너가 UTC로 돌아 기록이 하루 전 이름으로 열린다")
+    check("compose가 /etc/timezone도 물린다",
+          "/etc/timezone:/etc/timezone:ro" in compose,
+          "이름을 찍는 쪽(%Z)이 UTC라고 말한다")
+
+    sys.path.insert(0, os.path.join(ROS2, "tools"))
+    import move5_check as m5  # noqa: E402
+
+    zone = m5.local_zone()
+    check("local_zone()이 UTC 오프셋을 말한다", bool(re.search(r"UTC[+-]\d", zone)),
+          zone)
+    # 마운트를 빼고 `docker run`으로 띄우면 다시 UTC다 — 그때도 출력만 보고
+    # 알 수 있어야 한다. 그래서 기록 경로를 찍는 그 줄에 붙여 둔다.
+    body = open(os.path.join(ROS2, "tools", "move5_check.py"),
+                encoding="utf-8").read()
+    printed = [ln for ln in body.splitlines()
+               if "기록: {out_path}" in ln or "기록: " in ln and "out_path" in ln]
+    check("기록 경로를 찍는 줄에 시각대가 붙어 있다",
+          bool(printed) and all("local_zone()" in ln for ln in printed),
+          f"{printed}")
+
+
+def test_line_endings() -> None:
+    """작업트리가 **LF로 체크아웃되는가** — 이 저장소는 Windows에서 고쳐 젯슨으로 scp한다.
+
+    이 검사가 있는 이유: 2026-09-18 사이클25에 컨테이너 bash가
+    `/ws/tools/bringup_check.sh`를 통째로 못 읽었다(`set: pipefail: invalid
+    option name`). 원인은 스크립트가 아니라 **줄끝**이었다 — core.autocrlf=true인
+    Windows 작업트리가 CRLF로 체크아웃하고 scp는 바이트를 그대로 보낸다.
+    졸업기준 1번을 재는 bringup_check가 그것 하나로 통째로 막혀 있었으니 이건
+    한 번의 실수가 아니라 **배포 경로의 성질**이다. 그래서 여기서 못 박는다.
+
+    ⚠ 저장소(index)는 원래도 LF였다. 깨지는 것은 늘 **작업트리**다 — 그러니
+       검사도 작업트리 바이트를 본다(`git show`를 보면 항상 통과한다).
+    """
+    print("\n[줄끝] 배포되는 파일이 작업트리에서도 LF인가")
+    lf_pats, bin_pats = _eol_patterns()
+
+    # 셸·파이썬·systemd 유닛은 CRLF에서 *조용히* 깨진다(유닛은 ExecStart 끝에
+    # CR이 붙어 실행 파일 이름이 틀린다). 이 셋은 규칙이 있어야 한다.
+    for must in ("*.sh", "*.py", "*.service"):
+        check(f".gitattributes가 {must}를 LF로 못 박았다", must in lf_pats,
+              f"LF 패턴={lf_pats}")
+    # 3D 모델·사진은 CR이 데이터다 — text로 잡으면 파일이 망가진다.
+    for must in ("*.stl", "*.jpg"):
+        check(f".gitattributes가 {must}를 바이너리로 뺐다", must in bin_pats,
+              f"바이너리 패턴={sorted(bin_pats)}")
+
+    files = _worktree_files(lf_pats) if lf_pats else []
+    check("LF로 못 박은 종류의 파일을 실제로 찾았다", len(files) > 20, f"{len(files)}개")
+    crlf = [os.path.relpath(f, REPO).replace(os.sep, "/")
+            for f in files if CR in open(f, "rb").read()]
+    check("그 파일들에 CR이 하나도 없다", not crlf,
+          f"{len(crlf)}개가 CRLF다: {crlf[:5]} — 고치는 법: "
+          "git add --renormalize . 뒤 그 파일을 지우고 git checkout -- <파일>")
+
+    # 젯슨에서 실제로 도는 스크립트는 이름으로도 못 박는다 — 위 패턴이 지워져도
+    # 이 셋은 남는다(막힌 것이 bringup_check였다).
+    for rel in ("ros2/tools/bringup_check.sh", "ros2/docker/entrypoint.sh",
+                "deploy/astra-install.sh"):
+        raw = open(os.path.join(REPO, *rel.split("/")), "rb").read()
+        first = raw.split(b"\n", 1)[0]
+        check(f"{rel}가 LF다", CR not in raw,
+              "컨테이너·젯슨 bash가 이 파일을 통째로 못 읽는다")
+        # 셔뱅 줄만 CR이 붙어도 커널이 인터프리터 이름을 못 찾는다.
+        check(f"{rel}의 셔뱅 줄에 CR이 없다",
+              first.startswith(b"#!") and CR not in first,
+              first[:40].decode("utf-8", "replace"))
+
 def main() -> int:
     print(f"저장소: {REPO}")
     geom = kin.ArmGeometry()
@@ -1273,6 +1402,8 @@ def main() -> int:
     test_travel_split()
     test_sample_within_limits()
     test_mount_contract()
+    test_record_timezone()
+    test_line_endings()
     test_selfcheck_deps()
 
     print()
