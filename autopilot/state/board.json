@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 25,
+ "next_id": 26,
  "tasks": [
   {
    "id": "T1",
@@ -618,16 +618,40 @@
    "id": "T24",
    "title": "D405 노출이 최대일 때 스트림이 몇 fps로 떨어지는지 재고, 필요하면 발행기가 스스로 말하게 한다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 3,
    "why": "165ms 노출이면 30fps는 물리적으로 불가능(최대 ~6fps)한데 발행기는 D405_PUBLISH_FPS=8로 내보내려 한다. 지금 meta의 seq 증가율을 아무도 안 재고 있다 — '프레임이 신선하다'는 mtime만 보는데, 6fps여도 mtime은 신선하다. 이 저장소의 1번 병(지령은 나가는데 아무 일도 안 일어난다)이 프레임 주기에서 재발할 자리다.",
    "done_when": "젯슨에서 meta.json의 seq를 10초 간격으로 두 번 읽어 실제 발행 fps를 숫자로 적고, 설정 fps와 크게 다르면 meta에 measured_fps를 실어 읽는 쪽이 알 수 있게 한다. eye_check에 1종 추가. 4종 RC=0.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 00:23",
-   "updated": "2026-09-18 00:23",
+   "updated": "2026-09-18 00:43",
    "notes": [
     {
      "t": "2026-09-18 00:23",
+     "by": "builder",
+     "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 00:43",
+     "by": "builder",
+     "text": "완료: D405 실측 발행 fps=6.0 (설정 8.0의 75%) — 젯슨 seq 6097→6157/9.99초와 meta.measured_fps 둘 다 6.0. 두 발행기가 capture_fps/publish_fps/measured_fps를 meta에 싣고(공통 fps_measure, 창 4초·간격수÷시간), 판정은 읽는 쪽 한 곳(config.D405_MIN_FPS_FRAC=0.8)에서만 — DepthView.status()의 fps_warn과 조작대 /state의 fps_slow가 같은 숫자를 쓴다. Astra 실측 7.42(경고 안 뜸). 자체검증 45/90/108/33 전부 RC=0 (eye_check 77→90, +13종). docs/depth-camera.md §2.1 신설."
+    }
+   ]
+  },
+  {
+   "id": "T25",
+   "title": "느린 발행(6fps)에서 겨냥을 '경고'가 아니라 '거절'로 올릴지 정한다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 3,
+   "why": "T24로 fps_warn은 생겼지만 아무도 거절하지 않는다. D405_MAX_AGE_SEC=2.0은 6fps에서 12프레임(=팔이 한참 움직인 뒤)이라 굳음 검사가 사실상 안 잡는다. 이 모듈의 핵심은 '거절'인데(depth_camera.py 첫머리), 주기에는 그 규칙이 아직 없다.",
+   "done_when": "팔이 움직이는 중(또는 직후)의 화소 겨냥에 대해 max_age를 fps로 환산한 값(예: 2프레임)으로 거절할지 결정하고, 결정한 쪽을 코드+eye_check 1종으로 굳힌다. 거절하지 않기로 정했다면 그 이유를 docs/depth-camera.md §2.1에 한 줄 남긴다. 4종 RC=0.",
+   "attempts": 0,
+   "created": "2026-09-18 00:44",
+   "updated": "2026-09-18 00:44",
+   "notes": [
+    {
+     "t": "2026-09-18 00:44",
      "by": "builder",
      "text": "만듦"
     }

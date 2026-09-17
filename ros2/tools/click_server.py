@@ -639,7 +639,10 @@ function state(){
     if(j.u!=null){pt={u:j.u,v:j.v};
       document.getElementById('cur').textContent='표적 ('+j.u+', '+j.v+')  깊이 '+(j.z>0?j.z.toFixed(0)+'mm':'없음');}
     var dark=(j.cp99!=null&&j.cp99<30)?(' ⚠ 화면이 어둡다(평균 '+j.cmean+') — 점 검출이 원리상 0개다'):'';
-    document.getElementById('age').textContent='프레임 '+j.age.toFixed(1)+'초 전'+(j.age>5?' ⚠ depth-cam 확인':'')+dark;
+    var slow=j.fps_slow
+      ?(' ⚠ '+j.fps+'fps (설정 '+j.fps_want+') — 노출이 길다, 움직이는 중엔 화소가 낡는다'):'';
+    var fps=(j.fps!=null?(' · '+j.fps+'fps'):'');
+    document.getElementById('age').textContent='프레임 '+j.age.toFixed(1)+'초 전'+fps+(j.age>5?' ⚠ depth-cam 확인':'')+slow+dark;
     var wv=document.getElementById('warn');
     if(j.voice){wv.textContent='⚠ tomato-voice 가 켜져 있다 — 팔 포트를 뺏겨 여기서 시키는 일이 전부 실패한다. '
       +'젯슨에서 sudo systemctl stop tomato-voice';wv.style.display='';}
@@ -998,6 +1001,15 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 m = json.load(open(META))
                 out["cmean"], out["cp99"] = m.get("color_mean"), m.get("color_p99")
+                # 발행 주기 — "프레임 0.2초 전"은 신선해 보이지만 6fps면 팔이
+                # 움직이는 동안 그만큼 낡은 화소를 겨누는 것이다(T24, 09-18).
+                out["fps"], out["fps_want"] = m.get("measured_fps"), m.get("publish_fps")
+                # 판정 기준은 한 곳(config.D405_MIN_FPS_FRAC)에만 둔다 — 화면에
+                # 0.8을 또 적으면 언젠가 두 숫자가 갈린다.
+                from tomato_picker.config import D405_MIN_FPS_FRAC
+                out["fps_slow"] = bool(
+                    out["fps"] is not None and out["fps_want"]
+                    and out["fps"] < float(out["fps_want"]) * D405_MIN_FPS_FRAC)
             except Exception:                              # noqa: BLE001
                 pass
             if os.path.exists(TARGET):

@@ -32,6 +32,7 @@ import numpy as np
 
 from ..config import (
     D405_MAX_AGE_SEC,
+    D405_MIN_FPS_FRAC,
     D405_MIN_VALID_FRAC,
     D405_PATCH_PX,
     DEPTH_CAMERA_DEFAULT,
@@ -262,6 +263,10 @@ class DepthView:
             "color_mean": m.get("color_mean"),
             "color_p99": m.get("color_p99"),
             "color_max": m.get("color_max"),
+            # 발행 주기 (2026-09-18 발행기가 싣기 시작). 밝기와 같은 이유로
+            # 옛 발행기에서는 없을 수 있다 — None을 그대로 통과시킨다.
+            "publish_fps": m.get("publish_fps"),
+            "measured_fps": m.get("measured_fps"),
         }
         band = f"{lo / 10:.0f}~{hi / 10:.0f}cm"
         # ⚠ 이 경고가 2026-08-28 D405 첫 연결에서 실제로 났던 상황이다 — 삼각대가
@@ -287,6 +292,19 @@ class DepthView:
         #   최댓값이 아니라 **99백분위**로 본다 — 어두운 프레임에도 반짝이는 화소
         #   하나는 있다(평균 7.2인 화면의 최댓값이 42였다). 화면의 1%도 30을 못
         #   넘으면 마커 크기의 밝은 고리는 존재할 수 없다.
+        # ⚠ 프레임이 "신선한가"(age)와 "제때 오는가"(fps)는 다른 질문이다.
+        #   6fps로 떨어진 화면도 age는 0.2초라 위의 굳음 검사를 멀쩡히 통과한다.
+        #   그런데 그 0.2초 사이에 팔이 움직였으면 겨눈 화소는 이미 남의 자리다
+        #   (개발일지-2026-09-11 §1의 "겨냥이 정확할수록 틀린 자리로 정확히 간다").
+        #   그래서 늦는 것 자체를 말한다 — 원인(노출 165ms)까지 같이.
+        want, got = m.get("publish_fps"), m.get("measured_fps")
+        if want and got is not None and got < float(want) * D405_MIN_FPS_FRAC:
+            out["fps_warn"] = (
+                f"발행이 느리다 — 설정 {float(want):g}fps인데 실측 {got:g}fps"
+                f"(프레임 간격 {1000.0 / got:.0f}ms). 노출이 길면(D405_EXPOSURE_US) "
+                "센서가 그만큼 못 낸다. 팔이 움직이는 중에 찍은 화소는 이만큼 "
+                "낡았다고 보고 겨냥하라.")
+
         p99 = out.get("color_p99")
         if p99 is not None and p99 < 30:
             out["color_warn"] = (

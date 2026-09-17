@@ -59,6 +59,7 @@ D405를 잡아 **컬러에 정렬된 깊이**를 계속 /dev/shm에 쓴다. 팔�
 
 from __future__ import annotations
 
+import collections
 import json
 import os
 import sys
@@ -102,6 +103,34 @@ MAX_MM = float(os.environ.get("D405_MAX_MM", "900"))
 AUTO_EXPOSURE = os.environ.get("D405_AUTO_EXPOSURE")
 EXPOSURE_US = os.environ.get("D405_EXPOSURE_US")
 GAIN = os.environ.get("D405_GAIN")
+
+# 실제로 나오는 발행 주기를 재는 창 (2026-09-18 추가). PUBLISH_FPS는 **바라는**
+# 값이지 나오는 값이 아니다 — 위 ⚠대로 165ms 노출을 걸면 센서가 6fps밖에 못
+# 내는데 발행기는 8을 적어 놓고, 읽는 쪽은 mtime만 보므로 "신선하다"로 읽힌다.
+# 이 저장소의 1번 병(지령은 나가는데 아무 일도 안 일어난다)이 프레임 주기에서
+# 재발하는 자리다. 그러니 **깊이 단위·유효거리와 같은 규칙** — 카메라가 스스로
+# 말하게 하고, 읽는 코드에 fps를 박지 않는다.
+# 창을 회수가 아니라 **초**로 주는 이유: 회수로 주면 fps가 떨어질수록 창이
+# 길어져서, 정작 느려진 것을 늦게 본다.
+FPS_WINDOW_SEC = float(os.environ.get("D405_FPS_WINDOW_SEC", "4"))
+
+
+def fps_measure(stamps, now: float, window_sec: float = FPS_WINDOW_SEC) -> float | None:
+    """발행 시각 창을 갱신하고 **실측** fps를 낸다. 표본이 모자라면 None.
+
+    왜 순수 함수인가: 이 숫자가 틀리면 읽는 쪽이 "느리다"를 거꾸로 말한다.
+    카메라 없이 PC에서 자른다(`tools/eye_check.py`).
+
+    간격 수 ÷ 걸린 시간이다(표본 수가 아니다) — 표본 2개는 간격 1개다.
+    None은 "아직 모른다"이지 "0이다"가 아니므로 meta에도 그대로 실어 보낸다.
+    """
+    stamps.append(now)
+    while len(stamps) > 2 and now - stamps[0] > window_sec:
+        stamps.popleft()
+    span = stamps[-1] - stamps[0]
+    if len(stamps) < 2 or span <= 0:
+        return None
+    return round((len(stamps) - 1) / span, 2)
 
 
 def color_settings(env: dict | None = None) -> dict:
@@ -289,6 +318,7 @@ def main() -> None:
     interval = 1.0 / max(0.5, PUBLISH_FPS)
     seq = 0
     next_pub = 0.0
+    stamps = collections.deque()
     while True:
         try:
             frames = align.process(pipe.wait_for_frames(timeout_ms=5000))
@@ -312,6 +342,7 @@ def main() -> None:
         depth = np.asanyarray(dframe.get_data())
         color = np.asanyarray(cframe.get_data())
         seq += 1
+        measured_fps = fps_measure(stamps, now)
 
         valid = depth > 0
         z_mm = depth[valid].astype(np.float32) * scale_mm
@@ -339,6 +370,11 @@ def main() -> None:
             "valid_frac": round(float(valid.mean()), 3),
             "filters": bool(filters),
             "camera": "d405",
+            # 바라는 주기와 **나오는** 주기를 나란히 싣는다(위 FPS_WINDOW_SEC 참고).
+            # 판정("느리다")은 읽는 쪽이 한다 — 발행기는 임계를 안 박는다.
+            "capture_fps": float(FPS),
+            "publish_fps": PUBLISH_FPS,
+            "measured_fps": measured_fps,
             "min_mm": MIN_MM,
             "max_mm": MAX_MM,
             "near_mm": [70.0, 500.0],

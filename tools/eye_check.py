@@ -592,6 +592,80 @@ def test_publisher_exposure() -> None:
           and "color_warn" not in old_st)
 
 
+# ----------------------------------------------------------------------
+# 발행 주기 (2026-09-18, T24)
+#
+# 지키려는 사고: **"프레임이 신선하다"를 mtime으로만 보는 것.** 노출을 165ms로
+# 올린 뒤 실측이 6.0fps인데 발행기는 8fps라고 적어 놓고 있었다(젯슨 실측,
+# seq 6097→6157 / 9.99초). age는 0.2초라 굳음 검사를 멀쩡히 통과한다 —
+# 그 0.2초 사이에 팔이 움직였으면 겨눈 화소는 남의 자리다. 1번 병의 주기판.
+# ----------------------------------------------------------------------
+
+def test_publish_rate() -> None:
+    print("\n[발행 주기] 바라는 fps가 아니라 나오는 fps를 싣는가")
+    import collections
+
+    import depth_cam as pub
+
+    # 간격 수 ÷ 걸린 시간이다(표본 수가 아니다) — 5표본·4간격·0.5초 = 8fps.
+    q = collections.deque()
+    got = [pub.fps_measure(q, t) for t in (0.0, 0.125, 0.25, 0.375, 0.5)]
+    check("첫 프레임에는 아직 모른다고 한다(0이 아니라 None)", got[0] is None)
+    check("정확히 간격으로 나눈다 — 8fps를 8이라 한다", got[-1] == 8.0, str(got[-1]))
+
+    q = collections.deque()
+    for t in (0.0, 1 / 6, 2 / 6, 3 / 6):
+        slow = pub.fps_measure(q, t)
+    check("165ms 노출의 6fps를 6으로 읽는다 — 설정 8과 갈린다",
+          abs(slow - 6.0) < 0.05, str(slow))
+
+    # 창이 초 단위인 이유 — 아주 느려져도 마지막 두 장은 남아야 숫자가 나온다.
+    q = collections.deque()
+    for t in (0.0, 10.0, 20.0):
+        crawl = pub.fps_measure(q, t, window_sec=4.0)
+    check("창(4초)보다 느려도 None으로 떨어지지 않는다", crawl == 0.1, str(crawl))
+    check("오래된 표본은 창 밖으로 버린다 — 느려진 걸 늦게 보지 않게",
+          len(q) == 2, str(len(q)))
+    # --- 판단은 읽는 쪽이 한다 ---
+    cam = FakeCam((0.0, -300.0, 300.0), (0.0, 0.0, 0.0), tag="_fps")
+    cam.bake([(0.0, 0.0, 0.0)])
+    view = cam.view()
+
+    def with_fps(want, got_fps):
+        with open(cam.meta, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["publish_fps"] = want
+        meta["measured_fps"] = got_fps
+        with open(cam.meta, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        return view.status()
+
+    st = with_fps(8.0, 6.0)          # 2026-09-18 젯슨 실측 그대로
+    check("상태에 실측 fps가 실린다", st["measured_fps"] == 6.0 and st["publish_fps"] == 8.0)
+    check("설정보다 느리면 말한다 — age만으로는 안 걸린다",
+          "느리다" in (st.get("fps_warn") or ""), str(st.get("fps_warn"))[:60])
+    check("얼마나 낡은 화소인지 ms로 말해준다",
+          "167ms" in (st.get("fps_warn") or ""), str(st.get("fps_warn"))[:80])
+    check("느림 경고는 굳음 검사를 대신하지 않는다 — 여전히 ok다",
+          st["ok"] is True)
+    check("제 속도로 나오면 경고가 없다",
+          with_fps(8.0, 8.0).get("fps_warn") is None)
+    check("살짝 흔들리는 정도(8→7)는 안 짖는다 — 매번 짖으면 아무도 안 본다",
+          with_fps(8.0, 7.0).get("fps_warn") is None)
+
+    check("아직 모를 때(None)는 느리다고 하지 않는다",
+          with_fps(8.0, None).get("fps_warn") is None)
+    with open(cam.meta, encoding="utf-8") as f:
+        meta = json.load(f)
+    for key in ("publish_fps", "measured_fps"):
+        meta.pop(key, None)
+    with open(cam.meta, "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    old_st = view.status()
+    check("주기를 안 싣는 옛 발행기에도 상태가 돈다(None으로 통과)",
+          old_st["ok"] and old_st["measured_fps"] is None and "fps_warn" not in old_st)
+
+
 def main() -> int:
     print(f"보정→통합 자체검증 — 하드웨어 없이 (임시폴더 {TMP})")
     try:
@@ -604,6 +678,7 @@ def main() -> int:
         test_snapshot()
         test_two_cameras()
         test_publisher_exposure()
+        test_publish_rate()
     finally:
         shutil.rmtree(TMP, ignore_errors=True)
 

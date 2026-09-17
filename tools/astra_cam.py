@@ -61,6 +61,7 @@
 
 from __future__ import annotations
 
+import collections
 import ctypes
 import json
 import os
@@ -69,6 +70,12 @@ import time
 
 import cv2
 import numpy as np
+
+# 발행 주기 측정은 두 발행기가 **같은 뜻**이어야 한다(읽는 쪽이 한 코드로 읽는다).
+# 그래서 여기만 D405 발행기에서 빌려 쓴다 — 계약을 두 벌로 두면 언젠가 갈라진다.
+# depth_cam은 pyrealsense2를 지연 임포트하므로 이 import는 D405가 없어도 된다.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from depth_cam import fps_measure  # noqa: E402
 
 # 드라이버 위치. deploy/astra-install.sh 가 여기에 푼다.
 ONI_HOME = os.environ.get("ASTRA_ONI_HOME", os.path.expanduser("~/openni2"))
@@ -321,6 +328,7 @@ def main() -> None:
     seq = 0
     next_pub = 0.0
     last_valid = time.time()
+    stamps = collections.deque()
     while True:
         try:
             depth = cam.read()
@@ -336,6 +344,7 @@ def main() -> None:
             continue
         next_pub = now + interval
         seq += 1
+        measured_fps = fps_measure(stamps, now)
 
         valid = depth > 0
         z_mm = depth[valid].astype(np.float32) * scale_mm
@@ -378,6 +387,10 @@ def main() -> None:
             "depth_scale_mm": scale_mm,
             "valid_frac": round(float(valid.mean()), 3),
             "filters": False,
+            # 바라는 주기와 나오는 주기 — 판정은 읽는 쪽이 한다(D405와 같은 계약).
+            "capture_fps": float(FPS),
+            "publish_fps": PUBLISH_FPS,
+            "measured_fps": measured_fps,
             # 읽는 쪽의 거절 기준. 카메라가 스스로 말한다 — 그래야 읽는 코드에
             # 카메라별 상수가 안 생긴다.
             "min_mm": MIN_MM,
