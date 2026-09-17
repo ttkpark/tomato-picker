@@ -55,6 +55,12 @@ behavior the task requires stay in.
   잡기를 전부 거기서 시킨다. **버튼과 `curl`과 에이전트가 같은 경로**를 쓴다 —
   터미널에서만 되는 조작을 남기지 않기로 했다.
   ⚠ **한 번에 하나만 돈다**(팔 포트는 한 프로세스). 도는 중 새 일은 409로 거절한다.
+  ⚠ **`tomato-voice`와는 systemd `Conflicts=`로 서로를 밀어낸다**(2026-09-18). 8090과
+  팔 포트를 둘 다 다투므로 **부팅 자동실행은 `click-server` 하나뿐**이다(voice는 disable).
+  이제 `sudo systemctl start tomato-voice`는 조작대를 먼저 내리고 **실제로 뜬다** —
+  예전엔 조용히 실패하며 3초마다 되살아났다(재부팅 1회에 2425번). 되돌리려면
+  `sudo systemctl start click-server`. 정책 = `docs/인수인계-2026-09-03.md` §1 ·
+  강제 = `ros_selfcheck`의 [서비스].
   ⚠ 표적 클릭은 **그 프레임의 화소 자리**다 — 팔이 움직였으면 다시 찍어야 한다.
   잡기 본체 = [`ros2/tools/stem_grasp.py`](ros2/tools/stem_grasp.py),
   손끝 조그 = [`ros2/tools/tool_jog.py`](ros2/tools/tool_jog.py).

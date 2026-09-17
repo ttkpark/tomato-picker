@@ -2,6 +2,11 @@
 Description=Tomato stem click page (wrist camera) on :8090
 After=network-online.target depth-cam.service
 Wants=network-online.target
+# ⚠ tomato-voice와 포트 8090·팔 포트를 둘 다 놓고 다툰다 — 한 번에 하나만 돈다.
+#   여기가 **부팅 자동실행 쪽**이다(조작대가 지금의 운전석이다). 반대쪽 유닛에도
+#   같은 줄이 있다: systemd의 Conflicts는 대칭이지만, 한 파일만 배포돼도 규칙이
+#   살아 있게 양쪽에 적어 둔다.
+Conflicts=tomato-voice.service
 
 [Service]
 Type=simple

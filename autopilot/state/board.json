@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 46,
+ "next_id": 47,
  "tasks": [
   {
    "id": "T1",
@@ -780,13 +780,13 @@
    "id": "T27",
    "title": "tomato-voice.service와 click-server.service가 systemd에 둘 다 enabled라 8090 포트 충돌로 tomato-voice가 부팅마다 크래시루프한다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "T21 중 발견: systemctl start tomato-voice 직후 journalctl에 'OSError: [Errno 98] Address already in use'(포트 8090, voice/server.py:937)로 반복 재시작. CLAUDE.md 설계는 '한 프로세스만' 배타적으로 켜는 것을 전제하는데, 두 유닛이 둘 다 enabled(부팅자동시작)로 있어 재부팅 시마다 이 크래시루프가 재현될 것이다. 지금 당장 하드웨어를 못 쓰게 막지는 않지만(click-server가 이겨서 실제로 살아남는다) CPU/로그를 계속 태운다.",
    "done_when": "deploy/ 아래 두 서비스 파일(또는 활성화 정책)을 살펴 부팅 시 하나만 enabled 되게 정리하거나, tomato-voice가 포트 충돌 시 깔끔히 대기하고 재시도 간격을 늘리게 고친다. 젯슨에서 systemctl is-enabled tomato-voice click-server가 둘 다 enabled면 안 되는 이유(운영 정책)를 docs에 한 줄 남기고, 고친 뒤 journalctl -u tomato-voice에서 반복 크래시가 멈췄는지 확인.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 00:55",
-   "updated": "2026-09-18 03:26",
+   "updated": "2026-09-18 03:35",
    "notes": [
     {
      "t": "2026-09-18 00:55",
@@ -797,6 +797,11 @@
      "t": "2026-09-18 03:26",
      "by": "planner",
      "text": "2026-09-18 03:2x planner: p3→p2로 올린다. 이건 위생 문제가 아니라 **다른 작업의 완료조건을 거짓말로 만든다** — T36·T40·T44가 모두 '끝나면 tomato-voice를 되살린다'로 끝나는데, 8090을 click-server가 쥐고 있는 한 살아나지 않는다(restart 221회). 03:22 실측도 여전히 inactive. 빌더의 지금 next다."
+    },
+    {
+     "t": "2026-09-18 03:35",
+     "by": "builder",
+     "text": "완료: systemd Conflicts=로 두 유닛이 서로를 밀어내게 하고, 부팅 자동실행을 click-server 하나로 줄였다. 젯슨 실측: start tomato-voice → click-server가 먼저 내려가고 voice가 뜬다(is-active active/inactive, 'Address already in use' 0건, 'Scheduled restart' 0건, NRestarts=0, curl :8090 http=200). 되돌림: start click-server → voice inactive/click-server active, :8090 http=200. is-enabled = tomato-voice disabled / click-server enabled. 고치기 전 기준선: 부팅 1회에 bind 실패 2425건·Scheduled restart 2422건. 안전망으로 tomato-voice에 StartLimitIntervalSec=60/StartLimitBurst=5(systemctl show로 1min/5 파싱 확인). PC 4종 45/90/200/73 전부 RC=0(ros_selfcheck +8 = [서비스] 신설). 돌연변이 4건 전부 FAIL 확인(Conflicts 삭제/[Service]로 이동/StartLimitBurst 삭제/문서 정책줄 삭제). 정책 문서 = docs/인수인계-2026-09-03.md §1 + CLAUDE.md."
     }
    ]
   },
@@ -1239,12 +1244,17 @@
    "done_when": "젯슨(tomato-voice는 이미 inactive)에서 arm_extend.py로 B(기본 뻗기)까지 간 뒤, 그 자리에서 각 관절에 '지령 = 지령 + (지령-실제)'를 1회·2회 다시 써 보고 매번 관절 오차 최대(°)와 TCP(mm)를 적는다. 최소 3회 반복(수렴하는지/멈추는지). ⚠ 같은 값을 다시 쓰는 것은 소용없다(이미 정상상태다) — 오차만큼 '더' 주는 것이 요점이고, 이게 이 저장소의 '크기부터 재라' 원칙의 팔 판이다. 결과를 docs/인수인계-2026-09-04.md §22 아래에 '되먹임 1/2/3회 → 오차 X°→Y°→Z°' 표로 남기고, 오차가 0.5° 아래로 안 내려가면 '포화'라고 못 박는다. 한 걸음이 20°를 넘게 벗어나면 즉시 멈춘다(arm_extend의 기존 가드와 같은 뜻). 끝나면 팔을 A(134.3,15.3,168.9,7.6,88.8)로 두고 집게 100.",
    "attempts": 0,
    "created": "2026-09-18 03:25",
-   "updated": "2026-09-18 03:25",
+   "updated": "2026-09-18 03:35",
    "notes": [
     {
      "t": "2026-09-18 03:25",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 03:35",
+     "by": "builder",
+     "text": "2026-09-18 03:3x builder(T27): 이제 'systemctl start tomato-voice'가 실제로 뜬다(click-server가 먼저 내려간다) — 완료조건의 '되살린다'가 더는 거짓이 아니다. 단 조작대 API(8090)를 쓰려면 끝에 'sudo systemctl start click-server'로 되돌려라(이쪽이 다시 voice를 내린다). 부팅 자동실행은 click-server 하나뿐이니 기본 상태 = click-server active/voice inactive다. ⚠ 팔 실측(03:36): pan=133.3 lift=17.6 elbow=169.4 wflex=7.6 wroll=88.7 · TCP(151.0,-160.0,95.5) · 집게 98.4. 03:33(내 시험 전)엔 elbow=164.3 TCP z=122.7이었다 — voice가 팔을 잡았다 놓는 사이 elbow가 5.1도 처지며 z가 27mm 내려갔다(팔을 지령한 적은 없다). A자세로 삼는 값(134.3,15.3,168.9,7.6,88.8)에는 오히려 더 가까워졌지만, 서비스를 켜고 끄는 것만으로 이만큼 움직인다는 사실을 셈에 넣어라."
     }
    ]
   },
@@ -1263,6 +1273,25 @@
     {
      "t": "2026-09-18 03:25",
      "by": "planner",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T46",
+   "title": "tomato-voice를 켜고 끄는 것만으로 팔이 처진다 — 얼마나, 어느 관절이 처지는지 잰다",
+   "role": "tester",
+   "status": "todo",
+   "priority": 3,
+   "why": "2026-09-18 03:3x builder(T27) 실측: 팔에 아무 지령도 안 준 채 'systemctl start tomato-voice' → 'systemctl start click-server'만 했는데 elbow_flex가 164.3도에서 169.4도로 5.1도 처지고 TCP z가 122.7mm에서 95.5mm로 27mm 내려갔다. voice가 팔을 잡을 때/놓을 때 토크가 한 번 끊기는 것으로 보인다(메모리의 '도구 연달아 부르면 configure() 토크 끊김으로 래칫처럼 내려앉음'과 같은 병). 이게 왜 문제인가: 기준3 채점과 T36 반복성이 모두 'A자세'를 기준으로 삼는데, 서비스를 한 번 켰다 끄면 그 기준이 27mm 움직인다. 즉 자세를 좌표로 적어 둔 모든 기록이 서비스 조작 한 번에 낡는다.",
+   "done_when": "젯슨에서 arm_extend.py --dry로 자세를 읽고(움직이지 않는다) → systemctl start tomato-voice → 10초 뒤 --dry로 다시 읽고 → systemctl start click-server → --dry로 또 읽는다. 이 3회를 최소 3번 되풀이해 '켤 때/끌 때 각각 어느 관절이 몇 도 처지는지'를 표로 docs/인수인계-2026-09-04.md 새 절에 남긴다. 처짐이 되풀이되면(매번 같은 방향·비슷한 크기) 그 사실을 못 박고, 무작위면 그것도 적는다. 자세를 여러 개(A자세 하나 + 팔을 좀 더 뻗은 자세 하나)에서 재라 — 중력 모멘트가 다르면 처짐도 다르다. 팔은 끝에 A로 두고 집게 100, click-server active로 되돌린다.",
+   "attempts": 0,
+   "created": "2026-09-18 03:36",
+   "updated": "2026-09-18 03:36",
+   "notes": [
+    {
+     "t": "2026-09-18 03:36",
+     "by": "builder",
      "text": "만듦"
     }
    ]

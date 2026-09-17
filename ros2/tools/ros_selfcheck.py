@@ -1382,6 +1382,87 @@ def test_line_endings() -> None:
               first.startswith(b"#!") and CR not in first,
               first[:40].decode("utf-8", "replace"))
 
+
+# 한 장치·한 포트를 놓고 다투는 유닛 묶음. 이름만 적는다 — 무엇을 나눠 쓰는지는
+# 사람이 읽을 사유이고, 검사가 보는 것은 "서로를 Conflicts로 적었는가"다.
+EXCLUSIVE_UNITS = {
+    "포트 8090 + 팔 포트(/dev/ttyACM0)":
+        ("tomato-voice.service", "click-server.service"),
+}
+
+
+def _unit_text(name: str) -> str:
+    return open(os.path.join(REPO, "deploy", name), encoding="utf-8").read()
+
+
+def _unit_directive(body: str, key: str) -> list[str]:
+    """유닛 본문에서 `Key=값`을 모은다. 주석(`#`)으로 시작하는 줄은 뺀다 —
+    설명에 적어 둔 이름이 선언으로 세어지면 검사가 거짓말을 한다."""
+    out = []
+    for line in body.splitlines():
+        t = line.strip()
+        if t.startswith("#") or "=" not in t:
+            continue
+        k, _, v = t.partition("=")
+        if k.strip() == key:
+            out.extend(p for p in v.replace(",", " ").split() if p)
+    return out
+
+
+def test_service_exclusivity() -> None:
+    """같은 것을 나눠 쓰는 유닛이 **systemd 수준에서** 서로를 밀어내는가.
+
+    이 검사가 있는 이유: `tomato-voice`와 `click-server`는 포트 8090과 팔
+    포트를 **둘 다** 놓고 다투는데 systemd에는 그 사실이 적혀 있지 않았다.
+    둘 다 enabled라 부팅마다 진 쪽이 3초 간격으로 되살아났고, 재부팅 한 번에
+    **2425번** bind에 실패했다(2026-09-18 젯슨 실측). 더 나쁜 것은 그 뒤로
+    `systemctl start tomato-voice`가 *조용히* 실패했다는 것이다 — 실기 작업의
+    "끝나면 되살린다"가 전부 거짓이 됐다.
+
+    Conflicts를 적으면 systemd가 먼저 상대를 내리고 띄운다. 문서로는 09-03부터
+    "꺼져 있어야 한다"고 적혀 있었지만 사람이 매번 지켜야 하는 규칙이었다.
+    ⚠ 검사가 못 보는 것: 젯슨에서 무엇이 enabled인가. 그건 `systemctl
+      is-enabled`로만 알 수 있다(운영 정책 = docs/인수인계-2026-09-03.md §1).
+    """
+    print("\n[서비스] 같은 장치를 다투는 유닛이 서로를 밀어내는가")
+    for why, units in EXCLUSIVE_UNITS.items():
+        for name in units:
+            body = _unit_text(name)
+            others = [u for u in units if u != name]
+            declared = _unit_directive(body, "Conflicts")
+            check(f"{name}가 Conflicts로 {others}를 적었다",
+                  all(o in declared for o in others),
+                  f"{why} — 선언된 것: {declared}")
+            # Conflicts는 [Unit] 절의 지시어다. [Service]에 적으면 systemd가
+            # 통째로 무시하고 유닛은 그대로 뜬다(조용한 실패).
+            head = body.split("[Service]", 1)[0]
+            check(f"{name}의 Conflicts가 [Unit] 절에 있다",
+                  "Conflicts=" in head,
+                  "[Service]에 적으면 systemd가 무시한다")
+
+    # 못 고치는 이유로 죽는 것을 영원히 되풀이하지 않게 — 진 쪽에만 있으면 된다.
+    voice = _unit_text("tomato-voice.service")
+    burst = _unit_directive(voice, "StartLimitBurst")
+    interval = _unit_directive(voice, "StartLimitIntervalSec")
+    check("tomato-voice에 재시작 상한(StartLimitBurst)이 있다",
+          bool(burst) and int(burst[0]) > 0, f"{burst}")
+    check("tomato-voice에 그 상한을 재는 창(StartLimitIntervalSec)이 있다",
+          bool(interval) and int(interval[0]) > 0, f"{interval}")
+    # 상한은 [Unit] 절에서만 먹는다([Service]에 적으면 최신 systemd가 경고만
+    # 내고 무시한다) — Restart=는 반대로 [Service]다. 둘을 바꿔 적기 쉽다.
+    check("그 상한이 [Unit] 절에 있다",
+          "StartLimitBurst=" in voice.split("[Service]", 1)[0],
+          "[Service]에 적으면 먹지 않는다")
+
+    # 운영 정책(어느 쪽이 부팅 자동실행인가)은 코드가 아니라 문서에 산다.
+    # 문서가 사라지면 다음 사람이 둘 다 enable 해서 같은 병이 돌아온다.
+    policy = open(os.path.join(REPO, "docs", "인수인계-2026-09-03.md"),
+                  encoding="utf-8").read()
+    check("운영 정책이 문서에 적혀 있다(어느 쪽이 부팅 자동실행인가)",
+          "Conflicts" in policy and "disable tomato-voice" in policy,
+          "docs/인수인계-2026-09-03.md §1")
+
+
 def main() -> int:
     print(f"저장소: {REPO}")
     geom = kin.ArmGeometry()
@@ -1404,6 +1485,7 @@ def main() -> int:
     test_mount_contract()
     test_record_timezone()
     test_line_endings()
+    test_service_exclusivity()
     test_selfcheck_deps()
 
     print()

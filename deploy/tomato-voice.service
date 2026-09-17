@@ -1,6 +1,19 @@
 [Unit]
 Description=Tomato-picker voice command (arm + mecanum base, on-device STT)
 After=network.target sound.target
+# ⚠ 이쪽과 click-server는 **포트 8090과 팔 포트(/dev/ttyACM0)를 둘 다** 놓고 다툰다.
+#   둘 다 enabled였던 탓에 부팅 한 번에 bind 실패로 2425번 되살아났다(09-18 실측,
+#   `journalctl -u tomato-voice -b | grep -c 'Address already in use'`).
+#   Conflicts는 systemd가 **먼저 상대를 내리고** 이쪽을 띄우게 한다 — 그래서
+#   `systemctl start tomato-voice`가 이제 실제로 뜬다(예전엔 조용히 실패했다).
+#   ⚠ 부팅 자동실행은 click-server 하나뿐이다(이쪽은 `systemctl disable`) —
+#     둘 다 enabled면 부팅 순서에 따라 이긴 쪽이 바뀌어 매번 달라진다.
+Conflicts=click-server.service
+# bind 실패처럼 다시 해도 안 되는 이유로 죽으면 60초에 5번만 해 보고 포기한다.
+# 아래 Restart=always를 남겨 둔 것은 장비 부재·USB 재열거에서는 여전히
+# 되살아나야 하기 때문이다 — 막고 싶은 것은 '영원히 같은 실패'뿐이다.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
