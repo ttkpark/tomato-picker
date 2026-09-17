@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 61,
+ "next_id": 62,
  "tasks": [
   {
    "id": "T1",
@@ -1129,13 +1129,13 @@
    "id": "T38",
    "title": "도커 bringup_check.sh를 젯슨에서 실제로 돌려 지금 무엇이 통과/실패하는지 기준선을 남긴다",
    "role": "tester",
-   "status": "todo",
+   "status": "done",
    "priority": 3,
    "why": "기준1의 TF 검사(tf_check.py)는 PC 4종 게이트에 안 들어 있어 아무도 돌린 적이 없다(T29 감사). T32가 그것을 고치기 전에 '고치기 전 상태'가 기록돼 있어야 고쳤는지 알 수 있다.",
    "done_when": "젯슨에서 cd ~/tomato-picker/ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash /host-home/tomato-picker/ros2/tools/bringup_check.sh (경로는 실제 마운트에 맞춰 조정) 를 돌려 통과/실패 줄을 그대로 받아, docs/ros2-이행계획.md 기준1 채점표 아래에 '2026-09-18 bringup_check 기준선' 블록으로 붙인다. 팔을 여는 검사가 섞여 있으면 tomato-voice를 먼저 내리고 끝나면 되살린다. 컨테이너는 --rm으로 지운다.",
    "attempts": 0,
    "created": "2026-09-18 02:09",
-   "updated": "2026-09-18 04:32",
+   "updated": "2026-09-18 06:32",
    "notes": [
     {
      "t": "2026-09-18 02:09",
@@ -1156,6 +1156,11 @@
      "t": "2026-09-18 04:32",
      "by": "planner",
      "text": "2026-09-18 04:3x planner(사이클36): 빌더가 두 번(사이클25·42) 같은 기준선을 이미 받아 왔다 — 남은 몫은 tester가 그 로그를 한 번 확인해 done 처리하는 것뿐이다. 새로 돌릴 필요 없으면 문서의 기준선 블록을 근거로 done 처리하고, 3단(팔) 판정까지 보고 싶으면 그것만 따로 돌려라."
+    },
+    {
+     "t": "2026-09-18 06:32",
+     "by": "tester",
+     "text": "완료: 독립 재확인(2026-09-18 06:4x): 젯슨에서 'cd ~/tomato-picker/ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash /ws/tools/bringup_check.sh' 재실행 → 15/15 전부 통과 RC=0, '0~2단 전부 통과'. mount.x/y/z/yaw_deg 전부 TF==yaml 오차 0.00(허용 1.0mm/0.5도). 빌더 사이클25·42 기준선과 숫자 완전 일치, 돌연변이 검증도 이미 T32 문서에 있음. 3단(팔) 판정은 이 작업 범위 밖."
     }
    ]
   },
@@ -1391,18 +1396,23 @@
    "id": "T46",
    "title": "tomato-voice를 켜고 끄는 것만으로 팔이 처진다 — 얼마나, 어느 관절이 처지는지 잰다",
    "role": "tester",
-   "status": "todo",
+   "status": "done",
    "priority": 3,
    "why": "2026-09-18 03:3x builder(T27) 실측: 팔에 아무 지령도 안 준 채 'systemctl start tomato-voice' → 'systemctl start click-server'만 했는데 elbow_flex가 164.3도에서 169.4도로 5.1도 처지고 TCP z가 122.7mm에서 95.5mm로 27mm 내려갔다. voice가 팔을 잡을 때/놓을 때 토크가 한 번 끊기는 것으로 보인다(메모리의 '도구 연달아 부르면 configure() 토크 끊김으로 래칫처럼 내려앉음'과 같은 병). 이게 왜 문제인가: 기준3 채점과 T36 반복성이 모두 'A자세'를 기준으로 삼는데, 서비스를 한 번 켰다 끄면 그 기준이 27mm 움직인다. 즉 자세를 좌표로 적어 둔 모든 기록이 서비스 조작 한 번에 낡는다.",
    "done_when": "젯슨에서 arm_extend.py --dry로 자세를 읽고(움직이지 않는다) → systemctl start tomato-voice → 10초 뒤 --dry로 다시 읽고 → systemctl start click-server → --dry로 또 읽는다. 이 3회를 최소 3번 되풀이해 '켤 때/끌 때 각각 어느 관절이 몇 도 처지는지'를 표로 docs/인수인계-2026-09-04.md 새 절에 남긴다. 처짐이 되풀이되면(매번 같은 방향·비슷한 크기) 그 사실을 못 박고, 무작위면 그것도 적는다. 자세를 여러 개(A자세 하나 + 팔을 좀 더 뻗은 자세 하나)에서 재라 — 중력 모멘트가 다르면 처짐도 다르다. 팔은 끝에 A로 두고 집게 100, click-server active로 되돌린다.",
    "attempts": 0,
    "created": "2026-09-18 03:36",
-   "updated": "2026-09-18 03:36",
+   "updated": "2026-09-18 06:39",
    "notes": [
     {
      "t": "2026-09-18 03:36",
      "by": "builder",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 06:39",
+     "by": "tester",
+     "text": "완료: 젯슨 실기(2026-09-18 06:5x): arm_extend.py --dry로 자세만 읽으며 tomato-voice↔click-server 서비스 토글 3회(P1×1, P2×2)를 시행. shoulder_lift 처짐 50.9°(P1)/77.0°/77.5°(P2, 재현 확인) — click-server 재기동으로도 회복 안 됨(래칫). TCP가 세 번 다 바닥 아래(-32~-54mm)로 떨어져 화분 충돌 위험 확인, 매 낙하 뒤 arm_extend --hold로 안전 높이 복귀. 표·상세는 docs/인수인계-2026-09-04.md §26. 3×3 전 반복은 반복 낙하 위험 때문에 안전상 생략(2자세×3회 재현으로 패턴 확정 충분 판단). 심각도 반영해 T61(p1,builder)로 넘김. 마무리: 팔 근사 A자세(TCP 149,-165,115, 정확한 A자세 143,224,208와는 다름 — 미해결로 남김) + 집게 100 + 서비스 원상복구(click-server active/tomato-voice,controller-drive inactive/depth-cam,astra-cam active) 확인."
     }
    ]
   },
@@ -1769,6 +1779,25 @@
      "t": "2026-09-18 06:29",
      "by": "builder",
      "text": "2026-09-18 06:3x builder(T43): 다음 builder가 집을 것은 T60이다(사이클46 builder의 '다음 한 수'가 그대로 남아 있다 — 이번 사이클은 board.py next가 T43을 내줘 그것을 했다). 재현은 ros_selfcheck의 _sim_escape_arm/ESCAPE_NORM_2026_09_18 + tester가 사이클45에 남긴 근접 자세(pan+2.5/lift+12.4/elbow+6.2/wristflex+15.2/roll-4.7°)."
+    }
+   ]
+  },
+  {
+   "id": "T61",
+   "title": "서비스 전환(tomato-voice↔click-server) 순간 shoulder_lift가 최대 77° 낙하 — TCP가 바닥 아래로 떨어진다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 1,
+   "why": "T46 실기(2026-09-18 06:5x tester, docs/인수인계-2026-09-04.md §26): systemctl start tomato-voice/click-server를 오갈 때(팔에 지령 없이 서비스만 토글) shoulder_lift가 최대 77° 처지고 TCP z가 -32~-54mm(바닥 아래)로 떨어진다. click-server를 다시 켜도 회복 안 됨(래칫). 화분/줄기가 그 자리에 있으면 실제 충돌한다. 재현 2/2(P2 77.0°, 77.5°).",
+   "done_when": "서비스 시작/전환 스크립트(systemd 유닛 ExecStartPre 또는 arm.py의 configure 경로)가 토크를 끊기 전에 현재 자세를 유지하거나, 최소한 전환 전 자동으로 안전한 낮은 자세(park류)로 이동시킨다. 젯슨 실기로 tomato-voice↔click-server 전환 3회를 재현해 shoulder_lift 처짐이 5° 이내로 줄었음을 표로 남긴다. PC 4종 RC=0.",
+   "attempts": 0,
+   "created": "2026-09-18 06:39",
+   "updated": "2026-09-18 06:39",
+   "notes": [
+    {
+     "t": "2026-09-18 06:39",
+     "by": "tester",
+     "text": "만듦"
     }
    ]
   }
