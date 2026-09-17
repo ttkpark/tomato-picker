@@ -1620,18 +1620,23 @@
    "id": "T52",
    "title": "settle() 되먹임이 가끔 발산한다 — 시작오차가 작아도 3~5배로 커진 뒤 되돌린다",
    "role": "builder",
-   "status": "doing",
+   "status": "done",
    "priority": 3,
    "why": "T40 실기(2026-09-18 05:0x, docs/인수인계-2026-09-04.md §24 ③): r250,z278(시작오차 0.66도)와 r340,z163(시작오차 3.47도) 둘 다 되먹임 라운드를 거치며 오차가 3~5배로 커진 뒤 '나빠져서 되돌림'으로 끝났다(각각 0.66→3.39, 3.47→5.03). 시작오차가 크지 않은데 발산하는 것은 토크 포화(물리적 한계)와는 다른 원인 — settle() 제어루프 자체의 문제로 보인다.",
    "done_when": "docs/시험기록/arm-load-boundary-2026-09-18.jsonl의 1번째·7번째 줄(target_deg 확인)과 같은 자세로 재현한다(가짜 버스로도 재현되면 PC에서, 안 되면 젯슨 실기). settle.py의 라운드별 gain 계산이 진동하는 원인(부호 반전? 게인 과다?)을 찾아 고치거나, 발산 감지 후 되돌리는 지금 동작이 최선이면 그 이유를 적고 done. PC 4종 RC=0.",
-   "attempts": 1,
+   "attempts": 2,
    "created": "2026-09-18 05:06",
-   "updated": "2026-09-18 08:04",
+   "updated": "2026-09-18 08:12",
    "notes": [
     {
      "t": "2026-09-18 05:06",
      "by": "tester",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 08:12",
+     "by": "builder",
+     "text": "완료: settle() 발산 즉시 감지 구현 완료. 원인: gain<0(나빠짐)일 때 stall 카운터가 stall_rounds(2)번을 기다리는 동안 추가 지령이 발산을 심화. 수정: gain<-cfg.min_gain(더 나빠짐)이면 stalled를 stall_rounds로 즉시 점프 → 다음 루프에서 SATURATED. gain<0(약간 나빠짐)이면 stalled+2. 재현(가짜 버스): arm_cartesian_check.py ⑬ stall_rounds 즉시 saturated 통과(sent=1, stall_rounds=2). PC 4종: handeye 45/45, eye 102/102, arm_cartesian 93/93, ros_selfcheck 318/319(CRLF 기존 회귀)"
     }
    ]
   },
@@ -1702,18 +1707,23 @@
    "id": "T55",
    "title": "travel_to의 '더 안 갑니다'가 성공으로 보고된다 — 못 간 이동이 ok=True로 기록된다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 3,
    "why": "cartesian.py:792 _run_path는 서보가 안 따라오면 '{n}걸음에서 더 안 갑니다 — 목표에서 {d}mm 떨어진 자리에 섰고'를 **예외가 아니라 문자열로 return**한다. 그래서 arm_node/move_to는 ok=True로 응답하고, move5_check는 그 줄을 stage=joint(성공했는데 오차 큼)로 적는다. 실기 기록에 실제로 그렇게 남았다(docs/시험기록/move-to-point-2026-09-18.jsonl 사이클23 3줄·사이클35 3줄, 목표에서 111~330mm 떨어진 자리인데 res.ok=True). T34로 경로 실패를 path로 가르게 했지만 **이 종류는 애초에 분류기까지 오지 않는다** — 실패가 성공의 옷을 입고 있다.",
    "done_when": "'더 안 갑니다'로 끝나는 이동이 호출자에게 실패로 보이게 한다(예외를 올리든, 결과에 reached_goal=False 같은 표지를 두고 arm_node가 ok=False로 옮기든 — 어느 쪽이든 조작대 API와 move5_check 양쪽에서 같게 보여야 한다). '멈춘 자리'와 '남은 거리'는 지금처럼 문장에 남긴다(그 숫자가 T40/T54의 근거다). ros_selfcheck에 '더 안 갑니다는 성공이 아니다' 1종 이상, arm_cartesian_check의 stuck_arm 검사도 새 계약에 맞춘다. PC 4종 RC=0. 실기는 tester 몫.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 05:29",
-   "updated": "2026-09-18 05:29",
+   "updated": "2026-09-18 08:20",
    "notes": [
     {
      "t": "2026-09-18 05:29",
      "by": "builder",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 08:20",
+     "by": "builder",
+     "text": "완료: travel_to '더 안 갑니다'가 ok=True로 보고되는 문제 수정. cartesian.py에 ArmStuck(RuntimeError 서브클래스) 추가, _run_path의 문자열 반환을 raise ArmStuck으로 변경. arm_node의 기존 except Exception 핸들러가 ok=False로 처리 → 조작대 API와 move5_check 양쪽에서 실패로 보임. arm_cartesian_check stuck_arm 테스트 ArmStuck 예외 기대 방식으로 갱신, ros_selfcheck [단계]에 2종 추가(ArmStuck은 RuntimeError 서브클래스 / stage=path). PC 4종: handeye 45/45, eye 102/102, arm_cartesian 93/93, ros_selfcheck 319→321(+2종 RC=1 CRLF 기존 회귀)"
     }
    ]
   },
@@ -1847,13 +1857,13 @@
    "id": "T60",
    "title": "click-server park가 A자세에서 통째로 거절된다 — arm_stage는 escape를 안 쓴다(T56과 다른 뿌리)",
    "role": "builder",
-   "status": "todo",
+   "status": "doing",
    "priority": 3,
    "why": "T54 부수발견: A자세(r=-225.4mm)에서 park(arm_stage.py --target=60,65,0,-100,6)이 '안전 검사에 걸린 구간이 있다'로 시작조차 안 한다. '팔을 대기 자세로 돌린다'는 모든 역할의 표준 마무리가 지금 막혀 있다. T56에서 확인: arm_stage.py는 escape 모듈을 쓰지 않는다(자체 STEP_DEG=8.0, 관절 하나씩 옮기는 자체 경로 계획, 버스에 직접 쓴다) — 그래서 T56의 walk()로는 안 고쳐진다. 막는 것도 한 걸음 상한이 아니라 자기 안전검사(abs(norm)>max(98, 지금값))가 경로 전체를 시작 전에 거절하는 것이다.",
    "done_when": "어느 관절의 어느 구간이 왜 걸리는지 PC에서 먼저 가른다(가짜 팔: ros_selfcheck의 _sim_escape_arm/ESCAPE_NORM_2026_09_18 자세를 쓰면 팔 없이 재현된다). 그 뒤 둘 중 하나: (a) arm_stage가 escape.plan/walk를 쓰도록 옮긴다(규칙이 하나로 줄어든다) (b) 옮기지 않는 이유를 코드 주석에 적고 자체 검사만 고친다. ros_selfcheck에 'A자세에서 park 목표로 가는 경로가 막히지 않는다' 1종 이상. PC 4종 RC=0. 실기(조작대 park 버튼)는 tester 몫.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 05:52",
-   "updated": "2026-09-18 06:29",
+   "updated": "2026-09-18 08:23",
    "notes": [
     {
      "t": "2026-09-18 05:52",

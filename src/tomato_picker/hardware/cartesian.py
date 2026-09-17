@@ -60,6 +60,17 @@ from . import kinematics as kin
 from . import settle as st
 from .kinematics import ArmGeometry, ToolPose, Unreachable
 
+
+class ArmStuck(RuntimeError):
+    """서보가 지령을 따라오지 못해 진전이 없어 멈췄다.
+
+    `travel_to`가 반환 문자열로 이 사실을 알리면 `arm_node`는 ok=True로 응답하고
+    조작대 API도 성공으로 보인다(2026-09-18 실기 기록). 예외로 올려야 양쪽에서
+    같은 실패로 보인다 — RuntimeError와 구분되는 별도 이름이라 분류기가 정확히
+    stage='path'로 기록할 수 있다.
+    """
+
+
 GRIPPER = "gripper"
 # STS3215는 한 바퀴가 4096틱 — 정규화값 폭을 실제 각도로 바꿀 때 쓴다.
 DEG_PER_TICK = 360.0 / 4096.0
@@ -790,7 +801,11 @@ class CartesianArm:
                     away = math.dist((now.x, now.y, now.z),
                                      (target.x, target.y, target.z))
                     tail = f" [{why}]" if why else ""
-                    return (
+                    # ⚠ 문자열 반환이면 arm_node가 ok=True로 응답하고 조작대
+                    #   API도 성공으로 보인다(2026-09-18 실기 기록). 예외로
+                    #   올려야 arm_node의 `except Exception` 핸들러가 ok=False
+                    #   로 처리해 양쪽에서 같은 실패로 보인다(T55).
+                    raise ArmStuck(
                         f"{walked}걸음에서 더 안 갑니다 — 목표에서 {away:.0f}mm "
                         f"떨어진 자리에 섰고 {PROGRESS_STALL_STEPS}걸음째 남은 길이 "
                         f"{floor:.1f}{unit}도 안 줄었습니다(서보 추종오차·중력 처짐). "

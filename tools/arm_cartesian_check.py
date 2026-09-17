@@ -41,8 +41,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from tomato_picker import config  # noqa: E402
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
 from tomato_picker.hardware.cartesian import (  # noqa: E402
-    MAX_TRAVEL_STEPS, MAX_TRAVEL_STEPS_JOINT, PROGRESS_STALL_STEPS, CartesianArm,
-    SimJointIO, plan_joint_steps, plan_steps,
+    MAX_TRAVEL_STEPS, MAX_TRAVEL_STEPS_JOINT, PROGRESS_STALL_STEPS, ArmStuck,
+    CartesianArm, SimJointIO, plan_joint_steps, plan_steps,
 )
 from tomato_picker.hardware.kinematics import ArmGeometry  # noqa: E402
 from tomato_picker.hardware.settle import SettleConfig, settle  # noqa: E402
@@ -685,13 +685,19 @@ def test_travel_path() -> None:
     stuck_arm.config.set_zero(JETSON_ZERO)
     stuck_io.joints.update(stuck_arm.to_norms(CYCLE20_START_DEG))
     goal2 = standoff_pose(*CYCLE20_TARGETS[1])
-    note = stuck_arm.travel_to(x=goal2.x, y=goal2.y, z=goal2.z,
-                               pitch=goal2.pitch, roll=goal2.roll)
-    check("서보가 안 따라오면 '더 안 갑니다'라고 남은 거리를 말한다",
-          "더 안 갑니다" in note and "mm" in note, note[:110])
-    check("그때 예산(32걸음)을 다 태우지 않는다",
-          stuck_io.writes <= PROGRESS_STALL_STEPS + 1,
-          f"쓰기 {stuck_io.writes}회 / 상한 {MAX_TRAVEL_STEPS_JOINT}걸음")
+    stuck_writes_before = stuck_io.writes
+    try:
+        stuck_arm.travel_to(x=goal2.x, y=goal2.y, z=goal2.z,
+                            pitch=goal2.pitch, roll=goal2.roll)
+        check("서보가 안 따라오면 ArmStuck을 올린다(ok=True로 성공인 체하지 않는다)",
+              False, "예외가 없었다 — travel_to가 성공으로 반환했다")
+    except ArmStuck as exc:
+        msg = str(exc)
+        check("서보가 안 따라오면 '더 안 갑니다'라고 남은 거리를 말한다",
+              "더 안 갑니다" in msg and "mm" in msg, msg[:110])
+        check("그때 예산(32걸음)을 다 태우지 않는다",
+              stuck_io.writes - stuck_writes_before <= PROGRESS_STALL_STEPS + 1,
+              f"쓰기 {stuck_io.writes - stuck_writes_before}회 / stall {PROGRESS_STALL_STEPS}회")
 
     # 갈 수 없는 목표는 **한 걸음도 안 움직이고** 목표 검사에서 먼저 걸린다
     guard = jetson_arm()

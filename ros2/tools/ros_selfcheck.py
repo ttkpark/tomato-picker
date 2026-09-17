@@ -1319,6 +1319,17 @@ def test_stage_classify() -> None:
     check("지금 코드가 내는 한 걸음 상한 문장도 step이다",
           step_msg and m5.classify_stage(step_msg) == "step", step_msg[:60])
 
+    # **'더 안 갑니다'는 성공이 아니다** (T55, 2026-09-18).
+    # 옛 코드는 _run_path가 이 메시지를 문자열로 return해 arm_node가 ok=True로
+    # 응답했다 — 실기 기록에 목표에서 111~330mm 떨어진 자리가 ok=True로 남았다.
+    # ArmStuck을 올리도록 고쳤으므로: (a) arm_node의 except Exception이 잡아
+    # ok=False가 되고, (b) classify_stage가 path로 분류한다.
+    check("ArmStuck은 RuntimeError의 서브클래스 — arm_node의 except Exception이 잡는다",
+          issubclass(cart.ArmStuck, RuntimeError))
+    stuck_msg = "4걸음에서 더 안 갑니다 — 목표에서 111mm 떨어진 자리에 섰고"
+    check("ArmStuck 메시지도 stage=path로 분류된다",
+          m5.classify_stage(stuck_msg) == "path", m5.classify_stage(stuck_msg))
+
     reach_msg = ""
     try:
         cart.CartesianArm._check_workspace(
