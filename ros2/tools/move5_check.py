@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
 
-RECORD_DIR = os.path.join(REPO, "docs", "시험기록")
+RECORD_DIR = os.environ.get("TOMATO_RECORD_DIR") or os.path.join(REPO, "docs", "시험기록")
 STANDOFF_MM = 30.0
 
 

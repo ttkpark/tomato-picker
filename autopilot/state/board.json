@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 26,
+ "next_id": 28,
  "tasks": [
   {
    "id": "T1",
@@ -551,18 +551,28 @@
    "id": "T21",
    "title": "move5_check를 실기로 처음 돌려 졸업기준3의 현재 점수를 알아낸다 (지금 '모름')",
    "role": "tester",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "졸업 기준 5개 중 3번(move_to_point 5회 중 5회)만 아직 한 번도 시도된 적이 없어 채점이 '모름'이다. 그런데 move5_check.py는 좌표를 받지 카메라 검출을 받지 않는다 — 즉 손-눈 보정/거울 논란(§21)과 **무관하게 지금 당장 잴 수 있다**. TF/IK/관절 중 어디서 깨지는지 단계별로 갈라 주므로, 남은 14일에 무엇을 고쳐야 하는지가 이 한 번으로 정해진다.",
    "done_when": "먼저 PC에서 'python ros2/tools/move5_check.py --dry-run'이 5/5인지 확인(도구 자체 검증). 그다음 젯슨에서 충돌 서비스(tomato-voice)를 내리고 ROS2 stage1(arm_node)을 띄워 --points 없이 실기 5회를 돌린다. docs/시험기록/move-to-point-2026-09-18.jsonl에 5줄이 남고, 성공 수(n/5)와 실패한 줄의 stage(tf/ik/joint)·error_mm을 요약해 적는다. 끝나면 arm_node를 내리고 tomato-voice를 active로 되돌리며 팔은 대기 자세·집게 열림으로 둔다. 좌표는 forward()가 만든 사거리 안 점이라 화분 쪽으로 크게 뻗지 않는지 첫 점에서 눈으로 확인하고 진행.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 00:08",
-   "updated": "2026-09-18 00:08",
+   "updated": "2026-09-18 00:55",
    "notes": [
     {
      "t": "2026-09-18 00:08",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 00:55",
+     "by": "tester",
+     "text": "실기 첫 측정: 0/5, 전부 stage=tf(사실은 '집게가 회전축 위(특이점)' 안전가드). docs/시험기록/move-to-point-2026-09-18.jsonl에 5줄. 원인: 젯슨 ros2/가 08-28 배포 이후 갱신 안 됐었다(move5_check.py 자체가 없었음) → rsync로 동기화, colcon build(6패키지 18.6s), stage1 arm_node(handeye:=false) 기동, /arm/move_to_point 서비스 확인. 팔 시작자세(preset 0 '대기')의 signed_radius=-136~-223mm로 r_min=90mm 가드에 걸려 5회 전부 TF 단계 거부(팔은 못 움직였다 — 안전하게 실패). 프리셋 0(대기)·1(2층 사전준비)·2(2층준비)·5(1층준비)를 실측: 전부 folded=True(signed_radius 전부 음수, -136~-414mm) — 저장된 프리셋 10개 중 move_to_point가 요구하는 '앞으로 곧게 뻗은' 자세가 하나도 없다(1/2/3층 프리셋은 어깨-팔꿈치-손목이 접힌 채로 멀리 뻗는 구성). 결론: 기준3 점수는 아직 '0/5(가드 차단)'이고, 진짜 IK/관절 정확도는 측정 못 했다 — 그러려면 signed_radius>90mm인 새 프리셋을 하나 가르치거나, move_to_point가 스스로 pre-extend를 하게 바꿔야 한다. move5_check.py에 TOMATO_RECORD_DIR 환경변수 오버라이드 추가(버그: /repo가 컨테이너에서 읽기전용이라 원래 코드로는 기록 자체가 불가능했다). 젯슨 원상복구: 프리셋 0 재생+집게 100% 열기, docker 컨테이너 삭제, tomato-voice/click-server 상태는 시작 시점과 동일(click-server active, tomato-voice는 원래도 8090 충돌로 크래시루프 중이었음이 로그로 확인됨 — 별도 버그로 분리해 신규 작업 만듦)."
+    },
+    {
+     "t": "2026-09-18 00:55",
+     "by": "tester",
+     "text": "완료: 실기 0/5(전부 가드 차단, 팔 안 움직임) — 기준3은 여전히 미측정. 새 작업 T26(신규 프리셋)·T27(포트충돌 크래시루프) 생성"
     }
    ]
   },
@@ -653,6 +663,44 @@
     {
      "t": "2026-09-18 00:44",
      "by": "builder",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T26",
+   "title": "signed_radius>90mm인 '곧게 앞으로 뻗기' 프리셋을 하나 가르치거나 move_to_point가 스스로 pre-extend하게 한다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 2,
+   "why": "T21 실기: 저장된 프리셋 10개(대기/1~9) 전부 kin.signed_radius<0(-136~-414mm)다. move_to_point의 안전가드(r_min=90mm, hardware/cartesian.py:471)는 옳다 — 이 자세들에서 xyz 방향이 실제로 정의되지 않는다(문서화된 특이점 함정, CLAUDE.md '먼저 영점을 잡아야 열린다'). 그런데 지금 프리셋 어느 것도 그 가드를 통과 못 하므로 기준3(5/5 도달)을 잴 방법이 아예 없다.",
+   "done_when": "젯슨에서 (1) 사람 없이 새 프리셋을 하나 만든다 — shoulder_lift를 낮추고 elbow_flex를 펴는 쪽으로 조그하며 매 스텝 cartesian.pose()의 signed_radius(또는 /status의 arm.cartesian.r)가 >90mm가 되는 지점을 찾는다(화분 없는 빈 공간에서, 작은 스텝으로), 그 자세를 arm_presets.json에 저장(예: 슬롯 10, 이름 '뻗기'). (2) python ros2/tools/move5_check.py를 그 프리셋 자세에서 실기로 5회 돌려 docs/시험기록/move-to-point-<날짜>.jsonl에 남긴다. (3) 팔은 끝나고 대기(0)로, 집게 열고 나온다.",
+   "attempts": 0,
+   "created": "2026-09-18 00:55",
+   "updated": "2026-09-18 00:55",
+   "notes": [
+    {
+     "t": "2026-09-18 00:55",
+     "by": "tester",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T27",
+   "title": "tomato-voice.service와 click-server.service가 systemd에 둘 다 enabled라 8090 포트 충돌로 tomato-voice가 부팅마다 크래시루프한다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 3,
+   "why": "T21 중 발견: systemctl start tomato-voice 직후 journalctl에 'OSError: [Errno 98] Address already in use'(포트 8090, voice/server.py:937)로 반복 재시작. CLAUDE.md 설계는 '한 프로세스만' 배타적으로 켜는 것을 전제하는데, 두 유닛이 둘 다 enabled(부팅자동시작)로 있어 재부팅 시마다 이 크래시루프가 재현될 것이다. 지금 당장 하드웨어를 못 쓰게 막지는 않지만(click-server가 이겨서 실제로 살아남는다) CPU/로그를 계속 태운다.",
+   "done_when": "deploy/ 아래 두 서비스 파일(또는 활성화 정책)을 살펴 부팅 시 하나만 enabled 되게 정리하거나, tomato-voice가 포트 충돌 시 깔끔히 대기하고 재시도 간격을 늘리게 고친다. 젯슨에서 systemctl is-enabled tomato-voice click-server가 둘 다 enabled면 안 되는 이유(운영 정책)를 docs에 한 줄 남기고, 고친 뒤 journalctl -u tomato-voice에서 반복 크래시가 멈췄는지 확인.",
+   "attempts": 0,
+   "created": "2026-09-18 00:55",
+   "updated": "2026-09-18 00:55",
+   "notes": [
+    {
+     "t": "2026-09-18 00:55",
+     "by": "tester",
      "text": "만듦"
     }
    ]
