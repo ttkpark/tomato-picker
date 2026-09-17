@@ -1,0 +1,139 @@
+{
+ "version": 1,
+ "next_id": 8,
+ "tasks": [
+  {
+   "id": "T1",
+   "title": "자체검증 4종의 기준선 종수를 일지에 못 박기",
+   "role": "tester",
+   "status": "todo",
+   "priority": 1,
+   "why": "지금 몇 종이 통과하는지가 기록에 없으면 회귀를 알아볼 수 없다. 15일의 0일차 눈금.",
+   "done_when": "handeye_check·eye_check·ros_selfcheck·arm_cartesian_check 네 개를 돌려 각각 통과/전체를 일지에 숫자로 남김",
+   "attempts": 0,
+   "created": "2026-09-17 21:44",
+   "updated": "2026-09-17 21:44",
+   "notes": [
+    {
+     "t": "2026-09-17 21:44",
+     "by": "human",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T2",
+   "title": "젯슨 접속 경로 되살리기(지금 192.168.0.8 응답 없음)",
+   "role": "tester",
+   "status": "todo",
+   "priority": 1,
+   "why": "실기 없이는 졸업 기준 3번(5회 중 5회 도달)을 잴 수 없다.",
+   "done_when": "ssh로 hostname이 돌아오고 runner.py probe가 IP를 찍는다. 못 찾으면 [사람] 작업을 만들고 block",
+   "attempts": 0,
+   "created": "2026-09-17 21:44",
+   "updated": "2026-09-17 21:44",
+   "notes": [
+    {
+     "t": "2026-09-17 21:44",
+     "by": "human",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T3",
+   "title": "손-눈 보정 잔차 15mm를 코드가 강제하게 만들기",
+   "role": "builder",
+   "status": "todo",
+   "priority": 1,
+   "why": "졸업 기준 2번. 최소자승은 입력이 쓰레기여도 답을 내므로, 사람이 잔차를 안 보면 그대로 쌓인다.",
+   "done_when": "handeye_resolve가 잔차>15mm면 경고가 아니라 비영 종료코드를 내고, ros_selfcheck에 그 검사가 1종 추가되어 통과",
+   "attempts": 0,
+   "created": "2026-09-17 21:44",
+   "updated": "2026-09-17 21:44",
+   "notes": [
+    {
+     "t": "2026-09-17 21:44",
+     "by": "human",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T4",
+   "title": "URDF 링크 길이와 kinematics.py 상수가 어긋나면 자체검증이 잡게 하기",
+   "role": "builder",
+   "status": "todo",
+   "priority": 2,
+   "why": "졸업 기준 1번. 두 곳에 같은 숫자가 따로 적혀 있으면 언젠가 갈라진다.",
+   "done_when": "ros_selfcheck에 URDF↔kinematics 길이 일치 검사가 있고, 한쪽을 1mm 틀어 보면 실패한다",
+   "attempts": 0,
+   "created": "2026-09-17 21:44",
+   "updated": "2026-09-17 21:44",
+   "notes": [
+    {
+     "t": "2026-09-17 21:44",
+     "by": "human",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T5",
+   "title": "평행이동 오차가 실측의 3~5배인 원인 후보를 코드에서 좁히기",
+   "role": "builder",
+   "status": "todo",
+   "priority": 1,
+   "why": "docs/인수인계-2026-09-04.md의 미해결 항목. 이것이 졸업 기준 3번을 막고 있는 본체다.",
+   "done_when": "가설 3개 이상을 코드 근거(파일:줄)와 함께 문서에 적고, 각각을 가릴 수 있는 측정 절차를 작업으로 쪼개 놓음",
+   "attempts": 0,
+   "created": "2026-09-17 21:44",
+   "updated": "2026-09-17 21:44",
+   "notes": [
+    {
+     "t": "2026-09-17 21:44",
+     "by": "human",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T6",
+   "title": "ros2-이행계획 §3 ros.1 표의 ✅ 표시가 실제인지 한 줄씩 확인",
+   "role": "auditor",
+   "status": "todo",
+   "priority": 2,
+   "why": "표는 쉽게 썩는다. 거짓 ✅ 하나가 졸업 채점을 통째로 틀리게 한다.",
+   "done_when": "항목마다 근거 파일:줄 또는 '근거 없음'을 적어 문서를 갱신하고, 거짓이던 항목은 작업으로 만듦",
+   "attempts": 0,
+   "created": "2026-09-17 21:44",
+   "updated": "2026-09-17 21:44",
+   "notes": [
+    {
+     "t": "2026-09-17 21:44",
+     "by": "human",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T7",
+   "title": "move_to_point 5회 시험을 한 명령으로 돌리고 기록까지 남기는 도구 만들기",
+   "role": "tester",
+   "status": "todo",
+   "priority": 2,
+   "why": "졸업 기준 3번을 매번 손으로 재면 매번 다르게 잰다. 눈금이 흔들리면 진전도 안 보인다.",
+   "done_when": "ros2/tools/에 도구가 있고, docs/시험기록/에 시도마다 한 줄(jsonl)이 쌓인다. 젯슨 없이도 --dry-run으로 검증됨",
+   "attempts": 0,
+   "created": "2026-09-17 21:44",
+   "updated": "2026-09-17 21:44",
+   "notes": [
+    {
+     "t": "2026-09-17 21:44",
+     "by": "human",
+     "text": "만듦"
+    }
+   ]
+  }
+ ]
+}

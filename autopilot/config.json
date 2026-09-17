@@ -1,0 +1,19 @@
+{
+ "branch": "feat/base-firmware-v2-and-arm-presets",
+ "model": "opus",
+ "fallback_model": "sonnet",
+ "rotation": ["planner", "builder", "tester", "builder", "auditor", "builder", "tester"],
+ "cycle_timeout_sec": 2700,
+ "sleep_between_sec": 90,
+ "days": 15,
+ "push": true,
+ "hardware_allowed": true,
+ "jetson_user": "server",
+ "jetson_key": "C:/Users/parkg/.ssh/id_ed25519",
+ "jetson_candidates": ["192.168.0.8", "192.168.0.6"],
+ "jetson_subnet": "192.168.0",
+ "jetson_reprobe_cycles": 8,
+ "daily_cost_cap_usd": 0,
+ "max_consecutive_fails": 6,
+ "permission_flag": "--dangerously-skip-permissions"
+}

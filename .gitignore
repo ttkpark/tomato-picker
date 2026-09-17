@@ -31,3 +31,10 @@ firmware/MecanumRobot-Arduino-Uno-master/
 
 # 사진을 통째로 박아 만든 생성물 (젯슨 click-server 로 대체됨)
 stem_console.html
+
+# 자동운전 (사이클 원문 로그는 크고 재현 가능하다 — 작업판·일지만 남긴다)
+autopilot/logs/
+autopilot/state/*.tmp
+autopilot/state/*.lock
+autopilot/PAUSE
+autopilot/STOP
