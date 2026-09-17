@@ -922,11 +922,20 @@ def _escape_limits():
 
 # 경로 막힘을 **살아 있는 코드가 실제로 만드는 문장**으로 확인할 자리.
 # 실측 프레임(위 ESCAPE_FRAME)에 가짜 팔을 물린다 — 파일도 장치도 안 건드린다.
-PATH_START_DEG = {"shoulder_pan": 0.0, "shoulder_lift": 55.0, "elbow_flex": -70.0,
+# ⚠ 2026-09-18 감사(T50): elbow_flex=-70.0이던 옛 값은 **이 프레임의 계산으로도
+# 한계 밖**이었다(norm -128, 한계 ±98 — arm._to_norm(옛 PATH_START_DEG)로 직접
+# 확인됨). 사이클40 감사와 사이클41 빌더가 둘 다 "시작 elbow -70은 범위 안"이라
+# 적었는데, 그건 이 계산 없이 짐작한 것이었다 — **틀렸다**. -30.0으로 낮춰
+# start·target 둘 다 한계 안임을 아래에서 확인한 뒤에도 여전히 1번째 걸음에서
+# 막힌다(elbow norm -127) — 그러니 "직교 직선이 유효한 두 끝점 사이에서도
+# 막힌다"는 결론 자체는 살아 있다, 다만 원인은 "시작이 이미 밖"이 아니라
+# **직선이 관절공간에서 볼록하지 않다**는 기하 성질이다(자세한 근거 =
+# docs/인수인계-2026-09-04.md "T50" 절).
+PATH_START_DEG = {"shoulder_pan": 0.0, "shoulder_lift": 55.0, "elbow_flex": -30.0,
                   "wrist_flex": 10.0, "wrist_roll": 0.0}
 # 이 자리는 **끝점 둘 다 갈 수 있는데 그 사이가 막히는** 목표다(사이클20이 실기
 # 5/5로 겪은 것과 같은 모양). 좌표를 바꾸면 전제가 깨지니 아래 검사가 그 전제를
-# 먼저 확인한다.
+# 먼저 확인한다(시작·목표 둘 다 NormLimits 안인지를 명시적으로 검사한다).
 PATH_TARGET = (100.0, 0.0, 360.0, 0.0)
 
 
@@ -1240,6 +1249,15 @@ def test_stage_classify() -> None:
         ends_ok, end_degs = False, str(exc)
     check("시험용 목표는 **목표로서는 멀쩡하다**(안 그러면 아래가 헛돈다)",
           ends_ok, str(end_degs)[:70])
+    # T50(2026-09-18): **시작 자세도** 같은 잣대로 확인한다 — 옛 PATH_START_DEG는
+    # 목표만 검사하는 사이 자기 자신이 이미 한계 밖이었다(elbow norm -128,
+    # 아무도 안 봤다). "양 끝 다 갈 수 있는데 중간이 막힌다"는 이 검사의 전제이므로,
+    # 시작이 몰래 밖으로 나가면 이 시험은 조용히 다른 것(그냥 못 가는 시작점)을
+    # 재는 시험이 된다.
+    start_over = arm._to_norm(PATH_START_DEG)                   # noqa: SLF001
+    start_bad = {j: v for j, v in start_over.items() if abs(v) > cart.NORM_LIMIT}
+    check("시험용 시작 자세도 한계 안이다(그래야 '중간만 막힌다'는 전제가 산다)",
+          not start_bad, str({j: round(v, 1) for j, v in start_bad.items()}))
     walk_msg = arm._walk(arm._io.read(), now,                   # noqa: SLF001
                          cart.plan_steps(now, target), geom, joint_space=False)
     check("지금 코드가 내는 경로 막힘 문장도 path다",
