@@ -944,8 +944,15 @@ def test_stage_classify() -> None:
           all(w in src for w in ("몸통 뒤로", "거의 수직", "수평거리")),
           "문구를 바꾸면 이 검사가 먼저 터진다")
 
+    # ⚠ 감사 T39 실측: 이 파일이 없으면 아래 두 check()가 아예 안 불려
+    # FAIL 없이 통과 수만 줄어든다(10개→8개, 조용히 사라짐). 그 파일이
+    # 저장소에 커밋돼 있으니(사라지면 그 자체가 사고) 존재를 먼저 못 박는다.
+    # 날짜를 새 검사로 늘리지 않는 이유: "note가 있다"는 이 특정 사고
+    # (09-18 오분류)의 기록이지 미래 시험 전부에 강제할 규칙이 아니다.
     record = os.path.join(REPO, "docs", "시험기록",
                           "move-to-point-2026-09-18.jsonl")
+    check("09-18 시험기록 파일이 있다 (없으면 아래 두 검사가 소리없이 사라진다)",
+          os.path.exists(record), record)
     if os.path.exists(record):
         rows = [json.loads(ln) for ln in open(record, encoding="utf-8")
                 if ln.strip()]
