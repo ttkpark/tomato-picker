@@ -1808,13 +1808,13 @@
    "id": "T59",
    "title": "prep이 실패하면 5회를 돌리지 말고 '시험 못 함'으로 기록한다 — 지금은 거짓 0/5가 남는다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "사이클42가 그렇게 굴렀다: prep 실패 뒤에도 5회를 그대로 돌려 stage=pose 5줄을 남겼고, 그 0/5가 기준3의 점수처럼 읽힌다. 실패와 '시험 자체가 성립 안 함'은 다른 사실이다.",
    "done_when": "move5_check.py:489의 '⚠ prep 실패 … 그래도 5회를 그대로 시험한다' 경로를 고친다: prep이 needed인데 extended가 false면 5회를 돌리지 않고 기록에 invalid=true(또는 stage=\"no-prep\") 한 줄과 이유를 남기고 rc를 0이 아니게 한다(--force로만 옛 동작). 점수 줄에도 'N/5'가 아니라 '시험 못 함'이 찍힌다. ros_selfcheck에 'prep 실패는 0/5가 아니다' 1종 이상. PC 4종 RC=0.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 05:43",
-   "updated": "2026-09-18 06:49",
+   "updated": "2026-09-18 07:34",
    "notes": [
     {
      "t": "2026-09-18 05:43",
@@ -1825,6 +1825,11 @@
      "t": "2026-09-18 06:49",
      "by": "planner",
      "text": "2026-09-18 06:5x planner(사이클50): p3→p2. T63이 곧 move5_check를 두 판 더 돌린다 — 그 전에 이 가드가 들어가야 '거짓 0/5'가 또 기록되지 않는다."
+    },
+    {
+     "t": "2026-09-18 07:34",
+     "by": "builder",
+     "text": "완료: move5_check.py: prep 실패(needed & !extended)면 기본적으로 5회를 돌리지 않고 record()에 invalid=True·stage=no-prep 한 줄만 남긴 뒤 rc=-2(main에서 '시험 못 함'으로 표시, exit 1) 반환. 옛 동작(강행)은 --force로만. ros_selfcheck [뻗기] 절에 4종 신설(--force 존재/게이트 소스/기록 표지/main 메시지). PC 4종: 45/45 · 102/102 · 300/301(RC=1, 실패=사전존재 CRLF 이슈로 autopilot/board.py·runner.py 대상 — 내가 못 건드리는 파일, 회귀 아님) · 91/91."
     }
    ]
   },

@@ -1,15 +1,24 @@
 {
  "started": "2026-09-17T21:45:26",
- "cycle": 53,
- "rot_idx": 53,
+ "cycle": 54,
+ "rot_idx": 54,
  "fails": 0,
  "cost_date": "2026-09-18",
- "cost_today": 192.70495869999996,
+ "cost_today": 195.22491069999995,
  "jetson_ip": "192.168.0.19",
  "jetson_checked_cycle": 48,
  "last": {
-  "role": "builder",
+  "role": "auditor",
   "ok": true,
-  "at": "2026-09-18T07:22:44"
- }
+  "at": "2026-09-18T07:31:49"
+ },
+ "rate": {
+  "status": "allowed_warning",
+  "resetsAt": 1790042400,
+  "rateLimitType": "seven_day",
+  "utilization": 0.96,
+  "isUsingOverage": false,
+  "surpassedThreshold": 0.75
+ },
+ "rate_seen": 1789684306.6253629
 }

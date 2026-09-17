@@ -460,7 +460,8 @@ def _arm_node_geometry() -> tuple[kin.ArmGeometry, str]:
 
 
 def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
-             limits=None, prep: bool = True, load_tag: str = "none") -> int:
+             limits=None, prep: bool = True, load_tag: str = "none",
+             force: bool = False) -> int:
     """ROS2 stage1이 떠 있어야 한다 — /arm/move_to_point를 실제로 부른다."""
     import rclpy
     from geometry_msgs.msg import PointStamped
@@ -597,8 +598,23 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
     else:
         prep_row = {"needed": None, "extended": False,
                     "detail": "--no-prep — 뻗기를 껐다(자세는 부르는 쪽 책임이다)"}
-    if not prep_row.get("extended") and prep_row.get("needed"):
-        print(f"  ⚠ prep 실패: {prep_row['detail']} — 그래도 5회를 그대로 시험한다"
+    prep_failed = bool(prep_row.get("needed")) and not prep_row.get("extended")
+    if prep_failed and not force:
+        # **실패와 '시험 자체가 성립 안 함'은 다른 사실이다**(T59). 옛 동작은
+        # 여기서 그대로 5회를 돌려 전부 자세 가드에 거절당한 거짓 0/5를 남겼다
+        # (사이클42) — 그 0/5가 기준3의 점수처럼 읽혀 다음 사이클을 속였다.
+        # 팔을 움직이지 않고 이유 한 줄만 남긴 뒤 rc로 실패를 알린다.
+        detail = f"prep 실패: {prep_row['detail']} — 5회를 돌리지 않았다(--force로 강행)"
+        print(f"  ❌ {detail}")
+        record(out_path, {"trial": 0, "dry_run": False, "invalid": True,
+                          "stage": "no-prep", "ok": False, "error_mm": None,
+                          "reached": None, "limits": limits_tag,
+                          "load_limits": load_tag, "geometry": geom_tag,
+                          "prep": prep_row, "detail": detail})
+        rclpy.shutdown()
+        return -2
+    if prep_failed:
+        print(f"  ⚠ prep 실패: {prep_row['detail']} — --force로 그래도 5회를 그대로 시험한다"
               "(자세 가드 거절이 기록에 남는다)")
 
     ok_count = 0
@@ -678,6 +694,10 @@ def main() -> int:
     ap.add_argument("--no-prep", action="store_true",
                     help="시험 전 자동 뻗기를 끈다 (기본은 켬 — 자세 가드에 걸린 "
                          "자세에서 그냥 돌리면 5/5가 거절되고 거짓 0/5가 기록된다)")
+    ap.add_argument("--force", action="store_true",
+                    help="prep이 실패해도 5회를 그대로 시험한다(옛 동작). 기본은 "
+                         "돌리지 않고 '시험 못 함'을 기록한다(T59) — 자세 가드 거절 "
+                         "5줄이 기준3의 0/5처럼 읽히는 것을 막는다")
     args = ap.parse_args()
 
     # 표적을 뽑는 기하는 **재는 기하와 같은 함수에서 와야 한다**(T53) —
@@ -749,7 +769,10 @@ def main() -> int:
         ok = run_dry(points, geom, out_path, limits_tag, load_tag, geom_tag)
     else:
         ok = run_real(points, out_path, limits_tag, limits=limits,
-                      prep=not args.no_prep, load_tag=load_tag)
+                      prep=not args.no_prep, load_tag=load_tag, force=args.force)
+        if ok == -2:
+            print("\n시험 못 함 — prep 실패로 5회를 돌리지 않았다(--force로 강행 가능)")
+            return 1
         if ok < 0:
             return 1
 

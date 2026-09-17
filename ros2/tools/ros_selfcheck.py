@@ -1209,6 +1209,23 @@ def test_prep_autoextend() -> None:
           "es.walk(" in m5_src and 'for step in planned["steps"]:' not in m5_src,
           "move5_check.run_prep → escape.walk")
 
+    # ⑦ **prep 실패는 0/5가 아니다** (T59, 2026-09-18) — 사이클42는 prep이
+    # 실패한 채로 5회를 그대로 돌려 자세 가드 거절 5줄을 남겼고, 그 0/5가
+    # 기준3의 점수처럼 읽혔다. run_real은 rclpy 노드가 있어야 끝까지 돌길래
+    # (서비스 호출·spin) 여기서는 arm_extend·prep_plan처럼 소스 자체를 본다 —
+    # 이 저장소가 이미 ⑤에서 하는 것과 같은 방식이다.
+    check("--force로만 prep 실패에도 옛 동작(5회 강행)을 쓸 수 있다",
+          '"--force"' in m5_src, "기본은 강행하지 않는다")
+    check("prep 실패면 기본은 5회를 돌리지 않는다(거짓 0/5 방지)",
+          "prep_failed and not force" in m5_src and "return -2" in m5_src,
+          "run_real이 팔을 움직이기 전에 멈춰야 한다")
+    check("멈춘 판도 이유 한 줄은 기록에 남는다(invalid=True·stage=no-prep)",
+          '"invalid": True' in m5_src and '"stage": "no-prep"' in m5_src,
+          "다음 사이클이 '시험이 아예 안 됐다'를 줄만 보고 알아야 한다")
+    check("main()이 '시험 못 함'을 0/5와 다른 말로 알린다",
+          "ok == -2" in m5_src and "시험 못 함" in m5_src,
+          "N/5 점수줄과 헷갈리지 않게")
+
 
 def test_stage_classify() -> None:
     """거절 문장을 **어느 단계**로 적는가.
