@@ -1340,18 +1340,28 @@
    "id": "T47",
    "title": "되먹임이 붙은 뒤 졸업기준3을 실기로 다시 잰다 (move5_check 5회)",
    "role": "tester",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "T45가 travel_to 도착 뒤 되먹임을 넣었다. 시뮬에서는 도착 오차가 18.2mm→1.7mm로 줄었지만 실기로 기준3을 다시 잰 적이 없다 — 지금 점수는 되먹임 이전(0/5)의 것이다.",
    "done_when": "젯슨에서 move5_check.py를 실기로 5회 돌려 docs/시험기록/move-to-point-<날짜>.jsonl에 남기고, 각 줄의 detail에 '되먹임 N회 — 오차 a° → b°'가 실제로 들어갔는지 확인한다. 점수(n/5)와 오차 mm를 docs/인수인계-2026-09-04.md §22-2 '남은 것' 아래에 한 줄로 적는다. 팔·서비스는 발견한 그대로 되돌린다(click-server active, tomato-voice inactive).",
    "attempts": 0,
    "created": "2026-09-18 04:00",
-   "updated": "2026-09-18 04:00",
+   "updated": "2026-09-18 04:26",
    "notes": [
     {
      "t": "2026-09-18 04:00",
      "by": "builder",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 04:26",
+     "by": "tester",
+     "text": "2026-09-18 사이클35 tester: 실기 완료. A자세(수직)에서 곧장 5회 → 전부 pose가드 거절(T21과 동일 원인, arm_extend 선행 없이 시작하면 재현). arm_extend --hold로 signed_r 212.3mm까지 뻗은 뒤(되먹임 0.32도 수렴) 같은 5표적 재시험 → 1/5 성공. 닿는 표적 오차 44.6/36.4mm(cycle23, 되먹임 이전) -> 18.34/10.75mm(성공)로 줄었다 — T45 되먹임이 실기에서 오차를 줄인다는 것을 확인. 높은 표적 3개는 여전히 '진전 없음'(110/121/208mm) — T40이 짚은 물리적 천장(팔이 그 높이를 못 든다)은 되먹임으로 안 지워진다. 부수 발견: 팔 복귀 중 T45 되돌리기 규칙이 실기에서 처음 restored:true로 발동함(docs/시험기록/settle-2026-09-18.jsonl 마지막 줄) — T45 note의 '실기 4회 중 0회 발동'이 갱신됨. 기록: docs/시험기록/move-to-point-2026-09-18.jsonl(cycle35, 15줄)+settle-2026-09-18.jsonl(2줄). 젯슨 원상복구: click-server active, tomato-voice/controller-drive inactive, depth-cam/astra-cam active, 팔 A자세 근방(149.8,-164.8,118.5)+집게98.4."
+    },
+    {
+     "t": "2026-09-18 04:26",
+     "by": "tester",
+     "text": "완료: 기준3 1/5(cycle23 0/5 대비 개선). 되먹임이 닿는 표적 오차를 44.6/36.4mm→18.34/10.75mm(성공)로 줄임을 실기로 확인. 남은 0/5 중 3건은 물리적 천장(T40/T41 후속)."
     }
    ]
   },
