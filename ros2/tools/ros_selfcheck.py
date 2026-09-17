@@ -722,25 +722,41 @@ def test_handeye_identifiability() -> None:
     # 5mm 잡음을 줘도 되찾는다. 그러므로 범인은 자세 집합이 아니다.
     for noise, tol in ((0.0, 0.5), (5.0, 20.0)):
         syn = _synthetic_handeye([-80.0, 0.0, 80.0], noise_mm=noise)
-        got = hr.solve(syn, geom, +1.0, ("mid",), iters=4000)[2]
+        got = hr.solve(syn, geom, +1.0, ("mid",))[2]   # 기본값으로 — 수렴까지 돈다
         err = float(np.linalg.norm(got - np.array([-80.0, 0.0, 80.0])))
         check(f"잡음 {noise:.0f}mm에서 t_x를 {tol:.1f}mm 안으로 되찾는다",
               err < tol, f"오차 {err:.2f}mm · 되찾은 |t|={np.linalg.norm(got):.1f}mm "
                          f"(정답 113.1mm)")
 
-    # ⚠ 단, **기본 80회로는 안 멈는다.** 2026-09-17(T5) 실측: 위 표본을
-    #   잡음 0으로 두고도 80회에서는 t_x 오차가 10.2mm 남는다 — 졸업 예산
-    #   15mm의 2/3를 푸는 사람이 아니라 **멈추는 시점**이 먹는다.
-    #   (09-04 실표본은 빨리 수렴해서 80회로도 같은 값이다 — 그래서 §20의
-    #   결론은 그대로다. 하지만 다음 표본이 그럴 거라는 보장은 없다.)
+    # ── ⑤-2 solve()는 회수가 아니라 **개선폭**으로 멎는다 (T16, 2026-09-18) ──
+    # 옛 기본값 80회는 잡음 0인데도 t_x를 10.2mm 틀렸다 — 졸업 예산 15mm의
+    # 2/3를 데이터가 아니라 멈추는 시점이 먹고 있었다. 그 사실을 남겨 두고
+    # (아래 첫 검사), 기본값이 이제 정말 수렴까지 간다는 것을 못 박는다.
     slow = _synthetic_handeye([-80.0, 0.0, 80.0])
+    truth = np.array([-80.0, 0.0, 80.0])
     r80 = hr.solve(slow, geom, +1.0, ("mid",), iters=80)
-    r4k = hr.solve(slow, geom, +1.0, ("mid",), iters=4000)
-    check("교대 최소화가 기본 80회로는 안 멎는다는 것을 못 박아 둔다",
-          r80[0] > r4k[0] + 1.0,
-          f"80회 rms={r80[0]:.3f}mm / 4000회 rms={r4k[0]:.3f}mm — "
-          f"t_x 오차 {np.linalg.norm(r80[2] - np.array([-80.0, 0.0, 80.0])):.1f}"
-          f" → {np.linalg.norm(r4k[2] - np.array([-80.0, 0.0, 80.0])):.1f}mm")
+    rdef = hr.solve(slow, geom, +1.0, ("mid",))
+    check("회수로 자르면(iters=80) 잔차가 1mm 이상 나쁘다 — 기본값을 바꾼 이유",
+          r80[0] > rdef[0] + 1.0,
+          f"80회 rms={r80[0]:.3f}mm · t_x 오차 "
+          f"{np.linalg.norm(r80[2] - truth):.1f}mm → 기본값 rms={rdef[0]:.3f}mm · "
+          f"{np.linalg.norm(rdef[2] - truth):.3f}mm")
+    check("기본값은 잡음 0에서 t_x를 0.1mm 안으로 되찾는다 (수렴했다는 뜻)",
+          float(np.linalg.norm(rdef[2] - truth)) < 0.1,
+          f"오차 {np.linalg.norm(rdef[2] - truth):.4f}mm · rms {rdef[0]:.6f}mm")
+    # 상한(iters)에 부딪혀 잘린 게 아니라 **개선폭**으로 멎었음을 보인다 —
+    # 상한을 10배로 키워도 답이 그대로여야 진짜 멎은 것이다.
+    r10x = hr.solve(slow, geom, +1.0, ("mid",), iters=200000)
+    check("상한을 10배로 키워도 답이 안 바뀐다 (회수에 잘린 게 아니다)",
+          abs(r10x[0] - rdef[0]) < 1e-9
+          and float(np.linalg.norm(r10x[2] - rdef[2])) < 1e-6,
+          f"rms {rdef[0]:.9f} vs {r10x[0]:.9f}mm · "
+          f"t_x 차 {np.linalg.norm(r10x[2] - rdef[2]):.2e}mm")
+    # tol이 진짜 손잡이인지 — 크게 주면 일찍 멎어 옛 병(잘린 답)이 재현된다.
+    rcoarse = hr.solve(slow, geom, +1.0, ("mid",), tol=1.0)
+    check("tol을 크게 주면 일찍 멎는다 — 멈춤 조건이 개선폭이라는 증거",
+          rcoarse[0] > rdef[0] + 1.0,
+          f"tol=1.0mm rms={rcoarse[0]:.3f}mm / 기본 tol rms={rdef[0]:.6f}mm")
 
     # ── ⑥ 거울(왼손계)은 구별된다 ──────────────────────────────────────
     # 카메라점의 한 축 부호가 뒤집히면 회전으로는 못 되돌린다. 그 증상이

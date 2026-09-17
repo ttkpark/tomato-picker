@@ -158,11 +158,24 @@ def kabsch(A: np.ndarray, B: np.ndarray):
     return R, cb - R @ ca
 
 
-def solve(samples, geom, roll_sign: float, dots, iters: int = 80):
+def solve(samples, geom, roll_sign: float, dots, iters: int = 20000,
+          tol: float = 1e-6):
     """eye-in-hand: p_base = R_i (R_x p_i + t_x) + b_i.
 
     번갈아 푼다 — (R_x, t_x 고정 → 표적 위치) ↔ (표적 고정 → R_x, t_x).
-    양쪽 다 닫힌 해(평균·Kabsch)라서 몇 바퀴면 멎는다.
+    양쪽 다 닫힌 해(평균·Kabsch)라서 잔차가 단조롭게 줄어든다.
+
+    ⚠ **회수로 멎으면 안 된다** (2026-09-18, T16). "몇 바퀴면 멎는다"고 믿고
+      기본 80회로 잘라 뒀는데, 정답을 심은 합성 표본(잡음 0)에서 80회는
+      잔차 2.113mm · t_x 오차 10.2mm에 걸려 있었다 — 졸업 예산 15mm의 2/3를
+      데이터가 아니라 **멈추는 시점**이 먹고 있었던 것이다. 실제로 개선이
+      멎는 데는 650회쯤 걸리고, 거기서 오차는 0.000mm다.
+      이 저장소의 1번 병과 같은 모양이다: 답이 이상하면 게인(모델)을 만지기
+      전에 **크기부터 재라** — 여기서는 "정말 수렴했는가"가 그 크기다.
+
+    그래서 상한(iters)은 넉넉히 두고 **개선폭**(tol, mm)으로 멎는다. 단조
+    감소라 개선폭이 0에 붙으면 그 자리가 극소다 — 극소 자체를 벗어나는 일은
+    `solve_global`이 한다(이 함수는 거기서 더 못 간다는 것만 보장한다).
     """
     frames = [tool_frame(s["joints_deg"], geom, roll_sign) for s in samples]
     obs = np.array([sum((marker_points(s, k) for k in dots), []) for s in samples])
@@ -184,7 +197,7 @@ def solve(samples, geom, roll_sign: float, dots, iters: int = 80):
                                        + frames[i][1] - P[k])
                         for i in range(n) for k in range(K)])
         rms = float(np.sqrt((res ** 2).mean()))
-        if best is None or rms < best[0] - 1e-9:
+        if best is None or rms < best[0] - tol:
             best = (rms, Rx.copy(), tx.copy(), P.copy(), res.copy())
         else:
             break
