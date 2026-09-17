@@ -18,6 +18,8 @@
 기록을 오염시킨 적이 있다, T43. 연습도 진짜 기록에 남기려면 `--record`):
     trial, commanded{x,y,z,pitch}, standoff_mm, ok, reached{x,y,z}(관절 FK),
     error_mm, stage(실패 단계: timeout/step/tf/pose/ik/joint/None), detail, dry_run,
+    joints_cmd(이 표적으로 **보내려는** 관절 5개, 도 — IK가 안 풀리면 null),
+    joints_actual(이동이 끝난 뒤 **되읽은** 관절 5개, 도 — 못 읽으면 null),
     limits(표적을 뽑을 때 **이 팔의 가동범위를 알고 있었나** — 보정표 경로 또는
     "none". none이면 그 시험은 갈 수 없는 자리를 시험했을 수 있다),
     load_limits(표적을 뽑을 때 **팔이 그 자리를 들 수 있는지 알고 있었나** —
@@ -275,6 +277,23 @@ def limit_violations(p: dict, geom: kin.ArmGeometry, limits,
     return limits.violations(joints)
 
 
+def commanded_joints(p: dict, geom: kin.ArmGeometry,
+                     standoff_mm: float = STANDOFF_MM) -> dict[str, float] | None:
+    """이 표적으로 **실제로 보내지는** 관절 각(도) — arm_node가 IK로 풀 값과 같다.
+
+    사이클50 플래너가 성공/실패를 가르려고 기록의 TCP를 `kin.inverse`로
+    역산해야 했다(역산은 유일해가 아니다 — elbow_up 두 해 중 하나를 짐작으로
+    골랐다). 지령 관절을 뽑는 시점에 그대로 적어 두면 다음 사이클이 역산할
+    필요가 없다. IK가 안 풀리면 None — 그 표적은 애초에 갈 수 없다는 뜻이라
+    짐작으로 메우지 않는다(load_limits.py와 같은 규칙).
+    """
+    try:
+        return {j: round(v, 2) for j, v
+                in kin.inverse(standoff_pose(p, standoff_mm), geom).items()}
+    except kin.Unreachable:
+        return None
+
+
 def sample_joint_ranges(limits=None) -> dict[str, tuple[float, float]]:
     """뽑기 구간(도) — 상식적인 구간 ∩ 이 팔의 가동범위. limits가 없으면 그대로."""
     out = {}
@@ -415,12 +434,19 @@ def run_dry(points: list[dict], geom: kin.ArmGeometry, out_path: str,
             reached = kin.forward(joints, geom)
             err = math.dist((reached.x, reached.y, reached.z),
                              (target_pose.x, target_pose.y, target_pose.z))
+            joints_rounded = {j: round(v, 2) for j, v in joints.items()}
             row.update(ok=True, stage=None, error_mm=round(err, 3),
                        reached=reached.as_dict(),
+                       joints_cmd=joints_rounded,
+                       # dry-run엔 실제 서보가 없다 — IK가 곧 "이상적 실행"이므로
+                       # 되읽은 값도 지령과 같다(서보 오차는 이 모드가 원래
+                       # 못 본다, 파일 머리말에 이미 적혀 있다).
+                       joints_actual=joints_rounded,
                        detail=f"IK 풀림: {', '.join(f'{j}={v:.1f}°' for j, v in joints.items())}")
             ok_count += 1
         except kin.Unreachable as exc:
-            row.update(ok=False, stage="ik", error_mm=None, reached=None, detail=str(exc))
+            row.update(ok=False, stage="ik", error_mm=None, reached=None,
+                       joints_cmd=None, joints_actual=None, detail=str(exc))
         print(f"  trial {i}: ok={row['ok']} stage={row.get('stage')} "
               f"err={row.get('error_mm')}")
         record(out_path, row)
@@ -610,7 +636,8 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
                           "stage": "no-prep", "ok": False, "error_mm": None,
                           "reached": None, "limits": limits_tag,
                           "load_limits": load_tag, "geometry": geom_tag,
-                          "prep": prep_row, "detail": detail})
+                          "prep": prep_row, "joints_cmd": None,
+                          "joints_actual": None, "detail": detail})
         rclpy.shutdown()
         return -2
     if prep_failed:
@@ -619,6 +646,9 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
 
     ok_count = 0
     for i, p in enumerate(points, 1):
+        # arm_node가 안에서 풀 값과 같은 것 — 걸음이 이 지령대로 안 됐다면
+        # joints_actual과 나란히 놓고 어느 관절이 못 버텼는지 뒤에서 읽는다.
+        joints_cmd = commanded_joints(p, geom)
         req = MoveToPoint.Request()
         req.target = PointStamped()
         req.target.header.frame_id = "arm_base"
@@ -644,16 +674,18 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
                "geometry": geom_tag,
                # 이 시험이 **어떤 시작 자세에서** 출발했는지 남긴다 — 기준3의
                # 0/5가 팔의 0인지 시작 자세의 0인지 나중에 가릴 수 있어야 한다.
-               "prep": prep_row}
+               "prep": prep_row,
+               "joints_cmd": joints_cmd}
         if res is None:
             row.update(ok=False, stage=classify_stage(None), error_mm=None,
-                       reached=None, detail="응답 없음(타임아웃)")
+                       reached=None, joints_actual=None, detail="응답 없음(타임아웃)")
             record(out_path, row)
             print(f"  trial {i}: 응답 없음")
             continue
         if not res.ok:
             stage = classify_stage(res.detail)
-            row.update(ok=False, stage=stage, error_mm=None, reached=None, detail=res.detail)
+            row.update(ok=False, stage=stage, error_mm=None, reached=None,
+                       joints_actual=None, detail=res.detail)
             record(out_path, row)
             print(f"  trial {i}: FAIL[{stage}] {res.detail}")
             continue
@@ -661,18 +693,21 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
         js = latest_js["msg"]
         if js is None:
             row.update(ok=False, stage="joint", error_mm=None, reached=None,
-                       detail="/joint_states가 안 온다")
+                       joints_actual=None,
+                       detail="/joint_states가 안 온다 — 관절을 못 읽었다")
             record(out_path, row)
             print(f"  trial {i}: FAIL[joint] /joint_states 없음")
             continue
         degs = {n: math.degrees(v) for n, v in zip(js.name, js.position)}
+        joints_actual = {j: round(degs[j], 2) for j in kin.JOINTS if j in degs}
         pose = kin.forward(degs, geom)   # 뽑을 때와 같은 기하다 (T53)
         target_reached_mm = (res.reached.x * 1000.0, res.reached.y * 1000.0,
                               res.reached.z * 1000.0)
         err = math.dist((pose.x, pose.y, pose.z), target_reached_mm)
         success = err <= 15.0
         row.update(ok=success, stage=None if success else "joint",
-                   error_mm=round(err, 2), reached=pose.as_dict(), detail=res.detail)
+                   error_mm=round(err, 2), reached=pose.as_dict(),
+                   joints_actual=joints_actual, detail=res.detail)
         record(out_path, row)
         print(f"  trial {i}: ok={success} err={err:.2f}mm")
         if success:

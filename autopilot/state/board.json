@@ -415,7 +415,7 @@
    "done_when": "T9의 세 숫자가 나온 뒤, 젯슨에서 handeye_collect.py로 새 ~/handeye_samples.json을 채집(tomato-voice 내린 뒤, 끝나면 되돌림)하고 PC에서 'handeye_resolve.py <새표본> --fix-t A L U'가 잔차 15mm 이하(=RC 0)인지 확인. RC와 잔차를 §20 아래에 한 줄로 남긴다",
    "attempts": 0,
    "created": "2026-09-17 22:07",
-   "updated": "2026-09-18 07:22",
+   "updated": "2026-09-18 07:44",
    "notes": [
     {
      "t": "2026-09-17 22:07",
@@ -446,6 +446,11 @@
      "t": "2026-09-18 07:22",
      "by": "builder",
      "text": "2026-09-18 07:5x builder: **p2→p1. 선행이 전부 풀렸다 — 이제 이것이 기준2의 임계경로다.** T9의 마커판은 사람이 놓았고(07:2x target_check 2/4), T10의 세 숫자는 사람이 쟀다(§28: -52/0/+59). 남은 벽은 하나뿐이다: 09-04 표본이 못 쓴다는 것(어느 벡터를 넣어도 잔차 70~81mm). **새 표본이 나오면 T10·T67이 같이 풀린다.** 순서: ① T23의 자동노출 판정을 먼저 돌려 target_check가 4/4가 되게 한다(지금 2/4, 컬러 cmean=252로 포화다) ② handeye_collect.py로 새 ~/handeye_samples.json 채집(tomato-voice 내린 뒤, 끝나면 되돌림) ③ PC에서 handeye_resolve.py <새표본> --fix-t -52 0 59 → 잔차와 RC를 §20 아래에 적는다 ④ 이어서 T67의 ±18mm 두 후보도 같은 표본에 돌려 나란히 적는다."
+    },
+    {
+     "t": "2026-09-18 07:44",
+     "by": "builder",
+     "text": "2026-09-18 07:4x builder(사람 지시 07:20 처리): 새 표본을 풀 때 확인할 것 — 잔차가 wrist_flex(+0.75)·elbow_flex(-0.61)와 강하게 상관하면 그건 표본 탓이 아니라 손목 쪽 모델(l2·l3 또는 wrist 사슬) 탓이다. 그 경우 이 작업을 auditor에게 넘겨라(T13을 닫지 말고 note로 인계). --fix-t -52 0 59로 먼저 풀고, T67의 ±18mm 두 후보도 같은 표본에 나란히 돌려라."
     }
    ]
   },
@@ -1591,13 +1596,13 @@
    "id": "T51",
    "title": "arm_extend(뻗기)를 조작대에서도 할 수 있게 한다 — 지금은 터미널 전용이다",
    "role": "builder",
-   "status": "todo",
+   "status": "doing",
    "priority": 3,
    "why": "이 저장소는 '터미널에서만 되는 조작을 남기지 않기로' 했는데(CLAUDE.md, 조작대 절) click_server.py에는 뻗기(extend)가 없다(grep 0건). 사람이 팔을 특이점에서 꺼내려면 ssh로 lerobot venv를 불러야 한다 — 아침 5분에 할 일에 ssh가 끼면 그 5분이 안 끝난다. T49로 ROS 쪽 입구(arm/joint_command)는 생겼으니 남은 것은 조작대 쪽이다.",
    "done_when": "click_server에 POST /extend(또는 같은 뜻의 action)를 붙여 escape.plan/escape.TARGET_DEG를 그대로 쓰고, 화면에 버튼을 하나 둔다. 한 번에 하나만 도는 규칙(409)을 지킨다. ros_selfcheck에 '조작대와 arm_extend가 같은 목표자세·같은 걸음 상한을 쓴다' 1종 이상. PC 4종 RC=0. 실기는 tester 몫으로 넘긴다.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 04:50",
-   "updated": "2026-09-18 04:50",
+   "updated": "2026-09-18 07:45",
    "notes": [
     {
      "t": "2026-09-18 04:50",
@@ -1948,18 +1953,23 @@
    "id": "T64",
    "title": "실기 기록에 관절 지령·실제를 함께 남긴다 — 지금은 TCP만 있어 어느 관절이 못 버텼는지 뒤에서 읽을 수 없다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "사이클50 플래너가 성공/실패를 가르려고 기록의 TCP에서 관절을 IK로 역산해야 했다(역산은 유일해가 아니다). 실패가 어느 관절의 처짐인지는 기준3의 남은 2/5를 푸는 유일한 단서인데 기록에 그 칸이 없다.",
    "done_when": "move5_check가 남기는 줄에 joints_cmd(지령 5관절, 도)와 joints_actual(이동이 끝난 뒤 실제로 되읽은 5관절, 도) 두 칸을 넣는다. 되읽기는 이미 도는 되먹임(settle/escape.measure)이 쓰는 경로를 그대로 쓴다 — 새 포트를 열지 마라. 관절을 못 읽으면 칸을 null로 두고 이유를 detail에 적는다(짐작으로 메우지 않는다 — load_limits.py와 같은 규칙). ros_selfcheck에 '기록 줄에 joints_cmd/joints_actual가 있고, 못 읽으면 null이 남는다' 1종 이상. PC 4종 RC=0. 실기는 tester 몫.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 06:46",
-   "updated": "2026-09-18 06:46",
+   "updated": "2026-09-18 07:44",
    "notes": [
     {
      "t": "2026-09-18 06:46",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 07:44",
+     "by": "builder",
+     "text": "완료: move5_check.jsonl 줄에 joints_cmd(지령 5관절,도, IK 불가면 null)·joints_actual(되읽은 5관절,도, 못 읽으면 null) 두 칸 신설. 헬퍼 commanded_joints() 추가, run_dry는 joints_actual=joints_cmd(서보 없음), run_real은 timeout/거절/joint_states없음 세 갈래 전부 null, 성공 시 /joint_states 실측값. ros_selfcheck에 [관절기록] 12종 신설(dry-run 5관절 확인, IK불가 null 확인, 실기 소스 계약 확인). PC 4종: handeye_check 45/45, eye_check 102/102, ros_selfcheck 313/314(RC=1은 autopilot/board.py·runner.py의 기존 CRLF 문제, 손댈 수 없는 파일 — 신설분 전부 통과), arm_cartesian_check 91/91. 실기(젯슨에서 joints_actual이 실제로 채워지는지)는 tester 몫."
     }
    ]
   },

@@ -62,9 +62,15 @@ def recent_cycles(n=12):
     """runner.log에서 끝난 사이클 줄만 골라 최근 것부터."""
     out = []
     for line in reversed(tail(os.path.join(LOG_DIR, "runner.log"), 40000).splitlines()):
+        # 옛 형식 `role(model)`과 새 형식 `role(engine:model)`을 둘 다 읽는다.
         m = re.search(r"사이클 (\d+) · (\w+)\((\S+?)\) (완료|실패) · (\d+)초 · \$([\d.]+) · (\d+)턴", line)
         if m:
-            out.append({"cycle": int(m.group(1)), "role": m.group(2), "model": m.group(3),
+            tag = m.group(3)
+            eng, _, mod = tag.partition(":")
+            if not mod:
+                eng, mod = "claude", tag
+            out.append({"cycle": int(m.group(1)), "role": m.group(2),
+                        "engine": eng, "model": mod,
                         "ok": m.group(4) == "완료", "sec": int(m.group(5)),
                         "cost": float(m.group(6)), "turns": int(m.group(7)),
                         "at": line[1:15]})
@@ -92,7 +98,12 @@ def snapshot():
     hb = jread(os.path.join(STATE_DIR, "heartbeat.json"))
     live = jread(os.path.join(STATE_DIR, "live.json"))
     tasks, done, total = board_open()
-    rate = st.get("rate") or live.get("rate") or {}
+    rates = st.get("rates") or {}
+    if not rates and (st.get("rate") or live.get("rate")):
+        r0 = st.get("rate") or live.get("rate")
+        rates = {r0.get("rateLimitType", "unknown"): r0}
+    rate = max(rates.values(), key=lambda r: (r or {}).get("utilization") or 0) if rates else {}
+    attrib = st.get("attrib") or {}
     started = st.get("started")
     day = None
     if started:
@@ -113,7 +124,8 @@ def snapshot():
         "day": day, "cycle": st.get("cycle", 0), "cost_today": st.get("cost_today", 0.0),
         "fails": st.get("fails", 0), "jetson": st.get("jetson_ip"),
         "hb": hb, "hb_age": hb_age, "paused": paused, "stopped": stopped,
-        "live": live, "rate": rate, "du": st.get("du_ema"),
+        "live": live, "rate": rate, "rates": rates, "attrib": attrib,
+        "du": st.get("du_ema"), "engines": {},
         "tasks": tasks, "done": done, "total": total,
         "say": pending_say(), "journal": today_journal(),
         "cycles": recent_cycles(),
@@ -159,7 +171,7 @@ button{cursor:pointer;background:#2a2f45}
   <div class="card" style="grid-column:1/-1">
     <h2>지금 도는 것</h2><div id="live"></div>
   </div>
-  <div class="card"><h2>주간 한도 — 이 장치의 가장 큰 제약</h2><div id="rate"></div></div>
+  <div class="card"><h2>사용량 한도 — 창마다, 누가 먹었나</h2><div id="rate"></div></div>
   <div class="card"><h2>내가 하는 말 (INBOX)</h2>
     <div class="row"><input id="msg" placeholder="예: 그 방향 아니다. 평행이동부터"><button onclick="say()">보내기</button></div>
     <div id="say" style="margin-top:8px"></div>
@@ -200,21 +212,46 @@ async function tick(){
  }
  document.getElementById("live").innerHTML=h;
 
- // 한도
- const r=d.rate||{};
- if(r.utilization!=null){
-   const u=r.utilization, left=1-u, cyc=d.du?Math.floor(left/d.du):null;
-   const hrs=r.resetsAt?((r.resetsAt*1000-Date.now())/3.6e6):null;
-   const col=u>0.95?"var(--bad)":u>0.8?"var(--warn)":"var(--ok)";
-   document.getElementById("rate").innerHTML=
-     `<div class="big" style="color:${col}">${(u*100).toFixed(1)}% 소진</div>`
-     +`<div class="bar"><i style="width:${(u*100).toFixed(1)}%;background:${col}"></i></div>`
-     +`<table><tr><td class="dim">종류</td><td>${esc(r.rateLimitType||"?")}</td></tr>`
-     +`<tr><td class="dim">리셋</td><td>${r.resetsAt?new Date(r.resetsAt*1000).toLocaleString("ko-KR")
-       +` <span class="dim">(${hrs.toFixed(1)}시간 뒤)</span>`:"?"}</td></tr>`
-     +`<tr><td class="dim">사이클당</td><td>${d.du?(d.du*100).toFixed(2)+"%":"측정 중"}</td></tr>`
-     +`<tr><td class="dim">남은 사이클</td><td>${cyc!=null?"≈ "+cyc+"회":"-"}</td></tr></table>`;
-   document.getElementById("hrate").innerHTML=`<b style="color:${col}">한도 ${(u*100).toFixed(0)}%</b>`;
+ // 한도 — 창(5시간/7일)마다 한 덩이. 누가 먹었는지까지.
+ const NAMES={five_hour:"5시간 창",seven_day:"7일 창",unknown:"창 미상"};
+ const rs=d.rates||{}; const keys=Object.keys(rs);
+ if(keys.length){
+   let out="", worst=0;
+   for(const k of keys){
+     const r=rs[k]||{}, u=r.utilization; if(u==null) continue;
+     worst=Math.max(worst,u);
+     const col=u>0.95?"var(--bad)":u>0.8?"var(--warn)":"var(--ok)";
+     const hrs=r.resetsAt?((r.resetsAt*1000-Date.now())/3.6e6):null;
+     const a=(d.attrib||{})[k]||{}; const roles=a.roles||{};
+     const mine=Object.values(roles).reduce((x,y)=>x+y,0), other=a.other||0;
+     const seen=mine+other, unseen=Math.max(0,(u-(a.start_u!=null?a.start_u:u))-seen);
+     out+=`<div style="margin-bottom:12px">`
+       +`<div><b>${NAMES[k]||k}</b> <span class="big" style="color:${col}">${(u*100).toFixed(1)}%</span>`
+       +(hrs!=null?` <span class="dim">리셋 ${hrs.toFixed(1)}시간 뒤 (${new Date(r.resetsAt*1000).toLocaleString("ko-KR")})</span>`:"")+`</div>`
+       +`<div class="bar"><i style="width:${(u*100).toFixed(1)}%;background:${col}"></i></div>`;
+     if(seen>0){
+       out+=`<table><tr><td class="dim">자동운전이 먹은 몫</td><td><b>${(mine*100).toFixed(2)}%p</b>`
+         +` <span class="dim">(관측 구간에서)</span></td></tr>`
+         +`<tr><td class="dim">그 밖(내 대화 등)</td><td>${(other*100).toFixed(2)}%p</td></tr>`;
+       const top=Object.entries(roles).sort((x,y)=>y[1]-x[1]).slice(0,6);
+       for(const [name,v] of top){
+         if(v<=0) continue;
+         const [role,eng]=name.split(":");
+         out+=`<tr><td class="dim" style="padding-left:14px">${pill(role)} <span class="mono">${esc(eng)}</span></td>`
+           +`<td class="mono">${(v*100).toFixed(2)}%p</td></tr>`;
+       }
+       if(unseen>0.0001) out+=`<tr><td class="dim">못 본 구간</td><td class="mono">${(unseen*100).toFixed(2)}%p</td></tr>`;
+       out+=`</table>`;
+     } else {
+       out+=`<div class="dim">아직 이 창에서 귀속할 만큼 신호를 못 봤다.</div>`;
+     }
+     out+=`</div>`;
+   }
+   out+=`<div class="dim">사이클당 소모 ${d.du?(d.du*100).toFixed(2)+"%":"측정 중"}`
+     +(d.du?` · 남은 사이클 ≈ ${Math.floor((1-worst)/d.du)}회`:"")+`</div>`;
+   document.getElementById("rate").innerHTML=out;
+   const wc=worst>0.95?"var(--bad)":worst>0.8?"var(--warn)":"var(--ok)";
+   document.getElementById("hrate").innerHTML=`<b style="color:${wc}">한도 ${(worst*100).toFixed(0)}%</b>`;
  }else{
    document.getElementById("rate").innerHTML='<div class="dim">아직 한도 신호를 못 받았다(사이클 하나가 끝나면 보인다).</div>';
  }
@@ -235,7 +272,7 @@ async function tick(){
  // 사이클
  document.getElementById("cycles").innerHTML=d.cycles.map(c=>
    `<div class="t"><b class="mono">${c.cycle}</b>${pill(c.role)}`
-   +`<span class="mono dim">${esc(c.model)}</span>`
+   +`<span class="mono dim">${esc(c.engine)}:${esc(c.model)}</span>`
    +`<span class="${c.ok?"ok":"bad"}">${c.ok?"완료":"실패"}</span>`
    +`<span class="mono dim">${Math.round(c.sec/60)}분 · $${c.cost.toFixed(2)} · ${c.turns}턴</span></div>`).join("");
 

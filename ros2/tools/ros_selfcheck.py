@@ -1658,6 +1658,65 @@ def test_sample_within_limits() -> None:
           "기본값은 connect 직후 토크를 끈다 — 팔이 주저앉는다")
 
 
+def test_joint_record() -> None:
+    """기록 줄에 지령·실제 관절이 남는가 (T64, 2026-09-18).
+
+    사이클50 플래너가 성공/실패를 가르려고 기록의 TCP를 `kin.inverse`로
+    역산해야 했다 — 역산은 유일해가 아니다(elbow_up 두 해 중 하나를 짐작으로
+    골랐다). 관절을 뽑는 시점에 그대로 적어 두면 다음 사이클이 역산할 필요가
+    없다. `--dry-run`은 서보가 없으니 지령=실제(이상적 실행)이고, 실기는
+    `/joint_states`를 못 읽으면 null을 남긴다(load_limits.py와 같은 규칙 —
+    짐작으로 메우지 않는다).
+    """
+    print("\n[관절기록] joints_cmd/joints_actual이 기록 줄에 남는가")
+    sys.path.insert(0, os.path.join(REPO, "ros2", "tools"))
+    import move5_check as m5  # noqa: E402
+
+    geom = kin.ArmGeometry()
+
+    # ① 도달 가능한 표적 — dry-run에서 joints_cmd/joints_actual이 둘 다 채워지고
+    #    같은 값이다(서보가 없으니 지령이 곧 실행).
+    pts = m5.sample_points(3, geom, 0)
+    with tempfile.TemporaryDirectory() as td:
+        out = os.path.join(td, "rec.jsonl")
+        m5.run_dry(pts, geom, out)
+        rows = [json.loads(line) for line in open(out, encoding="utf-8")]
+    check("표적 개수만큼 줄이 남는다", len(rows) == len(pts), f"{len(rows)}줄")
+    for row in rows:
+        check("joints_cmd에 5관절이 다 있다",
+              row.get("joints_cmd") is not None
+              and set(row["joints_cmd"]) == set(kin.JOINTS),
+              f"trial {row.get('trial')}: {row.get('joints_cmd')}")
+        check("dry-run은 joints_actual == joints_cmd다 (서보가 없다)",
+              row.get("joints_actual") == row.get("joints_cmd"),
+              f"trial {row.get('trial')}: cmd={row.get('joints_cmd')} "
+              f"actual={row.get('joints_actual')}")
+
+    # ② IK가 안 풀리는 표적은 joints_cmd가 None이다 — 짐작으로 메우지 않는다.
+    unreachable = {"x": 9999.0, "y": 0.0, "z": 300.0, "pitch": 0.0}
+    check("사거리 밖 표적은 commanded_joints가 None을 준다",
+          m5.commanded_joints(unreachable, geom) is None)
+    with tempfile.TemporaryDirectory() as td:
+        out = os.path.join(td, "rec.jsonl")
+        m5.run_dry([unreachable], geom, out)
+        row = json.loads(open(out, encoding="utf-8").readline())
+    check("IK 실패 줄은 joints_cmd/joints_actual이 둘 다 null이다",
+          row.get("joints_cmd") is None and row.get("joints_actual") is None, row)
+
+    # ③ 소스에서도 막는다 — run_real(실기)이 두 칸을 채우는 자리가 있는가.
+    #    ROS 없이는 run_real을 못 돌리므로(rclpy import) 텍스트로 지킨다.
+    body = open(os.path.join(REPO, "ros2", "tools", "move5_check.py"),
+               encoding="utf-8").read()
+    check("run_real이 joints_cmd를 commanded_joints()로 채운다",
+          "joints_cmd = commanded_joints(p, geom)" in body)
+    check("실기 성공 줄은 되읽은 joints_actual을 남긴다",
+          "joints_actual=joints_actual" in body)
+    # 응답없음·거절·/joint_states 없음 — 셋 다 관절을 모른다, null이라고 말해야 한다.
+    check("응답이 없거나 못 읽으면 joints_actual을 null로 남긴다",
+          body.count("joints_actual=None") >= 3,
+          "timeout/거절//joint_states 없음 세 갈래 모두 null이어야 한다")
+
+
 def test_selfcheck_deps() -> None:
     """자체검증 4종이 **빈 환경에서 무엇이 없는지 말하고** 죽는가.
 
@@ -2269,6 +2328,7 @@ def main() -> int:
     test_stage_classify()
     test_travel_split()
     test_sample_within_limits()
+    test_joint_record()
     test_mount_contract()
     test_record_timezone()
     test_record_destination()

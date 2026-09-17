@@ -3,10 +3,10 @@
  "model": "opus",
  "models": {
   "planner": "opus",
-  "builder": "opus",
+  "metrologist": "opus",
   "auditor": "sonnet",
-  "tester": "sonnet",
-  "metrologist": "opus"
+  "builder": "sonnet",
+  "tester": "sonnet"
  },
  "fallback_model": "sonnet",
  "rotation": [
@@ -15,6 +15,8 @@
   "tester",
   "builder",
   "metrologist",
+  "builder",
+  "tester",
   "auditor",
   "builder",
   "tester"
@@ -39,5 +41,11 @@
  "permission_flag": "--dangerously-skip-permissions",
  "cheap_when_tight": true,
  "cheap_below_remaining": 0.1,
- "rate_reserve": 0.02
+ "rate_reserve": 0.02,
+ "engines": {
+  "builder": "gemini",
+  "tester": "gemini"
+ },
+ "gemini_model": "gemini-2.5-pro",
+ "saver": true
 }

@@ -62,9 +62,27 @@ DEFAULTS = {
     "jetson_reprobe_cycles": 8,
     "daily_cost_cap_usd": 0,
     "max_consecutive_fails": 6,
+    # 엔진 배정 — **사고는 클로드, 코딩 유닛은 제미나이.**
+    # 클로드 주간 한도가 벽이므로, 손이 많이 가는 역할을 다른 계정의 무료 등급으로 내린다.
+    "engines": {},                 # 예: {"builder": "gemini", "tester": "gemini"}
+    # 엔진 정의 — 새 에이전트 CLI(antigravity 등)는 **여기 한 칸만 더하면** 붙는다.
+    #   exe   실행파일 이름(PATH에서 찾는다)
+    #   args  인자. {pfile}=이번 사이클 지시가 든 파일, {model}, {role}, {safety}
+    #   ready_env / ready_files  이 중 하나라도 있어야 '자격 있음'으로 본다(없으면 클로드로)
+    "engine_defs": {
+        "gemini": {
+            "exe": "gemini",
+            "args": ["-p", "{ask}", "-o", "stream-json", "--yolo", "-m", "{model}"],
+            "model": "gemini-2.5-pro",
+            "ready_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+            "ready_files": ["~/.gemini/oauth_creds.json", "~/.gemini/google_accounts.json"],
+        },
+    },
+    "saver": False,                # 절약 모드: 클로드 쪽 문맥을 줄이고 값싼 모델을 쓴다
     "cheap_when_tight": True,      # 한도가 빠듯하면 전 역할을 fallback_model로
     "cheap_below_remaining": 0.10,
-    "rate_reserve": 0.02,          # 사람이 직접 쓸 몫으로 남겨 두는 주간 한도
+    "rate_reserve": 0.02,
+    "du_guess": 0.01,             # 안 재 봤을 때 가정하는 사이클당 한도 소모          # 사람이 직접 쓸 몫으로 남겨 두는 주간 한도
 
     "permission_flag": "--dangerously-skip-permissions",
 }
@@ -208,7 +226,7 @@ def build_prompt(c, s, role):
                + tail_file(os.path.join(HERE, "roles", "_공통.md"), 20000))
     objective = tail_file(os.path.join(HERE, "OBJECTIVE.md"), 6000)
     _, branch, _ = sh(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-    _, commits, _ = sh(["git", "log", "-8", "--oneline"])
+    _, commits, _ = sh(["git", "log", "-4" if c.get("saver") else "-8", "--oneline"])
     _, status, _ = sh(["git", "status", "--short"])
     status = "\n".join(status.splitlines()[:40])
     started = datetime.fromisoformat(s["started"])
@@ -242,6 +260,7 @@ def build_prompt(c, s, role):
                   " **처리하지 않은 줄은 체크하지 마라.** 내 판단과 어긋나면 사람 말이 이긴다;"
                   " 그래도 아니라고 보면 따르되 이유를 일지에 한 줄 남겨라.\n\n---\n\n")
 
+    saver = bool(c.get("saver"))
     parts = [
         head,
         charter,
@@ -280,26 +299,46 @@ def run_cycle(c, s, role):
               "w", encoding="utf-8") as f:
         f.write(prompt)
 
-    model = pick_model(c, s, role)
-    # stream-json으로 받는다 — 끝나야 아는 json과 달리 **도는 중에** 무엇을 하고 있는지
-    # 보인다(monitor.py가 live.json을 읽는다). 한도 경고도 이 스트림에만 실려 온다.
-    cmd = [claude_exe(), "-p",
-           "--output-format", "stream-json", "--verbose",
-           c["permission_flag"],
-           "--model", model,
-           "--append-system-prompt", SAFETY,
-           "--name", "autopilot-" + role]
-    if c.get("fallback_model") and c["fallback_model"] != model:
-        cmd += ["--fallback-model", c["fallback_model"]]
+    engine = engine_for(c, role)
+    spec = (c.get("engine_defs") or {}).get(engine) if engine != "claude" else None
+    if engine != "claude":
+        why = engine_blocked(engine, spec)
+        if why:
+            log("{} 못 씀({}) — 이번 사이클은 클로드로 돈다".format(engine, why))
+            engine = "claude"
+            spec = None
+    if spec:
+        model = c.get(engine + "_model") or spec.get("model") or ""
+        # 다른 CLI들은 프롬프트를 인자로 받는다(stdin을 안 읽는다). 윈도우 명령줄 32KB
+        # 한계가 있으므로 지시는 파일로 주고 인자로는 '읽어라'만 건넨다.
+        pfile = os.path.join(LOG_DIR, "{}-{}.prompt.txt".format(stamp, role))
+        ask = ("아래 파일이 이번 사이클의 전체 지시다. 먼저 그 파일을 읽고 그대로 수행하라: "
+               + pfile.replace(os.sep, "/") + "   ||   " + SAFETY)
+        subs = {"ask": ask, "pfile": pfile.replace(os.sep, "/"), "model": model,
+                "role": role, "safety": SAFETY}
+        cmd = [shutil.which(spec["exe"]) or spec["exe"]]
+        cmd += [str(a).format(**subs) for a in spec.get("args", [])]
+    else:
+        model = pick_model(c, s, role)
+        # stream-json으로 받는다 — 끝나야 아는 json과 달리 **도는 중에** 무엇을 하고 있는지
+        # 보인다(monitor.py가 live.json을 읽는다). 한도 경고도 이 스트림에만 실려 온다.
+        cmd = [claude_exe(), "-p",
+               "--output-format", "stream-json", "--verbose",
+               c["permission_flag"],
+               "--model", model,
+               "--append-system-prompt", SAFETY,
+               "--name", "autopilot-" + role]
+        if c.get("fallback_model") and c["fallback_model"] != model:
+            cmd += ["--fallback-model", c["fallback_model"]]
 
     env = dict(os.environ)
     env["AUTOPILOT_ROLE"] = role
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
 
-    res = {"role": role, "model": model, "seconds": 0, "cost": 0.0, "ok": False,
-           "text": "", "turns": 0, "limit_until": None, "rate": None}
-    live = {"cycle": s["cycle"] + 1, "role": role, "model": model,
+    res = {"role": role, "model": model, "engine": engine, "seconds": 0, "cost": 0.0,
+           "ok": False, "text": "", "turns": 0, "limit_until": None, "rate": None}
+    live = {"cycle": s["cycle"] + 1, "role": role, "model": model, "engine": engine,
             "started": datetime.now().isoformat(timespec="seconds"),
             "state": "running", "turns": 0, "cost": 0.0,
             "last_text": "", "tools": [], "rate": s.get("rate")}
@@ -315,6 +354,8 @@ def run_cycle(c, s, role):
 
     def on_event(ev):
         t = ev.get("type")
+        if spec:
+            return on_event_generic(ev, res, live, flush_live)
         if t == "assistant":
             for blk in (ev.get("message") or {}).get("content") or []:
                 if blk.get("type") == "text" and blk.get("text", "").strip():
@@ -329,8 +370,15 @@ def run_cycle(c, s, role):
             live["turns"] += 1
         elif t == "rate_limit_event":
             info = ev.get("rate_limit_info") or {}
-            if info:
+            if info and info.get("utilization") is not None:
                 live["rate"] = res["rate"] = info
+                # 창(5시간/7일)마다 따로 담는다 — 덮어쓰면 둘 중 하나가 사라진다.
+                kind = info.get("rateLimitType") or "unknown"
+                seen = res.setdefault("rate_by_type", {})
+                slot = seen.setdefault(kind, {"first": None, "last": None})
+                if slot["first"] is None:
+                    slot["first"] = dict(info)
+                slot["last"] = dict(info)
         elif "total_cost_usd" in ev:            # 마지막 결과 줄
             res["text"] = (ev.get("result") or "").strip()
             res["cost"] = float(ev.get("total_cost_usd") or 0.0)
@@ -358,7 +406,8 @@ def run_cycle(c, s, role):
     th_out.start()
     th_err.start()
     try:
-        p.stdin.write(prompt.encode("utf-8"))
+        if not spec:
+            p.stdin.write(prompt.encode("utf-8"))
         p.stdin.close()
     except OSError:
         pass
@@ -386,9 +435,109 @@ def run_cycle(c, s, role):
     if res["rate"]:
         s["rate"] = res["rate"]
         s["rate_seen"] = time.time()
+    attribute_usage(s, role, engine, res)
+    s["last_engine"] = engine
     live["state"] = "done" if res["ok"] else "failed"
     flush_live(force=True)
     return res
+
+
+def attribute_usage(s, role, engine, res):
+    """이 사이클이 한도를 얼마나 먹었나 — **창마다, 역할마다 따로 적는다.**
+
+    사이클 **안에서** 오른 만큼이 우리 몫이고, 지난 사이클이 끝난 뒤부터 이번 사이클이
+    시작될 때까지 오른 만큼은 **다른 것**(사람이 직접 쓴 대화 등)의 몫이다. 그래야
+    "자동운전이 먹은 건가 내가 먹은 건가"에 숫자로 답할 수 있다.
+
+    ⚠ 한도 신호는 매번 오지 않는다(임계에 가까울 때 실린다). 못 본 구간은 어느 쪽에도
+      안 넣고 `unseen`으로 센다 — 모르는 것을 아는 척하면 이 표가 거짓말이 된다.
+    """
+    seen = res.get("rate_by_type") or {}
+    if not seen:
+        return
+    book = s.setdefault("attrib", {})
+    for kind, slot in seen.items():
+        first, last = slot.get("first") or {}, slot.get("last") or {}
+        if first.get("utilization") is None:
+            continue
+        reset = last.get("resetsAt") or first.get("resetsAt")
+        b = book.get(kind)
+        if not b or b.get("resetsAt") != reset:
+            # 창이 새로 열렸다(리셋). 장부도 새로 연다.
+            b = book[kind] = {"resetsAt": reset, "roles": {}, "other": 0.0,
+                              "opened": datetime.now().isoformat(timespec="seconds"),
+                              "start_u": float(first["utilization"]), "last_u": None}
+        u0, u1 = float(first["utilization"]), float(last.get("utilization", first["utilization"]))
+        if b.get("last_u") is not None:
+            gap = u0 - float(b["last_u"])       # 사이클 사이에 오른 몫 = 내가 아닌 것
+            if gap > 0:
+                b["other"] = round(b.get("other", 0.0) + gap, 6)
+        mine = max(0.0, u1 - u0)
+        key = "{}:{}".format(role, engine)
+        b["roles"][key] = round(b["roles"].get(key, 0.0) + mine, 6)
+        b["last_u"] = u1
+        b["last_seen"] = datetime.now().isoformat(timespec="seconds")
+    s["rates"] = {k: (v.get("last") or v.get("first")) for k, v in seen.items()}
+
+
+def binding_rate(s):
+    """지금 우리를 묶고 있는 창 — 소진률이 가장 높은 것. (5시간이 먼저 찰 수도 있다)"""
+    rs = [r for r in (s.get("rates") or {}).values() if r and r.get("utilization") is not None]
+    if not rs:
+        r = s.get("rate") or {}
+        return r if r.get("utilization") is not None else None
+    return max(rs, key=lambda r: r["utilization"])
+
+
+def engine_blocked(engine, spec):
+    """이 엔진으로 못 도는 이유(없으면 None) — **막히면 조용히 클로드로 돌아간다.**
+
+    OAuth 로그인은 브라우저가 필요해 무인으로 못 한다. 그래서 자격이 없으면 사이클을
+    실패시키지 않고 엔진만 바꾼다 — 사람이 로그인하는 순간부터 저절로 쓰인다.
+    """
+    if not spec:
+        return "engine_defs에 정의가 없다"
+    if not shutil.which(spec.get("exe", "")):
+        return "실행파일 " + str(spec.get("exe")) + " 없음"
+    env_keys = spec.get("ready_env") or []
+    files = spec.get("ready_files") or []
+    if not env_keys and not files:
+        return None                       # 자격 조건을 안 적었으면 바로 쓴다
+    if any(os.environ.get(k) for k in env_keys):
+        return None
+    if any(os.path.exists(os.path.expanduser(f)) for f in files):
+        return None
+    return "인증 없음(로그인 한 번 필요)"
+
+
+def on_event_generic(ev, res, live, flush):
+    """제미나이 stream-json 한 줄. 스키마가 클로드와 다르고 판마다 바뀌므로 **느슨하게** 읽는다.
+
+    확실한 것 둘만 붙잡는다: 최종 응답(`response`)과 오류(`error`). 나머지는
+    '무엇을 하고 있나'를 보여 주는 데만 쓰고, 못 알아보면 조용히 흘린다.
+    """
+    kind = ev.get("type") or ""
+    if isinstance(ev.get("error"), dict):
+        res["ok"] = False
+        res["text"] = str(ev["error"].get("message", ""))[:1500]
+    if isinstance(ev.get("response"), str) and ev["response"].strip():
+        res["text"] = ev["response"].strip()
+        res["ok"] = True
+    st = ev.get("stats") or {}
+    if st:
+        live["stats"] = {k: v for k, v in list(st.items())[:6]}
+    # 도구 호출로 보이는 것은 무엇이든 한 줄로 남긴다
+    name = ev.get("name") or ev.get("tool") or (ev.get("toolCall") or {}).get("name")
+    if name:
+        args = ev.get("args") or (ev.get("toolCall") or {}).get("args") or {}
+        live["tools"].append({"t": datetime.now().strftime("%H:%M:%S"),
+                              "name": str(name)[:40],
+                              "brief": tool_brief(name, args if isinstance(args, dict) else {})})
+        del live["tools"][:-14]
+        live["turns"] += 1
+    elif kind in ("assistant", "content", "message") and isinstance(ev.get("text"), str):
+        live["last_text"] = ev["text"].strip()[-600:]
+    flush()
 
 
 def tool_brief(name, inp) -> str:
@@ -401,6 +550,10 @@ def tool_brief(name, inp) -> str:
     return (name or "")[:110]
 
 
+def engine_for(c, role) -> str:
+    return (c.get("engines") or {}).get(role, "claude")
+
+
 def pick_model(c, s, role):
     """역할별 모델. 단 **주간 한도가 빠듯하면 싼 쪽으로 내려간다.**
 
@@ -410,7 +563,7 @@ def pick_model(c, s, role):
     fb = c.get("fallback_model")
     if not (c.get("cheap_when_tight", True) and fb):
         return model
-    r = s.get("rate") or {}
+    r = binding_rate(s) or {}
     left = 1.0 - float(r.get("utilization") or 0.0)
     if r and left <= float(c.get("cheap_below_remaining", 0.10)):
         return fb
@@ -532,8 +685,9 @@ def loop(c, once_role=None):
         log("사이클 {} · {} 시작".format(s["cycle"] + 1, role))
         t_start = time.time()
         res = run_cycle(c, s, role)
-        log("사이클 {} · {}({}) {} · {}초 · ${:.2f} · {}턴".format(
-            s["cycle"] + 1, role, res["model"], "완료" if res["ok"] else "실패",
+        log("사이클 {} · {}({}:{}) {} · {}초 · ${:.2f} · {}턴".format(
+            s["cycle"] + 1, role, res.get("engine", "claude"), res["model"],
+            "완료" if res["ok"] else "실패",
             res["seconds"], res["cost"], res["turns"]))
 
         if res["limit_until"]:
@@ -583,7 +737,7 @@ def pace(c, s, dur):
     시간에 고르게 편다. 사이클이 싸지면(sonnet) 저절로 촘촘해지고, 비싸지면 성겨진다.
     """
     base = max(c["sleep_between_sec"], c.get("min_cycle_interval_sec", 0) - dur)
-    r = s.get("rate") or {}
+    r = binding_rate(s) or {}
     u, reset = r.get("utilization"), r.get("resetsAt")
     if u is None or not reset:
         return base, "한도 정보 없음"
@@ -597,20 +751,24 @@ def pace(c, s, dur):
             s["du_ema"] = du if s.get("du_ema") is None else 0.5 * s["du_ema"] + 0.5 * du
 
     du = s.get("du_ema")
+    guessed = False
+    if not du:
+        # 아직 안 재 봤다. 여기서 base(=1분)로 돌려보내면 남은 예산을 몇 분 만에 태운다.
+        # 모를 때는 **비싼 쪽으로 가정**한다 — 첫 사이클이 끝나면 실측값이 이걸 밀어낸다.
+        du = float(c.get("du_guess", 0.01))
+        guessed = True
     left_u = max(0.0, 1.0 - float(c.get("rate_reserve", 0.02)) - float(u))
     left_t = float(reset) - time.time()
     if left_t <= 0:
         return base, "리셋 직전"
-    if not du:
-        return base, "사이클당 소모 미측정(u={:.0%})".format(u)
 
     cycles = left_u / du
     if cycles < 0.5:
         # 예산이 없다. 리셋까지 자는 게 맞다 — 두드려 봐야 거절만 쌓인다.
         return min(left_t + 120, 6 * 3600), "예산 소진(u={:.1%}) — 리셋까지 대기".format(u)
     gap = max(base, left_t / cycles - dur)
-    return gap, "u={:.1%} · 사이클당 {:.2%} · 남은 {:.0f}회를 {:.0f}h에 폄".format(
-        u, du, cycles, left_t / 3600)
+    return gap, "u={:.1%} · 사이클당 {:.2%}{} · 남은 {:.0f}회를 {:.0f}h에 폄".format(
+        u, du, "(가정)" if guessed else "", cycles, left_t / 3600)
 
 
 def cmd_status(c):
