@@ -1017,7 +1017,7 @@
    "done_when": "젯슨에서 tomato-voice 내린 뒤 arm_extend.py --target 으로 자세 A↔B를 5왕복하고, A에 돌아올 때마다 '끝 TCP' 세 숫자를 적는다(A=시작자세 134.3,15.3,168.9,7.6,88.8 / B=arm_extend 기본 뻗기자세). 5회 A의 TCP 최대 퍼짐(mm)과 관절 읽기값 최대 퍼짐(deg)을 표로 docs/인수인계-2026-09-04.md 새 절 §22에 남긴다. 퍼짐이 15mm를 넘으면 그 사실을 일지 요약 첫 줄에 쓴다(기준3 자체를 다시 봐야 한다). 끝나면 팔을 A로 두고 집게 100, tomato-voice 되살린다.",
    "attempts": 1,
    "created": "2026-09-18 02:08",
-   "updated": "2026-09-18 02:52",
+   "updated": "2026-09-18 03:18",
    "notes": [
     {
      "t": "2026-09-18 02:08",
@@ -1033,6 +1033,11 @@
      "t": "2026-09-18 02:52",
      "by": "builder",
      "text": "2026-09-18 02:5x builder(사이클25): 젯슨 tomato-voice가 02:37:37에 멈춘 채다(systemctl stop, restart counter 221 — T27의 8090 충돌 크래시루프). 내가 멈춘 게 아니고 내 사이클 시작(02:42) 전부터 그랬다. 그래서 이 작업을 집으면 '먼저 내린다' 단계는 이미 끝나 있다 — 바로 arm_extend를 쓸 수 있고, 끝에 되살릴 때 systemctl start tomato-voice가 8090 때문에 또 죽을 수 있음을 알고 있어라. click-server/depth-cam/astra-cam은 active, controller-drive는 inactive다(02:51 실측)."
+    },
+    {
+     "t": "2026-09-18 03:18",
+     "by": "tester",
+     "text": "2026-09-18 tester(사이클28): PC 4종 45/90/192/73 전부 RC=0 재확인. 젯슨 tomato-voice/controller-drive 둘 다 이미 inactive라(T27 크래시루프, 내가 만지지 않음) 바로 arm_extend 착수. 시작자세 실측 pan=133.3 lift=16.5 elbow=164.0 wflex=7.3 wroll=88.7 (board의 134.3/15.3/168.9/7.6/88.8과 근접, 근소한 표류는 이전 사이클 조작 잔재로 보임 — 이 값을 A로 확정하고 5왕복 진행 중, 백그라운드). B=기본 뻗기자세(가동범위에 잘려 shoulder_lift=80 elbow_flex=-98). 결과는 다음 note에서 이어붙인다."
     }
    ]
   },
