@@ -39,7 +39,9 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 
 # 서드파티보다 먼저 — pyyaml이 없어 여기서 죽는 것을 "통과"로 오독한 적이 있다
@@ -1733,6 +1735,87 @@ def test_record_timezone() -> None:
           f"{printed}")
 
 
+def test_record_destination() -> None:
+    """실기 기록이 **저장소로 돌아갈 길이 있는가** — 없으면 조용히 사라진다.
+
+    이 검사가 있는 이유 (2026-09-18, T58): 사이클42의 실기 5회가 jsonl에 한 줄도
+    안 남고 산문에만 남았다. 원인은 "컨테이너가 기록을 못 쓴다"가 아니라
+    **젯슨 트리에 쓰고 저장소로 안 돌아온다**는 것이다 — 젯슨의
+    `~/tomato-picker/`는 archive+scp로 배포된 부분복사본이라 `.git`이 없다
+    (실측: `git rev-parse` → "not a git repository"). 커밋될 길이 없는 자리다.
+
+    ⚠ 그리고 그냥 덮어쓰면 한쪽을 잃는다 — 같은 이름의 파일이 두 곳에서 따로
+    자란다(2026-09-18 실측: 저장소 57줄 / 젯슨 20줄, 겹치는 것은 사람이 손으로
+    옮긴 5줄뿐). 그래서 가져오는 도구는 **붙이기만** 한다.
+    """
+    print("\n[기록] 실기 기록이 저장소로 돌아갈 길이 있는가")
+    sys.path.insert(0, os.path.join(ROS2, "tools"))
+    import move5_check as m5  # noqa: E402
+    import record_pull as rp  # noqa: E402
+
+    tmp = tempfile.mkdtemp(prefix="rec-dest-")
+    try:
+        # 저장소 안 = 커밋된다
+        kind, why = m5.record_home(os.path.join(REPO, "docs", "시험기록"))
+        check("저장소 안의 기록 자리는 repo로 읽힌다", kind == "repo", f"{kind} {why}")
+        # git 없는 트리 = 젯슨 트리의 성질. 여기서 갈리지 않으면 검사가 무의미하다.
+        far = os.path.join(tmp, "tomato-picker", "docs", "시험기록")
+        kind, why = m5.record_home(far)
+        check("git 없는 트리(=젯슨)는 volatile로 읽힌다", kind == "volatile", f"{kind} {why}")
+        # 못 쓰는 자리 = 기록이 진짜로 사라지는 유일한 경우
+        blocker = os.path.join(tmp, "blocker")
+        open(blocker, "w").write("x")  # 파일이라 그 아래로 못 판다
+        kind, why = m5.record_home(os.path.join(blocker, "시험기록"))
+        check("쓸 수 없는 자리는 unwritable로 읽힌다", kind == "unwritable", f"{kind} {why}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    body = open(os.path.join(ROS2, "tools", "move5_check.py"), encoding="utf-8").read()
+    # 조용히 넘어가지 않는다 — 셋 다 출력에 나타나야 한다.
+    check("못 쓰는 기록 자리면 팔을 움직이기 전에 멈춘다(rc≠0)",
+          'if RECORD_HOME == "unwritable":' in body and "return 2" in body,
+          "기록 없는 5회는 다음 사이클에 아무것도 아니다")
+    check("volatile이면 끝에 가져오는 명령을 찍는다",
+          "record_pull.py --date" in body,
+          "scp가 아니다 — 덮어쓰면 한쪽을 잃는다")
+    check("기록 경로를 찍는 줄이 어디에 떨어지는지도 말한다",
+          "[{RECORD_HOME}]" in body)
+    check("기록 줄마다 record_home이 붙는다",
+          'row.setdefault("record_home", RECORD_HOME)' in body,
+          "손으로 옮겨 온 줄인지 줄만 보고 알아야 한다")
+    check("기록 줄마다 시각이 붙는다",
+          'row.setdefault("t", ' in body,
+          "시각이 없으면 같은 표적의 두 판을 구분할 길이 없다")
+
+    # ⚠ 사람이 나중에 덧붙인 칸(cycle 따위)이 신원을 바꾸면 안 된다 — 2026-09-18
+    #   실측으로 사이클35의 10줄이 저장소에만 `cycle: 35`를 달고 있었고, 글자
+    #   해시로 보면 10줄이 통째로 겹쳐 붙었다(실제로 그렇게 나왔다).
+    same = '{"trial": 1, "ok": true, "detail": "x"}'
+    annotated = '{"trial": 1, "ok": true, "detail": "x", "cycle": 35}'
+    check("사람이 덧붙인 cycle 칸은 같은 시험을 다른 줄로 만들지 않는다",
+          rp.merge_lines([annotated], [same])[0] == [], "안 그러면 10줄이 겹쳐 붙는다")
+    check("거절 문장이 다르면 다른 판으로 본다",
+          len(rp.merge_lines([same], ['{"trial": 1, "ok": true, "detail": "y"}'])[0]) == 1,
+          "같은 표적을 두 판 돌린 것을 한 판으로 접으면 기록이 준다")
+
+    # 가져오는 도구는 **붙이기만** 한다 — 로컬 줄을 하나도 잃지 않는다.
+    local = ['{"trial": 1, "ok": true}', '{"trial": 2, "ok": false}']
+    remote = ['{"trial": 2, "ok": false}', '{"trial": 9, "ok": true}',
+              '{"trial": 9, "ok": true}', "  "]
+    fresh, dup = rp.merge_lines(local, remote)
+    check("record_pull은 저장소에 없는 줄만 골라낸다",
+          fresh == ['{"trial": 9, "ok": true}'], f"fresh={fresh}")
+    check("이미 있는 줄은 다시 안 붙인다(원격 안의 중복도 한 번)",
+          dup == ['{"trial": 2, "ok": false}', '{"trial": 9, "ok": true}'], f"dup={dup}")
+    # 합친 결과가 **양쪽을 다 담는가** — 이것이 "덮어쓰면 한쪽을 잃는다"의 반대말이다.
+    merged = local + fresh
+    lost = [ln for ln in local + [r for r in remote if r.strip()] if ln not in merged]
+    check("합친 결과가 저장소 줄과 젯슨 줄을 둘 다 담는다", not lost, f"잃은 줄={lost}")
+    pull_body = open(os.path.join(ROS2, "tools", "record_pull.py"), encoding="utf-8").read()
+    check("record_pull이 로컬 파일을 append로만 연다",
+          'open(local_path, "a"' in pull_body and 'open(local_path, "w"' not in pull_body)
+
+
 def test_line_endings() -> None:
     """작업트리가 **LF로 체크아웃되는가** — 이 저장소는 Windows에서 고쳐 젯슨으로 scp한다.
 
@@ -1883,6 +1966,7 @@ def main() -> int:
     test_sample_within_limits()
     test_mount_contract()
     test_record_timezone()
+    test_record_destination()
     test_line_endings()
     test_service_exclusivity()
     test_selfcheck_deps()

@@ -66,6 +66,40 @@ from tomato_picker.hardware import load_limits as ld  # noqa: E402
 RECORD_DIR = os.environ.get("TOMATO_RECORD_DIR") or os.path.join(REPO, "docs", "시험기록")
 
 
+def record_home(path: str) -> tuple[str, str]:
+    """이 기록이 **저장소로 돌아갈 길이 있는가**. ("repo"|"volatile"|"unwritable", 설명)
+
+    이 함수가 있는 이유 (2026-09-18, T58): 실기는 젯슨의 도커 안에서 돈다.
+    컨테이너에 물린 것은 **젯슨 트리**(`~/tomato-picker/`)이고 그 트리는 git
+    저장소가 아니다(실측: `git rev-parse` → "not a git repository"). 거기 쓴 줄은
+    커밋될 길이 없다 — 사이클42의 실기 5회가 산문에만 남고 jsonl에 없던 이유다.
+    기록은 다음 사이클이 사실로 믿는 유일한 물건이라 **조용히 사라지는 것만은
+    안 된다.** 그래서 매 실행이 자기 기록이 어디에 떨어지는지 스스로 말한다.
+
+    판정은 `.git`이 있느냐 하나다 — 마운트 경로를 짐작하는 것보다 이쪽이
+    직접적이다(같은 젯슨 트리를 어떤 경로로 물리든 결론이 같다).
+    """
+    probe = os.path.join(path, ".probe-%d" % os.getpid())
+    try:
+        os.makedirs(path, exist_ok=True)
+        with open(probe, "w") as fh:
+            fh.write("x")
+        os.remove(probe)
+    except OSError as exc:
+        return "unwritable", f"{path} — 쓸 수 없다: {exc}"
+    here = os.path.abspath(path)
+    while True:
+        if os.path.exists(os.path.join(here, ".git")):
+            return "repo", here
+        parent = os.path.dirname(here)
+        if parent == here:
+            return "volatile", f"{path} — git 저장소 밖이다(커밋될 길이 없다)"
+        here = parent
+
+
+RECORD_HOME, RECORD_HOME_WHY = record_home(RECORD_DIR)
+
+
 def local_zone() -> str:
     """지금 날짜를 어느 시각대로 셌는지 한 토막으로. 기록 이름이 날짜라서 중요하다.
 
@@ -324,6 +358,13 @@ def prep_plan(now_deg: dict[str, float], limits, geom: kin.ArmGeometry,
 
 
 def record(path: str, row: dict) -> None:
+    # 줄마다 **어디서 태어났는지**를 남긴다 — 저장소에서 바로 자란 줄인지
+    # 손으로 옮겨 와야 하는 줄인지를 다음 사이클이 줄만 보고 알아야 한다(T58).
+    row.setdefault("record_home", RECORD_HOME)
+    # 시각이 없으면 두 판을 구분할 길이 없다 — 2026-09-18 실측으로 같은 표적의
+    # 같은 거절이 여러 판에 걸쳐 글자까지 같았고, 회수 도구가 그것을 한 판으로
+    # 접을 뻔했다. 시각 하나가 그 애매함을 없앤다(T58).
+    row.setdefault("t", time.strftime("%Y-%m-%d %H:%M:%S") + f" {local_zone()}")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -623,7 +664,17 @@ def main() -> int:
     today = time.strftime("%Y-%m-%d")
     out_path = os.path.join(RECORD_DIR, f"move-to-point-{today}.jsonl")
 
-    print(f"{len(points)}개 표적, 기록: {out_path}  [{local_zone()}]")
+    print(f"{len(points)}개 표적, 기록: {out_path}  [{local_zone()}]  "
+          f"[{RECORD_HOME}]")
+    # **못 쓰는 자리면 팔을 움직이기 전에 멈춘다.** 기록 없는 5회는 다음 사이클에
+    # 아무것도 아니다 — 팔만 움직이고 사실은 남지 않는다(T58).
+    if RECORD_HOME == "unwritable":
+        print(f"❌ 기록을 쓸 수 없다 — {RECORD_HOME_WHY}")
+        print("   TOMATO_RECORD_DIR을 쓸 수 있는 자리로 지정하고 다시 돌려라.")
+        return 2
+    if RECORD_HOME == "volatile":
+        print(f"⚠ 이 기록은 커밋되지 않는다 — {RECORD_HOME_WHY}")
+
     if args.dry_run:
         ok = run_dry(points, geom, out_path, limits_tag, load_tag)
     else:
@@ -633,6 +684,13 @@ def main() -> int:
             return 1
 
     print(f"\n{ok}/{len(points)} 성공")
+    if RECORD_HOME == "volatile":
+        # 여기서 끝내면 이 줄들은 젯슨에서 늙다가 사라진다. 그래서 **가져오는
+        # 명령 한 줄**을 그대로 찍는다. scp가 아니라 record_pull인 이유: 같은
+        # 이름의 파일이 두 곳에서 따로 자라서(실측 저장소 57줄 / 젯슨 20줄)
+        # 덮어쓰면 한쪽을 잃는다 — 붙이기만 하는 도구가 따로 있다.
+        print("\n⚠ 이 기록은 저장소 밖에 있다 — PC에서 아래를 돌려 가져와라:")
+        print(f"     python ros2/tools/record_pull.py --date {today}")
     return 0 if ok == len(points) else 1
 
 

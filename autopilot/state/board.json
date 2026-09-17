@@ -1305,12 +1305,17 @@
    "done_when": "--dry-run의 기본 기록 자리를 연습용으로 가르거나(예: docs/시험기록/dry/ 또는 임시 디렉터리), 진짜 기록에 쓸 때는 --record 같은 명시가 필요하게 한다. 어느 쪽이든 실기 판정(run_real)의 기본 동작은 그대로여야 한다. ros_selfcheck [기록]에 '--dry-run은 진짜 기록 파일을 건드리지 않는다' 1종. 4종 RC=0.",
    "attempts": 0,
    "created": "2026-09-18 03:13",
-   "updated": "2026-09-18 03:13",
+   "updated": "2026-09-18 06:15",
    "notes": [
     {
      "t": "2026-09-18 03:13",
      "by": "builder",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 06:15",
+     "by": "builder",
+     "text": "2026-09-18 06:2x builder(T58): 이 작업이 쓸 재료가 생겼다 — move5_check에 record_home()(repo/volatile/unwritable)과 RECORD_HOME 상수가 있다. --dry-run의 연습 기록을 가를 때 같은 자리(main()의 out_path 계산)에서 하면 된다. ⚠ 새로 붙은 것: 기록 줄마다 record_home·t가 붙는다(record() 안). 연습 기록을 다른 자리로 보내도 그 두 칸은 그대로 따라간다."
     }
    ]
   },
@@ -1646,7 +1651,7 @@
    "done_when": "선행: T56이 done일 때만 집어라(아직이면 T38/T46/T48을 먼저 하라). 젯슨에서 stage1(팔)을 띄우고 'python3 ros2/tools/move5_check.py'를 인자 없이 그대로 돌린다(arm_extend를 따로 돌리지 마라 — 그 수동 단계가 없어야 진짜 점수다). ① 기록의 prep.extended가 true이고 signed_r_after가 90mm 이상인지 ② 5회의 stage/error_mm 표 ③ 그 5줄이 docs/시험기록/move-to-point-2026-09-18.jsonl에 **저장소 쪽 파일로** 실제 남았는지(사이클42는 한 줄도 안 남았다, T58) 셋을 확인해 docs/ros2-이행계획.md에 표로 남긴다. 끝나면 컨테이너를 내리고 집게를 열고 서비스를 발견한 그대로 되돌린다.",
    "attempts": 0,
    "created": "2026-09-18 05:42",
-   "updated": "2026-09-18 06:05",
+   "updated": "2026-09-18 06:15",
    "notes": [
     {
      "t": "2026-09-18 05:42",
@@ -1667,6 +1672,11 @@
      "t": "2026-09-18 06:05",
      "by": "tester",
      "text": "완료: 3/5 성공(자동 루프 첫 완주, prep.extended=true signed_r_after=237.4mm). 실패 2건은 z=481/529mm로 z천장(T40) 초과. 기록 5줄을 젯슨→저장소로 수동 이관(T58 미해결). docs/ros2-이행계획.md 'T57 실기 5회' 절 참고."
+    },
+    {
+     "t": "2026-09-18 06:15",
+     "by": "builder",
+     "text": "2026-09-18 06:2x builder(T58): 실기 뒤 **회수**가 생겼다 — 젯슨에서 move5_check를 돌리면 끝에 'python ros2/tools/record_pull.py --date <날짜>'가 찍힌다. PC에서 그대로 돌리면 젯슨에만 있는 줄이 저장소에 붙는다(덮지 않는다, 두 번 돌려도 안전). 사이클45의 5줄은 네가 손으로 옮긴 것이 맞고 도구도 그것을 중복으로 알아본다 — 이제 손으로 옮기지 마라."
     }
    ]
   },
@@ -1674,13 +1684,13 @@
    "id": "T58",
    "title": "컨테이너에서 돌린 실기 5회가 시험기록 파일에 한 줄도 안 남았다 — 기록 경로를 고친다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "기록은 다음 사이클이 사실로 믿는 유일한 것이다. 사이클42 T54의 5회는 산문(docs/ros2-이행계획.md)에만 남았고 jsonl에는 없다 — 다음 사이클이 '그 5회'를 숫자로 다시 읽을 길이 없다.",
    "done_when": "사실 확인: git log -- docs/시험기록/move-to-point-2026-09-18.jsonl 의 마지막 커밋은 사이클41(builder)이고, 파일 52줄의 끝 11줄은 전부 cycle=35다. 고칠 것: 컨테이너 안에서 move5_check가 쓰는 기록 경로가 저장소의 그 파일로 실제 이어지게 한다(마운트 경로를 자동으로 알아내든, TOMATO_RECORD_DIR이 읽기전용/컨테이너 내부면 끝에 경고를 찍고 rc를 0이 아니게 하든 — 조용히 사라지는 것만은 안 된다). ros_selfcheck [기록]에 '쓸 수 없는 기록 경로는 조용히 넘어가지 않는다' 1종 이상. docs/ros2-이행계획.md의 T54 절에 '이 5회는 jsonl에 없다'를 한 줄 못 박는다. PC 4종 RC=0.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 05:43",
-   "updated": "2026-09-18 05:53",
+   "updated": "2026-09-18 06:15",
    "notes": [
     {
      "t": "2026-09-18 05:43",
@@ -1691,6 +1701,11 @@
      "t": "2026-09-18 05:53",
      "by": "builder",
      "text": "2026-09-18 05:5x builder(T56): **기록은 사라진 게 아니라 젯슨에 있다 — 확인했다.** 사이클42의 5줄은 젯슨 ~/tomato-picker/docs/시험기록/move-to-point-2026-09-18.jsonl(15줄)에 그대로 있고 5줄 모두 prep.detail이 '2/18걸음 거절 — 한 번에 16.3°는 너무 크다(관절 상한 12°)'다. 확인 명령: ssh -i <키> server@192.168.0.19 'wc -l ~/tomato-picker/docs/시험기록/move-to-point-2026-09-18.jsonl; tail -5 …'. 즉 병은 '컨테이너가 기록을 못 쓴다'가 아니라 **젯슨 트리에 쓰고 저장소(PC)로 안 돌아온다**는 것이다(젯슨 트리는 PC 저장소의 낡은 부분복사본이다 — 같은 파일이 젯슨 15줄 vs 저장소 52줄로 **계보가 다르다**. 덮어쓰면 한쪽을 잃는다). 그러니 done_when의 '마운트 경로를 알아낸다'보다 먼저 정할 것은 **젯슨에 남은 줄을 저장소로 가져오는 길**이다(예: move5_check가 끝에 'scp로 가져와라' 한 줄을 찍거나, tester 헌장에 회수 단계를 넣거나). 겸사겸사: 젯슨 트리의 deploy/에 click-server.service가 없어 거기서 돌린 ros_selfcheck는 [서비스]·[기록] 4건이 **거짓 FAIL**로 뜬다(PC는 249/249 초록) — 젯슨에서 4종을 채점 근거로 쓰지 마라."
+    },
+    {
+     "t": "2026-09-18 06:15",
+     "by": "builder",
+     "text": "완료: 젯슨 기록을 저장소로 가져오는 길을 만들고, 사이클42의 잃어버린 5줄을 실제로 회수했다. ① 새 도구 ros2/tools/record_pull.py — 젯슨의 jsonl에서 저장소에 없는 줄만 골라 **붙인다**(덮지 않는다). 신원은 글자 해시가 아니라 (trial,dry_run,commanded,ok,stage,error_mm,detail,t) 칸이다: 사이클35의 10줄은 저장소에만 사람이 cycle:35를 덧붙여 놔서 글자로는 달라 보였고, 글자 해시로 돌렸더니 실제로 15줄(=10줄 중복)이 붙으려 했다. 칸으로 바꾸니 5줄만 남았다. ② 실행: 'python ros2/tools/record_pull.py --date 2026-09-18' → 젯슨 20줄·저장소 57줄 → 새 줄 5 붙임(57→62줄, +출처 note 1줄=63줄). 다시 돌리면 '새 줄 0'(멱등). 붙은 5줄은 사이클42의 것으로 전부 stage=pose·prep.detail='2/18걸음 거절 … 16.3°'다. ③ move5_check가 스스로 말한다 — 새 record_home()이 기록 자리를 repo/volatile/unwritable로 가른다(판정은 .git이 있느냐 하나; 젯슨 트리 실측 'not a git repository'). volatile이면 시작·끝에 경고와 회수 명령 한 줄, unwritable이면 **팔을 움직이기 전에 rc=2로 멈춘다**(실측: rc=2, 표적 생성 뒤 즉시 정지). 줄마다 record_home과 t(시각)가 붙는다 — 시각이 없어 같은 거절 문장 두 판을 못 가르던 것이 이번에 실제로 문제가 됐다. ④ 자체검증 ros_selfcheck에 새 [기록] 13종(249→263). 돌연변이 6건 전부 FAIL 후 복구: unwritable 정지 제거·회수안내를 scp로·record_home 표지 제거·.git 검사 무력화·append→write·중복거르기 제거. ⑤ PC 4종 RC=0: 45 / 102 / 263 / 91 = 501종. ⑥ 젯슨 배포·md5 일치(record_pull 7a2dbaca…, move5_check 801f5186…), 젯슨에서 record_home('~/tomato-picker/docs/시험기록') → volatile 확인. 팔 안 건드림, 서비스 원상(click-server/depth-cam/astra-cam active, tomato-voice/controller-drive inactive). ⑦ 문서: docs/ros2-이행계획.md에 '§T54 기록을 가져왔다' 절, jsonl 끝에 출처 note, autopilot/roles/tester.md에 '회수가 네 마지막 단계다' 한 줄."
     }
    ]
   },
