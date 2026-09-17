@@ -1,15 +1,15 @@
 {
  "started": "2026-09-17T21:45:26",
- "cycle": 3,
- "rot_idx": 3,
+ "cycle": 4,
+ "rot_idx": 4,
  "fails": 0,
  "cost_date": "2026-09-17",
- "cost_today": 10.432548500000001,
+ "cost_today": 15.458807500000002,
  "jetson_ip": "192.168.0.19",
  "jetson_checked_cycle": 0,
  "last": {
-  "role": "tester",
+  "role": "builder",
   "ok": true,
-  "at": "2026-09-17T22:18:16"
+  "at": "2026-09-17T23:40:10"
  }
 }

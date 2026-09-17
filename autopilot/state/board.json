@@ -131,18 +131,23 @@
    "id": "T6",
    "title": "ros2-이행계획 §3 ros.1 표의 ✅ 표시가 실제인지 한 줄씩 확인",
    "role": "auditor",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "표는 쉽게 썩는다. 거짓 ✅ 하나가 졸업 채점을 통째로 틀리게 한다.",
    "done_when": "항목마다 근거 파일:줄 또는 '근거 없음'을 적어 문서를 갱신하고, 거짓이던 항목은 작업으로 만듦",
    "attempts": 0,
    "created": "2026-09-17 21:44",
-   "updated": "2026-09-17 21:44",
+   "updated": "2026-09-17 23:42",
    "notes": [
     {
      "t": "2026-09-17 21:44",
      "by": "human",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-17 23:42",
+     "by": "auditor",
+     "text": "완료: 표 12줄 중 핵심 6줄(URDF/joint_states proxy·direct/cmd_vel C계약+V레거시/D405 거절/손눈보정 static TF/move_to_point)을 코드에서 근거로 확인 — 전부 실재(arm_node.py:57-59,88 · fruit3d.py:22,36-125 · handeye_node.py:44,151,301 · board_contract.py:8,62,276). 어긋난 것: 78행 '69종'이 낡음 — ros_selfcheck.py를 실제로 돌리면 95개(RC=0). 문서를 95종으로 고쳤다. 젯슨 1회성 실측 4줄(빌드/TF/팔직결/카메라)은 스크립트는 실재하나 숫자 재검증은 이번 사이클 범위 밖(하드웨어 필요, 검사가 아니라 일회성 로그라 재현 비용 큼)."
     }
    ]
   },

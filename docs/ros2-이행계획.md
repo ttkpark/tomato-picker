@@ -75,7 +75,7 @@ tools/tag.sh v2.0.0-ros.2 "손-눈 보정 실측 통과"
 | D405 → `/fruits` (3D, 못 믿을 깊이는 **거절**) | ✅ |
 | 손-눈 보정 (수집·풀이·static TF·잔차) | ✅ |
 | `/arm/move_to_point` (TF → IK → 이동) | ✅ |
-| ROS 없이 도는 자체검증 | ✅ `ros2/tools/ros_selfcheck.py` (69종, PC에서) |
+| ROS 없이 도는 자체검증 | ✅ `ros2/tools/ros_selfcheck.py` (95종, PC에서 — 2026-09-17 재확인. 늘어난다: `[의존성]` 검사군 등이 09-17에 추가됐다) |
 | 손눈보정 수학 자체검증 | ✅ `tools/handeye_check.py` (45종, PC에서) |
 | **젯슨에서 실제 빌드** | ✅ 2026-08-28 — 도커 이미지 3.02GB, `colcon build` 6패키지 1분 12초 |
 | **로봇 위에서 TF 확인** | ✅ `bringup_check.sh` 0~2단 — RSP가 만든 TF가 `kinematics.forward()`와 **0.000mm** 일치 (7자세) |
