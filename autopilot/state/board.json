@@ -1035,18 +1035,23 @@
    "id": "T37",
    "title": "졸업기준3의 '시험' 자체를 채점하라 — move5_check가 재는 것이 정말 기준3인가",
    "role": "auditor",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "기준1을 채점했더니(T29) '강제한다'던 것이 실제로는 안 재고 있었다. 기준3도 같은 병이 있으면 5/5가 나와도 졸업이 아니다. 실기 없이 PC에서 전부 확인된다.",
    "done_when": "docs/ros2-이행계획.md에 '기준3 채점표(2026-09-18)'를 만들어 항목별 ○/×와 근거 파일:줄을 적는다. 최소 다음 넷을 다룬다 — ① 성공판정 err가 무엇과 무엇의 거리인가(move5_check.py:313-318; res.reached는 arm_node.py:165에서 '지령한 스탠드오프 자세'이지 실측이 아니다 — 이 판정이 '도달'을 증명하는가, 아니면 'IK 해가 관절로 재현됐다'만 증명하는가) ② 기하 출처가 두 곳이다(move5_check.py:313/336은 kin.ArmGeometry() 기본값, arm_node.py:200-210은 ~/arm_cartesian.json의 FrameConfig().geometry() — 오늘은 젯슨 geometry가 {}라 우연히 같다. 갈라지면 '재는 자'와 '계획하는 자'의 팔 길이가 달라진다) ③ sample_points의 '임의의 자리'가 얼마나 넓은가 — seed를 10개 바꿔 표적 50개를 dry-run으로 뽑아 x/y/z 범위와 거절률을 숫자로 적는다 ④ 5회라는 표본이 몇 %를 보증하는가(한 줄). 각 ×마다 고칠 작업을 board에 추가한다. 4종 RC=0 유지.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 02:09",
-   "updated": "2026-09-18 02:09",
+   "updated": "2026-09-18 02:58",
    "notes": [
     {
      "t": "2026-09-18 02:09",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 02:58",
+     "by": "auditor",
+     "text": "완료: 기준3 채점표를 docs/ros2-이행계획.md에 신설(넷 항목: err판정 두 항/기하 출처/표적 범위/5회 보증력). ②는 실제 결함이라 move5_check.py에 _arm_node_geometry() 추가해 arm_node._geometry()와 같은 폴백을 따르게 고침(수정 전엔 항상 kin.ArmGeometry() 기본값만 써서 arm_cartesian.json에 geometry가 채워지면 조용히 갈라질 뻔했다). ①은 arm_node.py:165 res.reached가 실측이 아니라 명령한 IK 목표라는 것을 확인해 주석으로 남김(인터페이스는 안 건드림). ③은 젯슨 캘리브레이션을 PC로 가져와 dry-run 50개로 x/y/z/pitch 범위·거절률 2.0%를 실측, T41과 연결. ④는 5/5의 통계적 보증력이 약하다(Wilson 하한 ~48%)는 것만 기록, 작업 신설 안 함. PC 4종 45/90/175/73 전부 RC=0 재확인."
     }
    ]
   },

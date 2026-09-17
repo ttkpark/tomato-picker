@@ -162,6 +162,10 @@ class ArmNode(Node):
             return res
 
         res.joints_deg = [float(joints[j]) for j in JOINT_NAMES]
+        # ⚠ 이름과 달리 **실측이 아니다** — move_to()를 부르기 전에 IK가 푼
+        # 목표(스탠드오프) 자세를 그대로 담는다(T37 감사, 2026-09-18). "정말
+        # 거기 도달했나"는 이 필드가 아니라 호출부가 /joint_states를 다시 읽어
+        # FK로 확인해야 한다(move5_check.py:run_real이 그렇게 한다).
         res.reached = Point(x=pose.x / 1000.0, y=pose.y / 1000.0, z=pose.z / 1000.0)
 
         if req.dry_run:

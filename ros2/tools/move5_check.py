@@ -241,6 +241,22 @@ def run_dry(points: list[dict], geom: kin.ArmGeometry, out_path: str,
     return ok_count
 
 
+def _arm_node_geometry() -> kin.ArmGeometry:
+    """arm_node._geometry()와 **같은 규칙**으로 기하를 고른다 (T37 감사, 2026-09-18).
+
+    arm_node.py는 `~/arm_cartesian.json`의 `geometry` 키가 있으면 그걸 쓰고
+    없으면 코드 기본값으로 떨어진다. 여기서 `kin.ArmGeometry()` 기본값만 쓰면
+    그 파일이 `geometry`를 채우는 순간(예: 실측으로 링크를 다시 잰 뒤) **이
+    도구가 재는 자와 arm_node가 계획하는 자가 다른 팔 길이를 믿게 된다** —
+    말없이 갈라진다. arm_node.py를 직접 import할 수 없어(rclpy가 든다) 같은
+    폴백 규칙을 여기서도 그대로 편다.
+    """
+    try:
+        return cart.FrameConfig().geometry()
+    except Exception:  # noqa: BLE001 - 파일이 없으면 코드 기본값(arm_node와 동일)
+        return kin.ArmGeometry()
+
+
 def run_real(points: list[dict], out_path: str, limits_tag: str = "none") -> int:
     """ROS2 stage1이 떠 있어야 한다 — /arm/move_to_point를 실제로 부른다."""
     import rclpy
@@ -310,7 +326,7 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none") -> int
             print(f"  trial {i}: FAIL[joint] /joint_states 없음")
             continue
         degs = {n: math.degrees(v) for n, v in zip(js.name, js.position)}
-        pose = kin.forward(degs, kin.ArmGeometry())
+        pose = kin.forward(degs, _arm_node_geometry())
         target_reached_mm = (res.reached.x * 1000.0, res.reached.y * 1000.0,
                               res.reached.z * 1000.0)
         err = math.dist((pose.x, pose.y, pose.z), target_reached_mm)
