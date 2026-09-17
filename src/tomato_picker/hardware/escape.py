@@ -142,3 +142,87 @@ def plan(now_deg: dict[str, float], target_deg: dict[str, float],
 def blocked(steps: list[dict]) -> list[int]:
     """안전 검사에 걸린 걸음 번호들. 비어 있지 않으면 움직이지 않는다."""
     return [s["i"] for s in steps if s["notes"]]
+
+
+# 한 걸음을 보낸 뒤 실제가 지령에 **못 미치는 것은 정상이다** — 중력이 누른 만큼
+# 처진다(2026-09-18 실측: A자세 1.1~1.3°, 팔을 뻗은 B자세 4.0~4.9°). 그래서
+# "다 왔다"의 기준을 0으로 두면 영원히 안 끝나고, 처짐을 "안 움직였다"로 읽으면
+# 멀쩡한 뻗기를 중간에 포기한다. 두 숫자가 그 경계를 정한다.
+ARRIVE_DEG = 1.0        # 남은 길이 이보다 작으면 도착으로 본다
+MIN_GAIN_DEG = 0.5      # 한 걸음에 남은 길이 이만큼도 안 줄면 더 가 봐야 소용없다
+
+# 보내는 걸음을 상한보다 이만큼 **작게** 짠다. 받는 쪽은 자기가 따로 읽은 자세로
+# 크기를 다시 재는데(arm_source.move_joints_deg), 그 읽기가 한 박자 늦으면 꽉 찬
+# 12°짜리 걸음이 12.x°로 읽혀 거절된다 — 거절당한 걸음은 "팔이 못 간다"로 기록에
+# 남는다. 여유 1°는 걸음 수를 거의 안 늘리면서 그 경계를 비켜 준다.
+SEND_MARGIN_DEG = 1.0
+
+
+def walk(target_deg: dict[str, float], measure, send, to_norm,
+         geom: kin.ArmGeometry | None = None, step_deg: float = STEP_DEG,
+         limit: float = LIMIT_NORM, budget: int | None = None,
+         arrive_deg: float = ARRIVE_DEG, min_gain_deg: float = MIN_GAIN_DEG,
+         margin_deg: float = SEND_MARGIN_DEG) -> dict:
+    """목표 관절각까지 **걸음마다 실제 자세를 되읽어 다시 짜며** 걸어간다.
+
+    왜 이 함수가 필요한가 (T56, 2026-09-18) — `plan()`이 짜 준 걸음들을 그대로
+    차례로 보내면 **두 걸음째부터 거절된다.** 한 걸음(12°)을 보내면 팔은 중력
+    처짐으로 지령보다 4~5° 못 미친 자리에 서는데, 받는 쪽(`arm_source.
+    move_joints_deg`)은 **지금 실제 자세에서 다시 plan** 해 두 걸음 이상이면
+    거절하기 때문이다: 12 + 4.3 = 16.3° > 12°. 사이클42의 실기 기록에 정확히 그
+    숫자가 남아 있고, 그 거절 때문에 5회가 전부 자세 가드에 막혀 **거짓 0/5**가
+    됐다. 받는 쪽의 계약("쪼개는 쪽이 걸음마다 실제 자세를 되읽어야 한다")이
+    옳다 — 그 되읽기를 여기서 한 번만 구현해 부르는 쪽들이 나눠 쓴다.
+
+    ⚠ 이 함수도 **포트를 안 연다.** 재는 것(`measure() -> 관절각 dict`)과
+    보내는 것(`send(관절각 dict)`)은 부르는 쪽이 준다. `send`가 거절하면
+    예외를 올려라 — 여기서 삼키지 않는다(뻗은 척하는 것보다 멈추는 것이 낫다).
+
+    돌려주는 것: {"reached", "sent", "gap_deg", "last", "planned", "notes", "detail"}.
+    `reached`가 False여도 `last`까지는 **실제로 갔다** — 부르는 쪽은 그 자세로
+    목적(가드 탈출)이 이뤄졌는지 스스로 판정한다.
+    """
+    geom = geom or kin.ArmGeometry()
+    hop_deg = max(1.0, float(step_deg) - float(margin_deg))
+    now = {j: float(v) for j, v in measure().items() if j in kin.JOINTS}
+    planned = plan(now, {**now, **target_deg}, to_norm(now), to_norm, geom,
+                   hop_deg, limit)
+    # 예산은 계획 걸음수의 3배 — 처짐 때문에 같은 구간을 두어 번 더 밟는 것은
+    # 정상이고, 그보다 많이 밟는다면 진전이 없는 것이다(아래 min_gain이 먼저
+    # 잡지만, 되읽기가 흔들릴 때를 대비한 마지막 울타리다).
+    if budget is None:
+        budget = max(6, len(planned) * 3)
+    sent, gap_prev = 0, None
+    while True:
+        target = {**now, **{j: float(v) for j, v in target_deg.items()
+                            if j in kin.JOINTS}}
+        gap = max(abs(target[j] - now[j]) for j in kin.JOINTS)
+        if gap <= arrive_deg:
+            return _walk_result(True, now, planned, sent, gap, [],
+                                f"{sent}걸음으로 목표에 닿았다(남은 길 {gap:.1f}°)")
+        if gap_prev is not None and gap_prev - gap < min_gain_deg:
+            return _walk_result(False, now, planned, sent, gap, [],
+                                f"{gap:.1f}°를 남기고 더 안 줄어든다"
+                                f"(직전 {gap_prev:.1f}° → {gap:.1f}°) — "
+                                "서보가 그 자세를 더 못 든다")
+        if sent >= budget:
+            return _walk_result(False, now, planned, sent, gap, [],
+                                f"{budget}걸음을 다 쓰고도 {gap:.1f}° 남았다")
+        steps = plan(now, target, to_norm(now), to_norm, geom, hop_deg, limit)
+        head = steps[0]
+        if head["notes"]:
+            return _walk_result(False, now, planned, sent, gap, head["notes"],
+                                f"{sent + 1}걸음째가 안전 검사에 걸린다: "
+                                + " ".join(head["notes"])
+                                + f" (TCP z={head['pose'].z:.0f}mm "
+                                  f"r={head['signed_r']:.0f}mm)")
+        send(head["degs"])
+        sent += 1
+        gap_prev = gap
+        now = {j: float(v) for j, v in measure().items() if j in kin.JOINTS}
+
+
+def _walk_result(reached, now, planned, sent, gap, notes, detail) -> dict:
+    return {"reached": reached, "sent": sent, "gap_deg": round(gap, 2),
+            "last": dict(now), "planned": len(planned), "notes": list(notes),
+            "detail": detail}

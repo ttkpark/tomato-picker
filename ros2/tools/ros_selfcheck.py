@@ -940,6 +940,49 @@ def _sim_escape_arm():
     return arm
 
 
+class _SagArm:
+    """중력 처짐을 흉내 내는 **가짜 팔** + 받는 쪽의 거절 규칙(arm_source와 같다).
+
+    두 가지를 한 자리에서 재현한다:
+      · 받는 쪽은 지령을 받으면 **지금 실제 자세에서 다시 plan** 해 두 걸음 이상이면
+        거절한다(`arm_source.move_joints_deg`의 계약 그대로).
+      · 팔은 지령보다 `sag`만큼 못 미친 자리에 선다(2026-09-18 실측 4.0~4.9°).
+    이 둘이 겹치면 **낡은 걸음**은 12+4.3=16.3°가 되어 거절된다 — 사이클42가
+    실기에서 겪은 그 숫자이고, T56이 고친 병이다. 팔도 파일도 안 건드린다.
+    """
+
+    def __init__(self, start, limits, geom, sag=4.3, frozen=False):
+        from tomato_picker.hardware import escape as es  # noqa: E402
+        self._es = es
+        self.now = {j: float(start[j]) for j in kin.JOINTS}
+        self.limits, self.geom, self.sag = limits, geom, float(sag)
+        self.frozen = frozen                 # True면 지령을 받아도 안 움직인다
+        self.sent, self.hops, self.rejected = 0, [], []
+
+    def measure(self) -> dict:
+        return dict(self.now)
+
+    def send(self, degs) -> None:
+        want = {**self.now, **{j: float(v) for j, v in degs.items() if j in kin.JOINTS}}
+        big = max(abs(want[j] - self.now[j]) for j in kin.JOINTS)
+        steps = self._es.plan(self.now, want, self.limits.norms(self.now),
+                              self.limits.norms, self.geom, limit=self.limits.limit)
+        if len(steps) > 1:
+            self.rejected.append(round(big, 1))
+            raise RuntimeError(f"한 번에 {big:.1f}°는 너무 크다"
+                               f"(관절 상한 {self._es.STEP_DEG:.0f}°)")
+        self.sent += 1
+        self.hops.append(round(big, 2))
+        if self.frozen:
+            return
+        moved = {}
+        for j in kin.JOINTS:
+            d = want[j] - self.now[j]
+            # 걸음이 처짐보다 크면 그만큼 못 미치고, 작으면 그대로 닿는다.
+            moved[j] = want[j] - math.copysign(self.sag, d) if abs(d) > self.sag else want[j]
+        self.now = moved
+
+
 def test_prep_autoextend() -> None:
     """졸업기준3을 재는 도구가 **스스로 뻗는가** (T49, 2026-09-18).
 
@@ -1030,6 +1073,72 @@ def test_prep_autoextend() -> None:
     check("proxy 모드는 관절 지령을 **거절**한다(뻗은 척하지 않는다)",
           "def move_joints_deg" in src_src
           and "proxy 모드로는 관절 지령을 못 보낸다" in src_src)
+
+    # ⑥ 걸음이 **낡는다** — 처짐이 얹히면 두 걸음째가 거절된다 (T56, 2026-09-18)
+    # 사이클42 실기: A자세에서 2/18걸음이 16.3°(상한 12°)로 거절돼 5회가 전부
+    # 자세 가드에 막히고 **거짓 0/5**가 기록에 남았다. 아래 셋이 그 병과 약을
+    # 같은 가짜 팔 위에서 나란히 보여 준다 — 팔도 포트도 안 건드린다.
+    planned_steps = m5.prep_plan(inside, limits, geom)["steps"]
+    naive = _SagArm(inside, limits, geom)
+    naive_fail = None
+    for st in planned_steps:                    # 예전 방식: 짜 둔 걸음을 그대로
+        try:
+            naive.send(st["degs"])
+        except RuntimeError as exc:
+            naive_fail = (st["i"], str(exc))
+            break
+    check("낡은 걸음을 그대로 보내면 두 걸음째가 거절된다(병의 재현)",
+          naive_fail is not None and naive_fail[0] == 2 and naive.rejected
+          and naive.rejected[0] > es.STEP_DEG,
+          f"거절 걸음={naive_fail and naive_fail[0]} 크기={naive.rejected}° "
+          f"(상한 {es.STEP_DEG:.0f}°)")
+
+    target = m5.prep_plan(inside, limits, geom)["target"]
+    arm = _SagArm(inside, limits, geom)
+
+    def _walk(fake):
+        """가짜 팔 위에서 walk를 돌린다. 거절당하면 **예외 대신 실패로** 돌려준다.
+
+        ⚠ 여기서 예외가 그대로 올라가면 남은 검사가 통째로 안 돈다 — 되읽기를
+        빼먹는 회귀(T56이 고친 바로 그 병)가 오면 반드시 FAIL로 보여야 한다.
+        """
+        try:
+            return es.walk(target, measure=fake.measure, send=fake.send,
+                           to_norm=limits.norms, geom=geom, limit=limits.limit)
+        except Exception as exc:  # noqa: BLE001 - 거절 문구를 그대로 보여 준다
+            return {"reached": False, "sent": fake.sent, "gap_deg": None,
+                    "last": fake.measure(), "planned": 0, "notes": [],
+                    "detail": f"walk가 거절당해 멈췄다: {exc}"}
+
+    walked = _walk(arm)
+    check("walk는 같은 팔에서 **한 번도 거절당하지 않고** 완주한다",
+          walked["reached"] is True and arm.rejected == [],
+          f"{walked['detail']} · 보낸 걸음={arm.sent} 거절={arm.rejected}")
+    # 걸음을 상한에 꽉 채우지 않는 이유 — 받는 쪽은 **자기가 따로 읽은** 자세로
+    # 크기를 다시 잰다. 그 읽기가 한 박자 늦으면 12.0°짜리 걸음이 12.x°로 읽혀
+    # 거절되고, 그 거절은 "팔이 못 간다"로 기록에 남는다. 여유는 0.5° 이상이어야
+    # 한다(여기서 상수로 못 박는다 — SEND_MARGIN_DEG를 0으로 되돌리면 실패한다).
+    check("walk가 보낸 걸음은 상한에 꽉 차지 않는다(여유 ≥0.5°)",
+          bool(arm.hops) and max(arm.hops) <= es.STEP_DEG - 0.5
+          and es.SEND_MARGIN_DEG >= 0.5,
+          f"최대 걸음 {max(arm.hops) if arm.hops else None}° "
+          f"(상한 {es.STEP_DEG:.0f}° · 여유 {es.SEND_MARGIN_DEG:.1f}°)")
+    r_after = kin.signed_radius(walked["last"], geom)
+    check("완주한 자리는 좌표 가드를 넘는다(뻗기의 목적)",
+          r_after >= es.GUARD_MM,
+          f"signed_r {kin.signed_radius(inside, geom):.0f} → {r_after:.0f}mm "
+          f"(가드 {es.GUARD_MM:.0f}mm)")
+
+    # 안 움직이는 팔 — 영원히 걷지 않고 **못 갔다고 말한다**(뻗은 척 금지)
+    stuck = _SagArm(inside, limits, geom, frozen=True)
+    stopped = _walk(stuck)
+    check("안 움직이는 팔에서는 예산 안에서 멈추고 실패로 남는다",
+          stopped["reached"] is False and stuck.sent <= len(planned_steps) * 3
+          and "안 줄어든다" in stopped["detail"],
+          f"보낸 걸음={stuck.sent} · {stopped['detail']}")
+    check("prep가 그 되읽기 루프를 실제로 쓴다(낡은 걸음 루프로 되돌아오지 않았다)",
+          "es.walk(" in m5_src and 'for step in planned["steps"]:' not in m5_src,
+          "move5_check.run_prep → escape.walk")
 
 
 def test_stage_classify() -> None:

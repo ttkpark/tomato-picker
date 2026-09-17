@@ -289,7 +289,10 @@ def sample_points(n: int, geom: kin.ArmGeometry, seed: int,
 # 0/5**가 남는다 — 그리고 일지와 작업판은 다음 사이클이 사실로 믿는다.
 # 규칙(12°·바닥·한계·목표자세)은 베끼지 않는다: `hardware/escape.py` 하나가 갖고
 # `arm_extend.py`도 같은 것을 쓴다.
-PREP_JOINT_ERR_DEG = 20.0   # 지령과 실제가 이만큼 벌어지면 무언가에 걸린 것이다
+# ⚠ "지령과 실제가 N° 벌어지면 걸린 것"이라는 상수는 여기 없다(2026-09-18 T56에
+# 지웠다). 한 걸음 뒤의 처짐은 정상이고(4~5°), 걸렸다는 진짜 증거는 "한 걸음을
+# 더 보내도 남은 길이 안 줄어든다"이다 — 그 판정은 `escape.walk`의
+# MIN_GAIN_DEG가 한 자리에서 한다.
 
 
 def prep_plan(now_deg: dict[str, float], limits, geom: kin.ArmGeometry,
@@ -418,8 +421,9 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
     def run_prep() -> dict:
         """시험 전에 자세를 본다. 가드 안이면 **뻗고 나서** 시험한다.
 
-        ⚠ 걸음마다 결과를 기다린다 — 토픽은 실패를 안 돌려주므로, 성공했는지
-        모르는 채 다음 걸음을 보내면 팔이 어디 있는지 모르는 상태로 굴러간다.
+        ⚠ 걷는 것은 `escape.walk`가 한다 — 걸음마다 실제 자세를 되읽어 남은
+        길을 다시 짠다. 처음에 짠 걸음들을 그대로 보내면 처짐이 얹혀 두 걸음째가
+        거절된다(T56).
         """
         now = joints_now()
         if now is None:
@@ -444,37 +448,56 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
         print(f"  prep: signed_r {planned['signed_r']}mm < {es.GUARD_MM:.0f}mm — "
               f"{len(planned['steps'])}걸음으로 뻗는다"
               + (f" (목표 자름: {planned['clamped']})" if planned["clamped"] else ""))
-        for step in planned["steps"]:
+        # ⚠ 짜 둔 걸음들을 **그대로 차례로 보내면 두 걸음째부터 거절된다** —
+        #   받는 쪽(arm_source.move_joints_deg)은 지금 실제 자세에서 다시 재는데,
+        #   한 걸음(12°) 뒤 팔은 중력으로 4~5° 처져 있어 다음 목표가
+        #   12+4.3=16.3°가 되기 때문이다(사이클42 실기 기록의 그 숫자, T56).
+        #   되읽고 다시 짜는 일은 escape.walk 하나가 한다(ROS 쪽과 같은 규칙).
+        class _PrepStop(Exception):
+            """뻗기를 더 못 잇는 이유 — walk 바깥으로 그대로 올린다."""
+
+        def measure() -> dict:
+            got = joints_now()
+            if got is None:
+                raise _PrepStop("/joint_states가 안 온다 — 자세를 몰라 멈춘다")
+            return got
+
+        def send(degs: dict) -> None:
             msg = JointState()
             msg.name = list(kin.JOINTS)
-            msg.position = [math.radians(step["degs"][j]) for j in kin.JOINTS]
+            msg.position = [math.radians(degs[j]) for j in kin.JOINTS]
             jres["msg"] = None
             jcmd.publish(msg)
+            # ⚠ 걸음마다 결과를 기다린다 — 토픽은 실패를 안 돌려주므로, 성공했는지
+            #   모르는 채 다음 걸음을 보내면 팔이 어디 있는지 모르는 채 굴러간다.
             end = time.monotonic() + es.SECS_PER_STEP * 4 + 5.0
             while jres["msg"] is None and time.monotonic() < end:
                 rclpy.spin_once(node, timeout_sec=0.1)
             answer = jres["msg"]
             if answer is None:
-                out["detail"] = (f"{step['i']}/{step['of']}걸음에 응답이 없다 — "
-                                 "arm_node가 /arm/joint_command를 받는 판인지 확인하라")
-                return out
+                raise _PrepStop("걸음에 응답이 없다 — arm_node가 "
+                                "/arm/joint_command를 받는 판인지 확인하라")
             if not answer.startswith("ok|"):
-                out["detail"] = f"{step['i']}/{step['of']}걸음 거절 — {answer.split('|', 1)[-1]}"
-                return out
+                raise _PrepStop("걸음 거절 — " + answer.split("|", 1)[-1])
+
+        try:
+            walked = es.walk(planned["target"], measure=measure, send=send,
+                             to_norm=limits.norms, geom=geom, limit=limits.limit)
+        except _PrepStop as stop:
             got = joints_now()
-            if got is None:
-                out["detail"] = f"{step['i']}/{step['of']}걸음 뒤 /joint_states가 안 온다"
-                return out
-            err = max(abs(got[j] - step["degs"][j]) for j in kin.JOINTS if j in got)
-            if err > PREP_JOINT_ERR_DEG:
-                out["detail"] = (f"{step['i']}/{step['of']}걸음에서 지령과 실제가 "
-                                 f"{err:.1f}° 다르다 — 무언가에 걸렸다. 멈춘다")
+            out["detail"] = f"뻗다가 멈췄다 — {stop}"
+            if got is not None:
                 out["signed_r_after"] = round(kin.signed_radius(got, geom), 1)
-                return out
-        got = joints_now() or now
-        r_after = round(kin.signed_radius(got, geom), 1)
-        out.update(extended=True, signed_r_after=r_after,
-                   detail=(f"{len(planned['steps'])}걸음으로 뻗었다 — signed_r "
+            print(f"  prep: {out['detail']}")
+            return out
+        r_after = round(kin.signed_radius(walked["last"], geom), 1)
+        # **"뻗었다"의 뜻은 '가드를 넘었다'**이지 '걸음을 다 보냈다'가 아니다.
+        # 처짐 때문에 목표에 1~2° 못 미쳐도 가드 밖이면 시험은 돌아가고, 반대로
+        # 걸음을 다 보내고도 가드 안이면 5회가 전부 거절당한다 — 그 거짓 0/5를
+        # 기록에서 가려내는 것이 이 표지의 일이다.
+        out.update(extended=r_after >= es.GUARD_MM, signed_r_after=r_after,
+                   sent=walked["sent"], gap_deg=walked["gap_deg"],
+                   detail=(f"{walked['detail']} — signed_r "
                            f"{planned['signed_r']} → {r_after}mm"
                            + ("" if r_after >= es.GUARD_MM else " ⚠ 아직 가드 안쪽이다")))
         print(f"  prep: {out['detail']}")
