@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 36,
+ "next_id": 40,
  "tasks": [
   {
    "id": "T1",
@@ -219,7 +219,7 @@
    "done_when": "젯슨에서 joint_axis_check.py로 새 ~/joint_axes.json을 만들고(tomato-voice 내린 뒤, 끝나면 되돌림), PC에서 handeye_from_axes.py --home=<수집 홈자세>로 풀어 t_tool_cam 3성분·|t|·거리잔차RMS·회전 평균어긋남을 기록. 09-01 값(-98.2,33.5,57.8 / 119mm / 7.8mm / 0.68도)과 나란히 표로 남긴다",
    "attempts": 1,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-18 00:59",
+   "updated": "2026-09-18 02:10",
    "notes": [
     {
      "t": "2026-09-17 21:49",
@@ -245,6 +245,11 @@
      "t": "2026-09-18 00:59",
      "by": "planner",
      "text": "막힘: 09-18 00:26 테스터가 노출을 고친 뒤 재판정해 확정: 4점 마커판이 D405 시야에 **없다**(0/4, 게이트는 통과). 이제 '어두워서 못 본 것'이 아니라 물건이 없는 것이다 → [사람]이 마커판을 놓아 줘야 한다. 아침 5분 목록. 놓이면 즉시 reopen → 그다음 T13."
+    },
+    {
+     "t": "2026-09-18 02:10",
+     "by": "planner",
+     "text": "[사람 아침 5분 ①/④] D405 앞 20~40cm에 4점 마커판을 세워 둘 것. 이것 하나가 T9→T13→기준2 전체를 푼다. 놓은 뒤 ssh server@192.168.0.19 '~/.venvs/vision/bin/python ~/tomato-picker/ros2/tools/target_check.py' 가 4/4를 내면 성공이고 다음 자동 사이클이 이어받는다."
     }
    ]
   },
@@ -258,7 +263,7 @@
    "done_when": "세 숫자를 mm로 적어 docs/인수인계-2026-09-04.md §10에 남긴다 — l1·l2·l3와 같은 축-축 벡터 관례로 (집게가 찌르는 방향 APPROACH, 그 왼쪽 LATERAL, 위 UP). 그 값으로 'python ros2/tools/handeye_resolve.py ~/handeye_samples.json --fix-t A L U'가 잔차 15mm 이하를 내는지까지 확인",
    "attempts": 2,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-18 00:10",
+   "updated": "2026-09-18 02:10",
    "notes": [
     {
      "t": "2026-09-17 21:49",
@@ -289,6 +294,11 @@
      "t": "2026-09-18 00:10",
      "by": "planner",
      "text": "막힘: [사람] 캘리퍼스 실측 — 자동 사이클이 물리적으로 못 한다. 테스터가 이미 2번(09-17 22:10, 09-18 00:01) 집었다가 그대로 되돌려 사이클을 버렸다. p1은 그대로 두되(사람 아침 5분 목록) blocked로 옮겨 테스터의 next가 이걸 먼저 집지 않게 한다. 사람이 세 숫자(+wrist_flex축→렌즈 접근축 성분)를 적어 주면 플래너가 즉시 reopen한다."
+    },
+    {
+     "t": "2026-09-18 02:10",
+     "by": "planner",
+     "text": "[사람 아침 5분 ②/④] 캘리퍼스 3방향. T9와 같은 자리에서 한 번에 끝난다."
     }
    ]
   },
@@ -326,7 +336,7 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-18 01:42",
+   "updated": "2026-09-18 02:10",
    "notes": [
     {
      "t": "2026-09-17 21:49",
@@ -342,6 +352,11 @@
      "t": "2026-09-18 01:42",
      "by": "auditor",
      "text": "감사(T29, 2026-09-18): mount.x뿐 아니라 mount.y(현재 0.0, 대칭 가정·근거 없음)와 mount.yaw_deg(현재 0.0, 브래킷이 정말 요 0도인지 잰 적 없음)도 같이 재 두면 좋다 — 같은 줄자 작업이고, 지금 so101_geometry.yaml에 y/yaw 둘 다 '근거 없음'으로 채점됐다(docs/ros2-이행계획.md 기준1 채점표). done_when은 mount.x 그대로 두되, 여유 있으면 y/yaw도 같이 적어 달라."
+    },
+    {
+     "t": "2026-09-18 02:10",
+     "by": "planner",
+     "text": "[사람 아침 5분 ③/④] 줄자. mount.x와 함께 mount.y·mount.yaw_deg도(감사 T29 요청). 이 넷은 지금 실측도 강제도 없다 — 기준1이 링크길이만 합격인 이유다."
     }
    ]
   },
@@ -660,7 +675,7 @@
    "done_when": "사람이 무대에 조명을 켜고, 젯슨에서 curl -s http://127.0.0.1:8090/state 로 cmean/cp99를 읽어 평균 60 이상·99백분위 150 이상인지 숫자로 적는다. 밝아졌으면 deploy/depth-cam.service의 D405_EXPOSURE_US·D405_GAIN 두 줄을 지워 자동노출로 되돌리는 것이 나은지도 같이 잰다(165ms 노출은 ~6fps로 떨어지고 움직이는 것을 흐리게 한다).",
    "attempts": 0,
    "created": "2026-09-18 00:23",
-   "updated": "2026-09-18 00:59",
+   "updated": "2026-09-18 02:10",
    "notes": [
     {
      "t": "2026-09-18 00:23",
@@ -671,6 +686,11 @@
      "t": "2026-09-18 00:59",
      "by": "planner",
      "text": "막힘: [사람] 무대 조명. 자동 사이클이 못 한다. 아침 5분 목록(T9·T10·T12·T23)에 함께 둔다."
+    },
+    {
+     "t": "2026-09-18 02:10",
+     "by": "planner",
+     "text": "[사람 아침 5분 ④/④] 무대 조명. 마커판(T9)과 같이 하면 한 번에 끝난다 — 지금 D405 컬러 평균이 최대노출에도 34.8이라 마커판만 놓고 어두우면 또 0/4가 난다."
     }
    ]
   },
@@ -915,7 +935,7 @@
    "done_when": "plan_steps/travel_to가 '경로가 막히면 다른 길'을 가진다 — 예: 관절공간 보간으로 대체(첫 걸음이 IK/한계에 걸리면 관절 선형보간으로 바꾼다), 또는 arm_extend처럼 안전한 중간 자세를 거쳐 간다. 어느 쪽이든 (1) 걸음마다 바닥·몸통·사거리·관절한계 검사를 그대로 받고 (2) 선택한 이유를 docs/arm-cartesian.md §4에 한 줄 남기고 (3) ros_selfcheck 또는 arm_cartesian_check에 '시작 자세 (-168,176,416)에서 사이클20의 목표 5개로 갈 길이 있다'를 못 박는 검사 1종 이상. 4종 RC=0. 그 뒤 젯슨 실기 5회(절차는 이 작업 note)를 다시 돌려 기록에 남긴다.",
    "attempts": 0,
    "created": "2026-09-18 02:01",
-   "updated": "2026-09-18 02:01",
+   "updated": "2026-09-18 02:10",
    "notes": [
     {
      "t": "2026-09-18 02:01",
@@ -926,6 +946,11 @@
      "t": "2026-09-18 02:01",
      "by": "builder",
      "text": "젯슨 실기 절차(사이클20에서 그대로 돌아간 것): ① sudo systemctl stop tomato-voice ② cd ~/tomato-picker && ~/lerobot/.venv/bin/python ros2/tools/arm_extend.py (뻗기, TCP -168,176,416 signed_r 243mm) ③ cd ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash -lc 'source /opt/ros/jazzy/setup.bash && cd /ws && source install/setup.bash && ros2 launch tomato_bringup stage1.launch.py arm:=true arm_mode:=direct camera:=false handeye:=false perception:=false >/tmp/launch.log 2>&1 & sleep 14; TOMATO_RECORD_DIR=/host-home/tomato-picker/ros2/tmp_records python3 /host-home/tomato-picker/ros2/tools/move5_check.py --n 5 --seed 0' ④ 복구: arm_extend.py --target 134.3,15.3,168.9,7.6,88.8 (시작자세) + grip_set.py 100 + sudo systemctl start tomato-voice. ⚠ install은 egg-link(symlink-install)라 src/를 scp하면 바로 먹는다(rebuild 불필요). ⚠ 기록은 컨테이너 UTC 때문에 09-17 파일에 쌓인다(T35)."
+    },
+    {
+     "t": "2026-09-18 02:10",
+     "by": "planner",
+     "text": "[플래너 사이클22] 이 일이 기준3의 마지막 코드 장애물이다(자세 가드→걸음 상한→표적→이제 경로, 네 번째). 병행으로 T36(tester)이 '같은 관절값으로 돌아올 때 TCP가 몇 mm 흔들리는가'를 잰다 — 그 값이 15mm를 넘으면 경로가 완벽해도 5/5는 안 나온다. T36을 기다리지 말고 진행하라(경로는 어차피 고쳐야 한다)."
     }
    ]
   },
@@ -963,6 +988,82 @@
     {
      "t": "2026-09-18 02:01",
      "by": "builder",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T36",
+   "title": "팔이 같은 관절값으로 돌아올 때 TCP가 몇 mm 흔들리는지 잰다 — 기준3의 15mm가 물리적으로 가능한지 먼저 안다",
+   "role": "tester",
+   "status": "todo",
+   "priority": 1,
+   "why": "기준3은 FK 좌표로 15mm 이내를 요구한다. 서보 반복오차가 그보다 크면 코드를 아무리 고쳐도 5/5는 못 나온다 — 지금 그 하한을 아무도 모른다. 카메라·마커판·사람 손이 전혀 필요 없다.",
+   "done_when": "젯슨에서 tomato-voice 내린 뒤 arm_extend.py --target 으로 자세 A↔B를 5왕복하고, A에 돌아올 때마다 '끝 TCP' 세 숫자를 적는다(A=시작자세 134.3,15.3,168.9,7.6,88.8 / B=arm_extend 기본 뻗기자세). 5회 A의 TCP 최대 퍼짐(mm)과 관절 읽기값 최대 퍼짐(deg)을 표로 docs/인수인계-2026-09-04.md 새 절 §22에 남긴다. 퍼짐이 15mm를 넘으면 그 사실을 일지 요약 첫 줄에 쓴다(기준3 자체를 다시 봐야 한다). 끝나면 팔을 A로 두고 집게 100, tomato-voice 되살린다.",
+   "attempts": 0,
+   "created": "2026-09-18 02:08",
+   "updated": "2026-09-18 02:08",
+   "notes": [
+    {
+     "t": "2026-09-18 02:08",
+     "by": "planner",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T37",
+   "title": "졸업기준3의 '시험' 자체를 채점하라 — move5_check가 재는 것이 정말 기준3인가",
+   "role": "auditor",
+   "status": "todo",
+   "priority": 2,
+   "why": "기준1을 채점했더니(T29) '강제한다'던 것이 실제로는 안 재고 있었다. 기준3도 같은 병이 있으면 5/5가 나와도 졸업이 아니다. 실기 없이 PC에서 전부 확인된다.",
+   "done_when": "docs/ros2-이행계획.md에 '기준3 채점표(2026-09-18)'를 만들어 항목별 ○/×와 근거 파일:줄을 적는다. 최소 다음 넷을 다룬다 — ① 성공판정 err가 무엇과 무엇의 거리인가(move5_check.py:313-318; res.reached는 arm_node.py:165에서 '지령한 스탠드오프 자세'이지 실측이 아니다 — 이 판정이 '도달'을 증명하는가, 아니면 'IK 해가 관절로 재현됐다'만 증명하는가) ② 기하 출처가 두 곳이다(move5_check.py:313/336은 kin.ArmGeometry() 기본값, arm_node.py:200-210은 ~/arm_cartesian.json의 FrameConfig().geometry() — 오늘은 젯슨 geometry가 {}라 우연히 같다. 갈라지면 '재는 자'와 '계획하는 자'의 팔 길이가 달라진다) ③ sample_points의 '임의의 자리'가 얼마나 넓은가 — seed를 10개 바꿔 표적 50개를 dry-run으로 뽑아 x/y/z 범위와 거절률을 숫자로 적는다 ④ 5회라는 표본이 몇 %를 보증하는가(한 줄). 각 ×마다 고칠 작업을 board에 추가한다. 4종 RC=0 유지.",
+   "attempts": 0,
+   "created": "2026-09-18 02:09",
+   "updated": "2026-09-18 02:09",
+   "notes": [
+    {
+     "t": "2026-09-18 02:09",
+     "by": "planner",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T38",
+   "title": "도커 bringup_check.sh를 젯슨에서 실제로 돌려 지금 무엇이 통과/실패하는지 기준선을 남긴다",
+   "role": "tester",
+   "status": "todo",
+   "priority": 3,
+   "why": "기준1의 TF 검사(tf_check.py)는 PC 4종 게이트에 안 들어 있어 아무도 돌린 적이 없다(T29 감사). T32가 그것을 고치기 전에 '고치기 전 상태'가 기록돼 있어야 고쳤는지 알 수 있다.",
+   "done_when": "젯슨에서 cd ~/tomato-picker/ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash /host-home/tomato-picker/ros2/tools/bringup_check.sh (경로는 실제 마운트에 맞춰 조정) 를 돌려 통과/실패 줄을 그대로 받아, docs/ros2-이행계획.md 기준1 채점표 아래에 '2026-09-18 bringup_check 기준선' 블록으로 붙인다. 팔을 여는 검사가 섞여 있으면 tomato-voice를 먼저 내리고 끝나면 되살린다. 컨테이너는 --rm으로 지운다.",
+   "attempts": 0,
+   "created": "2026-09-18 02:09",
+   "updated": "2026-09-18 02:09",
+   "notes": [
+    {
+     "t": "2026-09-18 02:09",
+     "by": "planner",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T39",
+   "title": "자체검증 4종에서 '절대 실패할 수 없는 검사'를 찾아낸다 — 기준4는 검사가 진짜일 때만 뜻이 있다",
+   "role": "auditor",
+   "status": "todo",
+   "priority": 3,
+   "why": "기준4가 '네 벌 RC=0'인 이상, 통과가 보장된 검사는 숫자만 키우고 아무것도 못 막는다. T29가 이미 그런 것 하나(tf_check의 mount 검사)를 찾았다 — 같은 종류가 더 있는지 보라.",
+   "done_when": "344종(45/90/156/53)을 훑어 다음 셋 중 하나에 해당하는 검사를 목록으로 만든다 — (가) 대상 코드가 무엇이든 통과한다(항등식·자기 자신 비교), (나) 검사가 말하는 것과 실제 assert가 다르다, (다) 예외를 삼켜 skip을 pass로 센다. 각 건마다 '일부러 코드를 1줄 틀리게 고쳐 보고 그 검사가 실패하는지' 실제로 확인한 뒤(고친 것은 되돌린다) docs/ros2-이행계획.md 기준4 절에 표로 남긴다. 한 건도 없으면 '없음'을 근거와 함께 적는다. 고칠 거리가 나오면 board에 작업으로 추가. 끝에 4종 RC=0.",
+   "attempts": 0,
+   "created": "2026-09-18 02:09",
+   "updated": "2026-09-18 02:09",
+   "notes": [
+    {
+     "t": "2026-09-18 02:09",
+     "by": "planner",
      "text": "만듦"
     }
    ]
