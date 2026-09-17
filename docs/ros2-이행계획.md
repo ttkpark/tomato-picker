@@ -71,6 +71,36 @@ tools/tag.sh v2.0.0-ros.2 "손-눈 보정 실측 통과"
 바닥·몸통·사거리·관절한계 검사를 다시 받는다.** 상한을 키워서 푸는 것은 금지다.
 왜·어떻게 = [`docs/arm-cartesian.md`](arm-cartesian.md) §4.
 
+### 기준1 채점표(2026-09-18, 감사)
+
+기준1 = "링크 길이·마운트를 자로 잰 실측값으로 URDF와 `kinematics.py`가
+일치한다." 이제까지 이 항목은 09-17 사이클1의 한 줄("남은 미실측은
+`mount.x` 하나뿐")로만 채점돼 왔다. `so101_geometry.yaml`의 **모든 키**를
+훑어 (a) `ros_selfcheck.py`가 실제로 강제하는가 (b) 숫자가 실측인가 짐작인가를
+따로 봤다.
+
+| 키 | 강제하는 검사 | 실측 여부(근거) |
+|---|---|---|
+| `arm.z0/d0/l1/l2/l3` | ✅ `ros_selfcheck.test_geometry_matches`(yaml↔`ArmGeometry` 기본값 1e-9 일치) + `test_urdf_matches_kinematics`(so101_arm.xacro 사슬을 직접 파싱한 FK를 7자세에서 `kinematics.forward()`와 대조) | 실측. yaml 주석 "2026-08-31 실측"(`so101_geometry.yaml:16`) |
+| `arm.limits_deg`(6관절) | ❌ 없음. `description.launch.py`가 xacro 인자로 흘려보내 URDF 조인트 리밋에는 들어가지만, 그 값이 실제 팔 캘리브레이션(`arm_cartesian.json`)과 같은지 비교하는 검사가 없다 | 짐작. yaml 자신이 "⚠ 추정치다"라고 적어 뒀다(`so101_geometry.yaml:24`) — 실제 한계는 대시보드 캘리브레이션이 따로 정한다. 설계상 의도된 분리라 이 자체는 결함이 아니지만, "일치"를 주장할 근거는 없다 |
+| `mount.x` | ❌ 없음 | 미실측. yaml 자신이 "아직 안 쟀다"라고 적어 뒀다(`so101_geometry.yaml:38`) → 이미 T12로 추적 중 |
+| `mount.y` | ❌ 없음 | 근거 없음(0.0을 대칭 가정으로 둔 듯하나 주석이 없다) |
+| `mount.z` | ⚠ 약함. `tf_check.py`(도커·라이브 ROS 필요, PC 자체검증 4벌에 안 들어간다)가 `base_link→arm_base` 변환이 "0이 아니다"만 확인한다 — **yaml의 76.5와 같은지는 비교하지 않는다**(주석은 "so101_geometry.yaml과 같은가"라고 적어 놓고 실제로는 안 그런다, `tf_check.py:136-143`) | 실측. yaml 주석 "2026-08-31 실측"(`so101_geometry.yaml:40`) — 숫자는 맞을 가능성이 높지만 자동 검사가 그걸 보장하지 않는다 |
+| `mount.yaw_deg` | ❌ 없음 | 근거 없음(0.0 가정, 실제 브래킷이 정말 요 0°로 붙었는지 잰 기록이 없다) |
+| `base.length/width/height/wheel_radius` | ❌ 없음 | 근거 없음. 다만 yaml 자신이 "시각화용. 주행 계산에는 안 쓴다"고 적어 뒀으므로(`so101_geometry.yaml:43`) 기준1(팔 IK 정확도)과 무관 — 결함 아님 |
+
+**추가로 발견한 것(기준1과 별개, 문서 정확성 문제라 바로 고침)**: 최상위
+`tomato_robot.urdf.xacro`의 `xacro:arg default`가 옛 근사치(z0=55/l1=116/
+l2=135/l3=95, mount_z=180)를 그대로 두고 있었다 — `description.launch.py`가
+매번 yaml 값으로 덮어써서 정상 경로에선 안 드러나지만, xacro를 그 launch
+없이 손으로 펴 보면(디버깅 중 흔하다) **조용히 틀린 로봇**을 그린다. 지금
+실측값으로 맞춰 뒀다(`ros2/src/tomato_description/urdf/tomato_robot.urdf.xacro`).
+동작은 안 바뀐다(기본값은 정상 경로에서 항상 덮어써진다) — 45/90/135/53 재확인 RC=0.
+
+**결론**: 기준1은 "링크 길이는 실측+강제, 마운트는 실측이어도 강제가 없거나
+없다" — 09-17의 "합격, 미실측은 mount.x 하나"는 **틀렸다**. 이 표가 새로 연
+작업은 아래 T32(감사가 신설).
+
 ### 1단계 (`ros.1`) — 지금 여기
 
 | | 상태 |

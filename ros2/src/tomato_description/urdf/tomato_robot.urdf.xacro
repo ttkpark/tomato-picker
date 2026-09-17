@@ -14,17 +14,23 @@
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="tomato_robot">
 
-  <!-- ── 링크 길이 (mm) ── kinematics.ArmGeometry와 같은 값이어야 한다 -->
-  <xacro:arg name="z0_mm" default="55.0"/>
-  <xacro:arg name="d0_mm" default="0.0"/>
-  <xacro:arg name="l1_mm" default="116.0"/>
-  <xacro:arg name="l2_mm" default="135.0"/>
-  <xacro:arg name="l3_mm" default="95.0"/>
+  <!-- ── 링크 길이 (mm) ── kinematics.ArmGeometry와 같은 값이어야 한다.
+       기본값은 description.launch.py가 so101_geometry.yaml에서 항상 덮어쓰므로
+       정상 경로에선 안 쓰인다 — 그래도 옛 근사치를 남겨 두면 xacro를 launch
+       없이 손으로 펴 봤을 때 조용히 틀린 로봇을 그린다(2026-09-18 감사 때 발견,
+       옛값 z0=55/l1=116/l2=135/l3=95 vs 실측 119.5/116.5/138.0/168.0). so101_geometry.yaml
+       2026-08-31 실측값으로 맞춰 둔다. -->
+  <xacro:arg name="z0_mm" default="119.5"/>
+  <xacro:arg name="d0_mm" default="-31.5"/>
+  <xacro:arg name="l1_mm" default="116.5"/>
+  <xacro:arg name="l2_mm" default="138.0"/>
+  <xacro:arg name="l3_mm" default="168.0"/>
 
-  <!-- ── 팔 마운트 (mm, 도) ── -->
+  <!-- ── 팔 마운트 (mm, 도) ── 기본값 근거는 위와 같음(so101_geometry.yaml의
+       mount.z=76.5 2026-08-31 실측; mount.x=60.0은 아직 미실측 근사치 그대로) -->
   <xacro:arg name="mount_x_mm" default="60.0"/>
   <xacro:arg name="mount_y_mm" default="0.0"/>
-  <xacro:arg name="mount_z_mm" default="180.0"/>
+  <xacro:arg name="mount_z_mm" default="76.5"/>
   <xacro:arg name="mount_yaw_deg" default="0.0"/>
 
   <!-- ── 차체 (mm) ── -->

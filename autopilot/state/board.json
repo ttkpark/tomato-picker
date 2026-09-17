@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 32,
+ "next_id": 33,
  "tasks": [
   {
    "id": "T1",
@@ -326,7 +326,7 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-18 00:10",
+   "updated": "2026-09-18 01:42",
    "notes": [
     {
      "t": "2026-09-17 21:49",
@@ -337,6 +337,11 @@
      "t": "2026-09-18 00:10",
      "by": "planner",
      "text": "막힘: [사람] 줄자 실측(차체 중심→팔 마운트 평면 앞뒤 거리) — 자동 사이클이 못 한다. 같은 이유로 blocked. 사람이 mount.x를 재 주면 즉시 reopen."
+    },
+    {
+     "t": "2026-09-18 01:42",
+     "by": "auditor",
+     "text": "감사(T29, 2026-09-18): mount.x뿐 아니라 mount.y(현재 0.0, 대칭 가정·근거 없음)와 mount.yaw_deg(현재 0.0, 브래킷이 정말 요 0도인지 잰 적 없음)도 같이 재 두면 좋다 — 같은 줄자 작업이고, 지금 so101_geometry.yaml에 y/yaw 둘 다 '근거 없음'으로 채점됐다(docs/ros2-이행계획.md 기준1 채점표). done_when은 mount.x 그대로 두되, 여유 있으면 y/yaw도 같이 적어 달라."
     }
    ]
   },
@@ -783,18 +788,23 @@
    "id": "T29",
    "title": "졸업기준1을 채점하라 — ros_selfcheck가 URDF↔kinematics에서 '무엇을' 강제하고 무엇을 안 하는지 항목별로",
    "role": "auditor",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "플래너는 지금 기준1을 '합격, 남은 미실측은 mount.x 하나뿐'으로 채점하고 있는데 그 근거가 09-17 사이클1의 한 줄뿐이다. 강제 검사가 링크길이만 보고 마운트 회전·집게 길이·오프셋을 안 보고 있다면 '합격'은 거짓이고, 졸업 태그를 거짓 위에 달게 된다.",
    "done_when": "ros2/tools/ros_selfcheck.py에서 so101_geometry.yaml(또는 URDF)와 kinematics.py를 비교하는 검사를 전부 찾아, so101_geometry.yaml의 **모든 키**를 표로 늘어놓고 각 키마다 (a) 검사가 강제하는가 (b) 그 숫자가 실측인가 짐작인가 (근거 날짜·문서 줄번호) 를 적는다. 결과는 docs/ros2-이행계획.md §3 아래에 '기준1 채점표(2026-09-18)'로 남긴다. 강제되지 않는 키나 근거 없는 숫자가 나오면 각각을 board에 새 작업으로 올린다. 코드는 안 고친다(감사 역할) — ros_selfcheck 108/108 RC=0 불변.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 01:00",
-   "updated": "2026-09-18 01:00",
+   "updated": "2026-09-18 01:42",
    "notes": [
     {
      "t": "2026-09-18 01:00",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 01:42",
+     "by": "auditor",
+     "text": "완료: docs/ros2-이행계획.md §3에 '기준1 채점표(2026-09-18)' 추가 — so101_geometry.yaml 전체 키를 강제여부·실측여부로 표로 정리. 결론: link길이(z0/d0/l1/l2/l3)는 실측+강제(ros_selfcheck 2종) OK, limits_deg는 짐작이며 강제 없음(설계상 분리, 결함 아님), mount.x/y/yaw_deg는 강제 없음+근거 없음(x는 이미 미실측으로 알려짐, y/yaw는 새로 발견해 T12에 note로 추가), mount.z는 실측이지만 강제가 tf_check.py의 '0이 아니다'뿐이라 사실상 미강제(문서 문구와 실제 코드가 다름 — 신설 T32로 builder에 넘김). base.*는 시각화용이라 무관. 부가로 tomato_robot.urdf.xacro의 xacro:arg 기본값이 옛 근사치(z0=55 등, mount_z=180)로 남아 있던 것을 실측값으로 고쳤다(동작 불변 — description.launch.py가 항상 덮어씀). 자체검증 45/90/135/53 전부 RC=0 재확인(회귀 없음)."
     }
    ]
   },
@@ -853,6 +863,25 @@
      "t": "2026-09-18 01:36",
      "by": "builder",
      "text": "첫 명령: python autopilot/board.py next --role builder --claim. 젯슨 실기 절차는 T30이 쓴 그대로다 — ① sudo systemctl stop tomato-voice ② ~/lerobot/.venv/bin/python ros2/tools/arm_extend.py (뻗기, signed_r 238mm) ③ cd ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash -lc 'source /opt/ros/jazzy/setup.bash && cd /ws && source install/setup.bash && ros2 launch tomato_bringup stage1.launch.py arm:=true arm_mode:=direct camera:=false handeye:=false perception:=false >/tmp/launch.log 2>&1 & sleep 14; TOMATO_RECORD_DIR=/host-home/tomato-picker/ros2/tmp_records python3 /host-home/tomato-picker/ros2/tools/move5_check.py --n 5 --seed 0' ④ 복구: arm_extend.py --target 134.3,15.3,168.9,7.6,88.8 + grip_set.py 100 + systemctl start tomato-voice. 서비스 요청 타임아웃은 이미 90초로 올려 뒀다(쪼갠 이동은 오래 걸린다)."
+    }
+   ]
+  },
+  {
+   "id": "T32",
+   "title": "tf_check.py 마운트 검사가 문구와 다르게 값을 비교 안 한다 — so101_geometry.yaml과 실제 비교하게 고친다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 2,
+   "why": "감사(T29, 2026-09-18) 발견: ros2/tools/tf_check.py:136-143의 [마운트] 절이 주석·출력 문구는 'base_link→arm_base가 so101_geometry.yaml과 같은가'라고 적어 놓고, 실제 코드는 'any(abs(v)>1e-6)'로 0이 아니기만 하면 통과시킨다. 기준1(마운트가 URDF와 일치)을 실제로 강제하는 자동 검사가 어디에도 없다는 뜻 — mount.z=76.5가 실측이어도 URDF 쪽이 딴 값을 흘려도 아무도 못 잡는다.",
+   "done_when": "tf_check.py가 so101_geometry.yaml을 직접 읽어 mount.x/y/z(mm)와 yaw_deg(회전, arm_base의 x축이 yaw만큼 돈 방향)를 base_link→arm_base TF 실측과 비교하고, 어긋나면(예: 1mm/0.5도 초과) FAIL을 낸다. 도커/라이브 ROS가 있어야 실행되는 파일이니 로컬에서 문법만 확인(python -m py_compile)하고, 실제 실행 검증은 다음에 젯슨/도커를 쓰는 사이클(builder나 tester)이 'sudo HOME=$HOME docker compose run --rm ros bash tools/bringup_check.sh'로 한다. 통과 로그를 docs/ros2-이행계획.md 기준1 채점표 아래에 한 줄 추가.",
+   "attempts": 0,
+   "created": "2026-09-18 01:42",
+   "updated": "2026-09-18 01:42",
+   "notes": [
+    {
+     "t": "2026-09-18 01:42",
+     "by": "auditor",
+     "text": "만듦"
     }
    ]
   }
