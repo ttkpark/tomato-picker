@@ -1299,13 +1299,13 @@
    "id": "T43",
    "title": "move5_check --dry-run이 진짜 시험기록에 쓴다 — 연습과 기록이 같은 파일이다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 3,
    "why": "2026-09-18 builder(T35): PC에서 --dry-run --n 2를 스모크 테스트로 돌렸더니 docs/시험기록/move-to-point-2026-09-18.jsonl에 dry_run 줄 2개가 섞였다(git checkout으로 되돌렸다). 기록은 다음 사이클이 사실로 믿는 물건인데, 기본값이 '진짜 기록에 쓰기'라 연습 한 번이 그것을 오염시킨다. TOMATO_RECORD_DIR이 있지만 기억해야 쓴다.",
    "done_when": "--dry-run의 기본 기록 자리를 연습용으로 가르거나(예: docs/시험기록/dry/ 또는 임시 디렉터리), 진짜 기록에 쓸 때는 --record 같은 명시가 필요하게 한다. 어느 쪽이든 실기 판정(run_real)의 기본 동작은 그대로여야 한다. ros_selfcheck [기록]에 '--dry-run은 진짜 기록 파일을 건드리지 않는다' 1종. 4종 RC=0.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 03:13",
-   "updated": "2026-09-18 06:15",
+   "updated": "2026-09-18 06:29",
    "notes": [
     {
      "t": "2026-09-18 03:13",
@@ -1316,6 +1316,11 @@
      "t": "2026-09-18 06:15",
      "by": "builder",
      "text": "2026-09-18 06:2x builder(T58): 이 작업이 쓸 재료가 생겼다 — move5_check에 record_home()(repo/volatile/unwritable)과 RECORD_HOME 상수가 있다. --dry-run의 연습 기록을 가를 때 같은 자리(main()의 out_path 계산)에서 하면 된다. ⚠ 새로 붙은 것: 기록 줄마다 record_home·t가 붙는다(record() 안). 연습 기록을 다른 자리로 보내도 그 두 칸은 그대로 따라간다."
+    },
+    {
+     "t": "2026-09-18 06:29",
+     "by": "builder",
+     "text": "완료: --dry-run은 이제 임시 연습 자리(<temp>/tomato-move5-dry/)에 쓴다 — 진짜 기록에 남기려면 --record. 실기(run_real) 기본은 그대로 docs/시험기록. 연습 줄은 record_home=practice(젯슨 volatile과 구분). 검증: ros_selfcheck [기록] 13→19종(갈림 3종 + 실제로 --dry-run을 돌려 진짜 파일 바이트 불변 확인 3종), 돌연변이 3건 전부 FAIL 후 복구(갈림제거=4실패이며 실제로 진짜 기록에 연습 2줄이 섞였다·되돌림 / practice표지제거=1 / --record무시=1). PC 4종 RC=0: 45/102/270/91=508. 젯슨 배포·md5 6d3030b7 일치, 젯슨 실행 실측: 기록=/tmp/tomato-move5-dry/…[practice], 젯슨 진짜 기록 20줄 그대로. 팔·서비스 안 건드림."
     }
    ]
   },
@@ -1748,7 +1753,7 @@
    "done_when": "어느 관절의 어느 구간이 왜 걸리는지 PC에서 먼저 가른다(가짜 팔: ros_selfcheck의 _sim_escape_arm/ESCAPE_NORM_2026_09_18 자세를 쓰면 팔 없이 재현된다). 그 뒤 둘 중 하나: (a) arm_stage가 escape.plan/walk를 쓰도록 옮긴다(규칙이 하나로 줄어든다) (b) 옮기지 않는 이유를 코드 주석에 적고 자체 검사만 고친다. ros_selfcheck에 'A자세에서 park 목표로 가는 경로가 막히지 않는다' 1종 이상. PC 4종 RC=0. 실기(조작대 park 버튼)는 tester 몫.",
    "attempts": 0,
    "created": "2026-09-18 05:52",
-   "updated": "2026-09-18 06:05",
+   "updated": "2026-09-18 06:29",
    "notes": [
     {
      "t": "2026-09-18 05:52",
@@ -1759,6 +1764,11 @@
      "t": "2026-09-18 06:05",
      "by": "tester",
      "text": "2026-09-18 05:5x tester(T57 뒷정리): park가 A자세뿐 아니라 실기 5회 뒤 아무 자세에서나 막힌다는 것을 추가 확인했다 — 트라이얼5 종료 자세에서 job=stage로 3단계에 걸쳐 PARK(60,65,0,-100,6)까지 남은 차이를 pan+2.5/lift+12.4/elbow+6.2/wristflex+15.2/roll-4.7°로 좁혔는데도 4번 전부 wrist_flex한계로 거절됐다(재현: click-server POST /run {job:stage,target:<중간값>} 반복 후 job:park). wrist_flex=-100 자체가 관절 하나씩 순서대로 움직이는 지금 경로 전략으로는 이 팔에서 사실상 못 가는 자리일 수 있다 — done_when의 PC 재현(가짜 팔)에 이 좁혀진 근접 자세도 케이스로 넣어 보길 권한다. 상세: docs/ros2-이행계획.md 'T57 실기 5회' 절."
+    },
+    {
+     "t": "2026-09-18 06:29",
+     "by": "builder",
+     "text": "2026-09-18 06:3x builder(T43): 다음 builder가 집을 것은 T60이다(사이클46 builder의 '다음 한 수'가 그대로 남아 있다 — 이번 사이클은 board.py next가 T43을 내줘 그것을 했다). 재현은 ros_selfcheck의 _sim_escape_arm/ESCAPE_NORM_2026_09_18 + tester가 사이클45에 남긴 근접 자세(pan+2.5/lift+12.4/elbow+6.2/wristflex+15.2/roll-4.7°)."
     }
    ]
   }

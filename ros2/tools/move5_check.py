@@ -13,7 +13,9 @@
         표적을 눈으로 보고 정한 자리를 그대로 넣는다 — 무작위로 만들지 않는다.
         기본(파일 없음)은 forward()로 만든 사거리 안 임의 점 5개를 쓴다.
 
-매 시도를 `docs/시험기록/move-to-point-<오늘날짜>.jsonl`에 한 줄로 남긴다:
+매 시도를 `docs/시험기록/move-to-point-<오늘날짜>.jsonl`에 한 줄로 남긴다
+(⚠ `--dry-run`은 **연습 자리**(임시 디렉터리)에 남긴다 — 연습 한 번이 그날의 진짜
+기록을 오염시킨 적이 있다, T43. 연습도 진짜 기록에 남기려면 `--record`):
     trial, commanded{x,y,z,pitch}, standoff_mm, ok, reached{x,y,z}(관절 FK),
     error_mm, stage(실패 단계: timeout/step/tf/pose/ik/joint/None), detail, dry_run,
     limits(표적을 뽑을 때 **이 팔의 가동범위를 알고 있었나** — 보정표 경로 또는
@@ -51,6 +53,7 @@ import os
 import random
 import re
 import sys
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -63,7 +66,33 @@ from tomato_picker.hardware import escape as es  # noqa: E402
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
 from tomato_picker.hardware import load_limits as ld  # noqa: E402
 
-RECORD_DIR = os.environ.get("TOMATO_RECORD_DIR") or os.path.join(REPO, "docs", "시험기록")
+RECORD_DIR_ENV = os.environ.get("TOMATO_RECORD_DIR")
+RECORD_DIR = RECORD_DIR_ENV or os.path.join(REPO, "docs", "시험기록")
+# 연습(--dry-run)이 떨어지는 자리. 저장소 밖이라 무엇을 몇 번 돌려도 진짜 기록이
+# 더러워지지 않는다 — 지우는 것도 사람이 신경 쓸 일이 아니다.
+DRY_RECORD_DIR = os.path.join(tempfile.gettempdir(), "tomato-move5-dry")
+
+
+def record_dir_for(dry_run: bool, record: bool) -> tuple[str, str]:
+    """이 판의 기록이 **어디에 떨어지는가**. (디렉터리, 왜)
+
+    이 갈림이 있는 이유 (2026-09-18, T43): 사이클35의 빌더가 도구를 고친 뒤
+    `--dry-run --n 2`를 스모크 테스트로 한 번 돌렸더니 그날의 진짜 시험기록
+    (`move-to-point-2026-09-18.jsonl`)에 연습 줄 2개가 섞였다(git checkout으로
+    되돌렸다). 기록은 다음 사이클이 **사실로 믿는** 유일한 물건인데 연습 한 번이
+    그것을 오염시킨다 — 기본값이 틀려 있었던 것이다. 그래서 연습은 기본이
+    연습 자리고, 진짜 기록에 남기려면 `--record`로 **말해야** 한다.
+
+    ⚠ 실기(run_real)의 기본은 건드리지 않는다 — 실기 판정은 늘 진짜 기록이다.
+    ⚠ `TOMATO_RECORD_DIR`을 준 것도 '말한 것'으로 본다(그 자리에 모으려고
+      일부러 준 값을 연습이라고 빼앗으면 놀란다).
+    """
+    if dry_run and not record and not RECORD_DIR_ENV:
+        return DRY_RECORD_DIR, "연습 — 진짜 기록에 남기려면 --record"
+    if dry_run:
+        why = "--record" if record else "TOMATO_RECORD_DIR"
+        return RECORD_DIR, f"연습이지만 {why}로 진짜 기록 자리를 지정했다"
+    return RECORD_DIR, "실기 기록"
 
 
 def record_home(path: str) -> tuple[str, str]:
@@ -618,6 +647,10 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--record", action="store_true",
+                    help="연습(--dry-run)도 진짜 시험기록에 남긴다 (기본은 "
+                         "임시 연습 자리 — 연습 한 번이 기록을 오염시키지 "
+                         "않게)")
     ap.add_argument("--points", default="")
     ap.add_argument("--n", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
@@ -662,10 +695,23 @@ def main() -> int:
         points = sample_points(args.n, geom, args.seed, limits=limits, load=load)
 
     today = time.strftime("%Y-%m-%d")
-    out_path = os.path.join(RECORD_DIR, f"move-to-point-{today}.jsonl")
+    out_dir, out_why = record_dir_for(args.dry_run, args.record)
+    out_path = os.path.join(out_dir, f"move-to-point-{today}.jsonl")
+    # 이 판이 어디에 떨어지는지는 **줄에도** 남아야 한다(T58) — 연습 자리는
+    # 저장소 밖이지만 젯슨의 volatile과 뜻이 다르다(회수할 것이 없다).
+    # 그래서 세 갈래에 "practice"를 하나 더 둔다. 못 쓰는 자리만은 그대로
+    # unwritable로 둬서 아래의 정지가 연습에서도 먹게 한다.
+    global RECORD_HOME, RECORD_HOME_WHY
+    RECORD_HOME, RECORD_HOME_WHY = record_home(out_dir)
+    practice = out_dir == DRY_RECORD_DIR
+    if practice and RECORD_HOME != "unwritable":
+        RECORD_HOME = "practice"
+        RECORD_HOME_WHY = f"{out_dir} — 연습 자리(커밋되지 않고 회수할 것도 없다)"
 
     print(f"{len(points)}개 표적, 기록: {out_path}  [{local_zone()}]  "
           f"[{RECORD_HOME}]")
+    if practice:
+        print(f"   ↳ {out_why}")
     # **못 쓰는 자리면 팔을 움직이기 전에 멈춘다.** 기록 없는 5회는 다음 사이클에
     # 아무것도 아니다 — 팔만 움직이고 사실은 남지 않는다(T58).
     if RECORD_HOME == "unwritable":

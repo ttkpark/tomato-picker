@@ -40,8 +40,10 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 
 # 서드파티보다 먼저 — pyyaml이 없어 여기서 죽는 것을 "통과"로 오독한 적이 있다
@@ -1832,6 +1834,53 @@ def test_record_destination() -> None:
     pull_body = open(os.path.join(ROS2, "tools", "record_pull.py"), encoding="utf-8").read()
     check("record_pull이 로컬 파일을 append로만 연다",
           'open(local_path, "a"' in pull_body and 'open(local_path, "w"' not in pull_body)
+
+    # ── 연습(--dry-run)은 진짜 기록을 건드리지 않는다 (T43) ──────────────
+    # 이 검사가 있는 이유: 사이클35의 빌더가 도구를 고친 뒤 스모크 테스트로
+    # `--dry-run --n 2`를 한 번 돌렸더니 그날의 진짜 시험기록에 연습 줄 2개가
+    # 섞였다. 기록은 다음 사이클이 사실로 믿는 물건이라 **연습과 기록은 같은
+    # 파일이면 안 된다.** 갈림 자체(record_dir_for)와, 실제로 돌려서 진짜
+    # 파일의 바이트가 그대로인지를 둘 다 본다 — 갈림만 보면 나중에 부르는 쪽이
+    # 바뀌었을 때 조용히 돌아온다.
+    dry_dir, _ = m5.record_dir_for(dry_run=True, record=False)
+    real_dir, _ = m5.record_dir_for(dry_run=False, record=False)
+    check("연습의 기본 기록 자리가 진짜 기록과 다르다", dry_dir != real_dir,
+          f"연습={dry_dir} / 진짜={real_dir}")
+    check("실기(run_real)의 기본 기록 자리는 그대로다", real_dir == m5.RECORD_DIR,
+          "실기 판정은 늘 진짜 기록이다")
+    check("--record를 주면 연습도 진짜 기록 자리로 간다",
+          m5.record_dir_for(dry_run=True, record=True)[0] == m5.RECORD_DIR,
+          "진짜 기록에 남기려면 말해야 한다")
+
+    today = time.strftime("%Y-%m-%d")
+    real_path = os.path.join(m5.RECORD_DIR, f"move-to-point-{today}.jsonl")
+    before = open(real_path, "rb").read() if os.path.exists(real_path) else None
+    tmp = tempfile.mkdtemp(prefix="dry-rec-")
+    try:
+        env = dict(os.environ)
+        env.pop("TOMATO_RECORD_DIR", None)
+        # 연습 자리는 임시 디렉터리에서 온다 — 여기를 옮기면 연습 줄이
+        # 어디로 떨어지는지까지 같이 확인된다.
+        for key in ("TMPDIR", "TMP", "TEMP"):
+            env[key] = tmp
+        proc = subprocess.run(
+            [sys.executable, os.path.join(ROS2, "tools", "move5_check.py"),
+             "--dry-run", "--n", "2"],
+            cwd=REPO, env=env, capture_output=True, text=True, encoding="utf-8")
+        after = open(real_path, "rb").read() if os.path.exists(real_path) else None
+        check("--dry-run은 진짜 기록 파일을 건드리지 않는다",
+              proc.returncode == 0 and after == before,
+              f"rc={proc.returncode} {'바이트 그대로' if after == before else '바뀌었다'}")
+        practice = os.path.join(tmp, "tomato-move5-dry",
+                                f"move-to-point-{today}.jsonl")
+        rows = [json.loads(ln) for ln in
+                open(practice, encoding="utf-8").read().splitlines() if ln.strip()]             if os.path.exists(practice) else []
+        check("연습 줄은 연습 자리에 떨어진다", len(rows) == 2, f"{practice} {len(rows)}줄")
+        check("연습 줄은 record_home=practice로 표시된다",
+              bool(rows) and all(r.get("record_home") == "practice" for r in rows),
+              "젯슨의 volatile과 뜻이 다르다 — 회수할 것이 없다")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_line_endings() -> None:

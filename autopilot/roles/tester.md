@@ -46,6 +46,10 @@ ssh … 'systemctl is-active tomato-voice controller-drive depth-cam astra-cam c
   `python ros2/tools/record_pull.py --date <날짜>` (덮지 않고 붙인다, 두 번 돌려도
   안전하다). `move5_check`도 기록 자리가 저장소 밖이면 끝에 이 줄을 스스로 찍는다.
   회수를 잊으면 그 실기는 다음 사이클에 **없던 일**이 된다(2026-09-18 사이클42가 그랬다).
+- ⚠ 거꾸로 **없던 일이 기록에 남는 것**도 막았다: `move5_check --dry-run`은 이제
+  임시 자리에 쓴다(줄에 `record_home="practice"`). 연습을 진짜 기록에 남기려면
+  `--record`를 붙여 말해야 한다 — 스모크 테스트 한 번이 그날 기록을 오염시킨
+  적이 있다(T43).
 
 ## 시험의 원칙 (이 저장소가 비싸게 배운 것)
 - **판정을 사진이 아니라 물리에서** 하라. 집게가 물었는지는 집게 값이 말한다
