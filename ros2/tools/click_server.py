@@ -30,7 +30,7 @@ API 요약 (전부 JSON)
     GET  /frame.jpg                  손목 화면
     POST /click   {u,v,mode}         mode=target(줄기) | grip(십자)
     POST /clear                      표적 지움
-    POST /run     {job,args}         job=stage|jog|grasp|grip|pose|park|loop
+    POST /run     {job,args}         job=stage|jog|grasp|grip|pose|park|loop|extend|roll0|swab
     POST /stop                       도는 일을 끊는다
 """
 
@@ -252,6 +252,24 @@ def build(job, args):
         # 사람이 그 자세를 만들 길이 화면에 있어야 한다(2026-09-18 사람 지시).
         # 나머지 넷을 받아적지 않는 이유는 arm_stage.py의 --set 주석에 있다.
         return [PY, T("arm_stage.py"), "--set", "wrist_roll=0"]
+    if job == "extend":
+        # **특이점에서 빠져나오기.** 지금까지 ssh로 lerobot venv를 불러 arm_extend.py를
+        # 손으로 돌리는 것만 됐다 — 아침 5분에 ssh가 끼면 그 5분이 안 끝난다(T51).
+        # 목표자세·걸음 상한은 여기서 다시 정하지 않는다 — `--target`을 안 주면
+        # arm_extend.py가 `escape.TARGET_DEG`를 그대로 쓰고, 걸음은 그 스크립트가
+        # `escape.plan`으로 쪼갠다(베끼면 갈라진다, arm_extend.py 상단 주석과 같은 이유).
+        a = [PY, T("arm_extend.py")]
+        t = str(args.get("target", "")).strip()
+        if t:
+            parts = t.replace(" ", "").split(",")
+            if len(parts) != 5:
+                raise ValueError("target 은 관절 5개(도)여야 한다")
+            for p in parts:
+                float(p)
+            a += ["--target=" + ",".join(parts)]
+        if args.get("dry"):
+            a += ["--dry"]
+        return a
     if job == "grip":
         return [PY, T("grip_set.py"), "%.0f" % num(args, "value", 78, 0, 100)]
     if job == "jog":
@@ -518,6 +536,13 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <input id="s_t" style="width:190px" placeholder="60,65,0,-100,6">
       <button onclick="run('stage',{target:document.getElementById('s_t').value})">그 자세로</button>
     </div>
+    <div class="row" style="margin-top:8px">
+      <button class="go" onclick="run('extend',{})">특이점 탈출(펴기)</button>
+      <button onclick="run('extend',{dry:1})">미리보기(--dry)</button>
+    </div>
+    <div class="k" style="margin-top:4px">집게가 회전축 위에 서서(pitch≈-90°) 좌표이동이 거절될 때 씀 —
+      관절 걸음으로 조금씩 펴서 빠져나온다. 손목 케이블이 감길 수 있으니
+      <b>사람이 보는 앞에서만</b> 누른다.</div>
   </div>
 
   <div class="card"><h2>멈춤</h2>

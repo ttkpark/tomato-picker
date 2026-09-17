@@ -929,6 +929,30 @@ def test_arm_extend_escape() -> None:
           abs(r_goal) <= kin.ArmGeometry().reach_max,
           f"{r_goal:.1f} ≤ {kin.ArmGeometry().reach_max:.1f}mm")
 
+    # ⚠ T51: 조작대에도 뻗기(arm_extend)를 붙였다 — ssh로 lerobot venv를 불러야만
+    #   되던 조작이라 아침 5분에 ssh가 끼면 그 5분이 안 끝났다. 목표자세·걸음
+    #   상한은 escape.py 하나가 갖고, 여기서 다시 정의하면 베껴서 갈라진다
+    #   (arm_extend.py 상단 주석과 같은 이유) — 그래서 조작대는 값을 넘기지
+    #   않고 arm_extend.py가 escape.TARGET_DEG/plan을 그대로 쓰게 둔다.
+    sys.path.insert(0, os.path.join(ROS2, "tools"))
+    import click_server as csrv  # noqa: E402
+    cs_src = open(os.path.join(ROS2, "tools", "click_server.py"), encoding="utf-8").read()
+    check("조작대에 특이점 탈출(extend) 경로가 있다",
+          'if job == "extend":' in cs_src and "run('extend'" in cs_src,
+          "버튼과 curl과 에이전트가 같은 경로를 쓴다")
+    argv_default = csrv.build("extend", {})
+    check("조작대의 extend가 arm_extend.py를 부른다",
+          argv_default[-1].endswith("arm_extend.py"), " ".join(argv_default))
+    check("target을 안 주면 --target을 안 붙인다 (escape.TARGET_DEG를 그대로 쓴다)",
+          not any(a.startswith("--target") for a in argv_default), argv_default)
+    check("dry=1이면 --dry가 붙는다",
+          "--dry" in csrv.build("extend", {"dry": True}))
+    check("target을 주면 그대로 넘긴다 (걸음 쪼개기는 arm_extend.py의 escape.plan 몫)",
+          "--target=1,2,3,4,5" in csrv.build("extend", {"target": "1,2,3,4,5"}))
+    check("조작대가 목표자세·걸음상한 상수를 따로 정의하지 않는다",
+          "TARGET_DEG =" not in cs_src and "STEP_DEG =" not in cs_src,
+          "베끼면 escape.py와 조용히 갈라진다")
+
 
 # ----------------------------------------------------------------------
 # ⑩ 실패 단계 분류 (move5_check)

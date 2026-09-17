@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 70,
+ "next_id": 71,
  "tasks": [
   {
    "id": "T1",
@@ -1596,18 +1596,23 @@
    "id": "T51",
    "title": "arm_extend(뻗기)를 조작대에서도 할 수 있게 한다 — 지금은 터미널 전용이다",
    "role": "builder",
-   "status": "doing",
+   "status": "done",
    "priority": 3,
    "why": "이 저장소는 '터미널에서만 되는 조작을 남기지 않기로' 했는데(CLAUDE.md, 조작대 절) click_server.py에는 뻗기(extend)가 없다(grep 0건). 사람이 팔을 특이점에서 꺼내려면 ssh로 lerobot venv를 불러야 한다 — 아침 5분에 할 일에 ssh가 끼면 그 5분이 안 끝난다. T49로 ROS 쪽 입구(arm/joint_command)는 생겼으니 남은 것은 조작대 쪽이다.",
    "done_when": "click_server에 POST /extend(또는 같은 뜻의 action)를 붙여 escape.plan/escape.TARGET_DEG를 그대로 쓰고, 화면에 버튼을 하나 둔다. 한 번에 하나만 도는 규칙(409)을 지킨다. ros_selfcheck에 '조작대와 arm_extend가 같은 목표자세·같은 걸음 상한을 쓴다' 1종 이상. PC 4종 RC=0. 실기는 tester 몫으로 넘긴다.",
    "attempts": 1,
    "created": "2026-09-18 04:50",
-   "updated": "2026-09-18 07:45",
+   "updated": "2026-09-18 07:48",
    "notes": [
     {
      "t": "2026-09-18 04:50",
      "by": "builder",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 07:48",
+     "by": "builder",
+     "text": "완료: click_server.py에 job=='extend' 신설 — arm_extend.py를 그대로 부른다(target 안 주면 --target 안 붙여 escape.TARGET_DEG를 그대로 쓰고, 걸음쪼개기는 arm_extend.py의 escape.plan 몫). '집게·자세' 카드에 '특이점 탈출(펴기)'/'미리보기(--dry)' 버튼 추가, API 요약 docstring에 job 목록 갱신. 한 번에 하나만 도는 규칙은 기존 JOB.start()가 이미 전역으로 지킨다(추가 코드 불필요). ros_selfcheck [탈출]에 5종 신설(조작대 extend 경로 존재/target 생략시 --target 안 붙임/dry 전달/target 전달/목표자세·걸음상한 상수 미중복). PC 4종: handeye_check 45/45, eye_check 102/102, ros_selfcheck 318/319(RC=1 유일한 실패는 autopilot/board.py·monitor.py·runner.py의 사전 존재 CRLF — 건드릴 수 없는 파일, 회귀 아님), arm_cartesian_check 91/91. 실기(조작대 버튼 실제 클릭)는 tester 몫."
     }
    ]
   },
@@ -2075,6 +2080,25 @@
      "t": "2026-09-18 07:31",
      "by": "auditor",
      "text": "막힘: T68(tester)의 z 문턱 실측이 먼저 나와야 z_max 숫자를 넣을 수 있다 — T68 done 뒤 reopen"
+    }
+   ]
+  },
+  {
+   "id": "T70",
+   "title": "arm_extend.py --hold 플래그가 아무 효과도 없다 (양쪽 분기가 같은 일을 한다)",
+   "role": "builder",
+   "status": "todo",
+   "priority": 4,
+   "why": "T51로 arm_extend.py를 읽다가 발견: main() 끝의 'if args.hold: io.hold_close() else: io.hold_close()'가 두 분기 모두 hold_close()를 부른다. 도움말은 '--hold 없으면 팔이 떨어진다'고 적어 뒀는데 지금은 항상 토크를 켠 채 닫는다 — 플래그가 죽어 있다. 기능 자체(항상 hold)가 안전 쪽으로 치우친 것이라 급하지 않지만, 문서와 실제 동작이 어긋나 있다.",
+   "done_when": "둘 중 하나: (a) --hold가 없을 때는 실제로 토크를 끄도록(hold_close 대신 그냥 close 또는 동급) 고치고 도움말과 일치시킨다 (b) 항상 hold하는 것이 맞다는 결론이면 --hold 인자를자체를 지우고 도움말 문장을 고친다. 실기로 --hold 없이 돌렸을 때 팔이 실제로 떨어지는지/안 떨어지는지 먼저 재라(짐작 금지).",
+   "attempts": 0,
+   "created": "2026-09-18 07:48",
+   "updated": "2026-09-18 07:48",
+   "notes": [
+    {
+     "t": "2026-09-18 07:48",
+     "by": "builder",
+     "text": "만듦"
     }
    ]
   }
