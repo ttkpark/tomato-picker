@@ -10,6 +10,7 @@
   ④ 안전 검사가 실제로 막는가 (너무 작다/너무 크다/사거리 밖/바닥 아래/영점 없음)
   ⑤ 교시 자세(곧게 세운 팔)를 영점으로 잡으면 각도와 좌표가 맞게 나오는가
   ⑦ 상한(80mm)보다 먼 목표를 **여러 걸음으로** 가는가 (travel_to · 졸업기준3)
+  ⑧ 직선 경로가 관절공간에서 막히면 **다른 길로 가는가** (졸업기준3 · T33)
 
 왜 이걸 만들었나 — 좌표 이동의 버그는 "팔이 엉뚱한 데로 간다"로 나타나고,
 그건 부러진 집게로 배우게 된다. 여기서 걸리는 종류의 실수(부호, 라디안/도,
@@ -40,7 +41,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from tomato_picker import config  # noqa: E402
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
 from tomato_picker.hardware.cartesian import (  # noqa: E402
-    MAX_TRAVEL_STEPS, CartesianArm, SimJointIO, plan_steps,
+    MAX_TRAVEL_STEPS, MAX_TRAVEL_STEPS_JOINT, PROGRESS_STALL_STEPS, CartesianArm,
+    SimJointIO, plan_joint_steps, plan_steps,
 )
 from tomato_picker.hardware.kinematics import ArmGeometry  # noqa: E402
 from tomato_picker.config import ARM_CART_ZERO_POSE_DEG as ZERO_POSE  # noqa: E402
@@ -284,6 +286,200 @@ def test_travel() -> None:
           f"{MAX_TRAVEL_STEPS}걸음")
 
 
+# 2026-09-18 젯슨 실측 — 이 팔의 캘리브레이션(lerobot range_min/max)과 영점.
+#   ~/.cache/huggingface/lerobot/calibration/robots/so_follower/tomato_follower.json
+#   ~/arm_cartesian.json
+# ⚠ 숫자를 여기 박아 둔 이유: 이 검사는 "어떤 팔이든 된다"가 아니라 **그날 5/5로
+#   거절당한 바로 그 팔에서 되는가**를 묻는다. 팔을 다시 캘리브레이션하면 이
+#   숫자도 같이 갱신해야 한다(그때는 이 검사가 빨개져서 알려 준다).
+DEG_PER_TICK = 360.0 / 4096.0
+JETSON_SPANS = {"shoulder_pan": (3330 - 560) * DEG_PER_TICK,
+                "shoulder_lift": (3350 - 1009) * DEG_PER_TICK,
+                "elbow_flex": (3159 - 808) * DEG_PER_TICK,
+                "wrist_flex": (3099 - 735) * DEG_PER_TICK,
+                "wrist_roll": 4095 * DEG_PER_TICK}
+JETSON_ZERO = {"shoulder_pan": -11.516483516483516, "shoulder_lift": -18.24175824175824,
+               "elbow_flex": -60.35164835164835, "wrist_flex": -1.7582417582417582,
+               "wrist_roll": 0.0}
+# arm_extend.py가 세운 시작 자세. elbow_flex는 정규화 -98(가동 끝)까지 잘린 값이라
+# **한계에 붙어 있다** — 직교 직선이 첫 걸음부터 막히는 이유가 여기 있다.
+CYCLE20_START_DEG = {"shoulder_pan": 133.3, "shoulder_lift": 80.0, "elbow_flex": -38.9,
+                     "wrist_flex": 0.0, "wrist_roll": 88.8}
+# 사이클20 실기가 뽑은 표적 5개(mm, 접근 pitch°). 기록 =
+# docs/시험기록/move-to-point-2026-09-18.jsonl
+CYCLE20_TARGETS = [(265.2, 181.9, 355.8, 15.2), (378.7, 7.5, 264.0, 4.5),
+                   (315.3, -12.9, 400.3, 33.6), (291.3, -116.6, 372.4, 18.2),
+                   (219.1, -75.4, 481.4, 56.6)]
+CYCLE20_STANDOFF_MM = 30.0
+
+
+class LaggyJointIO(SimJointIO):
+    """지령의 일부만 따라가는 가짜 팔 — **실물 서보의 추종오차**를 흉내 낸다.
+
+    SimJointIO는 지령이 즉시 정확히 이뤄진다고 본다. 그래서 "계획한 웨이포인트를
+    그대로 따라가면 된다"는 틀린 가정이 시뮬에서는 절대 안 깨진다 — 실기에서만
+    깨졌다(2026-09-18: 관절 오차 최대 4.2° ≈ 팔 끝에서 ~28mm).
+    """
+
+    def __init__(self, *, deliver: float = 0.7, **kw) -> None:
+        super().__init__(**kw)
+        self.deliver = float(deliver)
+
+    def write(self, target: dict, secs: float) -> None:
+        partial = {k: self.joints.get(k, 0.0)
+                   + (float(v) - self.joints.get(k, 0.0)) * self.deliver
+                   for k, v in target.items()}
+        super().write(partial, secs)
+
+
+def jetson_arm(degrees: dict | None = None) -> CartesianArm:
+    """2026-09-18 젯슨의 보정표·영점을 그대로 쓰는 가짜 팔."""
+    io_ = SimJointIO(spans=JETSON_SPANS)
+    arm = CartesianArm(io_, path=tmp_path())
+    arm.config.set_zero(JETSON_ZERO)
+    io_.joints.update(arm.to_norms(degrees or CYCLE20_START_DEG))
+    return arm
+
+
+def standoff_pose(x: float, y: float, z: float, pitch: float) -> kin.ToolPose:
+    """arm_node가 `/arm/move_to_point`에서 만드는 것과 같은 스탠드오프 자세."""
+    pose = kin.ToolPose(x=x, y=y, z=z, pitch=pitch)
+    dx, dy, dz = kin.offset_in_tool_frame(pose, -CYCLE20_STANDOFF_MM, 0.0, 0.0)
+    return pose.replace(x=pose.x + dx, y=pose.y + dy, z=pose.z + dz)
+
+
+def test_travel_path() -> None:
+    """직교 직선이 관절공간에서 불가능할 때 **다른 길로 가는가** (T33).
+
+    2026-09-18 실기: 목표 사전검사는 5/5 통과했는데 5/5가 **첫 걸음**에서
+    거절됐다(`elbow_flex` 정규화 -124~-133, 한계 ±98). 직교공간의 직선은
+    관절공간의 직선이 아니다 — 양 끝이 다 갈 수 있어도 그 사이는 아닐 수 있다.
+
+    여기서 못 박는 것: ① 그 시작 자세에서 그 표적 5개로 **갈 길이 있다**
+    ② 직선만으로는 여전히 막힌다(= 이 검사가 실제로 대체 경로를 시험한다)
+    ③ 관절공간 보간의 성질(끝점 일치·한 걸음 상한 둘·볼록성)
+    ④ 직선이 되는 목표에서는 **직선을 쓴다**(대체 경로가 기본이 되면 안 된다).
+    """
+    print("\n⑧ 직선이 막히면 다른 길로 (travel_to · T33)")
+    geom = ArmGeometry()
+
+    # ③ 계획의 성질 — 실행 없이 순수 계산으로
+    end = {"shoulder_pan": -40.0, "shoulder_lift": 30.0, "elbow_flex": -60.0,
+           "wrist_flex": 20.0, "wrist_roll": -30.0}
+    steps = plan_joint_steps(CYCLE20_START_DEG, end, geom)
+    check("관절 보간의 마지막 걸음이 정확히 목표 관절각이다",
+          all(abs(steps[-1][j] - end[j]) < 1e-9 for j in kin.JOINTS),
+          str({j: round(steps[-1][j], 3) for j in kin.JOINTS}))
+    worst_deg = max(abs(b[j] - a[j]) for a, b in zip([CYCLE20_START_DEG] + steps[:-1], steps)
+                    for j in kin.JOINTS)
+    check(f"관절 한 걸음이 {config.ARM_CART_MAX_STEP_JOINT_DEG:.0f}° 이하",
+          worst_deg <= config.ARM_CART_MAX_STEP_JOINT_DEG + 1e-6, f"최대 {worst_deg:.2f}°")
+    poses = [kin.forward(d, geom) for d in [CYCLE20_START_DEG] + steps]
+    worst_mm = max(math.dist((a.x, a.y, a.z), (b.x, b.y, b.z))
+                   for a, b in zip(poses, poses[1:]))
+    check(f"관절 한 걸음의 끝점 이동도 {config.ARM_CART_MAX_STEP_MM:.0f}mm 이하 "
+          "(각도 상한 하나로는 못 막는다)",
+          worst_mm <= config.ARM_CART_MAX_STEP_MM + 1e-6, f"최대 {worst_mm:.1f}mm")
+    check("관절 보간은 걸음 수 상한이 있다", MAX_TRAVEL_STEPS_JOINT >= MAX_TRAVEL_STEPS,
+          f"{MAX_TRAVEL_STEPS_JOINT}걸음")
+
+    # ② 직선만으로는 막힌다 — 이 전제가 깨지면 아래 ①이 아무것도 증명하지 않는다
+    probe = jetson_arm()
+    now = probe.pose()
+    blocked = 0
+    for x, y, z, pitch in CYCLE20_TARGETS:
+        target = standoff_pose(x, y, z, pitch)
+        line = plan_steps(now, target)
+        if probe._walk(probe._io.read(), now, line, geom, joint_space=False) is not None:  # noqa: SLF001
+            blocked += 1
+    check("사이클20의 표적 5개는 직선 경로로는 여전히 막힌다(검사가 헛돌지 않는다)",
+          blocked == 5, f"{blocked}/5만 막힌다")
+
+    # ① 그래도 **갈 길이 있다** — 졸업기준3이 걸려 있던 자리
+    reached = 0
+    for i, (x, y, z, pitch) in enumerate(CYCLE20_TARGETS, 1):
+        arm = jetson_arm()
+        target = standoff_pose(x, y, z, pitch)
+        try:
+            note = arm.travel_to(x=target.x, y=target.y, z=target.z,
+                                 pitch=target.pitch, roll=target.roll)
+        except RuntimeError as exc:
+            check(f"표적{i}로 갈 길이 있다", False, str(exc))
+            continue
+        end_pose = arm.pose()
+        err = math.dist((end_pose.x, end_pose.y, end_pose.z), (target.x, target.y, target.z))
+        check(f"표적{i}({x:.0f},{y:.0f},{z:.0f})로 갈 길이 있다 — 오차 {err:.2f}mm",
+              err < 1.0 and "관절공간" in note, note[:90])
+        reached += err < 1.0
+    check("사이클20 표적 5개 전부 도달 (졸업기준3의 경로 장애물)", reached == 5,
+          f"{reached}/5")
+
+    # ④ 직선이 되는 목표에서는 직선을 쓴다 — 대체 경로가 기본이 되면 안 된다
+    plain = fresh_arm()
+    start = plain.pose()
+    note = plain.travel_to(x=start.x - 150.0, z=start.z + 120.0)
+    check("직선으로 갈 수 있으면 직선으로 간다(대체 경로를 안 쓴다)",
+          "관절공간" not in note, note)
+
+    # 서보가 지령에 못 미쳐도 간다 — 걸음마다 **남은 길을 다시 짠다**
+    # (2026-09-18 실기 3/5가 "3걸음 중 2번째에서 110mm는 너무 큽니다"였다:
+    #  고정 웨이포인트를 쓰면 못 미친 만큼이 다음 걸음에 얹혀 가드에 걸린다).
+    lag = LaggyJointIO(spans=JETSON_SPANS, deliver=0.7)
+    slow = CartesianArm(lag, path=tmp_path())
+    slow.config.set_zero(JETSON_ZERO)
+    lag.joints.update(slow.to_norms(CYCLE20_START_DEG))
+    goal = standoff_pose(*CYCLE20_TARGETS[0])
+    try:
+        note = slow.travel_to(x=goal.x, y=goal.y, z=goal.z,
+                              pitch=goal.pitch, roll=goal.roll)
+        got = slow.pose()
+        gap = math.dist((got.x, got.y, got.z), (goal.x, goal.y, goal.z))
+        check("서보가 지령의 70%만 따라가도 한 걸음 상한에 안 걸린다",
+              "너무 큽니다" not in note, note[:100])
+        check(f"그래도 목표 근처까지 간다 — 남은 거리 {gap:.0f}mm", gap < 80.0,
+              f"{gap:.1f}mm 남음")
+    except RuntimeError as exc:
+        check("서보가 지령의 70%만 따라가도 한 걸음 상한에 안 걸린다", False, str(exc))
+
+    # 서보가 아예 안 따라오면 **예산을 다 태우지 않고** 남은 거리를 말하고 멈춘다
+    # (09-18 실기 3/5가 32걸음을 다 태우고 err=None으로 끝났다 — 몇 mm 모자랐는지
+    #  조차 기록에 안 남았다. 다시 짜기가 영원한 재시도가 되면 안 된다).
+    stuck_io = LaggyJointIO(spans=JETSON_SPANS, deliver=0.0)
+    stuck_arm = CartesianArm(stuck_io, path=tmp_path())
+    stuck_arm.config.set_zero(JETSON_ZERO)
+    stuck_io.joints.update(stuck_arm.to_norms(CYCLE20_START_DEG))
+    goal2 = standoff_pose(*CYCLE20_TARGETS[1])
+    note = stuck_arm.travel_to(x=goal2.x, y=goal2.y, z=goal2.z,
+                               pitch=goal2.pitch, roll=goal2.roll)
+    check("서보가 안 따라오면 '더 안 갑니다'라고 남은 거리를 말한다",
+          "더 안 갑니다" in note and "mm" in note, note[:110])
+    check("그때 예산(32걸음)을 다 태우지 않는다",
+          stuck_io.writes <= PROGRESS_STALL_STEPS + 1,
+          f"쓰기 {stuck_io.writes}회 / 상한 {MAX_TRAVEL_STEPS_JOINT}걸음")
+
+    # 갈 수 없는 목표는 **한 걸음도 안 움직이고** 목표 검사에서 먼저 걸린다
+    guard = jetson_arm()
+    before = guard._io.writes  # noqa: SLF001
+    expect_error("바닥 아래 목표는 경로를 짜기 전에 거절",
+                 lambda: guard.travel_to(z=5.0), "바닥 아래")
+    check("거절당한 뒤 팔이 그대로 있다(관절공간 경로도 안 시도)",
+          guard._io.writes == before, f"쓰기 {guard._io.writes - before}회")  # noqa: SLF001
+
+    # 둘 다 막히면 **둘 다** 이유를 말한다 — 한쪽만 말하면 다음 사람이 헤맨다.
+    # 아래 자리는 실제로 두 길이 다 바닥을 뚫는다(무작위 탐색으로 찾은 실례).
+    stuck = jetson_arm({"shoulder_pan": 7.4, "shoulder_lift": 12.5, "elbow_flex": -31.3,
+                        "wrist_flex": -52.3, "wrist_roll": 0.0})
+    writes = stuck._io.writes  # noqa: SLF001
+    try:
+        stuck.travel_to(x=-169.5, y=226.6, z=286.6, pitch=-8.7, roll=0.0)
+        check("두 길이 다 막히면 둘 다 이유를 말한다", False, "거절하지 않았다")
+    except RuntimeError as exc:
+        check("두 길이 다 막히면 둘 다 이유를 말한다",
+              "직선 경로:" in str(exc) and "관절공간 경로:" in str(exc), str(exc)[:120])
+        check("두 길이 다 막혀도 팔은 제자리다(반쯤 가다 멈추지 않는다)",
+              stuck._io.writes == writes, f"쓰기 {stuck._io.writes - writes}회")  # noqa: SLF001
+
+
 def test_zero_pose(geom: ArmGeometry) -> None:
     """영점 = "어깨는 정면, 나머지는 곧게 위로". 이게 틀리면 전부 90° 틀어진다."""
     print("\n⑤ 교시 자세 — 곧게 세운 팔이 영점")
@@ -397,6 +593,7 @@ def main() -> int:
     test_zero_pose(geom)
     test_snapshot()
     test_travel()
+    test_travel_path()
 
     print()
     if FAILED:
