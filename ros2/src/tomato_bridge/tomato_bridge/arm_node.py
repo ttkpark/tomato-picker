@@ -11,6 +11,11 @@
   ② TF로 목표점을 **arm_base 좌표로** 옮기기
   ③ 실패를 문장으로 돌려주기
 
+입구가 둘인 이유(T49, 2026-09-18): 좌표(`arm/move_to_point`) 하나로는 **자세
+가드에 갇힌 팔을 꺼낼 수 없다** — `signed_radius`가 90mm 안이면 방위각이 정의
+되지 않아 어떤 좌표 이동도 거절된다. 그래서 관절공간 한 걸음(`arm/joint_command`)
+을 따로 열었다. 규칙은 `hardware/escape.py`가 갖고, 여기는 단위만 바꾼다.
+
 ────────────────────────────────────────────────────────────────────────
 `/joint_states`가 왜 중요한가 — 이게 있어야 robot_state_publisher가 TF를 만들고,
 TF가 있어야 카메라가 본 열매를 팔 좌표로 옮길 수 있다. **팔 자세를 모르면
@@ -86,6 +91,17 @@ class ArmNode(Node):
         self._tf_listener = TransformListener(self._tf, self)
 
         self._srv = self.create_service(MoveToPoint, "arm/move_to_point", self._on_move)
+
+        # 관절공간 한 걸음 — **특이점 탈출 전용 입구**다(T49, 2026-09-18).
+        # 왜 토픽인가: 새 .srv를 만들면 tomato_msgs를 다시 빌드해야 하는데,
+        # 여기 필요한 것은 "관절각 다섯 개"뿐이고 그건 JointState가 이미 나른다.
+        # 결과는 별도 토픽으로 돌려준다 — 토픽은 실패를 못 돌려주므로, 보낸 쪽이
+        # **성공했는지 모르는 채** 다음 걸음을 보내면 안 된다.
+        # ⚠ position은 **라디안**이다(/joint_states와 같은 규약).
+        self._jcmd = self.create_subscription(
+            JointState, "arm/joint_command", self._on_joint_cmd, 10)
+        self._jres = self.create_publisher(
+            String, "arm/joint_command_result", QoSPresetProfiles.SYSTEM_DEFAULT.value)
 
         hz = max(1.0, float(self.get_parameter("publish_hz").value))
         self._timer = self.create_timer(1.0 / hz, self._tick)
@@ -184,6 +200,31 @@ class ArmNode(Node):
         res.ok = True
         res.detail = detail or "이동 완료"
         return res
+
+    # ------------------------------------------------------------------
+    # 관절로 보내기 (탈출 전용)
+    # ------------------------------------------------------------------
+
+    JOINT_RESULT_OK = "ok|"
+    JOINT_RESULT_FAIL = "fail|"
+
+    def _on_joint_cmd(self, msg: JointState) -> None:
+        """관절각 한 걸음을 받아 그대로 보낸다. 결과를 문장으로 발행한다.
+
+        ⚠ 이 콜백은 서보 보간이 끝날 때까지(≈1.2초) 돌아오지 않는다 — 그동안
+        `/joint_states` 발행이 멈춘다. 탈출은 몇 초짜리 일회성이라 그대로 두었다.
+        (단일 스레드 실행기다. 여기서 콜백 그룹을 나누면 팔 버스를 두 콜백이
+        동시에 두드릴 수 있고, 그건 포트 하나 규칙을 어기는 것과 같다.)
+        """
+        degs = {n: math.degrees(float(p)) for n, p in zip(msg.name, msg.position)}
+        try:
+            detail = self._source.move_joints_deg(degs)
+        except Exception as exc:  # noqa: BLE001 - 이유를 그대로 올린다
+            self.get_logger().warning(f"관절 지령 거절 — {exc}")
+            self._jres.publish(String(data=self.JOINT_RESULT_FAIL + str(exc)))
+            return
+        self.get_logger().info(f"관절 지령 — {detail}")
+        self._jres.publish(String(data=self.JOINT_RESULT_OK + (detail or "이동 완료")))
 
     def _to_arm_base_mm(self, target) -> tuple[float, float, float]:
         """PointStamped → arm_base 기준 (mm, mm, mm).

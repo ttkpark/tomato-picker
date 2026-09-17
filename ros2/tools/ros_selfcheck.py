@@ -104,6 +104,8 @@ LEGACY_ALLOWED = {
     "tomato_picker.hardware.kinematics": "순수 계산 (import: math)",
     "tomato_picker.hardware.handeye": "순수 계산 (import: numpy)",
     "tomato_picker.hardware.cartesian": "이 팔의 영점·환산·안전 — 실측값은 한 벌",
+    "tomato_picker.hardware.escape": "특이점 탈출 규칙 (순수 계산, 포트를 안 연다) — "
+                                     "arm_extend·arm_source·move5_check가 같은 것을 써야 한다",
     "tomato_picker.hardware.eye": "보정 저장소 — ~/arm_eye.json 한 벌",
     "tomato_picker.hardware.ports": "포트 탐색 유틸",
     "tomato_picker.hardware.servo_probe": "버스 생존 확인 유틸",
@@ -888,6 +890,107 @@ TF_DETAIL = ("목표를 arm_base 좌표로 못 옮겼다: lookup failed. "
              "손-눈 보정을 했는지, 그 static TF가 떠 있는지 확인하라.")
 
 
+def _escape_limits():
+    """실측 프레임(2026-09-18)으로 만든 NormLimits — 팔도 파일도 안 건드린다."""
+    from tomato_picker.hardware import cartesian as cart  # noqa: E402
+    f = ESCAPE_FRAME_2026_09_18
+    return cart.NormLimits(zero=f["zero"], ref=f["ref"],
+                           signs={j: 1.0 for j in f["zero"]},
+                           deg_per_norm=f["dpn"], source="ros_selfcheck 고정표")
+
+
+def test_prep_autoextend() -> None:
+    """졸업기준3을 재는 도구가 **스스로 뻗는가** (T49, 2026-09-18).
+
+    사이클35는 A자세에서 move5_check를 그대로 돌려 5/5 자세 가드 거절(=0/5)을
+    받았고, 사람이 `arm_extend --hold`를 따로 돌린 뒤에야 1/5가 나왔다. 그
+    수동 단계는 어디에도 안 적혀 있었다 — 잊으면 **거짓 0/5**가 기록에 남고,
+    일지와 작업판은 다음 사이클이 사실로 믿는다. 그래서 두 방향을 못 박는다:
+    가드 안이면 뻗고, **가드 밖이면 안 뻗는다**(쓸데없이 뻗으면 시작 자세를
+    바꿔 시험 자체를 흔든다).
+    """
+    print("\n[뻗기] move5_check의 시험 전 자동 뻗기(prep)")
+    sys.path.insert(0, os.path.join(REPO, "ros2", "tools"))
+    import arm_extend as ax  # noqa: E402
+    import move5_check as m5  # noqa: E402
+
+    from tomato_picker.config import (ARM_CART_MAX_STEP_JOINT_DEG,  # noqa: E402
+                                      ARM_CART_Z_MIN)
+    from tomato_picker.hardware import escape as es  # noqa: E402
+
+    def source_of(*parts):
+        return open(os.path.join(*parts), encoding="utf-8").read()
+
+    geom = kin.ArmGeometry()
+    limits = _escape_limits()
+
+    # ① 가드 안 자세 — 2026-09-18 실측(프리셋 "대기", pan·elbow가 이미 범위 밖)
+    inside = _escape_deg(ESCAPE_NORM_2026_09_18)
+    got = m5.prep_plan(inside, limits, geom)
+    check("가드 안 자세면 뻗는다고 판정한다",
+          got["needed"] is True and got["steps"],
+          f"signed_r={got['signed_r']}mm 걸음={len(got['steps'])}")
+    check("그 경로는 안전 검사를 통과한다(막힌 걸음 0)",
+          got["blocked"] == [], f"막힌 걸음={got['blocked']}")
+    # ⚠ 아래는 전부 `.get`으로 읽는다 — 뻗기가 꺼지는 회귀가 오면 **실패로**
+    #   보여야 하고, KeyError로 검사 전체가 죽어 남은 검사를 못 돌면 안 된다.
+    check("뻗은 뒤 목표는 가드를 넘는다",
+          (got.get("signed_r_target") or -1.0) >= es.GUARD_MM,
+          f"{got['signed_r']} → {got.get('signed_r_target')}mm (가드 {es.GUARD_MM:.0f}mm)")
+    check("가동범위 밖 목표는 잘리고 **무엇이 잘렸는지 남는다**",
+          got["clamped"] == ["elbow_flex", "shoulder_pan"],
+          f"잘린 관절={got['clamped']}")
+    hop = (max(abs(got["steps"][0]["degs"][j] - inside[j]) for j in kin.JOINTS)
+           if got["steps"] else None)
+    check(f"첫 걸음이 {es.STEP_DEG:.0f}° 안이다",
+          hop is not None and hop <= es.STEP_DEG + 1e-6,
+          f"최대 {hop}°")
+
+    # ② 가드 밖 자세 — arm_extend가 세워 놓은 자리(뻗을 이유가 없다)
+    outside_deg = es.TARGET_DEG.copy()
+    outside = {**inside, **outside_deg}
+    r_out = kin.signed_radius(outside, geom)
+    out = m5.prep_plan(outside, limits, geom)
+    check("가드 밖 자세는 뻗지 않는다",
+          out["needed"] is False and out["steps"] == [],
+          f"signed_r={r_out:.1f}mm 걸음={len(out['steps'])}")
+    check("안 뻗는 경우에도 지금 자세를 숫자로 남긴다",
+          abs(out["signed_r"] - r_out) < 0.1, f"기록값={out['signed_r']}mm")
+
+    # ③ 바닥으로 내려가는 목표는 **시작 전에** 막힌다(절반 가서 멈추지 않는다)
+    down = {**inside, "shoulder_lift": -95.0, "elbow_flex": 0.0, "wrist_flex": 0.0}
+    steps = es.plan(inside, down, limits.norms(inside), limits.norms, geom)
+    check("바닥 아래로 가는 걸음은 막힌 걸음으로 잡힌다",
+          any("바닥아래" in " ".join(st["notes"]) for st in steps),
+          f"막힌 걸음={es.blocked(steps)}/{len(steps)}")
+
+    # ④ 규칙이 갈라지지 않는가 — 셋이 **같은 모듈**을 쓰는지 값으로 확인한다
+    check("arm_extend와 move5_check가 같은 걸음 상한을 쓴다",
+          ax.STEP_DEG == es.STEP_DEG == ARM_CART_MAX_STEP_JOINT_DEG,
+          f"arm_extend={ax.STEP_DEG} escape={es.STEP_DEG} "
+          f"config={ARM_CART_MAX_STEP_JOINT_DEG}")
+    check("탈출 바닥이 yaml의 mount.z와 같다",
+          abs(es.MOUNT_Z_MM - float(_geometry_yaml()["mount"]["z"])) < 1e-9,
+          f"escape={es.MOUNT_Z_MM} yaml={_geometry_yaml()['mount']['z']}")
+    check("좌표 유닛의 바닥(15mm)을 탈출에 쓰지 않는다",
+          es.floor_z() < 0.0 < ARM_CART_Z_MIN,
+          f"탈출 바닥={es.floor_z()}mm vs 좌표 바닥={ARM_CART_Z_MIN}mm "
+          "(주저앉은 팔은 z≈-66mm다 — 15mm를 바닥으로 보면 탈출이 불가능하다)")
+
+    # ⑤ 토픽 이름은 양쪽이 **글자 그대로** 같아야 한다(오타는 조용히 안 돈다)
+    node_src = source_of(SRC, "tomato_bridge", "tomato_bridge", "arm_node.py")
+    m5_src = source_of(REPO, "ros2", "tools", "move5_check.py")
+    src_src = source_of(SRC, "tomato_bridge", "tomato_bridge", "arm_source.py")
+    check("arm_node가 관절 지령 토픽을 구독한다",
+          'JointState, "arm/joint_command"' in node_src)
+    check("move5_check가 같은 이름으로 발행한다",
+          '"/arm/joint_command"' in m5_src and '"/arm/joint_command_result"' in m5_src)
+    check("prep를 끌 수 있다(기본은 켬)", '"--no-prep"' in m5_src)
+    check("proxy 모드는 관절 지령을 **거절**한다(뻗은 척하지 않는다)",
+          "def move_joints_deg" in src_src
+          and "proxy 모드로는 관절 지령을 못 보낸다" in src_src)
+
+
 def test_stage_classify() -> None:
     """거절 문장을 **어느 단계**로 적는가.
 
@@ -1486,6 +1589,7 @@ def main() -> int:
     test_handeye_gate()
     test_handeye_identifiability()
     test_arm_extend_escape()
+    test_prep_autoextend()
     test_stage_classify()
     test_travel_split()
     test_sample_within_limits()

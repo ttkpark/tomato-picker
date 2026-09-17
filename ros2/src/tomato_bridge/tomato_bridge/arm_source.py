@@ -64,6 +64,16 @@ class ArmSource(Protocol):
         ⚠ 못 가면 **예외**다. 가까운 데까지 가고 성공했다고 하지 않는다.
         """
 
+    def move_joints_deg(self, degs: dict[str, float]) -> str:
+        """관절각(도)을 직접 주는 **한 걸음**. 사람이 읽을 결과 문장.
+
+        왜 좌표 말고 관절인가 — `signed_radius`가 가드(90mm) 안이면 좌표 이동은
+        **원리상** 거절된다(방위각이 정의되지 않는다). 그 자세에서 빠져나오는
+        길은 관절공간뿐이다. 규칙은 `hardware/escape.py` 하나가 가진다.
+        ⚠ 경로를 쪼개는 책임은 **부르는 쪽**이다(여기는 한 걸음만 받는다).
+        ⚠ 못 움직이면 **예외**다.
+        """
+
     def describe(self) -> str:
         """진단용 한 줄 — 어느 길로 붙어 있는지."""
 
@@ -146,6 +156,54 @@ class DirectArm:
         """
         return self._unit().travel_to(x=x, y=y, z=z, pitch=pitch, roll=roll)
 
+    def move_joints_deg(self, degs) -> str:
+        """관절공간 **한 걸음**. 좌표 가드에 갇힌 자세에서 빠져나오는 유일한 길.
+
+        2026-09-18(T49)에 붙였다. 그전에는 이 길이 `ros2/tools/arm_extend.py`에만
+        있었고 그 도구는 lerobot 버스를 **직접** 잡는다 — 그래서 ROS가 떠 있으면
+        쓸 수 없고(포트는 한 프로세스), 졸업기준3을 재기 전에 사람이 컨테이너를
+        내리고 뻗고 다시 띄워야 했다. 잊으면 5/5가 자세 가드에 거절되고 그
+        **거짓 0/5**가 기록에 남는다(사이클35가 실제로 그랬다).
+
+        검사는 `escape.plan`이 한다(바닥·사거리·"더 나빠지는 한계"만). 좌표
+        유닛의 `_check_workspace`를 쓰지 **않는** 이유는 그 바닥(15mm)이 주저앉은
+        팔(z≈−66mm)에게는 첫 걸음부터 전부 막히는 값이기 때문이다 — escape.py의
+        MOUNT_Z_MM 주석에 적어 뒀다.
+        """
+        from tomato_picker.hardware import escape as es
+        from tomato_picker.hardware import kinematics as kin
+
+        unit = self._unit()
+        if not unit.config.has_zero:
+            raise ArmUnavailable(
+                "기구학 영점이 없다 — 관절각↔정규화값 환산을 못 한다. "
+                "대시보드 /settings의 [3D 좌표 영점]을 먼저 등록하라.")
+        want = {j: float(v) for j, v in degs.items() if j in kin.JOINTS}
+        if not want:
+            raise ValueError(f"아는 관절이 하나도 없다 — 받은 이름 {list(degs)}")
+        now_norms = self._io.read()
+        now = unit.to_degrees(now_norms)
+        target = {**now, **want}
+        geom = unit.config.geometry()
+        steps = es.plan(now, target, now_norms, unit.to_norms, geom)
+        if len(steps) > 1:
+            biggest = max(abs(target[j] - now[j]) for j in kin.JOINTS)
+            raise ValueError(
+                f"한 번에 {biggest:.1f}°는 너무 크다(관절 상한 {es.STEP_DEG:.0f}°) — "
+                f"{len(steps)}걸음으로 쪼개서 보내라. 쪼개는 쪽이 걸음마다 "
+                "실제 자세를 되읽어야 하므로 여기서 대신 하지 않는다.")
+        step = steps[-1]
+        if step["notes"]:
+            raise ValueError("이 걸음은 안전 검사에 걸린다: " + " ".join(step["notes"])
+                             + f" (TCP z={step['pose'].z:.0f}mm "
+                               f"r={step['signed_r']:.0f}mm)")
+        self._io.before_move()
+        with self._io.busy_lock():
+            self._io.write(unit.to_norms(target), es.SECS_PER_STEP)
+        pose = step["pose"]
+        return (f"관절 이동 → x={pose.x:.0f} y={pose.y:.0f} z={pose.z:.0f} "
+                f"pitch={pose.pitch:.0f}° signed_r={step['signed_r']:.0f}mm")
+
     def close(self) -> None:
         self._io.close()
 
@@ -219,6 +277,19 @@ class ProxyArm:
         if roll is not None:
             body["roll"] = roll
         return self._post(body)
+
+    def move_joints_deg(self, degs) -> str:
+        """**못 한다.** 레거시 대시보드에는 임의 관절값을 보내는 API가 없다.
+
+        (있는 것은 "현재 자세 저장"과 "저장된 프리셋 재생"뿐이다 — `arm_extend.py`가
+        lerobot 버스를 직접 잡는 이유가 이것이다.) 조용히 다른 길로 가지 않는다:
+        proxy로 뻗은 척하면 그 뒤의 5회가 전부 같은 가드에 거절되고, 그 0/5가
+        기록에 남는다.
+        """
+        raise ArmUnavailable(
+            "proxy 모드로는 관절 지령을 못 보낸다(대시보드에 그 API가 없다) — "
+            "arm_mode:=direct로 띄우거나, 컨테이너를 내리고 "
+            "ros2/tools/arm_extend.py로 먼저 뻗어라.")
 
     def close(self) -> None:
         pass

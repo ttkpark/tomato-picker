@@ -17,7 +17,15 @@
     trial, commanded{x,y,z,pitch}, standoff_mm, ok, reached{x,y,z}(관절 FK),
     error_mm, stage(실패 단계: timeout/step/tf/pose/ik/joint/None), detail, dry_run,
     limits(표적을 뽑을 때 **이 팔의 가동범위를 알고 있었나** — 보정표 경로 또는
-    "none". none이면 그 시험은 갈 수 없는 자리를 시험했을 수 있다)
+    "none". none이면 그 시험은 갈 수 없는 자리를 시험했을 수 있다),
+    prep(**어떤 시작 자세에서 출발했나** — needed/extended/signed_r/detail.
+    0/5를 볼 때 그것이 팔의 0인지 시작 자세의 0인지 여기서 가른다)
+
+⚠ **시작 자세는 이 도구가 스스로 만든다**(T49, 2026-09-18). 자세 가드
+(signed_radius < 90mm) 안에서 그냥 돌리면 5회가 5회 다 거절되고, 그 0/5는 팔이
+만든 0이 아니라 시작 자세가 만든 0이다 — 사이클35가 실제로 그렇게 기록됐다.
+그래서 실기 전에 관절공간으로 먼저 뻗는다(`/arm/joint_command`, 규칙은
+`hardware/escape.py`로 `arm_extend.py`와 공유). 끄려면 `--no-prep`.
 
 ⚠ **실패 단계**를 구분하는 게 이 도구의 요점이다 — 검출은 이 도구 밖(표적을 사람이
 놓는다), 여기서는 응답없음(timeout) / 한 걸음 상한(step) / 좌표계 변환(tf) /
@@ -41,6 +49,7 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 
 from tomato_picker.config import ARM_CART_R_MIN, ARM_CART_Z_MIN  # noqa: E402
 from tomato_picker.hardware import cartesian as cart  # noqa: E402
+from tomato_picker.hardware import escape as es  # noqa: E402
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
 
 RECORD_DIR = os.environ.get("TOMATO_RECORD_DIR") or os.path.join(REPO, "docs", "시험기록")
@@ -226,6 +235,44 @@ def sample_points(n: int, geom: kin.ArmGeometry, seed: int,
     return pts
 
 
+# ── 시험 전 준비(prep) — 가드에 갇힌 자세면 스스로 뻗는다 ───────────────────
+# 왜 여기 있나 (T49, 2026-09-18): 사이클35는 A자세에서 이 도구를 그대로 돌려
+# **5/5 자세 가드 거절**을 받았다. 사람이 `arm_extend --hold`를 따로 돌린 뒤에야
+# 1/5이 나왔다. 그 수동 단계는 어디에도 안 적혀 있어서, 잊으면 기록에 **거짓
+# 0/5**가 남는다 — 그리고 일지와 작업판은 다음 사이클이 사실로 믿는다.
+# 규칙(12°·바닥·한계·목표자세)은 베끼지 않는다: `hardware/escape.py` 하나가 갖고
+# `arm_extend.py`도 같은 것을 쓴다.
+PREP_JOINT_ERR_DEG = 20.0   # 지령과 실제가 이만큼 벌어지면 무언가에 걸린 것이다
+
+
+def prep_plan(now_deg: dict[str, float], limits, geom: kin.ArmGeometry,
+              target_deg: dict[str, float] | None = None) -> dict:
+    """시험 전에 뻗어야 하나, 뻗는다면 어떤 걸음들인가. **팔을 안 건드린다.**
+
+    돌려주는 것: {"needed", "signed_r", "steps", "target", "clamped", "blocked"}.
+    `needed`가 False면 걸음은 비어 있다 — **이미 가드 밖이면 안 뻗는다**(뻗는 것
+    자체가 시작 자세를 바꾸므로, 필요 없을 때 하면 시험을 흔든다).
+    """
+    r_now = kin.signed_radius(now_deg, geom)
+    out = {"needed": r_now < es.GUARD_MM, "signed_r": round(r_now, 1),
+           "steps": [], "target": None, "clamped": [], "blocked": []}
+    if not out["needed"]:
+        return out
+    now_norm = limits.norms(now_deg)
+    want = {**now_deg, **(target_deg or es.TARGET_DEG)}
+    clamped, hit = es.clamp_norm(limits.norms(want), limits.limit)
+    # 자른 뒤의 목표는 정규화 → 각도로 되돌려야 한다(자른 값이 곧 목표다).
+    target = cart.norms_to_degrees({**now_norm, **clamped}, zero=limits.zero,
+                                   ref=limits.ref, signs=limits.signs,
+                                   deg_per_norm=limits.deg_per_norm)
+    steps = es.plan(now_deg, target, now_norm, limits.norms, geom,
+                    limit=limits.limit)
+    out.update(steps=steps, target=target, clamped=sorted(hit),
+               blocked=es.blocked(steps),
+               signed_r_target=round(kin.signed_radius(target, geom), 1))
+    return out
+
+
 def record(path: str, row: dict) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
@@ -274,13 +321,15 @@ def _arm_node_geometry() -> kin.ArmGeometry:
         return kin.ArmGeometry()
 
 
-def run_real(points: list[dict], out_path: str, limits_tag: str = "none") -> int:
+def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
+             limits=None, prep: bool = True) -> int:
     """ROS2 stage1이 떠 있어야 한다 — /arm/move_to_point를 실제로 부른다."""
     import rclpy
     from geometry_msgs.msg import PointStamped
     from rclpy.node import Node
     from rclpy.time import Time
     from sensor_msgs.msg import JointState
+    from std_msgs.msg import String
     from tf2_ros import Buffer, TransformListener
 
     from tomato_msgs.srv import MoveToPoint
@@ -290,6 +339,11 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none") -> int
     latest_js: dict = {"msg": None}
     node.create_subscription(JointState, "/joint_states",
                               lambda m: latest_js.__setitem__("msg", m), 10)
+    # 뻗기(prep) 전용 입구 — arm_node가 팔의 주인이므로 관절도 그쪽으로 보낸다.
+    jcmd = node.create_publisher(JointState, "/arm/joint_command", 10)
+    jres: dict = {"msg": None}
+    node.create_subscription(String, "/arm/joint_command_result",
+                              lambda m: jres.__setitem__("msg", m.data), 10)
     buf = Buffer()
     TransformListener(buf, node)
     cli = node.create_client(MoveToPoint, "/arm/move_to_point")
@@ -302,6 +356,92 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none") -> int
         end = time.monotonic() + secs
         while time.monotonic() < end:
             rclpy.spin_once(node, timeout_sec=0.1)
+
+    def joints_now(timeout: float = 5.0) -> dict[str, float] | None:
+        """/joint_states 최신 한 장을 도(°)로. 안 오면 None."""
+        latest_js["msg"] = None
+        end = time.monotonic() + timeout
+        while latest_js["msg"] is None and time.monotonic() < end:
+            rclpy.spin_once(node, timeout_sec=0.1)
+        js = latest_js["msg"]
+        if js is None:
+            return None
+        return {n: math.degrees(v) for n, v in zip(js.name, js.position)}
+
+    def run_prep() -> dict:
+        """시험 전에 자세를 본다. 가드 안이면 **뻗고 나서** 시험한다.
+
+        ⚠ 걸음마다 결과를 기다린다 — 토픽은 실패를 안 돌려주므로, 성공했는지
+        모르는 채 다음 걸음을 보내면 팔이 어디 있는지 모르는 상태로 굴러간다.
+        """
+        now = joints_now()
+        if now is None:
+            return {"needed": None, "extended": False,
+                    "detail": "/joint_states가 안 온다 — 자세를 몰라 뻗지 않았다"}
+        if limits is None:
+            r = round(kin.signed_radius(now, geom), 1)
+            return {"needed": r < es.GUARD_MM, "signed_r": r, "extended": False,
+                    "detail": "가동범위를 몰라(limits=none) 뻗지 않았다 — "
+                              "관절한계를 못 보고 뻗는 것은 팔을 미는 것이다"}
+        planned = prep_plan(now, limits, geom)
+        out = {"needed": planned["needed"], "signed_r": planned["signed_r"],
+               "extended": False}
+        if not planned["needed"]:
+            out["detail"] = f"가드 밖이라 뻗지 않았다(하한 {es.GUARD_MM:.0f}mm)"
+            return out
+        if planned["blocked"]:
+            out["detail"] = (f"뻗는 경로가 막혔다 — {len(planned['steps'])}걸음 중 "
+                             f"{planned['blocked']}번째: "
+                             + " ".join(planned["steps"][planned["blocked"][0] - 1]["notes"]))
+            return out
+        print(f"  prep: signed_r {planned['signed_r']}mm < {es.GUARD_MM:.0f}mm — "
+              f"{len(planned['steps'])}걸음으로 뻗는다"
+              + (f" (목표 자름: {planned['clamped']})" if planned["clamped"] else ""))
+        for step in planned["steps"]:
+            msg = JointState()
+            msg.name = list(kin.JOINTS)
+            msg.position = [math.radians(step["degs"][j]) for j in kin.JOINTS]
+            jres["msg"] = None
+            jcmd.publish(msg)
+            end = time.monotonic() + es.SECS_PER_STEP * 4 + 5.0
+            while jres["msg"] is None and time.monotonic() < end:
+                rclpy.spin_once(node, timeout_sec=0.1)
+            answer = jres["msg"]
+            if answer is None:
+                out["detail"] = (f"{step['i']}/{step['of']}걸음에 응답이 없다 — "
+                                 "arm_node가 /arm/joint_command를 받는 판인지 확인하라")
+                return out
+            if not answer.startswith("ok|"):
+                out["detail"] = f"{step['i']}/{step['of']}걸음 거절 — {answer.split('|', 1)[-1]}"
+                return out
+            got = joints_now()
+            if got is None:
+                out["detail"] = f"{step['i']}/{step['of']}걸음 뒤 /joint_states가 안 온다"
+                return out
+            err = max(abs(got[j] - step["degs"][j]) for j in kin.JOINTS if j in got)
+            if err > PREP_JOINT_ERR_DEG:
+                out["detail"] = (f"{step['i']}/{step['of']}걸음에서 지령과 실제가 "
+                                 f"{err:.1f}° 다르다 — 무언가에 걸렸다. 멈춘다")
+                out["signed_r_after"] = round(kin.signed_radius(got, geom), 1)
+                return out
+        got = joints_now() or now
+        r_after = round(kin.signed_radius(got, geom), 1)
+        out.update(extended=True, signed_r_after=r_after,
+                   detail=(f"{len(planned['steps'])}걸음으로 뻗었다 — signed_r "
+                           f"{planned['signed_r']} → {r_after}mm"
+                           + ("" if r_after >= es.GUARD_MM else " ⚠ 아직 가드 안쪽이다")))
+        print(f"  prep: {out['detail']}")
+        return out
+
+    geom = _arm_node_geometry()
+    if prep:
+        prep_row = run_prep()
+    else:
+        prep_row = {"needed": None, "extended": False,
+                    "detail": "--no-prep — 뻗기를 껐다(자세는 부르는 쪽 책임이다)"}
+    if not prep_row.get("extended") and prep_row.get("needed"):
+        print(f"  ⚠ prep 실패: {prep_row['detail']} — 그래도 5회를 그대로 시험한다"
+              "(자세 가드 거절이 기록에 남는다)")
 
     ok_count = 0
     for i, p in enumerate(points, 1):
@@ -321,7 +461,10 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none") -> int
         rclpy.spin_until_future_complete(node, fut, timeout_sec=90.0)
         res = fut.result()
         row = {"trial": i, "dry_run": False, "commanded": p,
-               "standoff_mm": STANDOFF_MM, "limits": limits_tag}
+               "standoff_mm": STANDOFF_MM, "limits": limits_tag,
+               # 이 시험이 **어떤 시작 자세에서** 출발했는지 남긴다 — 기준3의
+               # 0/5가 팔의 0인지 시작 자세의 0인지 나중에 가릴 수 있어야 한다.
+               "prep": prep_row}
         if res is None:
             row.update(ok=False, stage=classify_stage(None), error_mm=None,
                        reached=None, detail="응답 없음(타임아웃)")
@@ -364,6 +507,9 @@ def main() -> int:
     ap.add_argument("--points", default="")
     ap.add_argument("--n", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--no-prep", action="store_true",
+                    help="시험 전 자동 뻗기를 끈다 (기본은 켬 — 자세 가드에 걸린 "
+                         "자세에서 그냥 돌리면 5/5가 거절되고 거짓 0/5가 기록된다)")
     args = ap.parse_args()
 
     geom = kin.ArmGeometry()
@@ -396,7 +542,8 @@ def main() -> int:
     if args.dry_run:
         ok = run_dry(points, geom, out_path, limits_tag)
     else:
-        ok = run_real(points, out_path, limits_tag)
+        ok = run_real(points, out_path, limits_tag, limits=limits,
+                      prep=not args.no_prep)
         if ok < 0:
             return 1
 

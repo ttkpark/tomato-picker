@@ -43,6 +43,7 @@ REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 sys.path.insert(0, os.path.join(REPO, "src"))
 sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
+from tomato_picker.hardware import escape as es  # noqa: E402
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
 from tomato_picker.hardware import settle as st  # noqa: E402
 
@@ -51,64 +52,22 @@ CAL = os.path.expanduser(
     "~/.cache/huggingface/lerobot/calibration/robots/so_follower/tomato_follower.json")
 CART = os.path.expanduser("~/arm_cartesian.json")
 
-# 바닥은 팔 base(마운트)보다 이만큼 아래에 있다 — 실측 76.5mm
-# (`ros2/src/tomato_description/config/so101_geometry.yaml` 의 mount.z 와 같은 값).
-# ⚠ 예전에는 "지금 자리보다 1mm 아래"를 바닥으로 삼았다. 그러면 팔이 낮게
-#   늘어져 있을 때 **1.8mm 내려갔다 다시 오르는 정상 경로까지 막혀** 빠져나올
-#   수가 없다(2026-09-01, 복구 불가 상태로 두 번 갇혔다). 바닥은 팔이 어디
-#   있느냐와 무관한 값이다.
-MOUNT_Z_MM = 76.5
-FLOOR_MARGIN_MM = 10.0
-STEP_DEG = 12.0        # 한 구간에서 어느 관절도 이 이상 안 움직인다
-# 되먹임 기록이 남는 곳 — move5_check와 같은 규칙(날짜별 jsonl, 한 줄이 한 번의 이동).
+# ── 탈출 규칙은 `hardware/escape.py` 하나가 가진다 ─────────────────────────
+# 2026-09-18(T49)까지 12°·바닥·한계·목표자세가 **이 파일 안에만** 있었다. 같은
+# 규칙을 ROS 쪽(`arm_source.move_joints_deg`)과 채점 도구(`move5_check`의 prep)도
+# 쓰게 되어 라이브러리로 옮겼다 — 베끼면 말없이 갈라지고, 갈라지면 한쪽이
+# 통과시킨 걸음을 다른 쪽이 거절한다. 이름은 그대로 두어 부르는 쪽은 안 바뀐다.
+MOUNT_Z_MM = es.MOUNT_Z_MM
+FLOOR_MARGIN_MM = es.FLOOR_MARGIN_MM
+STEP_DEG = es.STEP_DEG
+TARGET_DEG = es.TARGET_DEG
+LIMIT_NORM = es.LIMIT_NORM
+clamp_norm = es.clamp_norm
+limit_violations = es.worsening_limits
+
+SECS_PER_STEP = es.SECS_PER_STEP
+
 RECORD_DIR = os.path.join(REPO, "docs", "시험기록")
-SECS_PER_STEP = 1.2
-R_TARGET = 150.0       # 좌표 가드(90mm)에서 충분히 떨어진 곳까지
-
-# 목표 자세 — 집게가 **수평 앞**을 보는 표준 자세.
-#   lift 80° = 상완이 거의 수직, elbow -80° = 전완이 수평, wrist 0° = 손목 곧게
-#   → a1=80, a2=0, a3=0 이므로 pitch=0(수평), r≈250mm, z≈169mm
-TARGET_DEG = {"shoulder_lift": 80.0, "elbow_flex": -80.0, "wrist_flex": 0.0}
-
-# 정규화 가동범위는 -100..100이다. 98을 쓰는 건 끝에 2칸을 남겨 두려는 것.
-LIMIT_NORM = 98.0
-
-
-def clamp_norm(target_norm, limit=LIMIT_NORM):
-    """목표 정규화값을 가동범위 안으로 **자른다** — 못 간다고 거절하지 않는다.
-
-    왜 자르나 — 2026-09-18: 기본 목표 `elbow_flex=-80°`는 지금 보정표에서
-    정규화 -137.8이다(가동범위 밖). 거절하면 팔이 특이점에 갇힌 채로 아무 데도
-    못 간다. 잘라도 `signed_radius`가 219mm(가드 90mm의 2.4배)라 **목적은 달성된다**
-    — 뻗는 자세의 목적은 pitch 0°가 아니라 가드를 빠져나오는 것이다.
-    자른 관절은 부르는 쪽이 사람에게 말해 준다(무엇이 왜 덜 갔는지 보여야 한다).
-    """
-    out, hit = {}, []
-    for j, v in target_norm.items():
-        c = max(-limit, min(limit, float(v)))
-        if abs(c - float(v)) > 1e-9:
-            hit.append(j)
-        out[j] = c
-    return out, hit
-
-
-def limit_violations(now_norm, step_norm, limit=LIMIT_NORM):
-    """이 구간에서 **더 밖으로 나가는** 관절만 돌려준다.
-
-    ⚠ 이미 범위 밖에 있는 관절을 "한계"라고 막으면 빠져나올 수가 없다 —
-    바닥을 "지금 자리보다 1mm 아래"로 잡았다가 두 번 갇혔던 것과 같은 병이다
-    (위 MOUNT_Z_MM 주석). 2026-09-18 실측: `shoulder_pan`이 정규화 98.81,
-    `elbow_flex`가 103.16으로 **가만히 있는데도** 21구간 전부가 막혀 있었다.
-    기준은 "범위 밖이냐"가 아니라 "이 걸음이 상황을 더 나쁘게 하느냐"다.
-    """
-    bad = []
-    for j, v in step_norm.items():
-        v = float(v)
-        if abs(v) <= limit:
-            continue
-        if abs(v) > abs(float(now_norm.get(j, v))) + 1e-6:
-            bad.append(j)
-    return bad
 
 
 def load_frame():
@@ -191,31 +150,20 @@ def main() -> int:
     print(f"      TCP ({pt.x:6.1f},{pt.y:6.1f},{pt.z:6.1f}) pitch {pt.pitch:6.1f}° "
           f"signed_r {rt:6.1f}mm")
 
-    # 관절 최대 변화량으로 구간 수를 정한다 — 어느 관절도 STEP_DEG를 안 넘게.
+    # 걸음 쪼개기·안전 검사는 **escape.plan 하나가** 한다(ROS 쪽과 같은 규칙).
+    steps_info = es.plan(now, target, now_norms, to_norm, geom)
+    steps = steps_info[-1]["of"]
     biggest = max(abs(target[j] - now[j]) for j in kin.JOINTS)
-    steps = max(1, int(math.ceil(biggest / STEP_DEG)))
-    print(f"\n경로 {steps}구간 (최대 관절 변화 {biggest:.0f}° · 구간당 ≤{STEP_DEG:.0f}°)")
+    print(f"\n경로 {steps}구간 (최대 관절 변화 {biggest:.0f}° · 구간당 ≤{es.STEP_DEG:.0f}°)")
 
-    path, bad = [], []
-    for i in range(1, steps + 1):
-        degs = {j: now[j] + (target[j] - now[j]) * i / steps for j in kin.JOINTS}
-        pose = kin.forward(degs, geom)
-        r = kin.signed_radius(degs, geom)
-        note = []
-        if pose.z < -MOUNT_Z_MM + FLOOR_MARGIN_MM:
-            note.append("바닥아래")
-        if math.hypot(pose.x, pose.y) > geom.reach_max + 1e-6:
-            note.append("사거리밖")
-        # ⚠ 가동범위는 정규화값 -100..100이다 — 교시 자세 중심의 대칭이 아니다.
-        nm = to_norm(degs)
-        for j in limit_violations(now_norms, nm):
-            note.append(f"{j}한계")
-        if note:
-            bad.append(i)
-        path.append((i, degs, pose, r, " ".join(note)))
-        print(f"  {i:2}/{steps}  TCP ({pose.x:6.1f},{pose.y:6.1f},{pose.z:6.1f}) "
-              f"pitch {pose.pitch:6.1f}° r {r:6.1f}  {' '.join(note)}")
+    path = []
+    for step in steps_info:
+        pose, note = step["pose"], " ".join(step["notes"])
+        path.append((step["i"], step["degs"], pose, step["signed_r"], note))
+        print(f"  {step['i']:2}/{steps}  TCP ({pose.x:6.1f},{pose.y:6.1f},{pose.z:6.1f}) "
+              f"pitch {pose.pitch:6.1f}° r {step['signed_r']:6.1f}  {note}")
 
+    bad = es.blocked(steps_info)
     if bad:
         print(f"\n❌ {len(bad)}개 구간이 안전 검사에 걸린다 — 움직이지 않는다.")
         return 1
