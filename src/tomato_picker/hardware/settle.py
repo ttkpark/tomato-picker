@@ -32,6 +32,12 @@
    정규화 -98에 이미 잘려 있었다 — "지령"만 매회 멀어지고 실제는 굳은 채라
    보고되는 오차가 **지울수록 커졌다.** 그건 처짐이 아니라 **애초에 못 보낸
    지령**이다. 그걸 오차로 세면 포화 판정이 거짓말을 한다.
+
+⚠ **발산을 감지하면 즉시 포화로 처리한다.** (2026-09-18, T52 실기 기록 4건)
+   gain < -min_gain(이전보다 오차가 min_gain 비율 이상으로 커졌다)이면
+   stall 카운터를 stall_rounds로 점프해 다음 루프 진입 시 즉시 SATURATED 처리.
+   근거: 발산이 시작된 뒤에도 stall_rounds(=2)번을 기다리는 동안 0.66°→3.39°·
+   3.47°→5.03°로 3~5배 커졌다 — 나빠진 것이 확인된 순간 추가 지령을 멈춰야 한다.
 """
 
 from __future__ import annotations
@@ -229,7 +235,20 @@ def settle(desired: dict[str, float],
         res.err_deg = err
         if err < best_err:
             best_err, best_cmd = err, dict(sendable)
-        stalled = stalled + 1 if gain < cfg.min_gain else 0
+        # 직전보다 나빠졌으면(gain < -min_gain) 더 밀어도 소용없다 — 즉시 포화로 처리.
+        # 단순히 "안 줄었다"(0 ≤ gain < min_gain)면 stall 카운터를 하나 올리고,
+        # "더 나빠졌다"(-min_gain ≤ gain < 0)면 stall 카운터를 두 개 올리며,
+        # "크게 나빠졌다"(gain < -min_gain)면 stall_rounds로 바로 점프한다.
+        # 근거: 2026-09-18 실기 기록(arm-load-boundary-2026-09-18.jsonl) 발산 4건에서
+        #   gain이 -1.13·-2.14·-0.89로 나빠진 직후에도 추가 지령을 보내 발산이 심화됐다.
+        if gain < -cfg.min_gain:
+            stalled = cfg.stall_rounds          # 발산 확인 → 다음 루프에서 즉시 SATURATED
+        elif gain < 0:
+            stalled = stalled + 2               # 나빠졌음 → 일반 stall 2배 속도
+        elif gain < cfg.min_gain:
+            stalled = stalled + 1               # 제자리걸음 → 일반 stall
+        else:
+            stalled = 0                         # 줄었음 → 리셋
 
     # ⚠ **나빠진 채로 끝내지 않는다.** 2026-09-18 실기(A자세): 1.17° → 0.61°로
     #   좋아진 뒤 1.16° → 1.70°로 되돌아갔다(한 관절을 고치면 다른 관절이 딸려

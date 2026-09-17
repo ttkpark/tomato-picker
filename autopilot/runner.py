@@ -81,9 +81,17 @@ DEFAULTS = {
             "api_key_file": "autopilot/secrets/gemini_api_key.txt",
             "api_key_env": "GEMINI_API_KEY",
         },
-        # antigravity: 실행파일 자리를 확인하는 대로 exe/args 두 줄만 채우면 된다.
-        # "antigravity": {"exe": "antigravity-cli", "args": ["-p", "{ask}", "--yolo"], ...},
+        "agy": {
+            # Antigravity CLI — 클로드와 인터페이스가 거의 같다(같은 하니스 계열).
+            # 사람이 이미 로그인해 뒀다(2026-09-18) — ready_env/ready_files 없이 그냥 쓴다.
+            "exe": "agy",
+            "args": ["-p", "{ask}", "--output-format", "stream-json",
+                     "--dangerously-skip-permissions", "--model", "{model}"],
+            "model": "claude-sonnet-4-6",
+        },
     },
+    # agy.exe가 아직 PATH에 없을 수 있다 — 있으면 shutil.which보다 이 절대경로를 먼저 본다.
+    "engine_paths": {"agy": "C:/Users/parkg/AppData/Local/agy/bin/agy.exe"},
     "saver": False,                # 절약 모드: 클로드 쪽 문맥을 줄이고 값싼 모델을 쓴다
     "cheap_when_tight": True,      # 한도가 빠듯하면 전 역할을 fallback_model로
     "cheap_below_remaining": 0.10,
@@ -129,8 +137,19 @@ def save_json(path, obj):
 
 
 def cfg() -> dict:
+    """기본값 + config.json. **엔진류 딕셔너리는 얕게 덮지 않고 병합한다** —
+
+    안 그러면 config.json에 `engine_defs`를 살짝 손보다가 내장 gemini/agy 정의가
+    통째로 사라진다(실제로 한 번 그랬다: 옛 `antigravity` 메모만 남기고 나머지가 지워짐).
+    """
     c = dict(DEFAULTS)
-    c.update(load_json(CONFIG, {}))
+    override = load_json(CONFIG, {})
+    for key in ("models", "engines", "engine_defs", "engine_paths"):
+        if key in override and isinstance(override[key], dict):
+            merged = dict(c.get(key) or {})
+            merged.update(override.pop(key))
+            c[key] = merged
+    c.update(override)
     return c
 
 
@@ -308,7 +327,7 @@ def run_cycle(c, s, role):
     engine = engine_for(c, role)
     spec = (c.get("engine_defs") or {}).get(engine) if engine != "claude" else None
     if engine != "claude":
-        why = engine_blocked(engine, spec)
+        why = engine_blocked(c, engine, spec)
         if why:
             log("{} 못 씀({}) — 이번 사이클은 클로드로 돈다".format(engine, why))
             engine = "claude"
@@ -322,7 +341,7 @@ def run_cycle(c, s, role):
                + pfile.replace(os.sep, "/") + "   ||   " + SAFETY)
         subs = {"ask": ask, "pfile": pfile.replace(os.sep, "/"), "model": model,
                 "role": role, "safety": SAFETY}
-        cmd = [shutil.which(spec["exe"]) or spec["exe"]]
+        cmd = [resolve_engine_exe(c, engine, spec)]
         cmd += [str(a).format(**subs) for a in spec.get("args", [])]
     else:
         model = pick_model(c, s, role)
@@ -517,7 +536,22 @@ def api_key_from_file(spec):
         return None
 
 
-def engine_blocked(engine, spec):
+def resolve_engine_exe(c, engine, spec):
+    """실행파일 경로 — PATH에 없으면 `engine_paths`의 절대경로를 본다.
+
+    `agy`처럼 설치 직후 PATH가 아직 안 갱신된 경우가 있다(재로그인 전까지).
+    절대경로를 알면 그걸로 바로 붙는다.
+    """
+    p = shutil.which(spec.get("exe", ""))
+    if p:
+        return p
+    fixed = (c.get("engine_paths") or {}).get(engine)
+    if fixed and os.path.exists(fixed):
+        return fixed
+    return spec.get("exe", engine)
+
+
+def engine_blocked(c, engine, spec):
     """이 엔진으로 못 도는 이유(없으면 None) — **막히면 조용히 클로드로 돌아간다.**
 
     OAuth 로그인은 브라우저가 필요해 무인으로 못 한다. 그래서 자격이 없으면 사이클을
@@ -526,8 +560,9 @@ def engine_blocked(engine, spec):
     """
     if not spec:
         return "engine_defs에 정의가 없다"
-    if not shutil.which(spec.get("exe", "")):
-        return "실행파일 " + str(spec.get("exe")) + " 없음"
+    exe = resolve_engine_exe(c, engine, spec)
+    if not (shutil.which(exe) or os.path.exists(exe)):
+        return "실행파일 " + str(spec.get("exe")) + " 없음(engine_paths도 확인)"
     env_keys = spec.get("ready_env") or []
     files = spec.get("ready_files") or []
     has_key_file = bool(spec.get("api_key_file"))
@@ -546,11 +581,15 @@ def engine_blocked(engine, spec):
 
 
 def on_event_generic(ev, res, live, flush):
-    """제미나이 stream-json 한 줄. 스키마가 클로드와 다르고 판마다 바뀌므로 **느슨하게** 읽는다.
+    """다른 엔진의 stream-json 한 줄. 스키마가 클로드와 다르고 판마다 바뀌므로 **느슨하게** 읽는다.
 
-    확실한 것 둘만 붙잡는다: 최종 응답(`response`)과 오류(`error`). 나머지는
-    '무엇을 하고 있나'를 보여 주는 데만 쓰고, 못 알아보면 조용히 흘린다.
+    `event` 키가 있으면 agy(Antigravity CLI) 스키마로, 없으면 제미나이류 평평한
+    스키마로 본다. 확실한 것 둘만 붙잡는다: 최종 응답과 오류. 나머지는 '무엇을
+    하고 있나'를 보여 주는 데만 쓰고, 못 알아보면 조용히 흘린다.
     """
+    if "event" in ev:
+        return _on_event_agy(ev, res, live, flush)
+
     kind = ev.get("type") or ""
     if isinstance(ev.get("error"), dict):
         res["ok"] = False
@@ -575,10 +614,56 @@ def on_event_generic(ev, res, live, flush):
     flush()
 
 
+def _on_event_agy(ev, res, live, flush):
+    """agy(Antigravity CLI) 스키마 — `{"event": "init"|"step_update"|"result", ...}`.
+
+    구독 계정이라 `total_cost_usd`가 없다 — 토큰만 남기고 비용은 0으로 둔다
+    (한도 소진은 이 엔진에선 아직 안 잰다. 클로드와 이중으로 도는 것 자체가
+    한도 압박을 줄이는 목적이므로, 안 재는 것이 과대청구보다 안전한 쪽이다).
+    """
+    kind = ev.get("event")
+    if kind == "result":
+        r = ev.get("result") or {}
+        res["text"] = str(r.get("response") or "").strip() or res["text"]
+        res["ok"] = (r.get("status") == "SUCCESS")
+        u = r.get("usage") or {}
+        if u:
+            live["stats"] = {k: v for k, v in list(u.items())[:6]}
+    elif kind == "step_update":
+        su = ev.get("step_update") or {}
+        stype = su.get("step_type")
+        if stype == "tool":
+            info = su.get("tool_info") or {}
+            if su.get("state") == "ACTIVE":
+                live["tools"].append({
+                    "t": datetime.now().strftime("%H:%M:%S"),
+                    "name": str(info.get("name") or su.get("tool_name") or "?")[:40],
+                    "brief": tool_brief(info.get("name"), info.get("parameters") or {}),
+                })
+                del live["tools"][:-14]
+                live["turns"] += 1
+            err = info.get("error")
+            if err:
+                live["last_text"] = ("[도구 오류] " + str(err.get("message", "")))[:600]
+        elif stype == "agent_response":
+            delta = su.get("text_delta")
+            if isinstance(delta, str) and delta.strip():
+                live["last_text"] = (live.get("last_text", "") + delta)[-600:]
+    elif kind == "init":
+        live["stats"] = {"tools_available": len((ev.get("init") or {}).get("tools") or [])}
+    flush()
+
+
 def tool_brief(name, inp) -> str:
-    """도구 호출 한 줄 요약 — 모니터에서 '지금 무엇을 하고 있나'가 보이게."""
-    for key in ("command", "file_path", "pattern", "path", "url", "prompt", "description"):
-        v = inp.get(key)
+    """도구 호출 한 줄 요약 — 모니터에서 '지금 무엇을 하고 있나'가 보이게.
+
+    클로드는 소문자(`file_path`), agy는 PascalCase(`CommandLine`)를 쓰므로
+    대소문자를 접어서 찾는다.
+    """
+    low = {str(k).lower(): v for k, v in (inp or {}).items()}
+    for key in ("command", "commandline", "file_path", "filepath", "pattern",
+               "path", "directorypath", "url", "prompt", "description"):
+        v = low.get(key)
         if isinstance(v, str) and v.strip():
             v = " ".join(v.split())
             return v[:110] + ("…" if len(v) > 110 else "")

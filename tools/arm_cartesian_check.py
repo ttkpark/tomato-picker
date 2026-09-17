@@ -502,6 +502,38 @@ def test_settle() -> None:
     check("서보 분해능 아래 보정은 보냈다고 하지 않는다",
           res6.stop == "undeliverable" and not sent6.calls, res6.stop)
 
+    # ⑦ 발산 즉시 포화 — gain < -min_gain이면 추가 지령 없이 SATURATED. (T52)
+    #   2026-09-18 실기 기록(arm-load-boundary-2026-09-18.jsonl) 4건:
+    #   0.66°→1.40°→2.21°→3.39°(3~5배 발산), stall_rounds=2를 기다리는 동안 악화됨.
+    #   직전보다 오차가 min_gain 비율 이상 커진 것이 확인되면 즉시 멈춰야 한다.
+    diverge_state = {"shoulder_lift": want["shoulder_lift"] - 4.0,
+                     "elbow_flex": want["elbow_flex"]}
+    div_seq = {"n": 0}
+
+    def send_diverge(cmd):
+        div_seq["n"] += 1
+        # 보낼수록 나빠진다 — 실기 Line1의 0.66°→1.40°→2.21° 패턴을 흉내낸다.
+        diverge_state["shoulder_lift"] -= 2.0
+
+    sent_div = CountingCall(send_diverge)
+    # stall_rounds=2, min_gain=0.10로 기본값 사용
+    res_div = settle(want, measure=lambda: dict(diverge_state), send=sent_div)
+    check("발산(gain < -min_gain)이면 stall_rounds만큼 안 기다리고 즉시 SATURATED",
+          res_div.stop == "saturated" and sent_div.calls
+          and all(
+              (rnd.gain or 0.0) < -cfg.min_gain
+              for rnd in res_div.rounds[1:]  # 0회차는 gain 없음
+              if rnd.worst != "되돌림"
+          ),
+          f"{res_div.stop} · {len(sent_div.calls)}회 · "
+          f"gains={[round(r.gain, 3) for r in res_div.rounds if r.gain is not None]}")
+
+    # ⑦-b 발산 즉시 포화가 추가 지령 횟수를 줄인다 — rounds 예산보다 적어야 한다.
+    #   복구(restore) 지령 1회가 추가될 수 있어 <= stall_rounds + 1이 상한이다.
+    check("발산 즉시 종료는 rounds 예산을 다 쓰지 않는다",
+          len(sent_div.calls) <= cfg.rounds,
+          f"보낸 횟수={len(sent_div.calls)} / rounds={cfg.rounds}")
+
     # ⑦ 실제 이동에 붙었는가 — 처짐 팔로 travel_to를 끝까지 간다.
     io_ = DroopJointIO(spans=JETSON_SPANS, droop_norm=2.5, stiction=0.35)
     arm = CartesianArm(io_, path=tmp_path())
