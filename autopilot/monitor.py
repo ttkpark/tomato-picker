@@ -200,15 +200,16 @@ async function tick(){
  // 지금 도는 것
  const L=d.live||{};
  let h="";
+ const eng=L.engine&&L.engine!=="claude"?` <span class="pill" style="background:#565f89">${esc(L.engine)}</span>`:"";
  if(L.state==="running"){
-   h+=`<div class="big">${pill(L.role)} <span class="dim">${esc(L.model)}</span> `
+   h+=`<div class="big">${pill(L.role)}${eng} <span class="dim">${esc(L.model)}</span> `
      +`사이클 ${L.cycle} · ${mmss(L.elapsed)} · ${L.turns||0}턴</div>`;
    h+=(L.tools||[]).slice().reverse().map(t=>
       `<div class="tool"><span class="dim mono">${esc(t.t)}</span> <b>${esc(t.name)}</b> `
       +`<span class="mono">${esc(t.brief)}</span></div>`).join("");
    if(L.last_text) h+=`<pre style="margin-top:8px;max-height:160px">${esc(L.last_text)}</pre>`;
  }else{
-   h=`<div class="dim">쉬는 중 — 마지막: ${L.role?pill(L.role)+" 사이클 "+L.cycle+" "+esc(L.state||""):"없음"}</div>`;
+   h=`<div class="dim">쉬는 중 — 마지막: ${L.role?pill(L.role)+eng+" 사이클 "+L.cycle+" "+esc(L.state||""):"없음"}</div>`;
  }
  document.getElementById("live").innerHTML=h;
 

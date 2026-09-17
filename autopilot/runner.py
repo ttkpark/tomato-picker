@@ -84,9 +84,13 @@ DEFAULTS = {
         "agy": {
             # Antigravity CLI — 클로드와 인터페이스가 거의 같다(같은 하니스 계열).
             # 사람이 이미 로그인해 뒀다(2026-09-18) — ready_env/ready_files 없이 그냥 쓴다.
+            # ⚠ --print-timeout 기본이 5분이다. 안 주면 사이클 도중 조용히 잘려
+            #   분석만 하고 board.py note도 못 남긴 채 끝난다(실측: 첫 시험에서 그랬다).
+            #   cycle_timeout_sec보다 살짝 짧게 줘서 러너의 taskkill보다 먼저 스스로 접게 한다.
             "exe": "agy",
             "args": ["-p", "{ask}", "--output-format", "stream-json",
-                     "--dangerously-skip-permissions", "--model", "{model}"],
+                     "--dangerously-skip-permissions", "--model", "{model}",
+                     "--print-timeout", "{print_timeout}"],
             "model": "claude-sonnet-4-6",
         },
     },
@@ -339,8 +343,10 @@ def run_cycle(c, s, role):
         pfile = os.path.join(LOG_DIR, "{}-{}.prompt.txt".format(stamp, role))
         ask = ("아래 파일이 이번 사이클의 전체 지시다. 먼저 그 파일을 읽고 그대로 수행하라: "
                + pfile.replace(os.sep, "/") + "   ||   " + SAFETY)
+        print_timeout = max(60, int(c["cycle_timeout_sec"]) - 120)
         subs = {"ask": ask, "pfile": pfile.replace(os.sep, "/"), "model": model,
-                "role": role, "safety": SAFETY}
+                "role": role, "safety": SAFETY,
+                "print_timeout": "{}s".format(print_timeout)}
         cmd = [resolve_engine_exe(c, engine, spec)]
         cmd += [str(a).format(**subs) for a in spec.get("args", [])]
     else:
@@ -454,6 +460,7 @@ def run_cycle(c, s, role):
     th_err.join(5)
 
     res["seconds"] = round(time.time() - t0)
+    res["turns"] = max(res.get("turns", 0), live.get("turns", 0))
     err_s = b"".join(x for x in errbuf if x).decode("utf-8", "replace")
     if p.returncode not in (0, None) and not res["text"]:
         res["ok"] = False
@@ -626,9 +633,13 @@ def _on_event_agy(ev, res, live, flush):
         r = ev.get("result") or {}
         res["text"] = str(r.get("response") or "").strip() or res["text"]
         res["ok"] = (r.get("status") == "SUCCESS")
+        # 이 CLI엔 total_cost_usd가 없다(구독 계정) — 대신 도구 호출 수를 턴으로 남긴다.
+        # 0턴으로 찍히면 다음에 읽는 사람이 '아무것도 안 했다'로 오독한다.
+        res["turns"] = max(res.get("turns", 0), live.get("turns", 0))
         u = r.get("usage") or {}
         if u:
             live["stats"] = {k: v for k, v in list(u.items())[:6]}
+            res["tokens"] = int(u.get("total_tokens") or 0)
     elif kind == "step_update":
         su = ev.get("step_update") or {}
         stype = su.get("step_type")
