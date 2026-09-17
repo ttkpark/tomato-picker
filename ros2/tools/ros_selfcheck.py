@@ -1170,6 +1170,89 @@ def test_selfcheck_deps() -> None:
           f"빠진 것={sorted(all_needed - set(sd.SELFCHECK_MODULES))}")
 
 
+def test_mount_contract() -> None:
+    """마운트 대조가 **실제로 실패할 수 있는가** — tf_check.py [마운트] 절의 계산.
+
+    이 검사가 있는 이유: 그 절은 2026-09-18까지 출력 문구만 "yaml과 같은가"라
+    말하고 실제로는 *0이 아니기만* 하면 통과시켰다(감사 T29). 종수는 하나 늘었지만
+    잡는 것은 없는 검사였다. 그래서 여기서는 통과만 보지 않고 **틀린 값을 넣어
+    실패하는지**까지 본다 — 검사는 실패할 수 있을 때만 뜻이 있다.
+
+    ⚠ tf_check.py 자체는 rclpy를 물어 PC에서 못 돈다. 그래서 계산만
+    mount_compare.py로 떼어 놨고 여기서 그 함수를 직접 시험한다.
+    """
+    print("\n[마운트] TF ↔ so101_geometry.yaml 대조가 실패할 수 있는가")
+    sys.path.insert(0, HERE)
+    import mount_compare as mc  # noqa: E402
+
+    def qz(deg: float) -> tuple[float, float, float, float]:
+        h = math.radians(deg) / 2.0
+        return (0.0, 0.0, math.sin(h), math.cos(h))
+
+    def qx(deg: float) -> tuple[float, float, float, float]:
+        h = math.radians(deg) / 2.0
+        return (math.sin(h), 0.0, 0.0, math.cos(h))
+
+    def verdict(mount: dict, xyz, quat=(0.0, 0.0, 0.0, 1.0)) -> dict:
+        return {name: ok for name, ok, _ in mc.compare(mount, xyz, quat)}
+
+    GOOD = {"x": 60.0, "y": 0.0, "z": 76.5, "yaw_deg": 0.0}
+    TRUTH = (60.0, 0.0, 76.5)
+
+    check("맞는 값은 통과한다", all(verdict(GOOD, TRUTH).values()),
+          f"{TRUTH} vs {GOOD}")
+
+    # 축마다 따로 본다 — 한 축만 틀린 것을 다른 축이 덮으면 안 된다.
+    for axis, idx in mc.AXES:
+        far = list(TRUTH); far[idx] += 1.5     # 허용(1mm)보다 크게
+        near = list(TRUTH); near[idx] += 0.5   # 허용 안쪽
+        check(f"mount.{axis}가 1.5mm 틀리면 실패한다",
+              not verdict(GOOD, tuple(far))[f"mount.{axis}"], f"TF {far}")
+        check(f"mount.{axis}가 0.5mm 어긋난 것은 통과시킨다",
+              verdict(GOOD, tuple(near))[f"mount.{axis}"], f"TF {near}")
+
+    check("요가 0.6도 틀리면 실패한다",
+          not verdict(GOOD, TRUTH, qz(0.6))["mount.yaw_deg"], "허용 0.5도")
+    check("요가 0.3도 어긋난 것은 통과시킨다",
+          verdict(GOOD, TRUTH, qz(0.3))["mount.yaw_deg"])
+    # 180과 -180은 **같은 방향**이다. 접지 않으면 여기서 360도가 나와 헛실패한다.
+    check("요 180도와 -180도를 같게 본다",
+          verdict(dict(GOOD, yaw_deg=180.0), TRUTH, qz(-180.0))["mount.yaw_deg"],
+          f"차이 {mc.angle_diff_deg(-180.0, 180.0):.1f}도")
+    check("마운트가 2도 기울면 실패한다",
+          not verdict(GOOD, TRUTH, qx(2.0))["마운트가 기울지 않았다 (roll=pitch=0)"],
+          "xacro는 rpy=0 0 yaw로 박혀 있다 — 기울었으면 딴 경로가 끼어든 것이다")
+
+    # 키가 없으면 런치가 조용히 건너뛰고 xacro default가 이긴다 → 통과가 아니다.
+    for key, name in (("x", "mount.x"), ("y", "mount.y"), ("z", "mount.z"),
+                      ("yaw_deg", "mount.yaw_deg")):
+        missing = {k: v for k, v in GOOD.items() if k != key}
+        check(f"yaml에 mount.{key}가 없으면 실패한다",
+              not verdict(missing, TRUTH)[name],
+              "런치가 없는 키를 건너뛰면 yaml이 아무것도 안 정한 상태가 된다")
+
+    # 정본 yaml이 네 값을 실제로 갖고 있는가 + 자기 자신과는 당연히 맞는가.
+    real, path = mc.load_mount(mc.geometry_paths(None, ws_src=SRC))
+    check("so101_geometry.yaml에 mount 네 값이 다 있다",
+          {"x", "y", "z", "yaw_deg"} <= set(real), f"{sorted(real)} · {os.path.basename(path)}")
+    check("그 값을 그대로 넣으면 대조가 통과한다",
+          all(verdict(real, (float(real["x"]), float(real["y"]), float(real["z"])),
+                      qz(float(real["yaw_deg"]))).values()),
+          f"x={real.get('x')} y={real.get('y')} z={real.get('z')} yaw={real.get('yaw_deg')}")
+
+    # 배선 — yaml이 xacro까지 실제로 흘러가는가, 그리고 tf_check가 이 계산을 쓰는가.
+    launch = open(os.path.join(SRC, "tomato_description", "launch",
+                               "description.launch.py"), encoding="utf-8").read()
+    check("런치가 mount 네 값을 xacro 인자로 넘긴다",
+          all(a in launch for a in ("mount_x_mm", "mount_y_mm", "mount_z_mm",
+                                    "mount_yaw_deg")),
+          "안 넘기면 xacro default가 이겨서 yaml을 고쳐도 TF가 안 바뀐다")
+    tf_body = open(os.path.join(ROS2, "tools", "tf_check.py"), encoding="utf-8").read()
+    check("tf_check.py가 값을 비교한다 (0이 아닌지만 보지 않는다)",
+          "mount_compare.compare" in tf_body and "1e-6 for v in mount" not in tf_body,
+          "문구만 '같은가'이고 실제로는 존재만 보던 것이 감사 T29의 발견이다")
+
+
 def main() -> int:
     print(f"저장소: {REPO}")
     geom = kin.ArmGeometry()
@@ -1189,6 +1272,7 @@ def main() -> int:
     test_stage_classify()
     test_travel_split()
     test_sample_within_limits()
+    test_mount_contract()
     test_selfcheck_deps()
 
     print()

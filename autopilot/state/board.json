@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 42,
+ "next_id": 43,
  "tasks": [
   {
    "id": "T1",
@@ -910,18 +910,23 @@
    "id": "T32",
    "title": "tf_check.py 마운트 검사가 문구와 다르게 값을 비교 안 한다 — so101_geometry.yaml과 실제 비교하게 고친다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "감사(T29, 2026-09-18) 발견: ros2/tools/tf_check.py:136-143의 [마운트] 절이 주석·출력 문구는 'base_link→arm_base가 so101_geometry.yaml과 같은가'라고 적어 놓고, 실제 코드는 'any(abs(v)>1e-6)'로 0이 아니기만 하면 통과시킨다. 기준1(마운트가 URDF와 일치)을 실제로 강제하는 자동 검사가 어디에도 없다는 뜻 — mount.z=76.5가 실측이어도 URDF 쪽이 딴 값을 흘려도 아무도 못 잡는다.",
    "done_when": "tf_check.py가 so101_geometry.yaml을 직접 읽어 mount.x/y/z(mm)와 yaw_deg(회전, arm_base의 x축이 yaw만큼 돈 방향)를 base_link→arm_base TF 실측과 비교하고, 어긋나면(예: 1mm/0.5도 초과) FAIL을 낸다. 도커/라이브 ROS가 있어야 실행되는 파일이니 로컬에서 문법만 확인(python -m py_compile)하고, 실제 실행 검증은 다음에 젯슨/도커를 쓰는 사이클(builder나 tester)이 'sudo HOME=$HOME docker compose run --rm ros bash tools/bringup_check.sh'로 한다. 통과 로그를 docs/ros2-이행계획.md 기준1 채점표 아래에 한 줄 추가.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 01:42",
-   "updated": "2026-09-18 01:42",
+   "updated": "2026-09-18 02:52",
    "notes": [
     {
      "t": "2026-09-18 01:42",
      "by": "auditor",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 02:52",
+     "by": "builder",
+     "text": "완료: tf_check.py [마운트]가 이제 값을 비교한다. 계산은 ros2/tools/mount_compare.py(rclpy 없음)로 떼어 PC에서 시험 가능하게 했고, tf_check는 런치가 읽은 설치본 yaml(ament_index share)을 읽어 base_link→arm_base의 x/y/z(허용 1.0mm)와 요(쿼터니언에서 뽑음, 허용 0.5도), roll·pitch=0을 대조한다. 키가 없으면 통과가 아니라 실패다(런치가 없는 키를 건너뛰고 xacro default가 조용히 이기기 때문). [검증] PC 4종 45/90/175/73 전부 RC=0 (ros_selfcheck 156→175, [마운트] 19종 신설 — 1.5mm·0.6도·키누락·2도기울기를 넣어 '실패하는 것까지' 확인). [실기] 젯슨 도커에서 bringup_check.sh 실행: 0~2단 전부 통과 15개, 마운트 TF 60.00/0.00/76.50mm·요 0.000도가 yaml과 차이 0.00. [돌연변이] xacro의 마운트 z를 +5mm 틀었더니 FAIL mount.z (TF 81.50 vs yaml 76.50, 차이 5.00) + 종료코드 1 — 옛 코드는 이걸 통과시켰다. xacro는 즉시 복구(diff 동일 확인). 로그는 docs/ros2-이행계획.md '기준1 채점표 > T32 이후'에. ⚠ 강제가 생겼을 뿐 실측은 아니다 — mount.x/y/yaw_deg는 여전히 미실측(T12)."
     }
    ]
   },
@@ -1007,7 +1012,7 @@
    "done_when": "젯슨에서 tomato-voice 내린 뒤 arm_extend.py --target 으로 자세 A↔B를 5왕복하고, A에 돌아올 때마다 '끝 TCP' 세 숫자를 적는다(A=시작자세 134.3,15.3,168.9,7.6,88.8 / B=arm_extend 기본 뻗기자세). 5회 A의 TCP 최대 퍼짐(mm)과 관절 읽기값 최대 퍼짐(deg)을 표로 docs/인수인계-2026-09-04.md 새 절 §22에 남긴다. 퍼짐이 15mm를 넘으면 그 사실을 일지 요약 첫 줄에 쓴다(기준3 자체를 다시 봐야 한다). 끝나면 팔을 A로 두고 집게 100, tomato-voice 되살린다.",
    "attempts": 1,
    "created": "2026-09-18 02:08",
-   "updated": "2026-09-18 02:36",
+   "updated": "2026-09-18 02:52",
    "notes": [
     {
      "t": "2026-09-18 02:08",
@@ -1018,6 +1023,11 @@
      "t": "2026-09-18 02:34",
      "by": "builder",
      "text": "2026-09-18 사이클23(builder, T33): 이 작업이 더 급해졌다. 경로 거절이 사라진 뒤 실기 5회의 오차가 44.6 / 36.4 / 193.2 / 204.9 / 327.7mm였다 — **닿는 표적조차 36~45mm**이고 늘 z가 낮다(중력 처짐). 기준3의 15mm가 물리적으로 가능한지가 이제 유일한 물음이다. 참고: 팔이 못 드는 자세가 따로 있다는 것을 T40으로 냈다 — A↔B 왕복 자세를 고를 때 둘 다 팔이 편하게 버티는 자세로 고르지 않으면 반복오차가 아니라 처짐을 재게 된다."
+    },
+    {
+     "t": "2026-09-18 02:52",
+     "by": "builder",
+     "text": "2026-09-18 02:5x builder(사이클25): 젯슨 tomato-voice가 02:37:37에 멈춘 채다(systemctl stop, restart counter 221 — T27의 8090 충돌 크래시루프). 내가 멈춘 게 아니고 내 사이클 시작(02:42) 전부터 그랬다. 그래서 이 작업을 집으면 '먼저 내린다' 단계는 이미 끝나 있다 — 바로 arm_extend를 쓸 수 있고, 끝에 되살릴 때 systemctl start tomato-voice가 8090 때문에 또 죽을 수 있음을 알고 있어라. click-server/depth-cam/astra-cam은 active, controller-drive는 inactive다(02:51 실측)."
     }
    ]
   },
@@ -1050,12 +1060,17 @@
    "done_when": "젯슨에서 cd ~/tomato-picker/ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash /host-home/tomato-picker/ros2/tools/bringup_check.sh (경로는 실제 마운트에 맞춰 조정) 를 돌려 통과/실패 줄을 그대로 받아, docs/ros2-이행계획.md 기준1 채점표 아래에 '2026-09-18 bringup_check 기준선' 블록으로 붙인다. 팔을 여는 검사가 섞여 있으면 tomato-voice를 먼저 내리고 끝나면 되살린다. 컨테이너는 --rm으로 지운다.",
    "attempts": 0,
    "created": "2026-09-18 02:09",
-   "updated": "2026-09-18 02:09",
+   "updated": "2026-09-18 02:52",
    "notes": [
     {
      "t": "2026-09-18 02:09",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 02:52",
+     "by": "builder",
+     "text": "2026-09-18 사이클25 builder: 이 작업의 기준선을 내가 이미 받아 왔다 — docs/ros2-이행계획.md '기준1 채점표' 아래 'T32 이후' 절에 0~2단 전부 통과(15개) 로그를 붙였다. ⚠ 그 전에 막히는 것이 하나 있다: 젯슨의 ros2/tools/*.sh가 CRLF라 컨테이너 bash가 통째로 못 읽는다(T42). 이번엔 젯슨에서 sed -i 's/\\r$//'로 풀어 둬서 지금은 돈다. 명령은 'cd ~/tomato-picker/ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash /ws/tools/bringup_check.sh'(경로는 /ws/tools가 맞다, /host-home 아님)."
     }
    ]
   },
@@ -1111,6 +1126,25 @@
    "notes": [
     {
      "t": "2026-09-18 02:34",
+     "by": "builder",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T42",
+   "title": "젯슨의 ros2/tools/*.sh가 CRLF라 컨테이너 bash가 못 읽는다 — 배포 경로에서 끊는다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 2,
+   "why": "2026-09-18 사이클25 실측: bringup_check.sh를 도커에서 돌리니 'set: pipefail: invalid option name' / $'\\r': command not found / line 52 syntax error로 죽었다. 원인은 이 저장소를 Windows에서 작업해 git이 체크아웃할 때 CRLF로 바꾸는 것(git ls-files --eol = i/lf w/crlf)이고, 배포가 그 작업트리를 그대로 scp하기 때문이다. 이번엔 젯슨에서 sed -i 's/\\r$//'로 풀어 돌렸지만 다음 배포가 다시 덮으면 같은 자리에서 또 죽는다. T38(bringup_check 기준선)이 이것 때문에 통째로 막힌다.",
+   "done_when": "저장소 루트 .gitattributes에 '*.sh text eol=lf'(필요하면 *.py도)를 넣어 Windows 작업트리에서도 LF로 체크아웃되게 하고, git add --renormalize로 기존 파일을 맞춘다. 배포 스크립트(deploy/ 또는 scp 경로)가 있으면 거기서도 .sh를 LF로 보내는지 확인. 젯슨에 다시 올린 뒤 'sudo HOME=$HOME docker compose run --rm -T ros bash /ws/tools/bringup_check.sh'가 0단~2단을 통과하는지로 확인(2026-09-18 기준선: 15개 전부 통과). PC 4종 RC=0.",
+   "attempts": 0,
+   "created": "2026-09-18 02:52",
+   "updated": "2026-09-18 02:52",
+   "notes": [
+    {
+     "t": "2026-09-18 02:52",
      "by": "builder",
      "text": "만듦"
     }

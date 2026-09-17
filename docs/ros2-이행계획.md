@@ -101,6 +101,58 @@ l2=135/l3=95, mount_z=180)를 그대로 두고 있었다 — `description.launch
 없다" — 09-17의 "합격, 미실측은 mount.x 하나"는 **틀렸다**. 이 표가 새로 연
 작업은 아래 T32(감사가 신설).
 
+#### T32 이후 — 마운트에 **실제로 실패하는** 강제가 생겼다 (2026-09-18, builder)
+
+위 표의 `mount.*` 네 줄이 "강제 없음/약함"이었던 것은 `tf_check.py`의 [마운트]
+절이 `any(abs(v) > 1e-6)`, 즉 **0이 아니기만 하면** 통과시켰기 때문이다. 이제
+`base_link→arm_base` TF의 **평행이동 3성분과 요**를 `so101_geometry.yaml`과
+직접 비교한다(허용 1.0mm / 0.5도). 요는 쿼터니언에서 뽑고, roll·pitch가
+0인지도 같이 본다 — xacro는 `rpy="0 0 yaw"`로 박혀 있어서 기울었다면 다른
+경로가 끼어든 것이다.
+
+- 계산은 `ros2/tools/mount_compare.py`(rclpy 없음)로 떼어 놨다. `tf_check.py`는
+  rclpy를 물어 PC에서 못 도는데, **검사가 실패할 수 있는지는 PC에서 확인해야**
+  하기 때문이다(기준4 §T39의 문제의식). `ros_selfcheck.py` [마운트] 19종이
+  1.5mm·0.6도·키 누락·2도 기울기를 넣어 **실패하는 것까지** 확인한다.
+- 읽는 yaml은 **런치가 읽은 설치본**(`ament_index`의 share)이다. 소스만 고치고
+  빌드를 안 한 상태를 통과시키지 않기 위해서다. 젯슨은 symlink-install이라
+  설치본이 소스를 가리킨다(실측: `/ws/install/.../so101_geometry.yaml ->
+  /ws/src/.../so101_geometry.yaml`).
+
+**실제 실행 기록 (젯슨 192.168.0.19, 도커 `tomato-ros:jazzy`,
+`sudo HOME=/home/server docker compose run --rm -T ros bash /ws/tools/bringup_check.sh`)**
+
+```
+[마운트] base_link → arm_base 가 so101_geometry.yaml과 같은가
+  (읽은 yaml: /ws/install/tomato_description/share/tomato_description/config/so101_geometry.yaml)
+  ok   mount.x        (TF 60.00 vs yaml 60.00 mm · 차이 0.00)
+  ok   mount.y        (TF  0.00 vs yaml  0.00 mm · 차이 0.00)
+  ok   mount.z        (TF 76.50 vs yaml 76.50 mm · 차이 0.00)
+  ok   mount.yaw_deg  (TF 0.000 vs yaml 0.000 도 · 차이 0.000)
+  ok   마운트가 기울지 않았다 (roll=pitch=0)
+✅ 전부 통과 (15개) → ✅ 0~2단 전부 통과
+```
+
+**그 검사가 진짜인지도 실기에서 확인했다**(돌연변이 시험). xacro의 마운트 z를
+`${($(arg mount_z_mm)+5.0)*mm}`로 5mm 틀어 URDF만 yaml과 어긋나게 만들고 같은
+명령을 돌렸더니 —
+
+```
+  FAIL mount.z  TF 81.50 vs yaml 76.50 mm · 차이 5.00 (허용 1.0mm)
+❌ 1개 실패 / 15개 중   (bringup_check 종료코드 1)
+```
+
+xacro는 즉시 되돌렸다(`diff` 동일 확인). 이로써 위 표의 `mount.x/y/z/yaw_deg`
+줄의 "강제하는 검사"는 **✅ `tf_check.py` [마운트] + `ros_selfcheck` [마운트]**로
+바뀐다. **실측 여부는 그대로 ❌다** — 강제가 생겼다는 것은 "yaml에 적힌 숫자와
+TF가 같다"는 뜻이지 그 숫자가 자로 잰 값이라는 뜻이 아니다(T12가 그 일).
+
+**같이 드러난 것**: 젯슨의 `ros2/tools/*.sh`가 전부 **CRLF**라 컨테이너 bash가
+`set: pipefail: invalid option name` / `$'\r': command not found`로 죽는다.
+이 저장소는 Windows에서 작업해 git이 체크아웃할 때 CRLF로 바꾸는데
+(`git ls-files --eol` = `i/lf w/crlf`), 배포가 그 작업트리를 그대로 scp한다.
+이번엔 젯슨에서 `sed -i 's/\r$//'`로 풀고 돌렸다 → 항구적 해결은 T42.
+
 ### 1단계 (`ros.1`) — 지금 여기
 
 | | 상태 |

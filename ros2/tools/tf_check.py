@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import math
+import os
 import sys
 import time
 
@@ -31,6 +32,8 @@ from sensor_msgs.msg import JointState
 from tf2_ros import Buffer, TransformListener
 
 sys.path.insert(0, "/repo/src")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mount_compare  # noqa: E402  (rclpy를 안 무는 순수 계산 — PC에서 시험된다)
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
 
 JOINTS = list(kin.JOINTS)
@@ -90,6 +93,12 @@ class TfCheck(Node):
         t = tf.transform.translation
         return (t.x * 1000.0, t.y * 1000.0, t.z * 1000.0)
 
+    def pose(self, parent: str, child: str):
+        """(xyz mm, 쿼터니언 xyzw) — 마운트는 위치만으로는 못 본다(요가 있다)."""
+        tf = self._buf.lookup_transform(parent, child, Time())
+        t, q = tf.transform.translation, tf.transform.rotation
+        return (t.x * 1000.0, t.y * 1000.0, t.z * 1000.0), (q.x, q.y, q.z, q.w)
+
 
 def main() -> int:
     rclpy.init()
@@ -133,16 +142,27 @@ def main() -> int:
                    f"TF ({got[0]:.1f}, {got[1]:.1f}, {got[2]:.1f}) vs FK "
                    f"({want[0]:.1f}, {want[1]:.1f}, {want[2]:.1f}) mm · 차이 {err:.3f}mm")
 
-    # 마운트 — base_link에서 arm_base까지가 yaml과 같은가.
+    # 마운트 — base_link에서 arm_base까지가 yaml과 **같은 값인가**.
+    #
+    # ⚠ 2026-09-18까지 여기는 "0이 아니다"만 봤다. 그래서 yaml을 자로 재서
+    #    고쳐도 URDF 쪽이 딴 값을 흘려도 아무도 못 잡았다 — 졸업기준1이
+    #    "마운트가 URDF와 일치한다"고 적혀 있는데 그것을 강제하는 검사가
+    #    어디에도 없었다(감사 T29).
     print("\n[마운트] base_link → arm_base 가 so101_geometry.yaml과 같은가")
     node.hold({})
     try:
-        mount = node.translation_mm("base_link", "arm_base")
-        node.check("마운트 오프셋이 값을 가진다", any(abs(v) > 1e-6 for v in mount),
-                   " ".join(f"{v:.1f}" for v in mount) + " mm "
-                   "(⚠ 자로 잰 값인지 확인 — 기본값은 추정치다)")
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            share = get_package_share_directory("tomato_description")
+        except Exception:  # noqa: BLE001 - 설치 전이면 소스 yaml로 떨어진다
+            share = None
+        mount_cfg, used = mount_compare.load_mount(mount_compare.geometry_paths(share))
+        xyz, quat = node.pose("base_link", "arm_base")
+        print(f"  (읽은 yaml: {used})")
+        for name, ok, detail in mount_compare.compare(mount_cfg, xyz, quat):
+            node.check(name, ok, detail)
     except Exception as exc:  # noqa: BLE001
-        node.check("마운트 오프셋", False, str(exc)[:80])
+        node.check("마운트 대조", False, str(exc)[:120])
 
     print()
     if node.failed:
