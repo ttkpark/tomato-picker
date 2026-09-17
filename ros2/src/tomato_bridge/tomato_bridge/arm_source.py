@@ -124,7 +124,15 @@ class DirectArm:
             ) from exc
 
     def move_to(self, x, y, z, pitch, roll) -> str:
-        return self._unit().move_to(x=x, y=y, z=z, pitch=pitch, roll=roll)
+        """`travel_to`를 쓴다 — **여러 걸음으로 쪼개서** 간다.
+
+        `move_to`는 한 번에 80mm(ARM_CART_MAX_STEP_MM)까지만 가는 조그용 길이다.
+        이 서비스가 받는 일은 "임의의 자리로 보내라"(졸업기준3)이므로 그 길로는
+        원리상 도달할 수 없다 — 2026-09-18 T26 실기에서 572~720mm 요청 5/5가
+        한 걸음 상한에 거절됐다. 상한을 키우지 않고 걸음을 늘려 푼다: 걸음마다
+        바닥·몸통·사거리·관절한계 검사를 다시 받는다(cartesian.travel_to).
+        """
+        return self._unit().travel_to(x=x, y=y, z=z, pitch=pitch, roll=roll)
 
     def close(self) -> None:
         self._io.close()

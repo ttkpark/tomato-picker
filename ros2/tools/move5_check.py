@@ -15,10 +15,12 @@
 
 매 시도를 `docs/시험기록/move-to-point-<오늘날짜>.jsonl`에 한 줄로 남긴다:
     trial, commanded{x,y,z,pitch}, standoff_mm, ok, reached{x,y,z}(관절 FK),
-    error_mm, stage(실패 단계: tf/ik/joint/None), detail, dry_run
+    error_mm, stage(실패 단계: timeout/step/tf/pose/ik/joint/None), detail, dry_run
 
 ⚠ **실패 단계**를 구분하는 게 이 도구의 요점이다 — 검출은 이 도구 밖(표적을 사람이
-놓는다), 여기서는 TF(좌표계 변환) / IK(사거리 밖) / 관절(이동 후 오차)만 구분한다.
+놓는다), 여기서는 응답없음(timeout) / 한 걸음 상한(step) / 좌표계 변환(tf) /
+시작 자세(pose) / 목표가 무리(ik) / 이동 후 오차(joint)를 구분한다. 분류는
+`classify_stage()` 하나가 하고 `ros_selfcheck`의 [단계]가 그것을 못 박는다.
 """
 
 from __future__ import annotations
@@ -39,6 +41,43 @@ from tomato_picker.hardware import kinematics as kin  # noqa: E402
 
 RECORD_DIR = os.environ.get("TOMATO_RECORD_DIR") or os.path.join(REPO, "docs", "시험기록")
 STANDOFF_MM = 30.0
+
+
+# 실패 단계 분류 — arm_node는 **왜 거절했는지를 문장으로만** 돌려준다(구조화된
+# 코드가 없다). 그래서 문장을 읽는 수밖에 없는데, 예전 판정은 한 줄이었다:
+#     stage = "tf" if "TF" in detail or "좌표" in detail else "ik"
+# '좌표'라는 낱말이 **가드 안내문 안에** 들어 있어서(cartesian.py:479 "좌표 이동을
+# 쓰세요" / :519 "좌표로 다듬는") 09-18에 두 번 다 엉뚱하게 tf로 적혔다 —
+# T21의 자세 가드 5줄, T26의 한 걸음 상한 5줄. 기록은 다음 사이클이 사실로
+# 믿는 물건이라, "TF가 깨졌다"는 오독은 하루를 잡아먹는다.
+#
+# 그래서 **좁은 표지부터** 차례로 본다. 순서가 곧 규칙이다:
+#   timeout  응답이 없다 (서비스가 돌려주지 않았다 — 단계를 알 수 없다)
+#   step     한 걸음 상한 (cartesian._check_step) — 쪼개면 되는 거절 → T30
+#   tf       좌표계 변환 실패 (arm_node._to_arm_base_mm)
+#   pose     **지금 자세**가 좌표 이동을 못 받는다 (cartesian._require_state)
+#   ik       그 밖 — 사거리·관절한계·너무 작은 지령 등 목표 자체의 문제
+# ⚠ 'pose'와 'ik'를 가르는 것은 **'목표'라는 낱말**이다. 같은 "수평거리"가
+# 자세 가드(지금 자세)에도 사거리 초과(목표)에도 나오므로, 목표를 가리키는
+# 문장은 ik로 보낸다.
+STAGES = ("timeout", "step", "tf", "pose", "ik", "joint")
+
+
+def classify_stage(detail: str | None) -> str:
+    """거절 문장 하나를 실패 단계 이름으로 바꾼다. 위 표의 순서대로 본다."""
+    text = (detail or "").strip()
+    if not text or "응답 없음" in text or "타임아웃" in text:
+        return "timeout"
+    if "한 번에" in text and "상한" in text:
+        return "step"
+    if "TF" in text or "transform" in text.lower():
+        return "tf"
+    if "목표" not in text and ("몸통 뒤로" in text or "거의 수직" in text
+                              or "수평거리" in text):
+        return "pose"
+    if "영점" in text and "없습니다" in text:
+        return "pose"       # 영점 미등록도 '지금 상태'의 문제다 — 목표는 죄가 없다
+    return "ik"
 
 
 def sample_points(n: int, geom: kin.ArmGeometry, seed: int) -> list[dict]:
@@ -133,17 +172,20 @@ def run_real(points: list[dict], out_path: str) -> int:
         req.standoff_m = STANDOFF_MM / 1000.0
         req.dry_run = False
         fut = cli.call_async(req)
-        rclpy.spin_until_future_complete(node, fut, timeout_sec=20.0)
+        # ⚠ 먼 목표는 **여러 걸음**으로 간다(cartesian.travel_to) — 720mm면
+        # 9걸음이고 걸음마다 보간 0.6초 + 관절 읽기가 든다. 20초로는 정상
+        # 이동을 타임아웃으로 적게 된다(그러면 기록이 또 거짓말을 한다).
+        rclpy.spin_until_future_complete(node, fut, timeout_sec=90.0)
         res = fut.result()
         row = {"trial": i, "dry_run": False, "commanded": p, "standoff_mm": STANDOFF_MM}
         if res is None:
-            row.update(ok=False, stage="tf", error_mm=None, reached=None,
-                       detail="응답 없음(타임아웃)")
+            row.update(ok=False, stage=classify_stage(None), error_mm=None,
+                       reached=None, detail="응답 없음(타임아웃)")
             record(out_path, row)
             print(f"  trial {i}: 응답 없음")
             continue
         if not res.ok:
-            stage = "tf" if "TF" in res.detail or "좌표" in res.detail else "ik"
+            stage = classify_stage(res.detail)
             row.update(ok=False, stage=stage, error_mm=None, reached=None, detail=res.detail)
             record(out_path, row)
             print(f"  trial {i}: FAIL[{stage}] {res.detail}")

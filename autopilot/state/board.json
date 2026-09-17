@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 31,
+ "next_id": 32,
  "tasks": [
   {
    "id": "T1",
@@ -754,13 +754,13 @@
    "id": "T28",
    "title": "move5_check가 '자세 가드'를 stage=tf로 잘못 적는다 — 단계를 갈라 적고 09-18 기록에 정정 줄을 남긴다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "졸업기준3의 유일한 기록이 지금 'tf 5줄'인데 실제 원인은 TF가 아니라 팔 자세였다(cartesian.py:470 가드 문구에 '좌표'가 들어 있어 move5_check.py:146의 문자열 판정에 걸린다). 다음 사이클이 이 파일을 읽고 'TF가 깨졌다'로 믿으면 15일을 엉뚱한 데로 끌고 간다.",
    "done_when": "ros2/tools/move5_check.py:146의 단계 분류를 최소 셋으로 가른다 — '수평거리'/'몸통 뒤로'/'거의 수직'이 보이면 stage='pose', 'TF'/'transform'이면 'tf', 응답 없음은 'timeout'(지금은 이것도 tf로 적힌다, :140), 그 밖은 'ik'. docs/시험기록/move-to-point-2026-09-18.jsonl 은 고치지 말고(기록은 기록이다) 같은 파일 끝에 {\"note\":\"...\"} 한 줄로 '이 5줄의 stage=tf는 분류 버그이며 실제 단계는 pose다'를 남긴다. ros_selfcheck에 이 분류를 고정하는 검사 3종(가드문구→pose·TF문구→tf·응답없음→timeout)을 넣고, 자체검증 네 벌 전부 RC=0.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 01:00",
-   "updated": "2026-09-18 01:11",
+   "updated": "2026-09-18 01:27",
    "notes": [
     {
      "t": "2026-09-18 01:00",
@@ -771,6 +771,11 @@
      "t": "2026-09-18 01:11",
      "by": "builder",
      "text": "T26(2026-09-18 01:3x)이 세 번째 오분류 사례를 실기로 만들었다: 한 걸음 상한 거절('한 번에 572mm는 너무 큽니다(상한 80mm) … 큰 이동은 프리셋으로 대략 자세를 잡은 뒤 **좌표**로 다듬는 게 안전합니다')도 '좌표' 때문에 stage=tf로 적힌다. 분류에 'step'(한 걸음 상한: '한 번에'+'상한')을 하나 더 갈라라. 표본 5줄이 docs/시험기록/move-to-point-2026-09-18.jsonl 11~15번째 줄에 있고, 16번째 줄이 정정 note다."
+    },
+    {
+     "t": "2026-09-18 01:27",
+     "by": "builder",
+     "text": "완료: move5_check.classify_stage()로 실패 단계를 timeout/step/tf/pose/ik로 가른다(옛 판정은 '좌표' 낱말 하나로 전부 tf). 09-18 기록 10줄을 지금 규칙으로 다시 분류하면 pose5+step5, tf 0줄 — 기록 파일은 안 고치고 17번째 줄에 정정 note를 붙였다. ros_selfcheck에 [단계] 10종 추가(119→129, 살아 있는 cartesian 가드 문장으로도 검증). 자체검증 PC 45/90/129/33 전부 RC=0, 젯슨도 4종 RC=0(젯슨 사본이 낡아 5개 실패하던 것을 requirements.txt·handeye_check·eye_check·arm_cartesian_check 동기화로 맞춤)."
     }
    ]
   },
@@ -797,13 +802,13 @@
    "id": "T30",
    "title": "move_to_point이 80mm 상한에 걸린다 — 기준3은 '한 번에 한 걸음'으로는 절대 통과 못 한다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "2026-09-18 T26 실기: arm_extend로 특이점을 빠져나온 뒤(signed_r=237.2mm) move5_check 5회를 돌렸더니 자세 가드는 전부 통과했고, 이번엔 ARM_CART_MAX_STEP_MM(80mm, cartesian.py:517)에 5/5가 걸렸다(572·686·720·696·650mm). 졸업기준3은 '좌표로 보내면 집게가 거기로 간다'인데, 지금 move_to_point는 한 번에 80mm까지만 간다 — 임의의 자리로 보내는 일이 API 하나로는 원리상 불가능하다. 둘 중 하나를 정해야 한다: (a) arm_node/cartesian이 목표까지를 80mm 이하 걸음으로 스스로 쪼갠다, (b) 기준3의 '도달'을 여러 걸음으로 정의하고 move5_check가 쪼개어 부른다.",
    "done_when": "쪼개는 책임이 어디에 있는지 한 줄로 정하고(docs/ros2-이행계획.md §3 또는 docs/arm-cartesian.md), 그쪽에 구현한다. 매 걸음마다 기존 안전검사(z_min·r_min·사거리·관절한계)를 그대로 통과해야 한다 — 상한을 키워서 푸는 것은 금지(상한은 서보가 한 번에 뛰면 위험해서 있는 값이다). ros_selfcheck에 '목표가 상한보다 멀면 걸음 수가 ceil(d/상한) 이상이고 각 걸음이 상한 이하'를 고정하는 검사 2종 이상. 자체검증 4종 RC=0. 그 뒤 move5_check 실기 5회를 다시 돌려 docs/시험기록에 남긴다.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 01:11",
-   "updated": "2026-09-18 01:11",
+   "updated": "2026-09-18 01:36",
    "notes": [
     {
      "t": "2026-09-18 01:11",
@@ -814,6 +819,40 @@
      "t": "2026-09-18 01:11",
      "by": "builder",
      "text": "T26에서 확인한 것: 자세 가드(r_min 90mm)는 arm_extend.py로 빠져나올 수 있다 — 5회 전부 통과했다. 다음 사이클이 이 작업을 집으면 먼저 '~/lerobot/.venv/bin/python ros2/tools/arm_extend.py --dry'(젯슨)로 뻗은 뒤 재시험하면 된다. 그리고 이번에도 stage가 tf로 잘못 적혔다 — 상한 거절 문구에 '좌표로 다듬는'이 들어 있어 move5_check.py:146 문자열 판정에 걸린다. T28이 이 분류를 고칠 때 'step'(한 걸음 상한)도 갈라 적어라."
+    },
+    {
+     "t": "2026-09-18 01:27",
+     "by": "builder",
+     "text": "T28 완료: 단계 분류에 'step'이 생겼다 — T30을 재시험할 때 move5_check가 상한 거절을 step으로 적으므로, 쪼개기가 먹었는지 기록만 보고 알 수 있다(기대: step 0줄). 젯슨 ~/tomato-picker/ros2/tools/{move5_check,ros_selfcheck}.py는 이미 최신으로 올려 뒀다."
+    },
+    {
+     "t": "2026-09-18 01:36",
+     "by": "builder",
+     "text": "완료: 쪼개기 구현 완료 — 상한은 더 이상 기준3을 막지 않는다. ① 결정: 쪼개는 책임은 cartesian.travel_to()(걸음마다 z_min·r_min·사거리·관절한계 검사를 다시 받는 곳이 여기뿐이다) — docs/arm-cartesian.md §4, docs/ros2-이행계획.md §3에 한 줄로 남겼다. ② 상한은 안 키웠다: 걸음 수=ceil(d/80mm), 각 걸음 ≤80mm, move_to/jog는 여전히 거절. 목표의 작업영역·IK·관절한계는 걷기 전에 먼저 보고 거절 시 한 걸음도 안 움직인다. ③ arm_source.DirectArm.move_to가 travel_to를 쓴다(ros_selfcheck가 배선을 고정). ④ 검사: ros_selfcheck [쪼개기] 6종(119→135, [단계] 10종 포함) + arm_cartesian_check ⑦ 20종(33→53). PC 45/90/135/53 전부 RC=0, 젯슨도 arm_cartesian_check·ros_selfcheck RC=0. ⑤ 실기 재시험(젯슨, arm_extend로 signed_r 238.4mm까지 뻗은 뒤 ROS2 stage1 컨테이너): 한 걸음 상한 거절 0/5(이전 5/5) — 그러나 여전히 0/5 성공이고 원인이 한 칸 갔다: 목표 elbow_flex가 정규화 -121~-138(한계 ±98)로 이 팔의 가동범위 밖 → T31 신설. 기록 5줄+정정 note → docs/시험기록/move-to-point-2026-09-18.jsonl(23줄). 젯슨 원상복구: 팔 TCP(154.4,-162.4,134.5)=시작자세, 집게 98%, 컨테이너 삭제, tomato-voice/click-server/depth-cam/astra-cam active, controller-drive inactive."
+    }
+   ]
+  },
+  {
+   "id": "T31",
+   "title": "move5_check의 표적이 이 팔의 **캘리브레이션 가동범위**를 모른다 — 기준3의 '임의의 자리'를 갈 수 있는 자리로 뽑아라",
+   "role": "builder",
+   "status": "todo",
+   "priority": 1,
+   "why": "2026-09-18 T30 실기: 쪼개기를 넣어 한 걸음 상한을 없앴는데 5/5가 elbow_flex 정규화 -121~-138(한계 ±98)로 거절됐다. sample_points는 kinematics.forward의 사거리만 보고 elbow_flex를 -100~-20도에서 뽑는데, 이 팔은 ~/arm_cartesian.json(zero elbow_flex=-60.35, dpn=1.0332) 때문에 정규화 -98 = 각도 -38.9도까지만 굽는다. 즉 기준3이 지금 요구하는 표적의 상당수가 물리적으로 도달 불가다 — 도구가 '갈 수 없는 곳'을 시험하고 있다.",
+   "done_when": "move5_check.sample_points가 관절 정규화 한계(±(100-ARM_CART_NORM_MARGIN))를 함께 지켜 표적을 뽑는다 — 영점·deg_per_norm은 cartesian.CartesianConfig/arm_cartesian.json에서 읽고 코드에 박지 않는다(팔마다 다르다). 한계 표를 못 읽는 환경(PC)에서는 그 사실을 말하고 기존대로 뽑되 기록에 limits=none을 남긴다. ros_selfcheck 또는 arm_cartesian_check에 '뽑은 표적의 IK 해가 정규화 한계 안'을 고정하는 검사 1종 이상. 4종 RC=0. 그 뒤 젯슨에서 실기 5회(arm_extend로 뻗은 뒤)를 다시 돌려 docs/시험기록에 남긴다 — 이번엔 stage가 ik가 아니어야 한다.",
+   "attempts": 0,
+   "created": "2026-09-18 01:36",
+   "updated": "2026-09-18 01:36",
+   "notes": [
+    {
+     "t": "2026-09-18 01:36",
+     "by": "builder",
+     "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 01:36",
+     "by": "builder",
+     "text": "첫 명령: python autopilot/board.py next --role builder --claim. 젯슨 실기 절차는 T30이 쓴 그대로다 — ① sudo systemctl stop tomato-voice ② ~/lerobot/.venv/bin/python ros2/tools/arm_extend.py (뻗기, signed_r 238mm) ③ cd ros2/docker && sudo HOME=/home/server docker compose run --rm -T ros bash -lc 'source /opt/ros/jazzy/setup.bash && cd /ws && source install/setup.bash && ros2 launch tomato_bringup stage1.launch.py arm:=true arm_mode:=direct camera:=false handeye:=false perception:=false >/tmp/launch.log 2>&1 & sleep 14; TOMATO_RECORD_DIR=/host-home/tomato-picker/ros2/tmp_records python3 /host-home/tomato-picker/ros2/tools/move5_check.py --n 5 --seed 0' ④ 복구: arm_extend.py --target 134.3,15.3,168.9,7.6,88.8 + grip_set.py 100 + systemctl start tomato-voice. 서비스 요청 타임아웃은 이미 90초로 올려 뒀다(쪼갠 이동은 오래 걸린다)."
     }
    ]
   }

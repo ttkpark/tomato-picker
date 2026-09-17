@@ -9,6 +9,7 @@
   ③ 제자리 회전이 **정말 제자리인가** (끝점이 안 움직이는가)
   ④ 안전 검사가 실제로 막는가 (너무 작다/너무 크다/사거리 밖/바닥 아래/영점 없음)
   ⑤ 교시 자세(곧게 세운 팔)를 영점으로 잡으면 각도와 좌표가 맞게 나오는가
+  ⑦ 상한(80mm)보다 먼 목표를 **여러 걸음으로** 가는가 (travel_to · 졸업기준3)
 
 왜 이걸 만들었나 — 좌표 이동의 버그는 "팔이 엉뚱한 데로 간다"로 나타나고,
 그건 부러진 집게로 배우게 된다. 여기서 걸리는 종류의 실수(부호, 라디안/도,
@@ -36,8 +37,11 @@ for _stream in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
+from tomato_picker import config  # noqa: E402
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
-from tomato_picker.hardware.cartesian import CartesianArm, SimJointIO  # noqa: E402
+from tomato_picker.hardware.cartesian import (  # noqa: E402
+    MAX_TRAVEL_STEPS, CartesianArm, SimJointIO, plan_steps,
+)
 from tomato_picker.hardware.kinematics import ArmGeometry  # noqa: E402
 from tomato_picker.config import ARM_CART_ZERO_POSE_DEG as ZERO_POSE  # noqa: E402
 
@@ -212,6 +216,74 @@ def test_guards() -> None:
                  "몸통 뒤로 넘어가")
 
 
+def test_travel() -> None:
+    """상한보다 **먼 목표**로 여러 걸음에 가는가 (졸업기준3).
+
+    2026-09-18 T26 실기: arm_extend로 특이점을 빠져나온 뒤 move5_check 5회가
+    전부 한 걸음 상한(80mm)에 거절됐다(572~720mm). 상한은 좌표 오타 방어라
+    키울 수 없으니 걸음을 늘려 푼다 — 여기서 확인하는 것은 ① 걸음 수가
+    ceil(거리/상한) 이상인가 ② **각 걸음이 상한 이하인가**(쪼갠 척하고 한 번에
+    뛰면 상한이 없는 것과 같다) ③ 도착점이 목표와 같은가다.
+    """
+    print("\n⑦ 먼 좌표로 여러 걸음 이동 (travel_to)")
+    max_mm = config.ARM_CART_MAX_STEP_MM
+
+    now = kin.ToolPose(x=200.0, y=0.0, z=100.0, pitch=0.0)
+    for dist in (572.0, 686.0, 720.0, 696.0, 650.0):     # 09-18 실기의 거절 거리
+        target = now.replace(x=now.x + dist)
+        steps = plan_steps(now, target)
+        need = math.ceil(dist / max_mm)
+        hops = [math.dist((a.x, a.y, a.z), (b.x, b.y, b.z))
+                for a, b in zip([now] + steps[:-1], steps)]
+        check(f"{dist:.0f}mm → {len(steps)}걸음 (ceil={need})", len(steps) >= need,
+              f"걸음={len(steps)}")
+        check(f"{dist:.0f}mm의 각 걸음이 상한 {max_mm:.0f}mm 이하",
+              max(hops) <= max_mm + 1e-6, f"최대 {max(hops):.1f}mm")
+    check("한 걸음 안쪽 목표는 한 걸음이다",
+          len(plan_steps(now, now.replace(x=now.x + 50.0))) == 1)
+    check("마지막 걸음은 정확히 목표다",
+          plan_steps(now, now.replace(x=400.0))[-1].x == 400.0)
+    big = plan_steps(now, now.replace(pitch=now.pitch + 170.0))
+    check("회전이 크면 각도 상한으로도 쪼갠다",
+          len(big) >= math.ceil(170.0 / config.ARM_CART_MAX_STEP_DEG)
+          and max(abs(b.pitch - a.pitch) for a, b in zip([now] + big[:-1], big))
+              <= config.ARM_CART_MAX_STEP_DEG + 1e-6,
+          f"걸음={len(big)}")
+
+    # 가짜 팔로 실제로 걸어 본다 — 계획만 맞고 실행이 안 되면 의미가 없다.
+    arm = fresh_arm()
+    start = arm.pose()
+    far = start.replace(x=start.x - 150.0, z=start.z + 120.0)
+    d = math.dist((start.x, start.y, start.z), (far.x, far.y, far.z))
+    writes_before = arm._io.writes
+    note = arm.travel_to(x=far.x, y=far.y, z=far.z)
+    end = arm.pose()
+    check(f"{d:.0f}mm를 travel_to로 갔다", "걸음으로 이동 완료" in note, note)
+    check("걸음마다 한 번씩 썼다(한 번에 안 뛰었다)",
+          arm._io.writes - writes_before >= math.ceil(d / max_mm),
+          f"쓰기 {arm._io.writes - writes_before}회 / 필요 {math.ceil(d / max_mm)}회")
+    check("도착점이 목표와 같다 (1mm 안)",
+          math.dist((end.x, end.y, end.z), (far.x, far.y, far.z)) < 1.0,
+          f"오차 {math.dist((end.x, end.y, end.z), (far.x, far.y, far.z)):.3f}mm")
+
+    # 상한을 키워서 푼 게 아니라는 확인 — move_to는 여전히 거절해야 한다.
+    arm2 = fresh_arm()
+    expect_error("move_to는 여전히 80mm 상한을 지킨다",
+                 lambda: arm2.move_to(x=arm2.pose().x - 150.0), "너무 큽니다")
+    # 목표가 애초에 갈 수 없으면 **한 걸음도 움직이지 않는다** — 절반쯤 가 놓고
+    # 거절하면 팔이 엉뚱한 자리에 서고 사람은 무엇이 틀렸는지 모른다.
+    arm3 = fresh_arm()
+    before = arm3.pose()
+    writes = arm3._io.writes
+    expect_error("사거리 밖 목표는 travel_to도 거절",
+                 lambda: arm3.travel_to(x=before.x + 300.0), "사거리")
+    check("거절당한 뒤 팔이 그대로 있다", arm3._io.writes == writes
+          and math.dist((arm3.pose().x, arm3.pose().y, arm3.pose().z),
+                        (before.x, before.y, before.z)) < 1e-6)
+    check("걸음 수 상한이 있다(무한 루프 방어)", MAX_TRAVEL_STEPS >= 10,
+          f"{MAX_TRAVEL_STEPS}걸음")
+
+
 def test_zero_pose(geom: ArmGeometry) -> None:
     """영점 = "어깨는 정면, 나머지는 곧게 위로". 이게 틀리면 전부 90° 틀어진다."""
     print("\n⑤ 교시 자세 — 곧게 세운 팔이 영점")
@@ -324,6 +396,7 @@ def main() -> int:
     test_guards()
     test_zero_pose(geom)
     test_snapshot()
+    test_travel()
 
     print()
     if FAILED:

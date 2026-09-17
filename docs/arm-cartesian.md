@@ -112,13 +112,34 @@ roll  = 집게 축을 중심으로 한 비틀림 (= wrist_roll 그대로)
 ```python
 arm.cartesian.jog(dz=10)                      # 위로 10mm
 arm.cartesian.jog(dx=20, frame="tool")        # 집게가 보는 쪽으로 20mm
-arm.cartesian.move_to(x=210, z=140)           # 절대 좌표(안 준 축은 유지)
+arm.cartesian.move_to(x=210, z=140)           # 절대 좌표(안 준 축은 유지, 한 번에 80mm까지)
+arm.cartesian.travel_to(x=-120, z=300)        # **먼 좌표** — 80mm 이하 걸음으로 쪼개서 간다
 arm.cartesian.spin(30, axis="roll")           # 문 채로 30° 비틀기
 arm.cartesian.spin(-15, axis="pitch")         # 끝점 고정하고 손목만 숙이기
 arm.cartesian.spin(90, axis="yaw")            # 내려다보는 자세에서만
 arm.cartesian.set_grip(0)                     # 집게 닫기(0=닫힘, 100=열림)
 pose = arm.cartesian.pose()                   # ToolPose(x, y, z, pitch, roll)
 ```
+
+### 쪼개는 책임은 **카테시안 유닛**에 있다 (2026-09-18)
+
+한 걸음 상한 `ARM_CART_MAX_STEP_MM`(80mm)은 좌표 오타 하나가 팔을 던지는 것을
+막는 값이다. 그래서 "임의의 자리로 보내라"(졸업기준3 · `/arm/move_to_point`)는
+`move_to` 하나로는 **원리상** 안 됐다 — 2026-09-18 실기에서 572~720mm 요청
+5/5가 거절됐다(`docs/시험기록/move-to-point-2026-09-18.jsonl`).
+
+**정한 것: 쪼개는 일은 `cartesian.travel_to()`가 한다.** 호출자(arm_node ·
+move5_check · 대시보드)는 쪼개지 않는다. 이유는 하나다 — 바닥(`z_min`)·몸통
+(`r_min`)·사거리·관절한계 검사는 이 유닛 안에만 있고, 걸음마다 그 검사를
+다시 받아야 하기 때문이다. 호출자가 쪼개면 그 검사를 호출자가 베껴야 한다.
+
+- 상한은 **키우지 않았다.** 걸음 수 = `ceil(거리/80mm)`이고 각 걸음이 80mm 이하다.
+- `move_to`·`jog`는 그대로 거절한다(조그 버튼의 오타 방어는 남아야 한다).
+- 목표의 작업영역·IK·관절한계는 **걷기 전에** 먼저 본다 — 갈 수 없는 곳으로
+  절반쯤 가 놓고 거절하면 팔은 엉뚱한 자리에 서고 사람은 이유를 모른다.
+- 중간에 막히면 그 자리에 서고 "9걸음 중 4번째에서 멈췄습니다 — …"로 말한다.
+- 걸음마다 관절을 **다시 읽는다**(서보가 못 미친 만큼을 다음 걸음이 메운다).
+- 검증: `tools/arm_cartesian_check.py` ⑦ · `ros2/tools/ros_selfcheck.py` [쪼개기].
 
 **집게는 좌표 이동이 절대 건드리지 않는다.** 매 조그마다 집게에 새 목표를 주면
 눌린 현재값을 목표로 다시 써서 무는 힘이 조금씩 풀리고, 몇 번 반복하면 떨어뜨린다.

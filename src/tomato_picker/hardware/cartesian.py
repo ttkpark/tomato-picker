@@ -397,6 +397,63 @@ class CartesianArm:
         )
         return self._go(norms, now, target, secs)
 
+    def travel_to(self, x: float | None = None, y: float | None = None,
+                  z: float | None = None, pitch: float | None = None,
+                  roll: float | None = None, secs: float | None = None) -> str:
+        """**먼 좌표로 여러 걸음에 걸쳐** 이동. 한 걸음 상한은 그대로 지킨다.
+
+        `move_to`는 한 번에 ARM_CART_MAX_STEP_MM(80mm)까지만 간다 — 좌표 오타
+        하나가 팔을 던지는 것을 막는 값이다. 그래서 "임의의 자리로 보내라"는
+        일(졸업기준3 · `/arm/move_to_point`)은 `move_to` 하나로는 **원리상**
+        불가능했다(2026-09-18 T26: 572~720mm 5/5 거절).
+
+        쪼개는 책임을 여기에 둔 이유: 걸음마다 `_go`를 다시 지나가야 바닥·몸통·
+        사거리·관절한계 검사를 **매 걸음** 받을 수 있고, 그 검사들은 이 유닛
+        안에만 있다. 호출자가 쪼개면 그 검사를 호출자가 베껴야 한다.
+        ⚠ 그래도 **`move_to`를 조용히 바꾸지는 않았다** — 조그 버튼이 오타를
+          막는 것은 그대로 남아야 해서, 긴 이동은 이름이 다른 길로만 열어 둔다.
+
+        중간에 막히면 **어느 걸음에서 왜**인지를 말하고 멈춘다(그 자리에 선다).
+        """
+        norms, now = self._require_state()
+        target = ToolPose(
+            x=now.x if x is None else float(x),
+            y=now.y if y is None else float(y),
+            z=now.z if z is None else float(z),
+            pitch=now.pitch if pitch is None else float(pitch),
+            roll=now.roll if roll is None else float(roll),
+        )
+        geom = self.config.geometry()
+
+        # **목표부터 본다** — 갈 수 없는 곳으로 절반쯤 가 놓고 거절하면, 팔은
+        # 엉뚱한 자리에 서 있고 사람은 무엇이 틀렸는지 모른다.
+        self._check_workspace(target, geom)
+        try:
+            end_degs = kin.inverse(target, geom, elbow_up=ARM_CART_ELBOW_UP,
+                                   seed_pan=self._to_deg(norms).get("shoulder_pan", 0.0))
+        except Unreachable as exc:
+            raise RuntimeError(f"거기까지 못 갑니다 — {exc}") from exc
+        self._check_joint_limits(self._to_norm(end_degs), end_degs)
+
+        steps = plan_steps(now, target)
+        if len(steps) > MAX_TRAVEL_STEPS:
+            raise RuntimeError(
+                f"{len(steps)}걸음이 필요합니다(상한 {MAX_TRAVEL_STEPS}걸음) — "
+                "그렇게 먼 목표는 좌표가 잘못됐을 가능성이 큽니다."
+            )
+        for i, waypoint in enumerate(steps, 1):
+            try:
+                self._go(norms, now, waypoint, secs)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"{len(steps)}걸음 중 {i}번째에서 멈췄습니다 — {exc}"
+                ) from exc
+            # 걸음마다 **실제로 어디에 있는지 다시 읽는다.** 서보가 목표에
+            # 조금 못 미쳐도 다음 걸음이 그만큼을 메우고, 자세 가드도 다시 받는다.
+            norms, now = self._require_state()
+        return (f"{len(steps)}걸음으로 이동 완료 → {self._last_note} "
+                f"(도착 x={now.x:.0f} y={now.y:.0f} z={now.z:.0f})")
+
     def jog(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0,
             dpitch: float = 0.0, droll: float = 0.0, frame: str = "base",
             secs: float | None = None) -> str:
@@ -577,6 +634,45 @@ class CartesianArm:
                 "스텝을 키우세요."
             )
         return biggest
+
+
+MAX_TRAVEL_STEPS = 16
+"""`travel_to`가 한 번에 허용하는 걸음 수 상한.
+
+사거리가 {reach}mm이므로 도달 가능한 두 점 사이 직선거리는 아무리 멀어도
+2·사거리(≈780mm)를 못 넘는다 — 상한 80mm면 10걸음이다. 16으로 잡아 두면
+정상 목표는 전부 통과하고, 그보다 많이 필요한 값은 애초에 갈 수 없는 목표다
+(목표 자체 검사에서 먼저 걸린다). 무한 루프 방어용 값이다.
+"""
+
+
+def plan_steps(now: ToolPose, target: ToolPose,
+               max_step_mm: float = ARM_CART_MAX_STEP_MM,
+               max_step_deg: float = ARM_CART_MAX_STEP_DEG) -> list[ToolPose]:
+    """지금 자세에서 목표까지를 **상한 이하 걸음들**로 쪼갠 중간 목표 목록.
+
+    마지막 원소는 정확히 `target`이다(근처까지 갔다고 도달이라 하지 않는다).
+    직선 보간이며 각(pitch·roll)도 같은 걸음 수로 나눈다 — 이동과 회전 중
+    더 많이 쪼개야 하는 쪽이 걸음 수를 정한다.
+
+    ⚠ **상한을 키워서 푸는 게 아니다.** 상한(ARM_CART_MAX_STEP_MM)은 서보가 한
+      번에 뛰면 위험해서 있는 값이고, 여기서 하는 일은 그 상한을 지키면서 여러
+      번 가는 것이다. 각 걸음은 `_go`를 그대로 지나가므로 바닥·몸통·사거리·
+      관절한계 검사를 **걸음마다** 다시 받는다.
+    """
+    d = math.dist((now.x, now.y, now.z), (target.x, target.y, target.z))
+    da = max(abs(kin.wrap180(target.pitch - now.pitch)),
+             abs(kin.wrap180(target.roll - now.roll)))
+    n = max(1,
+            math.ceil(d / max_step_mm - 1e-9),
+            math.ceil(da / max_step_deg - 1e-9))
+    return [ToolPose(
+        x=now.x + (target.x - now.x) * i / n,
+        y=now.y + (target.y - now.y) * i / n,
+        z=now.z + (target.z - now.z) * i / n,
+        pitch=now.pitch + kin.wrap180(target.pitch - now.pitch) * i / n,
+        roll=now.roll + kin.wrap180(target.roll - now.roll) * i / n,
+    ) for i in range(1, n + 1)]
 
 
 def _try_acquire(lock) -> bool:

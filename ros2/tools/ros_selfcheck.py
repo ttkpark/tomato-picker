@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import io
+import json
 import math
 import os
 import re
@@ -860,6 +861,132 @@ def test_arm_extend_escape() -> None:
           f"{r_goal:.1f} ≤ {kin.ArmGeometry().reach_max:.1f}mm")
 
 
+# ----------------------------------------------------------------------
+# ⑩ 실패 단계 분류 (move5_check)
+# ----------------------------------------------------------------------
+
+# 2026-09-18 젯슨 실기에서 **실제로 기록된** 거절 문장들. 둘 다 stage=tf로
+# 적혔고 둘 다 TF와 무관했다(docs/시험기록/move-to-point-2026-09-18.jsonl).
+POSE_DETAIL_2026_09_18 = (
+    "이동 실패 — 팔이 몸통 뒤로 넘어가 있습니다 — 수평거리 -136mm < 90mm. "
+    "이 근처에서는 집게가 회전축 위에 있어 xyz 방향이 정해지지 않습니다. "
+    "프리셋으로 앞으로 뻗은 자세를 먼저 만든 뒤 좌표 이동을 쓰세요."
+)
+STEP_DETAIL_2026_09_18 = (
+    "이동 실패 — 한 번에 572mm는 너무 큽니다(상한 80mm). 나눠서 가세요 — "
+    "큰 이동은 프리셋으로 대략 자세를 잡은 뒤 좌표로 다듬는 게 안전합니다."
+)
+# arm_node._to_arm_base_mm이 실패할 때 올리는 문장 형식(arm_node.py:142).
+TF_DETAIL = ("목표를 arm_base 좌표로 못 옮겼다: lookup failed. "
+             "손-눈 보정을 했는지, 그 static TF가 떠 있는지 확인하라.")
+
+
+def test_stage_classify() -> None:
+    """거절 문장을 **어느 단계**로 적는가.
+
+    이 검사가 있는 이유: 09-18에 기준3의 유일한 기록이 `stage=tf` 열 줄이었고
+    **열 줄 다 TF가 아니었다**(자세 가드 5 + 한 걸음 상한 5). 옛 판정이
+    `"좌표" in detail`이었고, 가드 안내문이 "좌표 이동을 쓰세요"로 끝나기
+    때문이다. 기록은 다음 사이클이 사실로 믿는 물건이라 오분류 한 글자가
+    하루를 엉뚱한 데로 끌고 간다 — 그래서 실제 문장으로 못 박는다.
+    """
+    print("\n[단계] move5_check 실패 단계 분류")
+    sys.path.insert(0, os.path.join(REPO, "ros2", "tools"))
+    import move5_check as m5  # noqa: E402
+    from tomato_picker.hardware import cartesian as cart  # noqa: E402
+
+    check("자세 가드 문구 → pose (실기 기록 그대로)",
+          m5.classify_stage(POSE_DETAIL_2026_09_18) == "pose",
+          m5.classify_stage(POSE_DETAIL_2026_09_18))
+    check("한 걸음 상한 문구 → step (실기 기록 그대로)",
+          m5.classify_stage(STEP_DETAIL_2026_09_18) == "step",
+          m5.classify_stage(STEP_DETAIL_2026_09_18))
+    check("TF 실패 문구 → tf", m5.classify_stage(TF_DETAIL) == "tf")
+    check("응답 없음 → timeout (tf가 아니다)",
+          m5.classify_stage(None) == "timeout"
+          and m5.classify_stage("응답 없음(타임아웃)") == "timeout")
+    check("IK 실패 → ik", m5.classify_stage("IK가 안 풀린다 — 사거리 밖") == "ik")
+
+    # **살아 있는 코드가 만드는 문장**으로 확인한다 — 문구를 다듬다가 분류가
+    # 조용히 틀어지는 것이 이 병의 발생 경로였다. self는 안 쓰이므로 None.
+    step_msg = ""
+    try:
+        cart.CartesianArm._check_step(
+            None, kin.ToolPose(x=200.0, y=0.0, z=100.0, pitch=0.0),
+            kin.ToolPose(x=700.0, y=0.0, z=100.0, pitch=0.0))
+    except RuntimeError as exc:
+        step_msg = str(exc)
+    check("지금 코드가 내는 한 걸음 상한 문장도 step이다",
+          step_msg and m5.classify_stage(step_msg) == "step", step_msg[:60])
+
+    reach_msg = ""
+    try:
+        cart.CartesianArm._check_workspace(
+            None, kin.ToolPose(x=900.0, y=0.0, z=100.0, pitch=0.0),
+            kin.ArmGeometry())
+    except RuntimeError as exc:
+        reach_msg = str(exc)
+    # ⚠ 이 문장에도 "수평거리"가 들어 있다 — 자세 가드와 같은 낱말이다.
+    # 가르는 것은 '목표'다(목표가 무리 ≠ 지금 자세가 무리).
+    check("사거리 초과는 pose가 아니라 ik다 ('수평거리'가 겹쳐도)",
+          reach_msg and m5.classify_stage(reach_msg) == "ik", reach_msg[:60])
+
+    src = open(os.path.join(REPO, "src", "tomato_picker", "hardware",
+                            "cartesian.py"), encoding="utf-8").read()
+    check("자세 가드가 기대하는 표지를 아직 쓰고 있다",
+          all(w in src for w in ("몸통 뒤로", "거의 수직", "수평거리")),
+          "문구를 바꾸면 이 검사가 먼저 터진다")
+
+    record = os.path.join(REPO, "docs", "시험기록",
+                          "move-to-point-2026-09-18.jsonl")
+    if os.path.exists(record):
+        rows = [json.loads(ln) for ln in open(record, encoding="utf-8")
+                if ln.strip()]
+        fails = [r for r in rows if r.get("detail") and not r.get("ok", True)]
+        redo = [m5.classify_stage(r["detail"]) for r in fails]
+        check("09-18 기록의 실패 줄은 지금 규칙으로 tf가 하나도 없다",
+              redo and "tf" not in redo,
+              f"{len(redo)}줄 → {sorted(set(redo))}")
+        check("그 기록에 정정 note가 남아 있다",
+              any("note" in r for r in rows))
+
+
+# ----------------------------------------------------------------------
+# ⑪ 먼 좌표로 쪼개서 가기 (travel_to ↔ /arm/move_to_point)
+# ----------------------------------------------------------------------
+
+def test_travel_split() -> None:
+    """`/arm/move_to_point`가 **상한보다 먼 목표**에 도달할 수 있는가.
+
+    2026-09-18 T26 실기: 572~720mm 요청 5/5가 한 걸음 상한(80mm)에 거절됐다.
+    상한은 서보가 한 번에 뛰면 위험해서 있는 값이라 키우지 않는다 — 걸음을
+    늘려 푼다. 여기서 박는 것은 두 가지다: ① 쪼개기 계약(걸음 수·걸음 크기)
+    ② **노드가 그 길을 쓰고 있는가**(계획만 맞고 배선이 옛 길이면 헛것이다).
+    """
+    print("\n[쪼개기] 상한보다 먼 목표를 여러 걸음으로")
+    from tomato_picker.config import ARM_CART_MAX_STEP_MM as LIMIT  # noqa: E402
+    from tomato_picker.hardware.cartesian import plan_steps  # noqa: E402
+
+    now = kin.ToolPose(x=200.0, y=0.0, z=100.0, pitch=0.0)
+    for dist in (572.0, 720.0):        # 09-18 실기에서 거절당한 거리 그대로
+        steps = plan_steps(now, now.replace(x=now.x + dist))
+        hops = [math.dist((a.x, a.y, a.z), (b.x, b.y, b.z))
+                for a, b in zip([now] + steps[:-1], steps)]
+        check(f"{dist:.0f}mm는 ceil({dist:.0f}/{LIMIT:.0f})={math.ceil(dist / LIMIT)}걸음 이상",
+              len(steps) >= math.ceil(dist / LIMIT), f"걸음={len(steps)}")
+        check(f"{dist:.0f}mm의 모든 걸음이 상한 이하",
+              max(hops) <= LIMIT + 1e-6, f"최대 {max(hops):.1f}mm")
+    check("마지막 걸음은 목표 그 자체다 (근처가 아니다)",
+          plan_steps(now, now.replace(x=500.0))[-1].x == 500.0)
+
+    src = open(os.path.join(REPO, "ros2", "src", "tomato_bridge", "tomato_bridge",
+                            "arm_source.py"), encoding="utf-8").read()
+    body = src.split("class DirectArm")[1].split("class ProxyArm")[0]
+    check("DirectArm.move_to가 travel_to를 부른다 (옛 move_to가 아니다)",
+          "travel_to(" in body and "._unit().move_to(" not in body,
+          "배선이 옛 길로 돌아가면 상한 거절이 그대로 재발한다")
+
+
 def test_selfcheck_deps() -> None:
     """자체검증 4종이 **빈 환경에서 무엇이 없는지 말하고** 죽는가.
 
@@ -955,6 +1082,8 @@ def main() -> int:
     test_handeye_gate()
     test_handeye_identifiability()
     test_arm_extend_escape()
+    test_stage_classify()
+    test_travel_split()
     test_selfcheck_deps()
 
     print()
