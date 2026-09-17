@@ -37,12 +37,14 @@ import json
 import math
 import os
 import sys
+import time
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 sys.path.insert(0, os.path.join(REPO, "src"))
 sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
+from tomato_picker.hardware import settle as st  # noqa: E402
 
 DEG_PER_TICK = 360.0 / 4096.0
 CAL = os.path.expanduser(
@@ -58,6 +60,8 @@ CART = os.path.expanduser("~/arm_cartesian.json")
 MOUNT_Z_MM = 76.5
 FLOOR_MARGIN_MM = 10.0
 STEP_DEG = 12.0        # 한 구간에서 어느 관절도 이 이상 안 움직인다
+# 되먹임 기록이 남는 곳 — move5_check와 같은 규칙(날짜별 jsonl, 한 줄이 한 번의 이동).
+RECORD_DIR = os.path.join(REPO, "docs", "시험기록")
 SECS_PER_STEP = 1.2
 R_TARGET = 150.0       # 좌표 가드(90mm)에서 충분히 떨어진 곳까지
 
@@ -128,6 +132,10 @@ def main() -> int:
                          "비우면 기본 목표(집게가 수평 앞)")
     ap.add_argument("--hold", action="store_true",
                     help="끝나고 토크를 켠 채 둔다 (안 그러면 팔이 떨어진다)")
+    ap.add_argument("--no-settle", action="store_true",
+                    help="마지막 걸음 뒤 되먹임(처짐 지우기)을 하지 않는다")
+    ap.add_argument("--record", default="",
+                    help="되먹임 기록 jsonl 경로 (기본 docs/시험기록/settle-<오늘>.jsonl)")
     args = ap.parse_args()
 
     spans, zero, ref, signs, over = load_frame()
@@ -231,6 +239,54 @@ def main() -> int:
             print("     ⚠ 지령과 실제가 20° 넘게 다르다 — 무언가에 걸렸을 수 있다. 중단.")
             io.hold_close()
             return 1
+
+    # ── 마지막 걸음 뒤: 처짐을 되먹임으로 지운다 ──────────────────────────
+    # 여기까지의 루프는 "지령을 한 번 쓰고 되읽어 오차를 찍기만" 했다. 오차를
+    # 보고도 아무것도 안 하면 팔은 중력이 누른 만큼 못 미친 자리에 선 채 끝난다
+    # (2026-09-18 실측 관절 오차 A자세 1.1~1.3° / B자세 4.0~4.9°, §22).
+    # ⚠ 같은 값을 다시 보내는 것으로는 안 된다 — 이미 정상상태다. 오차만큼 **더** 준다.
+    def deliver(cmd):
+        """보정 지령을 **실제로 보낼 수 있는 값**으로 깎는다.
+
+        보정은 목표를 지나쳐 가는 값이라 그냥 보내면 한 걸음 상한·가동범위·바닥을
+        넘을 수 있다. 관절마다 STEP_DEG 안으로 자르고 가동범위로 한 번 더 자른 뒤,
+        그 자세가 바닥/사거리를 어기면 **보정을 통째로 버린다**(안전이 처짐보다 세다).
+        settle은 깎인 관절을 '한계에 눌림'으로 보고 그 관절에 더 안 민다.
+        """
+        capped = {j: target[j] + max(-STEP_DEG, min(STEP_DEG, float(v) - target[j]))
+                  for j, v in cmd.items()}
+        norms, _ = clamp_norm(to_norm(capped))
+        out = to_deg({**now_norms, **norms})
+        pose = kin.forward(out, geom)
+        if (pose.z < -MOUNT_Z_MM + FLOOR_MARGIN_MM
+                or math.hypot(pose.x, pose.y) > geom.reach_max + 1e-6):
+            print("     ⚠ 보정 자세가 바닥/사거리를 어긴다 — 되먹임을 버린다.")
+            return dict(target)
+        return {j: out[j] for j in cmd}
+
+    cfg = st.SettleConfig(rounds=0) if args.no_settle else st.SettleConfig()
+    res = st.settle(target,
+                    measure=lambda: to_deg(io.read()),
+                    send=lambda degs: io.write(to_norm(degs), SECS_PER_STEP),
+                    deliver=deliver, cfg=cfg)
+    print("\n되먹임 " + res.describe())
+    for r in res.rounds:
+        gain = "" if r.gain is None else f"  개선 {r.gain * 100:+.1f}%"
+        print(f"  {r.n}회  오차 {r.err_deg:5.2f}° ({r.worst}){gain}")
+    if not args.no_settle:
+        row = {"t": time.strftime("%Y-%m-%d %H:%M:%S"), "tool": "arm_extend",
+               "target_deg": {j: round(target[j], 2) for j in kin.JOINTS},
+               "settle": res.as_record()}
+        path = args.record or os.path.join(
+            RECORD_DIR, f"settle-{time.strftime('%Y-%m-%d')}.jsonl")
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            print(f"  기록 {path}")
+        except OSError as exc:
+            # 기록을 못 남기는 것이 팔을 세워 둔 채 죽을 이유는 아니다.
+            print(f"  ⚠ 기록 실패: {exc}")
 
     final = to_deg(io.read())
     fp = kin.forward(final, geom)

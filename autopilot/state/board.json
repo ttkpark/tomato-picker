@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 47,
+ "next_id": 48,
  "tasks": [
   {
    "id": "T1",
@@ -1282,18 +1282,28 @@
    "id": "T45",
    "title": "마지막 걸음에서 처짐을 되먹임으로 지운다 — arm_extend·cartesian의 '한 번 쓰고 끝'을 고친다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "지금 ros2/tools/arm_extend.py:222-229와 cartesian의 이동은 걸음마다 io.write를 한 번만 하고 되읽어 '오차 몇 도'를 찍기만 한다. 오차를 보고도 아무것도 안 한다 — 기준3의 36~45mm가 거기서 나온다.",
    "done_when": "선행 = 위 tester 측정이 '되먹임이 먹는다'를 숫자로 보인 뒤(포화로 나오면 이 작업은 닫고 기준3을 다시 본다). 마지막 걸음 뒤 '실제를 읽어 오차만큼 더 준다'를 최대 N회(기본 3) 반복하고, 오차 임계(기본 0.5°)에 들면 멈추며, 줄지 않으면(연속 2회 개선 <10%) 포화로 보고 그만둔다 — 세 숫자(N·임계·개선률)는 코드에 박지 말고 config 한 곳에. 되먹임 횟수와 최종 오차를 기록 jsonl에 남긴다. arm_cartesian_check 또는 ros_selfcheck에 '수렴하면 멈춘다'·'포화면 무한히 안 돈다' 2종 이상 신설하고, 일부러 1줄 틀리게 고쳐 그 검사가 실패하는지 확인한다(T39 기준). 4종 RC=0.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 03:25",
-   "updated": "2026-09-18 03:25",
+   "updated": "2026-09-18 04:01",
    "notes": [
     {
      "t": "2026-09-18 03:25",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 04:01",
+     "by": "builder",
+     "text": "되돌리기 규칙(가장 좋았던 지령으로 한 번만 복귀)은 시뮬에서만 발동했다 — 실기 4회 중 발동 0회(03:58:47은 2회에 수렴). 다음에 실기에서 restored=true가 찍히면 그 줄을 §22-2에 추가할 것."
+    },
+    {
+     "t": "2026-09-18 04:01",
+     "by": "builder",
+     "text": "완료: settle.py(순수 판정) + arm_extend + cartesian._run_path에 되먹임을 넣었다. 실기가 보정 법칙을 갈랐다: '목표+(목표-실제)'는 B자세에서 4.83→1.23 뒤 1.67→2.21로 되돌아갔고, '지령+(목표-실제)'(누적)로 바꾸니 같은 자세가 3.57→0.41°로 2회에 수렴, A자세도 2.70→0.35° 수렴(젯슨 실기 4회, 원자료 docs/시험기록/settle-2026-09-18.jsonl). 소프트 한계에 눌린 관절(B=elbow_flex, A=shoulder_pan)은 오차에서 빼고 더 안 민다. 세 숫자는 config.py(ARM_SETTLE_ROUNDS=3/STOP_DEG=0.5/MIN_GAIN=0.10/STALL_ROUNDS=2). 자체검증 arm_cartesian_check ⑨ 18종 신설(수렴·포화·예산·한계눌림·되돌리기·분해능·누적) — 돌연변이 7건 전부 FAIL로 잡히고 복구 후 통과. 4종 RC=0: 45/90/200/91. 시뮬 도착오차 18.2mm→1.7mm. 젯슨 서비스는 발견 그대로 복원(click-server active, tomato-voice inactive), 팔은 A(132.9/15.2/164.0/7.9/88.7)."
     }
    ]
   },
@@ -1311,6 +1321,25 @@
    "notes": [
     {
      "t": "2026-09-18 03:36",
+     "by": "builder",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T47",
+   "title": "되먹임이 붙은 뒤 졸업기준3을 실기로 다시 잰다 (move5_check 5회)",
+   "role": "tester",
+   "status": "todo",
+   "priority": 2,
+   "why": "T45가 travel_to 도착 뒤 되먹임을 넣었다. 시뮬에서는 도착 오차가 18.2mm→1.7mm로 줄었지만 실기로 기준3을 다시 잰 적이 없다 — 지금 점수는 되먹임 이전(0/5)의 것이다.",
+   "done_when": "젯슨에서 move5_check.py를 실기로 5회 돌려 docs/시험기록/move-to-point-<날짜>.jsonl에 남기고, 각 줄의 detail에 '되먹임 N회 — 오차 a° → b°'가 실제로 들어갔는지 확인한다. 점수(n/5)와 오차 mm를 docs/인수인계-2026-09-04.md §22-2 '남은 것' 아래에 한 줄로 적는다. 팔·서비스는 발견한 그대로 되돌린다(click-server active, tomato-voice inactive).",
+   "attempts": 0,
+   "created": "2026-09-18 04:00",
+   "updated": "2026-09-18 04:00",
+   "notes": [
+    {
+     "t": "2026-09-18 04:00",
      "by": "builder",
      "text": "만듦"
     }

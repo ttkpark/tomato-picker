@@ -57,6 +57,7 @@ from ..config import (
     ARM_ID,
 )
 from . import kinematics as kin
+from . import settle as st
 from .kinematics import ArmGeometry, ToolPose, Unreachable
 
 GRIPPER = "gripper"
@@ -421,6 +422,8 @@ class CartesianArm:
         self.config = FrameConfig(path)
         self._last_pose: ToolPose | None = None
         self._last_note = ""
+        # 마지막 이동의 되먹임 결과(settle) — 기록하는 쪽이 그대로 jsonl에 넣는다.
+        self.last_settle: dict | None = None
         # 읽기가 실패하면 잠깐 쉰다 — 아래 snapshot() 참고.
         self._read_quiet_until = 0.0
         self._last_error: str | None = None
@@ -592,6 +595,7 @@ class CartesianArm:
           고르는 이유는 docs/arm-cartesian.md §4에 적어 뒀다.
         """
         norms, now = self._require_state()
+        self.last_settle = None   # 이번 이동의 기록만 남는다(직전 것이 새지 않게)
         target = ToolPose(
             x=now.x if x is None else float(x),
             y=now.y if y is None else float(y),
@@ -684,6 +688,44 @@ class CartesianArm:
             pose, cur = nxt, {**cur, **step_norms}
         return None
 
+    def _settle(self, end_degs: dict[str, float], geom: ArmGeometry,
+                secs: float | None) -> "st.SettleResult":
+        """**마지막 걸음 뒤 남은 처짐을 지운다** — 오차만큼 더 준다.
+
+        왜 여기가 필요한가 — `_run_path`는 걸음마다 다시 짜지만 그것은 **같은
+        목표를 다시 보내는 것**이다. 서보는 중력이 누르는 만큼 못 미친 자리에서
+        멈춰 있고(정상상태), 같은 값을 또 보내면 그 자리에 그대로 선다
+        (2026-09-18 실기: 그렇게 32걸음 예산을 다 태웠다). 지워지는 것은
+        `목표 + (목표 - 실제)`뿐이다. 판정 규칙은 settle.py에.
+
+        ⚠ 보정은 목표를 **지나쳐 가는** 값이다 — 그래서 한 걸음 상한으로 자르고,
+          가동범위 밖은 깎고(깎인 관절은 settle이 '한계에 눌림'으로 보고 더 안
+          민다 — §22-1의 elbow_flex), 그 자세가 바닥·몸통·사거리를 어기면
+          **보정을 통째로 버린다.** 안전이 처짐보다 세다.
+        """
+        cap = ARM_CART_MAX_STEP_JOINT_DEG
+
+        def deliver(cmd: dict[str, float]) -> dict[str, float]:
+            capped = {j: end_degs[j] + max(-cap, min(cap, float(v) - end_degs[j]))
+                      for j, v in cmd.items()}
+            norms = {j: max(-NORM_LIMIT, min(NORM_LIMIT, v))
+                     for j, v in self._to_norm(capped).items()}
+            out = self._to_deg(norms)
+            try:
+                self._check_workspace(kin.forward(out, geom), geom)
+            except RuntimeError:
+                return dict(end_degs)
+            return {j: out[j] for j in cmd}
+
+        def send(degs: dict[str, float]) -> None:
+            self._io.before_move()
+            with self._io.busy_lock():
+                self._io.write(self._to_norm(degs),
+                               secs if secs is not None else ARM_CART_MOVE_SECS)
+
+        return st.settle(end_degs, measure=lambda: self._to_deg(self._io.read()),
+                         send=send, deliver=deliver)
+
     def _run_path(self, norms: dict[str, float], now: ToolPose, steps: list,
                   geom: ArmGeometry, secs: float | None, *, joint_space: bool,
                   target: ToolPose, end_degs: dict[str, float], why: str = "") -> str:
@@ -762,9 +804,17 @@ class CartesianArm:
                 f"{budget}걸음을 걷고도 목표에 못 닿았습니다 — 서보가 지령을 계속 "
                 "못 따라가고 있습니다(전원·부하·토크를 보세요)."
             )
+        # 걸음은 끝났다 — 이제 **남은 처짐**을 지운다(마지막 걸음의 '한 번 쓰고 끝').
+        res = self._settle(end_degs, geom, secs)
+        self.last_settle = res.as_record()
+        if res.sent:
+            # 되먹임 뒤 자리를 다시 읽는다. ⚠ 여기서 `_require_state`를 쓰면 자세
+            #   가드가 **성공한 이동을 예외로 뒤집을** 수 있다 — 도착 좌표만 읽는다.
+            now = kin.forward(self._to_deg(self._io.read()), geom)
         tail = f" [{why}]" if why else ""
         return (f"{walked}걸음으로 이동 완료 → {self._last_note} "
-                f"(도착 x={now.x:.0f} y={now.y:.0f} z={now.z:.0f}){tail}")
+                f"(도착 x={now.x:.0f} y={now.y:.0f} z={now.z:.0f}) "
+                f"· {res.describe()}{tail}")
 
     def jog(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0,
             dpitch: float = 0.0, droll: float = 0.0, frame: str = "base",

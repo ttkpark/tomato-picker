@@ -45,6 +45,7 @@ from tomato_picker.hardware.cartesian import (  # noqa: E402
     SimJointIO, plan_joint_steps, plan_steps,
 )
 from tomato_picker.hardware.kinematics import ArmGeometry  # noqa: E402
+from tomato_picker.hardware.settle import SettleConfig, settle  # noqa: E402
 from tomato_picker.config import ARM_CART_ZERO_POSE_DEG as ZERO_POSE  # noqa: E402
 
 FAILED: list[str] = []
@@ -332,6 +333,209 @@ class LaggyJointIO(SimJointIO):
         super().write(partial, secs)
 
 
+class DroopJointIO(SimJointIO):
+    """**중력이 누른 만큼 못 미친 자리에서 멈추는** 가짜 팔 — 처짐(정상상태).
+
+    LaggyJointIO와 결정적으로 다르다: 저쪽은 "남은 거리의 70%"라 **같은 지령을
+    다시 보내기만 해도** 언젠가 닿는다. 이쪽은 지령에서 늘 같은 만큼 모자란
+    자리에 서므로 같은 지령을 몇 번을 보내도 그 자리다 — 2026-09-18 실기의
+    관절 오차(A자세 1.1~1.3° / B자세 4.0~4.9°가 자세마다 **거의 일정**)가 이
+    모양이었다(docs/인수인계-2026-09-04.md §22). 이걸 지우는 유일한 길이
+    "오차만큼 더" 주는 되먹임이다.
+
+    `stiction`을 주면 보정의 일부만 먹는다(§22-1: 4.92→3.70→3.50→2.84°로
+    기하급수로 안 줄었다 — 정지마찰·백래시가 섞여 있다는 뜻).
+    """
+
+    def __init__(self, *, droop_norm: float = 3.0, joint: str = "shoulder_lift",
+                 stiction: float = 0.0, **kw) -> None:
+        super().__init__(**kw)
+        self.droop_norm = float(droop_norm)
+        self.droop_joint = joint
+        self.stiction = float(stiction)
+
+    def write(self, target: dict, secs: float) -> None:
+        out = {}
+        for k, v in target.items():
+            v = float(v)
+            if k == self.droop_joint:
+                want = v - self.droop_norm
+                # 정지마찰: 지금 자리에서 want까지의 일부만 실제로 간다.
+                now = self.joints.get(k, 0.0)
+                v = want - (want - now) * self.stiction
+            out[k] = v
+        super().write(out, secs)
+
+
+class CountingCall:
+    """부른 횟수와 인자를 세는 껍데기 — settle이 **몇 번 보냈나**를 본다."""
+
+    def __init__(self, fn=None) -> None:
+        self.calls: list = []
+        self._fn = fn
+
+    def __call__(self, *a):
+        self.calls.append(a[0] if a else None)
+        if self._fn:
+            return self._fn(*a)
+
+
+def test_settle() -> None:
+    print("\n⑨ 마지막 걸음의 처짐 되먹임 (settle — 졸업기준3)")
+    cfg = SettleConfig()
+    check("세 숫자는 config.py에서 온다(코드에 안 박혔다)",
+          (cfg.rounds, cfg.stop_deg, cfg.min_gain, cfg.stall_rounds)
+          == (config.ARM_SETTLE_ROUNDS, config.ARM_SETTLE_STOP_DEG,
+              config.ARM_SETTLE_MIN_GAIN, config.ARM_SETTLE_STALL_ROUNDS),
+          f"{cfg.rounds}회 / {cfg.stop_deg}° / {cfg.min_gain} / {cfg.stall_rounds}회")
+
+    want = {"shoulder_lift": 40.0, "elbow_flex": -30.0}
+
+    # ① 수렴하면 멈춘다 — 처짐이 지워지면 더 안 보낸다.
+    droop = {"shoulder_lift": 3.0}
+    state = {j: want[j] - droop.get(j, 0.0) for j in want}
+    sent = CountingCall(lambda cmd: state.update(
+        {j: float(v) - droop.get(j, 0.0) for j, v in cmd.items()}))
+    res = settle(want, measure=lambda: dict(state), send=sent)
+    check("수렴하면 멈춘다 (되먹임 1회로 문턱 아래)",
+          res.stop == "converged" and len(sent.calls) == 1
+          and res.err_deg <= cfg.stop_deg,
+          f"{res.stop} · {len(sent.calls)}회 · {res.start_deg:.2f}°→{res.err_deg:.2f}°")
+    lift = "shoulder_lift"
+    check("같은 값을 다시 보내는 게 아니다 — 목표를 지나친 지령을 보낸다",
+          sent.calls[0][lift] > want[lift] + 1e-6,
+          f"목표 {want[lift]:.1f}° → 지령 {sent.calls[0][lift]:.1f}°")
+
+    # ①-b **초과지령을 계속 물고 있어야 서는 팔**(스프링: 실제 = 지령의 70%).
+    #     2026-09-18 실기가 이 모양이었다 — `목표 + (목표-실제)`로 매회 다시 세우면
+    #     4.83°→1.23°로 좋아졌다가 1.67→2.21°로 **되돌아갔다**(직전 보정을 내려놓으니
+    #     중력이 도로 끌어내렸다). 누적(지령 += 오차)만 이 팔에서 수렴한다.
+    hold = 0.7
+    spring = {j: want[j] * hold for j in want}
+    sent_b = CountingCall(lambda cmd: spring.update(
+        {j: float(cmd[j]) * hold for j in cmd}))
+    res_b = settle(want, measure=lambda: dict(spring), send=sent_b)
+    check("초과지령을 물고 있어야 서는 팔에서도 수렴한다(보정을 누적한다)",
+          res_b.stop == "converged" and not res_b.restored,
+          f"{res_b.stop} · {res_b.start_deg:.2f}°→{res_b.err_deg:.2f}° "
+          f"· {len(sent_b.calls)}회")
+
+    # ② 포화면 무한히 안 돈다 — 아무리 밀어도 안 움직이는 팔.
+    stuck = {j: want[j] - 4.0 for j in want}
+    sent2 = CountingCall()
+    res2 = settle(want, measure=lambda: dict(stuck), send=sent2)
+    check("포화면 무한히 안 돈다 (연속 2회 안 줄면 그만)",
+          res2.stop == "saturated" and len(sent2.calls) == cfg.stall_rounds,
+          f"{res2.stop} · {len(sent2.calls)}회 보냄 / 예산 {cfg.rounds}회")
+    check("포화 판정이 예산보다 먼저 온다(그래야 뜻이 있다)",
+          cfg.stall_rounds < cfg.rounds, f"{cfg.stall_rounds} < {cfg.rounds}")
+
+    # ③ 예산 — 조금씩 줄기만 해도 N회에서 멈춘다.
+    slow = {j: want[j] - 6.0 for j in want}
+    sent3 = CountingCall(lambda cmd: slow.update(
+        {j: want[j] - (want[j] - slow[j]) * 0.5 for j in slow}))
+    res3 = settle(want, measure=lambda: dict(slow), send=sent3)
+    check("반씩만 줄면 예산에서 멈춘다",
+          res3.stop == "budget" and len(sent3.calls) == cfg.rounds,
+          f"{res3.stop} · {len(sent3.calls)}회 · {res3.start_deg:.2f}°→{res3.err_deg:.2f}°")
+
+    # ④ 소프트 한계에 눌린 관절은 오차에서 뺀다 (§22-1의 elbow_flex).
+    #    안 그러면 "지울수록 오차가 커지는" 거짓 보고가 나온다.
+    hard = {"shoulder_lift": want["shoulder_lift"] - 3.0,
+            "elbow_flex": want["elbow_flex"] + 2.0}
+
+    def deliver(cmd):
+        out = dict(cmd)
+        # elbow_flex는 이미 가동 끝이라 목표보다 더는 못 준다.
+        out["elbow_flex"] = max(out["elbow_flex"], want["elbow_flex"])
+        return out
+
+    def send4(cmd):
+        for j, v in cmd.items():
+            if j == "elbow_flex":
+                continue          # 한계에 눌려 실제로는 안 움직인다
+            hard[j] = float(v) - 3.0
+
+    res4 = settle(want, measure=lambda: dict(hard), send=send4, deliver=deliver)
+    check("한계에 눌린 관절을 알아낸다", res4.clamped == ("elbow_flex",),
+          str(res4.clamped))
+    check("눌린 관절은 오차에서 빠진다 (지울수록 커지는 거짓 보고 방지)",
+          res4.err_deg < res4.start_deg and res4.rounds[-1].worst != "elbow_flex",
+          f"{res4.start_deg:.2f}° → {res4.err_deg:.2f}° (worst={res4.rounds[-1].worst})")
+
+    # ④-b 되먹임이 **나빠지면** 가장 좋았던 지령으로 되돌린다 (2026-09-18 실기 A자세).
+    #     한 관절을 고치면 다른 관절이 딸려 움직인다 — 더 틀어 놓고 끝나면 안 쓰느니만 못하다.
+    worse = {"shoulder_lift": want["shoulder_lift"] - 3.0, "elbow_flex": want["elbow_flex"]}
+    seq = {"n": 0}
+    best_cmd = {}
+
+    def send_worse(cmd):
+        seq["n"] += 1
+        if seq["n"] == 1:                    # 1회차는 좋아진다
+            best_cmd.update(cmd)
+            worse["shoulder_lift"] = want["shoulder_lift"] - 0.9
+        elif cmd == best_cmd:                # 되돌린 지령은 그 자리를 되찾는다
+            worse["shoulder_lift"] = want["shoulder_lift"] - 0.9
+        else:                                # 그 뒤로는 도로 나빠진다
+            worse["shoulder_lift"] = want["shoulder_lift"] - 2.0 - seq["n"] * 0.5
+
+    res_w = settle(want, measure=lambda: dict(worse), send=send_worse)
+    check("나빠지면 가장 좋았던 지령으로 되돌린다", res_w.restored
+          and abs(res_w.err_deg - 0.9) < 1e-6,
+          f"{res_w.stop} · 되돌림={res_w.restored} · 최종 {res_w.err_deg:.2f}°")
+    check("되돌리는 것은 한 번뿐이다(여기서 또 재면 루프가 된다)",
+          seq["n"] <= SettleConfig().rounds + 1, f"{seq['n']}회 보냄")
+
+    # ⑤ 껐으면 한 번도 안 보낸다. 그래도 0회차 측정은 남는다.
+    sent5 = CountingCall()
+    res5 = settle(want, measure=lambda: {j: want[j] - 5.0 for j in want},
+                  send=sent5, cfg=SettleConfig(rounds=0))
+    check("되먹임을 끄면 한 번도 안 보낸다(그래도 오차는 잰다)",
+          not sent5.calls and res5.stop == "off" and res5.err_deg > 4.0,
+          f"{res5.stop} · {len(res5.rounds)}회차 기록 · {res5.err_deg:.2f}°")
+
+    # ⑥ 분해능 아래 보정은 **보내지 않는다** (이 저장소의 1번 병).
+    tiny = {j: want[j] - 0.3 for j in want}
+    sent6 = CountingCall()
+    res6 = settle(want, measure=lambda: dict(tiny), send=sent6,
+                  cfg=SettleConfig(stop_deg=0.05, min_cmd_deg=1.0))
+    check("서보 분해능 아래 보정은 보냈다고 하지 않는다",
+          res6.stop == "undeliverable" and not sent6.calls, res6.stop)
+
+    # ⑦ 실제 이동에 붙었는가 — 처짐 팔로 travel_to를 끝까지 간다.
+    io_ = DroopJointIO(spans=JETSON_SPANS, droop_norm=2.5, stiction=0.35)
+    arm = CartesianArm(io_, path=tmp_path())
+    arm.config.set_zero(JETSON_ZERO)
+    io_.joints.update(arm.to_norms(CYCLE20_START_DEG))
+    goal = standoff_pose(*CYCLE20_TARGETS[2])
+    note = arm.travel_to(x=goal.x, y=goal.y, z=goal.z, pitch=goal.pitch, roll=goal.roll)
+    got = arm.pose()
+    gap = math.dist((got.x, got.y, got.z), (goal.x, goal.y, goal.z))
+    check("이동 뒤 되먹임이 실제로 돈다", (arm.last_settle or {}).get("sent", 0) >= 1,
+          str(arm.last_settle)[:90])
+    check("되먹임 횟수와 최종 오차가 기록에 남는다",
+          {"sent", "err_deg", "start_err_deg", "stop"} <= set(arm.last_settle or {}),
+          f"sent={arm.last_settle['sent']} err={arm.last_settle['err_deg']}° "
+          f"stop={arm.last_settle['stop']}")
+    check("사람이 읽는 말에도 되먹임이 보인다", "되먹임" in note, note[-60:])
+    check(f"처짐 팔도 15mm 안으로 도착한다 (졸업기준3) — {gap:.1f}mm", gap <= 15.0,
+          f"{gap:.2f}mm")
+
+    # 되먹임을 껐을 때보다 **실제로 가까이** 서는가 — 이게 이 기능의 존재 이유다.
+    io2 = DroopJointIO(spans=JETSON_SPANS, droop_norm=2.5, stiction=0.35)
+    arm2 = CartesianArm(io2, path=tmp_path())
+    arm2.config.set_zero(JETSON_ZERO)
+    io2.joints.update(arm2.to_norms(CYCLE20_START_DEG))
+    arm2._settle = lambda end_degs, geom, secs: settle(
+        end_degs, measure=lambda: arm2.to_degrees(io2.read()),
+        send=lambda d: None, cfg=SettleConfig(rounds=0))
+    arm2.travel_to(x=goal.x, y=goal.y, z=goal.z, pitch=goal.pitch, roll=goal.roll)
+    raw = arm2.pose()
+    gap0 = math.dist((raw.x, raw.y, raw.z), (goal.x, goal.y, goal.z))
+    check(f"되먹임이 도착 오차를 줄인다 ({gap0:.1f}mm → {gap:.1f}mm)",
+          gap < gap0 - 1.0, f"껐을 때 {gap0:.2f}mm / 켰을 때 {gap:.2f}mm")
+
+
 def jetson_arm(degrees: dict | None = None) -> CartesianArm:
     """2026-09-18 젯슨의 보정표·영점을 그대로 쓰는 가짜 팔."""
     io_ = SimJointIO(spans=JETSON_SPANS)
@@ -594,6 +798,7 @@ def main() -> int:
     test_snapshot()
     test_travel()
     test_travel_path()
+    test_settle()
 
     print()
     if FAILED:
