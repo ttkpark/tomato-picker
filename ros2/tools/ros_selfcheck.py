@@ -20,6 +20,8 @@
   ④ **보드 계약** — 단위 변환·체크섬·정지마찰 feedforward·조용한 폴백 거절
   ⑤ **깊이 읽기** — 구멍·잎 섞임·가장자리를 실제로 거절하는가
   ⑥ **TF 수학** — 쿼터니언 왕복, camera_link 재타깃
+  ⑦ **손-눈 합격선** — 잔차 15mm 판정이 경고가 아니라 종료코드·저장차단으로
+     이어지는가 (`handeye_resolve.gate`)
 
 ⚠ 여기가 통과해도 로봇이 도는 건 아니다. 여기서 걸리는 종류의 실수(부호,
    라디안/도, mm/m, 좌표계 부모)를 **실물에서 배우지 않게** 하는 것이 전부다.
@@ -50,7 +52,9 @@ for pkg in ("tomato_bridge", "tomato_perception", "tomato_handeye"):
     sys.path.insert(0, os.path.join(SRC, pkg))
 
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
-from tomato_picker.hardware.handeye import Intrinsics, Rigid  # noqa: E402
+from tomato_picker.hardware.handeye import (  # noqa: E402
+    GOOD_RMS_MM as handeye_good, Intrinsics, Rigid,
+)
 
 from tomato_bridge import board_contract as bc  # noqa: E402
 from tomato_bridge.arm_source import EXTRA_JOINTS, JOINT_NAMES  # noqa: E402
@@ -551,6 +555,38 @@ def test_tf_math() -> None:
                       base_to_link.apply(link_to_optical.apply(p_cam)), atol=1e-9))
 
 
+def test_handeye_gate() -> None:
+    """졸업 기준 2번(잔차 ≤15mm)을 **코드가** 강제하는가.
+
+    이 검사가 있는 이유: 09-04에 17.8·20.2mm짜리 해가 나왔는데도 도구는
+    경고 한 줄만 찍고 0으로 끝났다. 사람이 그 줄을 안 읽으면 그대로 다음 단계로
+    간다. 여기서는 팔도 표본도 없이 **판정만** 시험한다 — 경계값과 종료코드.
+    """
+    print("\n[손-눈 합격선] 잔차 15mm를 코드가 강제하는가")
+    sys.path.insert(0, os.path.join(ROS2, "tools"))
+    import handeye_resolve as hr  # noqa: E402
+
+    check("합격선이 레거시 handeye.py와 한 벌이다",
+          hr.GOOD_RMS_MM == handeye_good, f"{hr.GOOD_RMS_MM} vs {handeye_good}")
+    # 경계는 포함이다 — Fit.good(`<=`)과 다른 쪽으로 자르면 같은 해를 한 도구는
+    # 통과시키고 다른 도구는 거절한다.
+    check("14.99mm는 합격", hr.gate(14.99)[0] is True)
+    check("정확히 15.00mm도 합격", hr.gate(15.0)[0] is True)
+    check("15.01mm는 불합격", hr.gate(15.01)[0] is False)
+    check("불합격 문구가 이유를 말한다", "헛집" in hr.gate(20.2)[1], hr.gate(20.2)[1])
+    check("--max-rms로 합격선을 좁힐 수 있다", hr.gate(12.0, 10.0)[0] is False)
+
+    # ⚠ 판정이 종료코드로 이어지는가 — 여기가 끊기면 위의 경계 검사는 장식이다.
+    src = open(os.path.join(ROS2, "tools", "handeye_resolve.py"),
+               encoding="utf-8").read()
+    check("main()이 불합격을 비영 종료코드로 낸다",
+          "return 0 if ok else 1" in src,
+          "gate()가 False인데 0으로 끝나면 스크립트는 아무것도 안 멈춘다")
+    check("불합격이면 --save를 막는다",
+          "if args.save and not ok and not args.save_anyway:" in src,
+          "경고만 하고 파일은 갱신하면, 다음 사람은 파일이 있다는 것만 보고 믿는다")
+
+
 def main() -> int:
     print(f"저장소: {REPO}")
     geom = kin.ArmGeometry()
@@ -564,6 +600,7 @@ def main() -> int:
     test_board_contract()
     test_fruit3d()
     test_tf_math()
+    test_handeye_gate()
 
     print()
     if FAILED:

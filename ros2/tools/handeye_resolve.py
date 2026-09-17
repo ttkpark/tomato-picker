@@ -4,6 +4,11 @@
     python ros2/tools/handeye_resolve.py ~/handeye_samples.json
     python ros2/tools/handeye_resolve.py samples.json --save ~/arm_eye.json
 
+⚠ **잔차가 합격선(15mm, `--max-rms`)을 넘으면 종료코드가 0이 아니다**, 그리고
+   `--save`도 막는다(`--save-anyway`로만 연다). 예전에는 경고 한 줄만 찍고
+   0으로 끝나서 17.8·20.2mm짜리 해가 조용히 파일에 들어갔다(2026-09-04).
+   판정 함수는 `gate()` — `ros_selfcheck`가 그 경계를 따로 시험한다.
+
 ⚠ 팔도 카메라도 필요 없다. **PC에서 돈다**(이 저장소의 규칙: 숫자는 젯슨에
    올리기 전에 확인한다). `handeye_collect.py`가 남긴 JSON만 있으면 된다.
 
@@ -39,8 +44,30 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 
 from tomato_picker.config import ARM_CART_ZERO_POSE_DEG as REF_DEG  # noqa: E402
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
+from tomato_picker.hardware.handeye import GOOD_RMS_MM  # noqa: E402
 
 DOTS = ("tl", "tr", "bl", "br")
+
+
+def gate(rms_mm: float, max_rms_mm: float = GOOD_RMS_MM):
+    """잔차가 합격선 안인가 — (합격여부, 사람이 읽을 한 줄).
+
+    ⚠ 왜 순수 함수로 떼어 놨나: 이 판정이 `main()` 안의 print 한 줄이던 동안
+      **아무도 안 봤다.** 최소자승은 입력이 쓰레기여도 답을 내므로 경고를
+      흘려보내면 15mm를 넘는 해가 그대로 `~/arm_eye.json`에 쌓인다
+      (2026-09-04의 17.8·20.2mm run들). 떼어 놓으면 `ros_selfcheck`가 팔도
+      표본도 없이 이 판정만 따로 시험할 수 있다 — 이 저장소의 규칙(숫자는
+      젯슨에 올리기 전에 PC에서 확인한다)대로.
+
+    경계는 **포함**이다: 정확히 15.00mm는 합격. `handeye.Fit.good`
+    (`rms_mm <= GOOD_RMS_MM`)과 같은 쪽으로 자르지 않으면 같은 해를 한 도구는
+    통과시키고 다른 도구는 거절한다.
+    """
+    ok = rms_mm <= max_rms_mm
+    if ok:
+        return True, f"✅ 잔차 {rms_mm:.2f}mm ≤ 합격선 {max_rms_mm:.1f}mm"
+    return False, (f"❌ 잔차 {rms_mm:.2f}mm > 합격선 {max_rms_mm:.1f}mm — "
+                   "집게가 헛집는다. 저장하면 안 된다.")
 
 
 def tool_frame(degs: dict, geom: kin.ArmGeometry, roll_sign: float):
@@ -323,6 +350,13 @@ def main() -> int:
                     help="전역 탐색에서 훑을 회전 개수")
     ap.add_argument("--loo", action="store_true",
                     help="표본을 하나씩 빼 보며 어느 것이 잔차를 지배하는지 본다")
+    ap.add_argument("--max-rms", type=float, default=GOOD_RMS_MM, metavar="MM",
+                    help=f"합격선(mm, 기본 {GOOD_RMS_MM:.0f}). 넘으면 **비영 종료코드**로 "
+                         "죽는다 — 사람이 잔차 줄을 안 읽어도 스크립트가 멈추게 "
+                         "하려는 것이다.")
+    ap.add_argument("--save-anyway", action="store_true",
+                    help="합격선을 넘어도 --save를 강행한다. 종료코드는 그래도 비영이다 "
+                         "— 저장했다는 사실이 합격을 뜻하지 않는다.")
     ap.add_argument("--expect-t-mm", type=float, nargs=2, default=None,
                     metavar=("MIN", "MAX"),
                     help="자로 따로 잰 카메라~손끝 거리(mm) 범위 — 이 안에 드는 "
@@ -534,9 +568,13 @@ def main() -> int:
             flag = "  ← 이걸 빼면 크게 좋아진다" if r < rms * 0.75 else ""
             print(f"  {i:2} {samples[i]['label']:<36} {r:6.2f}mm{flag}")
 
-    if rms > 15.0:
-        print("\n⚠ 15mm를 넘는다 — 집게가 헛집는다. 저장하면 안 된다.")
-    if args.save:
+    ok, verdict = gate(rms, args.max_rms)
+    print("\n" + verdict)
+    if args.save and not ok and not args.save_anyway:
+        # ⚠ 여기서 막지 않으면 "경고는 떴지만 파일은 갱신됐다"가 된다 — 다음
+        #   사람은 파일이 있다는 것만 보고 보정이 끝났다고 믿는다.
+        print(f"저장 안 함: {args.save} (합격선 초과 · 굳이 쓰려면 --save-anyway)")
+    elif args.save:
         # ⚠ **`EyeConfig`가 읽는 형식 그대로 써야 한다.** 예전 버전은 여기서
         #   {"mode","R","t",...}를 직접 json.dump했는데, `Eye.cam_to_base`가
         #   찾는 건 `transform:{"R","t"}` 감싼 모양이다 — 이 파일의 예전
@@ -558,8 +596,12 @@ def main() -> int:
         cfg = EyeConfig(path=args.save)
         cfg.set_mount("on_arm")
         cfg.store("on_arm", fit, None, note=note)
-        print(f"저장: {cfg.path} ({'good' if fit.good else '⚠ 기준(15mm) 초과'})")
-    return 0
+        # ⚠ `fit.good`은 --max-rms를 안 본다 — 저장 파일의 합격/불합격은 이
+        #   저장소의 기준(GOOD_RMS_MM) 하나로만 매긴다. CLI에서 합격선을 늘려
+        #   통과시킨 해가 파일 안에서도 good으로 보이면 그게 제일 위험하다.
+        print(f"저장: {cfg.path} "
+              f"({'good' if fit.good else f'⚠ 저장소 기준 {GOOD_RMS_MM:.0f}mm 초과'})")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
