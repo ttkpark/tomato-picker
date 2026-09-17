@@ -331,7 +331,11 @@ def run_cycle(c, s, role):
     engine = engine_for(c, role)
     spec = (c.get("engine_defs") or {}).get(engine) if engine != "claude" else None
     if engine != "claude":
-        why = engine_blocked(c, engine, spec)
+        cooldown_until = (s.get("engine_cooldown") or {}).get(engine)
+        if cooldown_until and time.time() < cooldown_until:
+            why = "냉각 중, {:.0f}분 남음".format((cooldown_until - time.time()) / 60)
+        else:
+            why = engine_blocked(c, engine, spec)
         if why:
             log("{} 못 씀({}) — 이번 사이클은 클로드로 돈다".format(engine, why))
             engine = "claude"
@@ -706,15 +710,23 @@ def parse_limit(text):
 
     구독은 돈이 아니라 시간이 벽이다. 한도는 기다리면 반드시 풀리므로, 이것을
     보통 실패로 세어 지수 백오프에 넣으면 안 된다(백오프가 창을 넘겨 더 놀게 된다).
+
+    ⚠ 엔진마다 문구가 다르다 — 실측으로 잡은 것들:
+      클로드: "5-hour limit reached … resets 1789000000"(유닉스초, 종종 ms)
+      agy:    "Individual quota reached … Resets in 4h30m24s"(상대시간, 09-18 실측)
     """
     import re
     low = text.lower()
-    if "limit reached" not in low and "usage limit" not in low and "rate_limit" not in low:
+    if not any(k in low for k in ("limit reached", "usage limit", "rate_limit", "quota reached")):
         return None
     m = re.search(r"(?:limit reached|resets?)\D{0,20}(\d{10,13})", low)
     if m:
         v = int(m.group(1))
         return v / 1000.0 if v > 10 ** 11 else float(v)
+    m = re.search(r"resets?\s+in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?", low)
+    if m and any(m.groups()):
+        h, mi, se = (int(g) if g else 0 for g in m.groups())
+        return time.time() + h * 3600 + mi * 60 + se + 60   # 60초 여유
     # 시각을 못 읽으면 5시간 창의 절반만 기다렸다 다시 두드린다(헛치는 비용은 프로세스 하나).
     return time.time() + 1800
 
@@ -822,8 +834,28 @@ def loop(c, once_role=None):
             res["seconds"], res["cost"], res["turns"]))
 
         if res["limit_until"]:
+            eng = res.get("engine", "claude")
+            if eng != "claude":
+                # 한 엔진(agy 등)만 냉각시킨다. **다른 엔진의 역할은 계속 돈다** —
+                # 09-18 실측: agy 개인 할당량이 찼는데(4h30m 리셋) 전체를 재우면
+                # 클로드만 쓰는 planner·metrologist까지 6시간을 억울하게 논다.
+                s.setdefault("engine_cooldown", {})[eng] = res["limit_until"]
+                log("{} 한도 — {:.0f}분 냉각(그동안 이 역할은 클로드로 대신 돈다)".format(
+                    eng, (res["limit_until"] - time.time()) / 60))
+                # 이 사이클은 기록해 둔다 — 진짜로 90턴을 일했을 수 있다(agy가 그랬다).
+                journal(c, s, role, res)
+                git_sync(c, role, s)
+                s["cycle"] += 1
+                s["rot_idx"] += 1
+                save_json(STATE, s)
+                heartbeat(s, role, "idle")
+                if once_role:
+                    return 1
+                time.sleep(c["sleep_between_sec"])
+                continue
+            # 클로드 자체 한도는 정말 전부가 멈춘다 — 여기서만 길게 잔다.
             wait = max(120, res["limit_until"] - time.time() + 120)
-            log("사용량 한도 — {:.0f}분 뒤에 다시(실패로 세지 않는다)".format(wait / 60))
+            log("클로드 사용량 한도 — {:.0f}분 뒤에 다시(실패로 세지 않는다)".format(wait / 60))
             heartbeat(s, role, "usage-limit")
             time.sleep(min(wait, 6 * 3600))
             continue  # 같은 역할로 다시. 한 일이 없으니 일지도 커밋도 남기지 않는다.
