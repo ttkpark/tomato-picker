@@ -18,6 +18,8 @@
     error_mm, stage(실패 단계: timeout/step/tf/pose/ik/joint/None), detail, dry_run,
     limits(표적을 뽑을 때 **이 팔의 가동범위를 알고 있었나** — 보정표 경로 또는
     "none". none이면 그 시험은 갈 수 없는 자리를 시험했을 수 있다),
+    load_limits(표적을 뽑을 때 **팔이 그 자리를 들 수 있는지 알고 있었나** —
+    경계의 출처 또는 "none". 가동범위와 다른 종류의 한계다, 아래 참고),
     prep(**어떤 시작 자세에서 출발했나** — needed/extended/signed_r/detail.
     0/5를 볼 때 그것이 팔의 0인지 시작 자세의 0인지 여기서 가른다)
 
@@ -26,6 +28,13 @@
 만든 0이 아니라 시작 자세가 만든 0이다 — 사이클35가 실제로 그렇게 기록됐다.
 그래서 실기 전에 관절공간으로 먼저 뻗는다(`/arm/joint_command`, 규칙은
 `hardware/escape.py`로 `arm_extend.py`와 공유). 끄려면 `--no-prep`.
+
+⚠ **뽑는 자리는 '들 수 있는 자리'라야 한다**(T41, 2026-09-18). 가동범위를
+지나고도 서보가 못 버티는 자리가 있다 — 2026-09-18 실기에서 r=331mm의 자세는
+관절각으로는 풀리는데 어깨가 한계에 눌려 z가 73mm 처진 채 끝났다(§24). 그 경계는
+`hardware/load_limits.py`가 `config.ARM_LOAD_R_MAX` 또는 `~/arm_load_limits.json`
+에서 읽는다. **못 읽으면 거르지 않고, 그 사실을 기록에 `load_limits=none`으로**
+남긴다 — 그러면 그 0/5가 팔의 0인지 도구의 0인지 나중에 가릴 수 있다.
 
 ⚠ **실패 단계**를 구분하는 게 이 도구의 요점이다 — 검출은 이 도구 밖(표적을 사람이
 놓는다), 여기서는 응답없음(timeout) / 한 걸음 상한(step) / 좌표계 변환(tf) /
@@ -51,6 +60,7 @@ from tomato_picker.config import ARM_CART_R_MIN, ARM_CART_Z_MIN  # noqa: E402
 from tomato_picker.hardware import cartesian as cart  # noqa: E402
 from tomato_picker.hardware import escape as es  # noqa: E402
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
+from tomato_picker.hardware import load_limits as ld  # noqa: E402
 
 RECORD_DIR = os.environ.get("TOMATO_RECORD_DIR") or os.path.join(REPO, "docs", "시험기록")
 
@@ -194,7 +204,8 @@ def sample_joint_ranges(limits=None) -> dict[str, tuple[float, float]]:
 
 
 def sample_points(n: int, geom: kin.ArmGeometry, seed: int,
-                  limits=None, standoff_mm: float = STANDOFF_MM) -> list[dict]:
+                  limits=None, standoff_mm: float = STANDOFF_MM,
+                  load: ld.LoadLimits | None = None) -> list[dict]:
     """임의 표적 n개. **팔이 설 자리를 뽑고 표적은 그 앞 스탠드오프에 둔다.**
 
     ⚠ **사거리 안 ≠ 갈 수 있는 자리.** 사거리는 링크 길이(기구학)가 정하고
@@ -208,6 +219,12 @@ def sample_points(n: int, geom: kin.ArmGeometry, seed: int,
          통과시킨 표적이 실기에서 거절당한다.
     limits가 None이면(팔 보정표를 못 읽는 PC) 옛날 구간 그대로 뽑되, 부르는
     쪽이 기록에 limits=none을 남겨 그 시험이 무엇을 못 봤는지 남게 한다.
+
+    ⚠ **갈 수 있는 자리 ≠ 들 수 있는 자리**(T41). 위 ①②를 다 지나고도 서보가
+    못 버티는 자리가 있다 — 2026-09-18 실기 5회 중 셋이 그것이었다(z를 115~190mm
+    떨군 채 멈췄다). `load`를 주면 팔이 **설 자리**의 수평 사거리로 그것도 거른다
+    (표적이 아니라 설 자리다 — 팔이 가는 곳이 거기다). `load`가 None이면 못 거르고,
+    limits와 같은 규칙으로 부르는 쪽이 기록에 load_limits=none을 남긴다.
     """
     rng = random.Random(seed)
     ranges = sample_joint_ranges(limits)
@@ -218,8 +235,9 @@ def sample_points(n: int, geom: kin.ArmGeometry, seed: int,
         if tries > MAX_SAMPLE_TRIES:
             raise RuntimeError(
                 f"{MAX_SAMPLE_TRIES}번 던져 {len(pts)}/{n}개밖에 못 뽑았다 — 뽑기 "
-                f"구간 {ranges}이 이 팔에서 거의 비어 있다는 뜻이다. "
-                "SAMPLE_JOINT_DEG를 넓히거나 --points로 직접 자리를 주라."
+                f"구간 {ranges}이 이 팔에서 거의 비어 있다는 뜻이다"
+                + (f" (드는 한계 {load.r_max:.0f}mm도 같이 자른다)" if load else "")
+                + ". SAMPLE_JOINT_DEG를 넓히거나 --points로 직접 자리를 주라."
             )
         stand = {j: rng.uniform(lo, hi) for j, (lo, hi) in ranges.items()}
         pose = kin.forward(stand, geom)
@@ -227,8 +245,11 @@ def sample_points(n: int, geom: kin.ArmGeometry, seed: int,
             continue
         p = target_from_stand(pose, standoff_mm)
         # ⚠ 반올림한 **뒤에** 본다 — 기록에 남는 숫자가 곧 명령이 되는 숫자다.
-        if workspace_reject(standoff_pose(p, standoff_mm), geom):
+        stand_pose = standoff_pose(p, standoff_mm)
+        if workspace_reject(stand_pose, geom):
             continue
+        if load is not None and load.rejects(stand_pose.x, stand_pose.y):
+            continue   # 갈 수는 있지만 **못 드는** 자리 — 서보 토크의 벽(§24)
         if limits is not None and limit_violations(p, geom, limits, standoff_mm):
             continue
         pts.append(p)
@@ -280,14 +301,14 @@ def record(path: str, row: dict) -> None:
 
 
 def run_dry(points: list[dict], geom: kin.ArmGeometry, out_path: str,
-            limits_tag: str = "none") -> int:
+            limits_tag: str = "none", load_tag: str = "none") -> int:
     """ROS 없이 — 같은 IK를 로컬에서 돌려 도구 자체를 검증한다."""
     ok_count = 0
     for i, p in enumerate(points, 1):
         standoff_mm = STANDOFF_MM
         target_pose = standoff_pose(p, standoff_mm)
         row = {"trial": i, "dry_run": True, "commanded": p, "standoff_mm": standoff_mm,
-               "limits": limits_tag}
+               "limits": limits_tag, "load_limits": load_tag}
         try:
             joints = kin.inverse(target_pose, geom)
             reached = kin.forward(joints, geom)
@@ -322,7 +343,7 @@ def _arm_node_geometry() -> kin.ArmGeometry:
 
 
 def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
-             limits=None, prep: bool = True) -> int:
+             limits=None, prep: bool = True, load_tag: str = "none") -> int:
     """ROS2 stage1이 떠 있어야 한다 — /arm/move_to_point를 실제로 부른다."""
     import rclpy
     from geometry_msgs.msg import PointStamped
@@ -462,6 +483,9 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
         res = fut.result()
         row = {"trial": i, "dry_run": False, "commanded": p,
                "standoff_mm": STANDOFF_MM, "limits": limits_tag,
+               # 뽑을 때 **들 수 있는 자리인지 알고 있었나**(T41). none이면 그
+               # 실패는 팔의 실패가 아니라 도구가 고른 자리의 실패일 수 있다.
+               "load_limits": load_tag,
                # 이 시험이 **어떤 시작 자세에서** 출발했는지 남긴다 — 기준3의
                # 0/5가 팔의 0인지 시작 자세의 0인지 나중에 가릴 수 있어야 한다.
                "prep": prep_row}
@@ -518,6 +542,11 @@ def main() -> int:
     limits, limits_note = cart.load_norm_limits()
     limits_tag = limits.source if limits else "none"
     print(f"관절 가동범위: {limits_note}")
+    # **들 수 있는 자리**의 경계는 또 다른 한계다(§24). 이것도 파일에서만 온다 —
+    # 못 읽으면 거르지 않고 기록에 load_limits=none이 남는다.
+    load, load_note = ld.load_load_limits()
+    load_tag = load.source if load else "none"
+    print(f"드는 한계: {load_note}")
 
     if args.points:
         points = json.load(open(args.points, encoding="utf-8"))
@@ -532,18 +561,25 @@ def main() -> int:
                        ", ".join(f"{j} {v:+.0f}(한계 ±{limits.limit:.0f})"
                                  for j, v in sorted(over.items())))
                 print(f"  ⚠ 표적 {i}는 이 팔의 가동범위 밖으로 보인다 — {why}")
+        if load:
+            # 사람이 고른 자리도 **드는지**는 봐 준다 — 막지는 않는다(위와 같은 이유).
+            for i, p in enumerate(points, 1):
+                stand_pose = standoff_pose(p)
+                over = load.rejects(stand_pose.x, stand_pose.y)
+                if over:
+                    print(f"  ⚠ 표적 {i}는 팔이 못 드는 자리로 보인다 — {over}")
     else:
-        points = sample_points(args.n, geom, args.seed, limits=limits)
+        points = sample_points(args.n, geom, args.seed, limits=limits, load=load)
 
     today = time.strftime("%Y-%m-%d")
     out_path = os.path.join(RECORD_DIR, f"move-to-point-{today}.jsonl")
 
     print(f"{len(points)}개 표적, 기록: {out_path}  [{local_zone()}]")
     if args.dry_run:
-        ok = run_dry(points, geom, out_path, limits_tag)
+        ok = run_dry(points, geom, out_path, limits_tag, load_tag)
     else:
         ok = run_real(points, out_path, limits_tag, limits=limits,
-                      prep=not args.no_prep)
+                      prep=not args.no_prep, load_tag=load_tag)
         if ok < 0:
             return 1
 

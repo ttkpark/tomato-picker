@@ -1195,6 +1195,74 @@ def test_sample_within_limits() -> None:
           abs(degs["elbow_flex"] + 38.9) < 0.1, f"{degs['elbow_flex']:.2f}°")
     check("각도→정규화가 왕복한다", abs(back["elbow_flex"] + 98.0) < 1e-9)
 
+    # ⑤b **들 수 있는 자리인가** — 가동범위를 지나고도 서보가 못 버티는 자리가 있다.
+    #     2026-09-18 실기(§24): r=331mm의 자세는 IK도 가동범위도 통과하는데 어깨가
+    #     한계에 눌려 z가 73mm 처진 채 끝났다. 그런 자리를 뽑으면 기준3의 실패에
+    #     **도구가 만든 실패**가 섞인다(T30·T31이 고친 것과 같은 병의 다음 겹).
+    from tomato_picker.config import ARM_LOAD_R_MAX  # noqa: E402
+    from tomato_picker.hardware import load_limits as ld  # noqa: E402
+
+    def m5_source() -> str:
+        return open(os.path.join(REPO, "ros2", "tools", "move5_check.py"),
+                    encoding="utf-8").read()
+
+    def stand_r(p: dict) -> float:
+        q = m5.standoff_pose(p)
+        return math.hypot(q.x, q.y)
+
+    # 250mm를 고른 이유 — 이 seed에서 표적(스탠드오프 바깥)이 250을 넘는 자리가
+    # 섞인다. 아래 "표적이 아니라 서는 자리를 본다"가 그 차이로 판정된다.
+    tight = ld.LoadLimits(r_max=250.0, source="테스트")
+    picked = m5.sample_points(8, geom, 0, limits=limits, load=tight)
+    over = [round(stand_r(p), 1) for p in picked if stand_r(p) > tight.r_max + 1e-6]
+    check("경계 밖 자리는 안 뽑힌다", not over, f"경계 {tight.r_max}mm 밖={over}")
+    blind_r = [round(stand_r(p), 1) for p in m5.sample_points(8, geom, 0, limits=limits)]
+    check("경계를 안 주면 밖이 섞인다 (이 검사가 무엇을 막는지)",
+          any(r > tight.r_max for r in blind_r), f"stand r={blind_r}")
+    # 판정은 **팔이 서는 자리**다 — 표적은 스탠드오프만큼 더 바깥이라 넘어도 된다.
+    check("경계는 표적이 아니라 팔이 서는 자리를 본다",
+          any(math.hypot(p["x"], p["y"]) > tight.r_max for p in picked),
+          "표적까지 경계 안이면 30mm를 두 번 자르고 있는 것이다")
+
+    # 숫자의 출처 — 도구에 박으면 다시 잰 값이 안 먹는다(§24는 아직 표본 9개다).
+    got, note = ld.load_load_limits(path="/없는파일/arm_load_limits.json")
+    check("파일이 없으면 config의 실측값을 쓴다",
+          got is not None and got.r_max == ARM_LOAD_R_MAX, note)
+    check("경계 숫자가 move5_check에 박혀 있지 않다",
+          "310" not in m5_source(),
+          "경계는 config 또는 ~/arm_load_limits.json에서만 온다")
+    check("09-18 실측 경계는 못 든 자리(r=331)를 거절한다",
+          bool(ld.LoadLimits(ARM_LOAD_R_MAX, "테스트").rejects(331.0, 0.0)),
+          f"한계 {ARM_LOAD_R_MAX}mm")
+    check("그러면서 든 자리(r=308)는 통과시킨다",
+          not ld.LoadLimits(ARM_LOAD_R_MAX, "테스트").rejects(308.0, 0.0))
+
+    # 모르면 **모른다고 말한다** — 깨진 파일을 보고 조용히 config로 돌아가면,
+    # 넓히려고 쓴 파일이 무시된 줄 모른 채 옛 경계로 시험하게 된다.
+    tmp = os.path.join(REPO, "ros2", "tools", "__t41_load_tmp.json")
+    try:
+        for body, why in (('{"r_max_mm": null}', "null"),
+                          ('{"r_max_mm": 0}', "0 이하"),
+                          ('{"note": "재는 중"}', "키가 없다"),
+                          ("{깨진 json", "깨진 파일")):
+            open(tmp, "w", encoding="utf-8").write(body)
+            got, note = ld.load_load_limits(path=tmp)
+            check(f"경계를 못 읽으면 None이고 이유를 말한다 ({why})",
+                  got is None and len(note) > 0, note)
+        open(tmp, "w", encoding="utf-8").write('{"r_max_mm": 321.5}')
+        got, note = ld.load_load_limits(path=tmp)
+        check("파일이 config를 이긴다 (이 팔에서 다시 잰 값)",
+              got is not None and abs(got.r_max - 321.5) < 1e-9 and got.source == tmp,
+              note)
+    finally:
+        os.path.exists(tmp) and os.remove(tmp)
+
+    # 기록에 남는가 — 남지 않으면 그 0/5가 팔의 0인지 도구의 0인지 못 가린다.
+    m5_body = m5_source()
+    check("기록 줄에 load_limits가 들어간다",
+          m5_body.count('"load_limits": load_tag') >= 2,
+          "dry-run과 실기 둘 다 남겨야 한다")
+
     # ⑥ **노드가 붙으면서 팔을 놓지 않는가.** 2026-09-18: `arm_extend`로 z=+423mm
     #    까지 세워 둔 팔이 arm_node가 뜨자 z=−66mm로 주저앉았다 —
     #    `FollowerIO`의 기본값이 connect 직후 `disable_torque()`를 부르기 때문이다.
