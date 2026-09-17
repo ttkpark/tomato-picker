@@ -42,7 +42,11 @@ STOP = os.path.join(HERE, "STOP")
 DEFAULTS = {
     "branch": "feat/base-firmware-v2-and-arm-presets",
     "model": "opus",
+    # 역할마다 모델을 나눈다 — 한도는 돈이 아니라 시간이고, 넷 다 opus면 이틀이면 벽을 친다.
+    # 만드는 쪽(planner/builder)은 판단이 비싸고, 보는 쪽(auditor/tester)은 대체로 대조와 실행이다.
+    "models": {},
     "fallback_model": "sonnet",
+    "min_cycle_interval_sec": 3600,
     "rotation": ["planner", "builder", "tester", "builder", "auditor", "builder", "tester"],
     "cycle_timeout_sec": 2700,
     "sleep_between_sec": 90,
@@ -251,10 +255,11 @@ def run_cycle(c, s, role):
               "w", encoding="utf-8") as f:
         f.write(prompt)
 
+    model = (c.get("models") or {}).get(role) or c["model"]
     cmd = [claude_exe(), "-p",
            "--output-format", "json",
            c["permission_flag"],
-           "--model", c["model"],
+           "--model", model,
            "--append-system-prompt", SAFETY,
            "--name", "autopilot-" + role]
     if c.get("fallback_model"):
@@ -289,8 +294,8 @@ def run_cycle(c, s, role):
               "w", encoding="utf-8") as f:
         f.write(out_s + ("\n--- stderr ---\n" + err_s if err_s else ""))
 
-    res = {"role": role, "seconds": round(dt), "cost": 0.0, "ok": False,
-           "text": "", "turns": 0}
+    res = {"role": role, "model": model, "seconds": round(dt), "cost": 0.0,
+           "ok": False, "text": "", "turns": 0, "limit_until": None}
     try:
         j = json.loads(out_s)
         res["text"] = (j.get("result") or "").strip()
@@ -300,7 +305,27 @@ def run_cycle(c, s, role):
     except ValueError:
         res["text"] = (out_s[-1500:] or err_s[-1500:] or "(출력 없음)").strip()
         res["ok"] = False
+    if not res["ok"]:
+        res["limit_until"] = parse_limit(res["text"] + "\n" + err_s)
     return res
+
+
+def parse_limit(text):
+    """사용량 한도에 부딪혔나. 부딪혔으면 '언제 풀리는지'를 초로 돌려준다.
+
+    구독은 돈이 아니라 시간이 벽이다. 한도는 기다리면 반드시 풀리므로, 이것을
+    보통 실패로 세어 지수 백오프에 넣으면 안 된다(백오프가 창을 넘겨 더 놀게 된다).
+    """
+    import re
+    low = text.lower()
+    if "limit reached" not in low and "usage limit" not in low and "rate_limit" not in low:
+        return None
+    m = re.search(r"(?:limit reached|resets?)\D{0,20}(\d{10,13})", low)
+    if m:
+        v = int(m.group(1))
+        return v / 1000.0 if v > 10 ** 11 else float(v)
+    # 시각을 못 읽으면 5시간 창의 절반만 기다렸다 다시 두드린다(헛치는 비용은 프로세스 하나).
+    return time.time() + 1800
 
 
 def journal(c, s, role, res):
@@ -313,8 +338,8 @@ def journal(c, s, role, res):
     with open(path, "a", encoding="utf-8") as f:
         if new:
             f.write("# 자동운전 일지 — {}\n".format(datetime.now().strftime("%Y-%m-%d")))
-        f.write("\n## {} · {} · 사이클 {} · {}분 · ${:.2f}{}\n\n{}\n".format(
-            datetime.now().strftime("%H:%M"), role, s["cycle"] + 1,
+        f.write("\n## {} · {}({}) · 사이클 {} · {}분 · ${:.2f}{}\n\n{}\n".format(
+            datetime.now().strftime("%H:%M"), role, res.get("model", "?"), s["cycle"] + 1,
             max(1, res["seconds"] // 60), res["cost"],
             "" if res["ok"] else " · **실패**", text))
 
@@ -398,10 +423,18 @@ def loop(c, once_role=None):
 
         heartbeat(s, role, "running")
         log("사이클 {} · {} 시작".format(s["cycle"] + 1, role))
+        t_start = time.time()
         res = run_cycle(c, s, role)
-        log("사이클 {} · {} {} · {}초 · ${:.2f} · {}턴".format(
-            s["cycle"] + 1, role, "완료" if res["ok"] else "실패",
+        log("사이클 {} · {}({}) {} · {}초 · ${:.2f} · {}턴".format(
+            s["cycle"] + 1, role, res["model"], "완료" if res["ok"] else "실패",
             res["seconds"], res["cost"], res["turns"]))
+
+        if res["limit_until"]:
+            wait = max(120, res["limit_until"] - time.time() + 120)
+            log("사용량 한도 — {:.0f}분 뒤에 다시(실패로 세지 않는다)".format(wait / 60))
+            heartbeat(s, role, "usage-limit")
+            time.sleep(min(wait, 6 * 3600))
+            continue  # 같은 역할로 다시. 한 일이 없으니 일지도 커밋도 남기지 않는다.
 
         journal(c, s, role, res)
         git_sync(c, role, s)
@@ -428,7 +461,13 @@ def loop(c, once_role=None):
             log("실패 — {}분 뒤 재개".format(back // 60))
             time.sleep(back)
         else:
-            time.sleep(c["sleep_between_sec"])
+            # 속도 조절 — 사이클 **시작**을 기준으로 간격을 맞춘다. 15일을 버티는 것이
+            # 하루에 몰아치는 것보다 낫다(한도를 일찍 태우면 그 뒤가 통째로 빈다).
+            gap = max(c["sleep_between_sec"],
+                      c["min_cycle_interval_sec"] - (time.time() - t_start))
+            log("다음 사이클까지 {:.0f}분".format(gap / 60))
+            heartbeat(s, role, "idle")
+            time.sleep(gap)
 
 
 def cmd_status(c):
