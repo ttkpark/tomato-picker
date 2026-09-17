@@ -181,5 +181,18 @@ behavior the task requires stay in.
 - **PS2X는 이 보드에서 `millis()`를 얼림**(timer0 간섭) → 주행 펌웨어에서 PS2 완전 배제, 안전은 HW워치독.
 - 게임패드 스틱 드리프트/latch 폭주 방지 위해 **데드맨(LT 홀드) 필수 설계**.
 
+## ⚙ 자동운전이 돌고 있다 (2026-09-17 ~ 10-02)
+[`autopilot/`](autopilot/)가 `claude -p`를 **planner·builder·auditor·tester** 넷으로 번갈아
+띄워 15일간 쉬지 않는다. 목표 = [`autopilot/OBJECTIVE.md`](autopilot/OBJECTIVE.md)(`v2.0.0-ros.2` 졸업).
+**매 사이클은 새 세션이고, 연속성은 문맥이 아니라 파일이 잇는다** —
+작업판(`autopilot/board.py`) · 일지(`autopilot/journal/`) · 매 사이클 커밋.
+- 사람이 끼어들 때: **`autopilot/PAUSE` 파일을 만들고** 작업한 뒤 지운다(같은 트리를 쓴다).
+  완전히 끝내려면 `autopilot/STOP`.
+- 지금 상태: `python autopilot/runner.py status` · 아침에는 **오늘 일지 하나만** 읽으면 된다
+  (사람이 풀어 줘야 하는 것은 플래너가 `[사람]`을 붙여 p1로 올려 둔다).
+- ⚠ 자동 루프도 **실기(팔·주행)를 움직인다**(사용자 허가). 젯슨을 만지기 전에
+  `runner.py status`로 지금 무엇이 도는 중인지 보라.
+- 자세한 건 [`autopilot/README.md`](autopilot/README.md).
+
 ## Git
 - origin: `github.com/ttkpark/tomato-picker`. 기본 브랜치 `master`.
