@@ -598,6 +598,166 @@ def test_handeye_gate() -> None:
           "경고만 하고 파일은 갱신하면, 다음 사람은 파일이 있다는 것만 보고 믿는다")
 
 
+def _synthetic_handeye(t_x, R_x=None, target=None, noise_mm=0.0, seed=11,
+                       geom=None, dot_scale=1.0):
+    """정답을 아는 손-눈 표본을 만든다 — 팔도 카메라도 없이.
+
+    ⚠ 왜 필요한가. 2026-09-04~17 내내 "잔차가 20mm고 |t_x|가 실측의 4~6배"라는
+      같은 답이 반복됐는데, 그게 **하드웨어 탓인지 푸는 쪽 탓인지** 가릴 방법이
+      없었다. 정답을 심은 표본에 같은 풀이를 돌려 보면 그 둘이 갈린다:
+      되찾으면 풀이는 결백하고 표본이 상한 것이다(2026-09-17 T5가 그렇게 갈랐다).
+
+    자세 집합은 09-04 실측 채집과 비슷한 폭(pan ±18°, elbow 30°, roll 120°)으로
+    만든다 — 좁은 자세 폭 자체가 범인이라는 가설도 여기서 같이 죽는다.
+    """
+    import numpy as np
+    from tomato_picker.hardware import kinematics as kin
+
+    geom = geom or kin.ArmGeometry()
+    t_x = np.asarray(t_x, dtype=float)
+    if R_x is None:
+        th = math.radians(20.0)
+        R_x = np.array([[math.cos(th), 0.0, math.sin(th)],
+                        [0.0, 1.0, 0.0],
+                        [-math.sin(th), 0.0, math.cos(th)]])
+    target = np.asarray(target if target is not None else [420.0, 10.0, 260.0], float)
+    # 표적은 100 x 174.5mm 직사각형(실물과 같은 것) — 네 점 경로도 시험할 수 있게.
+    corners = {"tl": (-50.0, 87.25), "tr": (50.0, 87.25),
+               "bl": (-50.0, -87.25), "br": (50.0, -87.25)}
+
+    # ⚠ 자세를 **골고루 쒸어야** 한다. 첫 판은 관절을 전부 같은 방향으로
+    #   일정하게 쒸었는데, 그러면 관절끼리 완전히 상관돼 교대최소화가
+    #   극소에 갇혔다(잡음 0인데도 t_x 오\李82mm). 이것도 이 저장소의 1번 병과
+    #   같은 모양이다 — "도는 것처럼 보이는데 실제로 갈리는 것은 없다."
+    rng = np.random.default_rng(seed)
+    span = {"shoulder_pan": (-18.0, 18.0), "shoulder_lift": (11.0, 24.0),
+            "elbow_flex": (32.0, 63.0), "wrist_flex": (89.0, 103.0),
+            "wrist_roll": (-62.0, 59.0)}
+    poses = [{j: float(rng.uniform(lo, hi)) for j, (lo, hi) in span.items()}
+             for _ in range(11)]
+
+    out = []
+    for degs in poses:
+        R_t, b = _hr().tool_frame(degs, geom, +1.0)
+        dots = {}
+        for k, (dy, dz) in corners.items():
+            P = target + np.array([0.0, dy, dz])
+            p_cam = R_x.T @ (R_t.T @ (P - b) - t_x)
+            p_cam = p_cam * dot_scale + rng.normal(scale=noise_mm, size=3)
+            dots[k] = [float(c) for c in p_cam]
+        out.append({"label": "synth", "joints_deg": dict(degs), "dots_mm": dots})
+    return out
+
+
+def _hr():
+    sys.path.insert(0, os.path.join(ROS2, "tools"))
+    import handeye_resolve as hr  # noqa: E402
+    return hr
+
+
+def test_handeye_identifiability() -> None:
+    """무엇이 이 표본으로 **원리적으로 갈리는가** — 죽은 손잡이를 못 박는다.
+
+    2026-09-17(T5)에 숫자로 확인한 것들이다. 이 검사가 없으면 다음 사람이
+    같은 벽에 다시 머리를 박는다:
+
+      · `l3`와 `t_x`의 접근축 성분은 **완전히 같은 짓**을 한다. 그래서 `|t_x|`
+        하나만 떼어 "실측의 3~5배"라고 말하는 것은 뜻이 없다 — 데이터가 정하는
+        것은 `l3 + t_x[approach]`라는 **합** 하나뿐이다.
+      · `z0`는 표적 위치(자유 미지수)가 통째로 흡수한다 — 잔차를 못 움직인다.
+      · 반대로 풀이기 자체는 건강하다. 정답을 심으면 되찾는다.
+    """
+    import numpy as np
+    from tomato_picker.hardware import kinematics as kin
+
+    print("\n[손-눈 식별성] 이 식으로 무엇이 갈리고 무엇이 안 갈리는가")
+    hr = _hr()
+    geom = kin.ArmGeometry()
+
+    # ── ① 도구 좌표계가 진짜 오른손 회전인가 ────────────────────────────
+    # 한쪽이라도 왼손계면 R_x(회전)로는 절대 못 맞춘다 — 그때 오차는 갈 곳이
+    # 없어 t_x로 몰린다(그게 09-04의 435mm처럼 보였다).
+    dets, orth = [], []
+    for s in _synthetic_handeye([-80.0, 0.0, 80.0]):
+        R, _t = hr.tool_frame(s["joints_deg"], geom, +1.0)
+        dets.append(float(np.linalg.det(R)))
+        orth.append(float(np.abs(R.T @ R - np.eye(3)).max()))
+    check("tool_frame이 오른손 회전이다 (det=+1)",
+          all(abs(d - 1.0) < 1e-9 for d in dets), f"det {min(dets):.9f}~{max(dets):.9f}")
+    check("tool_frame이 직교한다", max(orth) < 1e-9, f"최대 {max(orth):.1e}")
+
+    # ── ② TCP는 wrist_roll 축 위에 있다 ────────────────────────────────
+    # 이걸 어기면 roll을 돌릴 때마다 원점이 흔들려 t_x가 자세마다 달라진다.
+    d0 = {"shoulder_pan": 10.0, "shoulder_lift": 20.0, "elbow_flex": 40.0,
+          "wrist_flex": 95.0, "wrist_roll": 0.0}
+    p0 = hr.tool_frame(d0, geom, +1.0)[1]
+    p1 = hr.tool_frame(dict(d0, wrist_roll=40.0), geom, +1.0)[1]
+    check("roll을 돌려도 TCP는 안 움직인다 (TCP가 롤축 위)",
+          float(np.linalg.norm(p1 - p0)) < 1e-9, f"{np.linalg.norm(p1 - p0):.3e}mm")
+
+    # ── ③ l3 ↔ t_x[approach] 는 완전 축퇴 ──────────────────
+    # 잠리를 직접 계산해 보인다 — 푸는 쪽(국소해)을 거치면 같은 해로
+    # 안 가서 축퇴가 가려진다. 식은 b_i(l3+Δ) = b_i(l3) + Δ·approach_i 이고
+    # R_i·(… + t_x − Δ·e_approach) 가 그것을 그대로 상쇄한다.
+    S = _synthetic_handeye([-80.0, 0.0, 80.0])
+    Rx0 = np.eye(3)
+    tx0 = np.array([-80.0, 0.0, 80.0])
+
+    def _rms(g2, tx):
+        frames = [hr.tool_frame(s["joints_deg"], g2, +1.0) for s in S]
+        obs = [np.mean([s["dots_mm"][k] for k in hr.DOTS], axis=0) for s in S]
+        pred = np.array([R @ (Rx0 @ o + tx) + b for (R, b), o in zip(frames, obs)])
+        P = pred.mean(axis=0)
+        return float(np.sqrt((np.linalg.norm(pred - P, axis=1) ** 2).mean()))
+
+    r_a = _rms(geom, tx0)
+    r_b = _rms(kin.ArmGeometry(l3=geom.l3 + 50.0), tx0 - np.array([50.0, 0.0, 0.0]))
+    check("l3 +50mm 와 t_x[approach] −50mm 는 잔차가 **똑같다** (완전 축퇴)",
+          abs(r_a - r_b) < 1e-9, f"{r_a:.9f} vs {r_b:.9f}mm")
+    check("그래서 데이터가 정하는 것은 합 l3+t_a 하나다 — |t_x| 단독은 뜻이 없다",
+          abs((geom.l3 + tx0[0]) - ((geom.l3 + 50.0) + (tx0[0] - 50.0))) < 1e-9)
+
+    # ── ⑤ 풀이기는 결백하다 — 정답을 심으면 되찾는다 ────────────────────
+    # 09-04의 "|t|가 4~6배"를 두고 자세 폭 부족을 의심했는데, 같은 폭의 자세로
+    # 5mm 잡음을 줘도 되찾는다. 그러므로 범인은 자세 집합이 아니다.
+    for noise, tol in ((0.0, 0.5), (5.0, 20.0)):
+        syn = _synthetic_handeye([-80.0, 0.0, 80.0], noise_mm=noise)
+        got = hr.solve(syn, geom, +1.0, ("mid",), iters=4000)[2]
+        err = float(np.linalg.norm(got - np.array([-80.0, 0.0, 80.0])))
+        check(f"잡음 {noise:.0f}mm에서 t_x를 {tol:.1f}mm 안으로 되찾는다",
+              err < tol, f"오차 {err:.2f}mm · 되찾은 |t|={np.linalg.norm(got):.1f}mm "
+                         f"(정답 113.1mm)")
+
+    # ⚠ 단, **기본 80회로는 안 멈는다.** 2026-09-17(T5) 실측: 위 표본을
+    #   잡음 0으로 두고도 80회에서는 t_x 오차가 10.2mm 남는다 — 졸업 예산
+    #   15mm의 2/3를 푸는 사람이 아니라 **멈추는 시점**이 먹는다.
+    #   (09-04 실표본은 빨리 수렴해서 80회로도 같은 값이다 — 그래서 §20의
+    #   결론은 그대로다. 하지만 다음 표본이 그럴 거라는 보장은 없다.)
+    slow = _synthetic_handeye([-80.0, 0.0, 80.0])
+    r80 = hr.solve(slow, geom, +1.0, ("mid",), iters=80)
+    r4k = hr.solve(slow, geom, +1.0, ("mid",), iters=4000)
+    check("교대 최소화가 기본 80회로는 안 멎는다는 것을 못 박아 둔다",
+          r80[0] > r4k[0] + 1.0,
+          f"80회 rms={r80[0]:.3f}mm / 4000회 rms={r4k[0]:.3f}mm — "
+          f"t_x 오차 {np.linalg.norm(r80[2] - np.array([-80.0, 0.0, 80.0])):.1f}"
+          f" → {np.linalg.norm(r4k[2] - np.array([-80.0, 0.0, 80.0])):.1f}mm")
+
+    # ── ⑥ 거울(왼손계)은 구별된다 ──────────────────────────────────────
+    # 카메라점의 한 축 부호가 뒤집히면 회전으로는 못 되돌린다. 그 증상이
+    # "잔차도 크고 |t_x|가 수백 mm로 달아난다"이다 — 09-04 표본과 같은 모양.
+    S0 = _synthetic_handeye([-80.0, 0.0, 80.0])
+    Sm = [{"joints_deg": s["joints_deg"],
+           "dots_mm": {k: [v[0], -v[1], v[2]] for k, v in s["dots_mm"].items()}}
+          for s in S0]
+    good = hr.solve(S0, geom, +1.0, ("mid",))
+    mir = hr.solve(Sm, geom, +1.0, ("mid",))
+    check("카메라점을 거울로 뒤집으면 잔차가 크게 나빠진다",
+          mir[0] > good[0] + 20.0, f"{good[0]:.2f} → {mir[0]:.2f}mm")
+    check("그리고 |t_x|가 수백 mm로 달아난다 (09-04 표본과 같은 증상)",
+          float(np.linalg.norm(mir[2])) > 400.0,
+          f"|t|={np.linalg.norm(mir[2]):.0f}mm (정답 113mm)")
+
+
 def test_selfcheck_deps() -> None:
     """자체검증 4종이 **빈 환경에서 무엇이 없는지 말하고** 죽는가.
 
@@ -691,6 +851,7 @@ def main() -> int:
     test_fruit3d()
     test_tf_math()
     test_handeye_gate()
+    test_handeye_identifiability()
     test_selfcheck_deps()
 
     print()
