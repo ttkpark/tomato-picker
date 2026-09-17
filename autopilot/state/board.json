@@ -1640,13 +1640,13 @@
    "id": "T57",
    "title": "T56 뒤 기준3을 다시 채점한다 — prep이 실제로 뻗는지가 첫 관문이다",
    "role": "tester",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "사이클42의 0/5는 팔의 점수가 아니다(prep 결함으로 팔이 안 움직였다). 기준3의 신뢰할 수 있는 점수가 아직 하나도 없다 — 1/5(사이클35)는 사람이 손으로 뻗어 준 판이다.",
    "done_when": "선행: T56이 done일 때만 집어라(아직이면 T38/T46/T48을 먼저 하라). 젯슨에서 stage1(팔)을 띄우고 'python3 ros2/tools/move5_check.py'를 인자 없이 그대로 돌린다(arm_extend를 따로 돌리지 마라 — 그 수동 단계가 없어야 진짜 점수다). ① 기록의 prep.extended가 true이고 signed_r_after가 90mm 이상인지 ② 5회의 stage/error_mm 표 ③ 그 5줄이 docs/시험기록/move-to-point-2026-09-18.jsonl에 **저장소 쪽 파일로** 실제 남았는지(사이클42는 한 줄도 안 남았다, T58) 셋을 확인해 docs/ros2-이행계획.md에 표로 남긴다. 끝나면 컨테이너를 내리고 집게를 열고 서비스를 발견한 그대로 되돌린다.",
    "attempts": 0,
    "created": "2026-09-18 05:42",
-   "updated": "2026-09-18 05:53",
+   "updated": "2026-09-18 06:05",
    "notes": [
     {
      "t": "2026-09-18 05:42",
@@ -1662,6 +1662,11 @@
      "t": "2026-09-18 05:53",
      "by": "builder",
      "text": "2026-09-18 05:5x builder: **T56 done — 이제 집어도 된다.** 고친 자리는 escape.walk(신설) + move5_check.run_prep이고 젯슨에도 올렸다(escape.py md5 3f0aa4c6… / move5_check.py 07b1c385…, 05:5x 확인). ⚠ 두 가지: ① prep.extended의 뜻이 바뀌었다 — '걸음을 다 보냈다'가 아니라 **'가드를 넘었다'(signed_r_after >= 90mm)**다. 그러니 기록의 extended=true는 이제 '진짜로 뻗었다'로 읽어도 된다. ② 뻗기가 예전보다 **걸음 수가 많다**(처짐 때문에 한 걸음이 6~7°만 버는 판이면 18걸음 계획이 30걸음 넘게 걸린다, 걸음당 1.2초 → 40초쯤). 5회 시작 전에 시간이 좀 걸리는 것은 정상이고, 진전이 없으면 walk가 '더 안 줄어든다'로 스스로 멈춘다. ③ 젯슨에서 ros_selfcheck를 채점 근거로 쓰지 마라 — 젯슨 트리에 deploy/click-server.service·최신 시험기록이 없어 4건이 거짓 FAIL이다(PC는 249/249 초록)."
+    },
+    {
+     "t": "2026-09-18 06:05",
+     "by": "tester",
+     "text": "완료: 3/5 성공(자동 루프 첫 완주, prep.extended=true signed_r_after=237.4mm). 실패 2건은 z=481/529mm로 z천장(T40) 초과. 기록 5줄을 젯슨→저장소로 수동 이관(T58 미해결). docs/ros2-이행계획.md 'T57 실기 5회' 절 참고."
     }
    ]
   },
@@ -1718,12 +1723,17 @@
    "done_when": "어느 관절의 어느 구간이 왜 걸리는지 PC에서 먼저 가른다(가짜 팔: ros_selfcheck의 _sim_escape_arm/ESCAPE_NORM_2026_09_18 자세를 쓰면 팔 없이 재현된다). 그 뒤 둘 중 하나: (a) arm_stage가 escape.plan/walk를 쓰도록 옮긴다(규칙이 하나로 줄어든다) (b) 옮기지 않는 이유를 코드 주석에 적고 자체 검사만 고친다. ros_selfcheck에 'A자세에서 park 목표로 가는 경로가 막히지 않는다' 1종 이상. PC 4종 RC=0. 실기(조작대 park 버튼)는 tester 몫.",
    "attempts": 0,
    "created": "2026-09-18 05:52",
-   "updated": "2026-09-18 05:52",
+   "updated": "2026-09-18 06:05",
    "notes": [
     {
      "t": "2026-09-18 05:52",
      "by": "builder",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 06:05",
+     "by": "tester",
+     "text": "2026-09-18 05:5x tester(T57 뒷정리): park가 A자세뿐 아니라 실기 5회 뒤 아무 자세에서나 막힌다는 것을 추가 확인했다 — 트라이얼5 종료 자세에서 job=stage로 3단계에 걸쳐 PARK(60,65,0,-100,6)까지 남은 차이를 pan+2.5/lift+12.4/elbow+6.2/wristflex+15.2/roll-4.7°로 좁혔는데도 4번 전부 wrist_flex한계로 거절됐다(재현: click-server POST /run {job:stage,target:<중간값>} 반복 후 job:park). wrist_flex=-100 자체가 관절 하나씩 순서대로 움직이는 지금 경로 전략으로는 이 팔에서 사실상 못 가는 자리일 수 있다 — done_when의 PC 재현(가짜 팔)에 이 좁혀진 근접 자세도 케이스로 넣어 보길 권한다. 상세: docs/ros2-이행계획.md 'T57 실기 5회' 절."
     }
    ]
   }
