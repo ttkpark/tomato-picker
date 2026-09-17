@@ -1,7 +1,14 @@
 # 토마토 따기 로봇 — Python 의존성
+#
+# ⚙ **PC 자체검증 4종만** 돌리려면 이 셋이면 된다 (2026-09-17 빈 venv에서 확인,
+#   45/60/95/33 통과). 젯슨·팔·카메라 없이 도는 것이 이 넷의 존재 이유다:
+#       pip install numpy PyYAML opencv-python
+#   없으면 스크립트가 **종료코드 2**와 설치 한 줄로 죽는다
+#   (tools/selfcheck_deps.py — 2로 죽은 것은 '실패'가 아니라 '안 돌았다').
 anthropic>=0.40        # Claude 함수콜 오케스트레이션
 opencv-python>=4.10    # 색 기반 열매 검출
-numpy>=1.26            # 영상 배열 처리
+numpy>=1.26            # 영상 배열 처리 · 손-눈 보정(최소자승) · 자체검증 4종
+PyYAML>=6.0            # ros2/src의 파라미터·기하 yaml 읽기. **자체검증 ros_selfcheck가 이것 없이는 안 돈다**
 python-dotenv>=1.0     # .env에서 API 키 로드
 pyserial>=3.5          # 젯슨↔Arduino 메카넘 베이스 시리얼 통신
 faster-whisper>=1.2    # 음성 명령 STT(온디바이스, 젯슨은 CPU/int8로 동작). arecord 필요(alsa-utils)

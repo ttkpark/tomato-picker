@@ -23,6 +23,10 @@ import random
 import sys
 import tempfile
 
+# ⚠ 여기만 서드파티가 없다 — kinematics·cartesian·config는 표준 라이브러리만 쓴다.
+#   그래서 selfcheck_deps.require()를 안 부른다. 그 사실을 ros_selfcheck의
+#   [의존성] 검사가 지킨다(numpy가 끼어들면 거기서 걸린다).
+
 # 윈도우 콘솔(cp949)에서도 한글/기호가 안 깨지게 — main.py와 같은 처리.
 # (이 도구의 존재 이유가 "개발 PC에서 돈다"인데, 출력의 em dash 하나에
 #  UnicodeEncodeError로 죽으면 검증 자체를 못 한다.)

@@ -26,7 +26,13 @@ import math
 import os
 import sys
 
-import numpy as np
+# 서드파티보다 먼저 — 없을 때 스무 줄짜리 역추적 대신 "설치하라" 한 줄로 죽는다.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from selfcheck_deps import require  # noqa: E402
+
+require("numpy")
+
+import numpy as np  # noqa: E402
 
 # 윈도우 콘솔(cp949)에서도 한글/기호가 안 깨지게 — arm_cartesian_check.py와 같은 처리.
 for _stream in (sys.stdout, sys.stderr):

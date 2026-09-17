@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 14,
+ "next_id": 15,
  "tasks": [
   {
    "id": "T1",
@@ -251,18 +251,23 @@
    "id": "T11",
    "title": "PC 자체검증이 빈 환경에서도 돌게 의존성을 못 박기",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "ros_selfcheck가 pyyaml 없이 ModuleNotFoundError로 죽고 있었는데, 파이프 뒤 종료코드가 0이라 '통과'로 오독됐다. 졸업기준4는 이 4종이 실제로 도는 것을 전제한다.",
    "done_when": "requirements(또는 그에 해당하는 파일)에 pyyaml·numpy가 명시돼 있고, 네 검증 스크립트가 필수 모듈이 없으면 '설치하라'는 한 줄과 함께 비영 종료코드로 죽는다. 새 venv에서 4종이 45/60/70/33으로 도는 것을 확인",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-17 21:49",
+   "updated": "2026-09-17 23:39",
    "notes": [
     {
      "t": "2026-09-17 21:49",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-17 23:39",
+     "by": "builder",
+     "text": "완료: requirements.txt에 PyYAML 명시 + tools/selfcheck_deps.py(require/missing) 신설, 4종이 서드파티 import 전에 묻는다. 없으면 '설치하라 pip install …' 한 줄 + 종료코드 2(=환경이 없다, 1=검사실패와 구분). ros_selfcheck에 [의존성] 검사군 신설(78→95종). 빈 venv 실측: 빈 상태 RC=2 각각 numpy/numpy+opencv-python/numpy+PyYAML, 'pip install numpy PyYAML opencv-python' 뒤 45/60/95/33 전부 RC=0. eye_check은 Eye.fruits()의 늦은 cv2 import 때문에 cv2도 필요하다는 것을 빈 venv에서 실측해 표에 반영."
     }
    ]
   },
@@ -299,6 +304,25 @@
    "notes": [
     {
      "t": "2026-09-17 22:07",
+     "by": "builder",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T14",
+   "title": "졸업기준4의 '175종'을 지금 숫자로 갱신",
+   "role": "planner",
+   "status": "todo",
+   "priority": 3,
+   "why": "OBJECTIVE.md 기준4가 'ros_selfcheck 70·handeye 45·eye 60 = 175종'이라고 적혀 있는데 실제는 95·45·60·33 = 233종이다(2026-09-17 사이클 4). 검사를 늘릴 때마다 기준이 낡으면 '통과'의 뜻이 흐려진다.",
+   "done_when": "OBJECTIVE.md 기준4가 지금 숫자와 맞고, 앞으로 검사를 늘려도 기준이 안 낡을 표현(예: '4종 전부 RC=0')으로 바뀐다. 플래너만 이 파일을 고친다.",
+   "attempts": 0,
+   "created": "2026-09-17 23:39",
+   "updated": "2026-09-17 23:39",
+   "notes": [
+    {
+     "t": "2026-09-17 23:39",
      "by": "builder",
      "text": "만듦"
     }

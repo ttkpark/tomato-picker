@@ -22,6 +22,8 @@
   ⑥ **TF 수학** — 쿼터니언 왕복, camera_link 재타깃
   ⑦ **손-눈 합격선** — 잔차 15mm 판정이 경고가 아니라 종료코드·저장차단으로
      이어지는가 (`handeye_resolve.gate`)
+  ⑧ **의존성** — 빈 환경에서 4종이 *무엇이 없는지 말하고* 죽는가
+     (`tools/selfcheck_deps.py`). 종료코드 2 = 환경이 없다, 1 = 검사 실패
 
 ⚠ 여기가 통과해도 로봇이 도는 건 아니다. 여기서 걸리는 종류의 실수(부호,
    라디안/도, mm/m, 좌표계 부모)를 **실물에서 배우지 않게** 하는 것이 전부다.
@@ -29,14 +31,23 @@
 
 from __future__ import annotations
 
+import io
 import math
 import os
 import re
 import sys
 import xml.etree.ElementTree as ET
 
-import numpy as np
-import yaml
+# 서드파티보다 먼저 — pyyaml이 없어 여기서 죽는 것을 "통과"로 오독한 적이 있다
+# (2026-09-17). tools/selfcheck_deps.py의 머리말을 보라.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))), "tools"))
+from selfcheck_deps import require  # noqa: E402
+
+require("numpy", "yaml")
+
+import numpy as np  # noqa: E402
+import yaml  # noqa: E402
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
@@ -587,6 +598,85 @@ def test_handeye_gate() -> None:
           "경고만 하고 파일은 갱신하면, 다음 사람은 파일이 있다는 것만 보고 믿는다")
 
 
+def test_selfcheck_deps() -> None:
+    """자체검증 4종이 **빈 환경에서 무엇이 없는지 말하고** 죽는가.
+
+    이 검사가 있는 이유: 2026-09-17에 `.venv`에 pyyaml이 없어 이 스크립트가
+    ModuleNotFoundError로 죽고 있었고, 그게 "통과"로 오독될 뻔했다. 졸업
+    기준 4번은 넷이 **실제로 도는 것**을 전제한다 — 안 돌았으면 그 사실이
+    한 줄로 보여야 한다. 여기서 지키는 것은 두 가지다: ① 필요한 것이
+    requirements.txt에 적혀 있는가 ② 서드파티를 import하기 **전에** 물어보는가.
+    """
+    print("\n[의존성] 빈 환경에서 무엇이 없는지 말하고 죽는가")
+    sys.path.insert(0, os.path.join(REPO, "tools"))
+    import selfcheck_deps as sd  # noqa: E402
+
+    req = open(os.path.join(REPO, "requirements.txt"), encoding="utf-8").read().lower()
+    for mod in sd.SELFCHECK_MODULES:
+        pip = sd.PIP_NAME[mod]
+        check(f"requirements.txt가 {pip}를 적어 뒀다", pip.lower() in req,
+              f"{pip}가 없다 — 새 환경에서 자체검증이 안 돈다")
+
+    # 있는 것은 통과시키고, 없는 것은 잡는가. (find_spec이라 import 부작용 없음)
+    check("있는 모듈은 통과시킨다", sd.missing("os", "sys") == [])
+    check("없는 모듈은 잡아낸다",
+          sd.missing("정말_없는_모듈_ㄱㄴㄷ") == ["정말_없는_모듈_ㄱㄴㄷ"])
+
+    # ⚠ 종료코드 2 = 환경이 없다. 1(검사 실패)과 섞으면 "고칠 코드"와
+    #   "깔 패키지"가 구분이 안 된다.
+    # stderr를 삼킨다 — 안 그러면 이 **일부러 실패시키는** 호출이 뱉는
+    # "❌ 자체검증을 돌릴 수 없다"가 통과 출력 한가운데 섞여 진짜 사고처럼 보인다.
+    hushed, sys.stderr = sys.stderr, io.StringIO()
+    try:
+        sd.require("정말_없는_모듈_ㄱㄴㄷ")
+        rc, said = 0, ""
+    except SystemExit as e:
+        rc, said = e.code, sys.stderr.getvalue()
+    finally:
+        sys.stderr = hushed
+    check("없으면 종료코드 2로 죽는다", rc == 2, f"rc={rc}")
+    check("죽으면서 설치 명령을 알려준다", "pip install" in said, said.strip()[:60])
+    check("import 이름과 pip 이름이 다른 것을 표가 안다",
+          sd.PIP_NAME["yaml"] == "PyYAML", "yaml을 `pip install yaml`로 안내하면 못 깐다")
+
+    # 배선 — 스크립트마다 **무엇을 묻는지**가 실제로 필요한 것과 같아야 한다.
+    # ⚠ 이 표는 파일 머리의 import를 훑어서 만든 게 아니라 **빈 venv에서 돌려
+    #   보고** 적었다(2026-09-17). eye_check의 cv2가 그 차이다 — 늦은 import라
+    #   머리에는 안 보이고 검사 뒤쪽에서 죽는다. 표를 고칠 일이 생기면
+    #   빈 venv에서 한 번 돌려 보고 고쳐라.
+    NEEDS = {
+        "tools/handeye_check.py": {"numpy"},
+        "tools/eye_check.py": {"numpy", "cv2"},
+        "ros2/tools/ros_selfcheck.py": {"numpy", "yaml"},
+        "tools/arm_cartesian_check.py": set(),   # 표준 라이브러리만 쓴다
+    }
+    for rel, needs in NEEDS.items():
+        body = open(os.path.join(REPO, *rel.split("/")), encoding="utf-8").read()
+        lines = body.splitlines()
+        third = [i for i, ln in enumerate(lines)
+                 if re.match(r"^\s*(import|from)\s+(numpy|yaml|cv2)\b", ln)]
+        guard = [i for i, ln in enumerate(lines) if re.match(r"^\s*require\(", ln)]
+        asked = set(re.findall(r'"([a-z0-9_]+)"',
+                               " ".join(lines[i] for i in guard)))
+        check(f"{rel} — 묻는 목록이 필요한 것과 같다", asked == needs,
+              f"묻는 것={sorted(asked)} / 필요한 것={sorted(needs)}")
+        if not needs:
+            check(f"{rel} — 서드파티를 안 쓴다", not third,
+                  "서드파티가 끼어들었다면 require()도 함께 넣어라")
+            continue
+        # 묻기 전에 import하면 묻는 의미가 없다(역추적이 먼저 뜬다).
+        check(f"{rel} — 서드파티를 묻고 나서 import한다",
+              not third or (bool(guard) and guard[0] < third[0]),
+              f"require 줄={guard} / 서드파티 줄={third}")
+
+    # 표에 적은 것이 전부 requirements.txt에 있는가 — 위 표만 늘리고 설치
+    # 목록을 안 고치면 "묻기는 하는데 깔 방법은 안 적힌" 상태가 된다.
+    all_needed = set().union(*NEEDS.values())
+    check("스크립트가 묻는 것이 전부 SELFCHECK_MODULES에 있다",
+          all_needed <= set(sd.SELFCHECK_MODULES),
+          f"빠진 것={sorted(all_needed - set(sd.SELFCHECK_MODULES))}")
+
+
 def main() -> int:
     print(f"저장소: {REPO}")
     geom = kin.ArmGeometry()
@@ -601,6 +691,7 @@ def main() -> int:
     test_fruit3d()
     test_tf_math()
     test_handeye_gate()
+    test_selfcheck_deps()
 
     print()
     if FAILED:

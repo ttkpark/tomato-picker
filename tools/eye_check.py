@@ -35,7 +35,15 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8")
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+
+# 서드파티보다 먼저 — 없을 때 스무 줄짜리 역추적 대신 "설치하라" 한 줄로 죽는다.
+from selfcheck_deps import require  # noqa: E402
+
+# cv2는 Eye.fruits()가 늦게 끌어온다 — 없으면 60종 중 뒤쪽에서 죽으므로
+# 시작할 때 묻는다.
+require("numpy", "cv2")
 
 import numpy as np  # noqa: E402
 
