@@ -639,10 +639,12 @@ function state(){
     if(j.u!=null){pt={u:j.u,v:j.v};
       document.getElementById('cur').textContent='표적 ('+j.u+', '+j.v+')  깊이 '+(j.z>0?j.z.toFixed(0)+'mm':'없음');}
     var dark=(j.cp99!=null&&j.cp99<30)?(' ⚠ 화면이 어둡다(평균 '+j.cmean+') — 점 검출이 원리상 0개다'):'';
+    var aim=j.aim_impossible
+      ?(' ⛔ 겨냥 불가 — 한 주기가 겨냥 한계 '+Math.round(j.aim_max_age*1000)+'ms보다 길다'):'';
     var slow=j.fps_slow
       ?(' ⚠ '+j.fps+'fps (설정 '+j.fps_want+') — 노출이 길다, 움직이는 중엔 화소가 낡는다'):'';
     var fps=(j.fps!=null?(' · '+j.fps+'fps'):'');
-    document.getElementById('age').textContent='프레임 '+j.age.toFixed(1)+'초 전'+fps+(j.age>5?' ⚠ depth-cam 확인':'')+slow+dark;
+    document.getElementById('age').textContent='프레임 '+j.age.toFixed(1)+'초 전'+fps+(j.age>5?' ⚠ depth-cam 확인':'')+slow+aim+dark;
     var wv=document.getElementById('warn');
     if(j.voice){wv.textContent='⚠ tomato-voice 가 켜져 있다 — 팔 포트를 뺏겨 여기서 시키는 일이 전부 실패한다. '
       +'젯슨에서 sudo systemctl stop tomato-voice';wv.style.display='';}
@@ -1006,10 +1008,17 @@ class Handler(BaseHTTPRequestHandler):
                 out["fps"], out["fps_want"] = m.get("measured_fps"), m.get("publish_fps")
                 # 판정 기준은 한 곳(config.D405_MIN_FPS_FRAC)에만 둔다 — 화면에
                 # 0.8을 또 적으면 언젠가 두 숫자가 갈린다.
-                from tomato_picker.config import D405_MIN_FPS_FRAC
+                from tomato_picker.config import (D405_AIM_MAX_AGE_SEC,
+                                                   D405_MIN_FPS_FRAC)
                 out["fps_slow"] = bool(
                     out["fps"] is not None and out["fps_want"]
                     and out["fps"] < float(out["fps_want"]) * D405_MIN_FPS_FRAC)
+                # 겨냥 한계 — 이 주기로는 **어떤 프레임도** 못 지키는가(T25).
+                # age가 아니라 주기를 본다: age는 읽는 순간마다 달라지지만
+                # "1/fps > 한계"는 그 화면에 대한 고정된 사실이다.
+                out["aim_max_age"] = D405_AIM_MAX_AGE_SEC
+                out["aim_impossible"] = bool(
+                    out["fps"] and 1.0 / float(out["fps"]) > D405_AIM_MAX_AGE_SEC)
             except Exception:                              # noqa: BLE001
                 pass
             if os.path.exists(TARGET):
@@ -1087,7 +1096,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps({"ok": True, "u": u, "v": v, "mode": "grip"}))
                 return
             z = depth_at(u, v)
-            json.dump({"u": u, "v": v, "z": z, "when": time.strftime("%Y-%m-%d %H:%M:%S")},
+            # ⚠ 표적 화소는 **그 프레임의 자리**다. 팔이 움직이면 무효가 되는데,
+            #   지금까지 파일에는 사람이 읽는 시각 문자열만 있어 나중에 쓰는 쪽이
+            #   "언제 찍힌 화소인가"를 물을 수 없었다(T25). 프레임의 ts를 같이 남긴다.
+            try:
+                frame_ts = float(json.load(open(META)).get("ts", 0.0))
+            except Exception:                              # noqa: BLE001
+                frame_ts = 0.0
+            json.dump({"u": u, "v": v, "z": z, "ts": time.time(), "frame_ts": frame_ts,
+                       "when": time.strftime("%Y-%m-%d %H:%M:%S")},
                       open(TARGET, "w"), indent=1)
             self._send(200, json.dumps({"ok": True, "u": u, "v": v, "z": z,
                                         "mode": "target"}))

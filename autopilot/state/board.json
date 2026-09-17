@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 48,
+ "next_id": 49,
  "tasks": [
   {
    "id": "T1",
@@ -732,18 +732,23 @@
    "id": "T25",
    "title": "느린 발행(6fps)에서 겨냥을 '경고'가 아니라 '거절'로 올릴지 정한다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 3,
    "why": "T24로 fps_warn은 생겼지만 아무도 거절하지 않는다. D405_MAX_AGE_SEC=2.0은 6fps에서 12프레임(=팔이 한참 움직인 뒤)이라 굳음 검사가 사실상 안 잡는다. 이 모듈의 핵심은 '거절'인데(depth_camera.py 첫머리), 주기에는 그 규칙이 아직 없다.",
    "done_when": "팔이 움직이는 중(또는 직후)의 화소 겨냥에 대해 max_age를 fps로 환산한 값(예: 2프레임)으로 거절할지 결정하고, 결정한 쪽을 코드+eye_check 1종으로 굳힌다. 거절하지 않기로 정했다면 그 이유를 docs/depth-camera.md §2.1에 한 줄 남긴다. 4종 RC=0.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 00:44",
-   "updated": "2026-09-18 00:44",
+   "updated": "2026-09-18 04:14",
    "notes": [
     {
      "t": "2026-09-18 00:44",
      "by": "builder",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 04:14",
+     "by": "builder",
+     "text": "완료: 겨냥(화소→팔 좌표)에 굳음 한계(2초)와 별개의 좁은 나이 한계를 두고 거절한다 — D405_AIM_MAX_AGE_SEC=0.35초, point_at(..., aiming=True)로 부르는 쪽이 '이 값으로 팔을 보낸다'고 선언할 때만. eye.pixel_to_base(→aim)만 켜고 probe·열매목록은 그대로. 단위를 '프레임 수'로 잡지 않은 것이 핵심 결정이다(2프레임이면 6fps 0.33초·3fps 0.67초로 느릴수록 관문이 넓어져 막으려던 상황에서 문이 열린다) — fps는 대신 '주기>한계면 어떤 프레임도 못 지킨다'는 aim_warn/조작대 ⛔겨냥불가에 쓴다. 조작대: /state에 aim_max_age·aim_impossible, ~/click_target.json에 frame_ts·ts 기록. 검증: 4종 RC=0 45/102/201/91(439종, eye_check +12종 [겨냥]). 돌연변이 5건 전부 FAIL(프레임수로 되돌리기·게이트삭제·겨냥불가판정삭제·한계가 굳음한계 초과·모르는fps 단정), 복구 후 재통과. 젯슨 실기: /state aim_max_age=0.35 aim_impossible=false @6.0fps(주기167ms) — 지금 구성에서 겨냥 안 막힘, 실제 D405 프레임 608ms 낡힌 사본은 굳음검사 통과(427mm)하고 겨냥은 거절. /click이 frame_ts 기록(클릭 107ms 전 프레임), 옛 표적파일 원복. click-server 재시작 후 active·http=200, 나머지 서비스 발견 그대로."
     }
    ]
   },
@@ -1347,6 +1352,30 @@
      "t": "2026-09-18 04:00",
      "by": "builder",
      "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T48",
+   "title": "겨냥 나이 한계 0.35초의 근거를 실측으로 만든다 — 팔이 이동 중 초당 몇 mm 가는가",
+   "role": "tester",
+   "status": "todo",
+   "priority": 3,
+   "why": "T25가 겨냥 거절 한계를 D405_AIM_MAX_AGE_SEC=0.35초로 넣었지만 그 값은 짐작이다(6fps 주기 167ms의 두 배). 허용 오차 15mm를 넘지 않으려면 '15mm ÷ 이동속도'가 한계여야 하는데, 이 팔이 move_to/조그 중 TCP를 초당 몇 mm 옮기는지를 아무도 잰 적이 없다.",
+   "done_when": "젯슨에서 arm_extend.py 또는 cartesian move_to로 알려진 거리(예: 50mm)를 옮기며 걸린 시간을 3회 이상 재고, TCP 속도(mm/s)를 docs/depth-camera.md 2.1.1절 아래 표로 남긴다. 그 값으로 15mm/속도를 계산해 0.35초가 큰지 작은지 판정하고, 고쳐야 하면 그 숫자를 적어 builder 작업으로 넘긴다. 팔은 끝에 A자세로 두고 서비스는 발견한 그대로(click-server active) 되돌린다.",
+   "attempts": 0,
+   "created": "2026-09-18 04:14",
+   "updated": "2026-09-18 04:14",
+   "notes": [
+    {
+     "t": "2026-09-18 04:14",
+     "by": "builder",
+     "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 04:14",
+     "by": "builder",
+     "text": "2026-09-18 04:1x builder(T25): 지금 실측 6.0fps(주기 167ms)이라 0.35초 한계는 현 구성에서 겨냥을 막지 않는다(젯슨 /state aim_impossible=false 확인). 2.9fps 아래로 떨어지면 원리상 막힌다. 이 작업은 '너무 빡빡한가'가 아니라 '너무 느슨한가'를 묻는 것이다 — 15mm/속도가 0.35초보다 작으면 한계를 줄여야 한다."
     }
    ]
   }

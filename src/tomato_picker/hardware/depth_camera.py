@@ -31,6 +31,7 @@ import time
 import numpy as np
 
 from ..config import (
+    D405_AIM_MAX_AGE_SEC,
     D405_MAX_AGE_SEC,
     D405_MIN_FPS_FRAC,
     D405_MIN_VALID_FRAC,
@@ -73,6 +74,7 @@ class DepthView:
         color_path: str | None = None,
         max_age: float = D405_MAX_AGE_SEC,
         camera: str = DEPTH_CAMERA_DEFAULT,
+        aim_max_age: float = D405_AIM_MAX_AGE_SEC,
     ) -> None:
         spec = camera_spec(camera)
         self.camera = camera
@@ -83,6 +85,8 @@ class DepthView:
         self._depth_path = depth_path or spec["depth"]
         self._color_path = color_path or spec["color"]
         self._max_age = max_age
+        # 겨냥용 한계는 굳음 한계보다 클 수 없다 — 커지면 2초 규칙이 무의미해진다.
+        self._aim_max_age = min(float(aim_max_age), float(max_age))
 
     # ------------------------------------------------------------------
     # 원자료
@@ -102,6 +106,42 @@ class DepthView:
     def available(self) -> bool:
         age = self.age()
         return age is not None and age <= self._max_age
+
+    # ------------------------------------------------------------------
+    # 겨냥은 더 빡빡하게 본다 (2026-09-18, T25)
+    #
+    # `_max_age`(2초)가 묻는 것은 "발행기가 살아 있는가"다. 겨냥이 묻는 것은
+    # **"이 화소를 찍은 뒤 팔이 움직이지 않았는가"** — 다른 질문이고, 답도 더
+    # 짧아야 한다. 6fps 화면의 age 0.17초는 굳음 검사를 멀쩡히 통과하지만
+    # 그 사이 움직인 팔에게는 이미 남의 자리다(개발일지-2026-09-11 §1).
+    #
+    # ⚠ 한계를 **프레임 수**로 잡지 않은 이유는 config에 적어 뒀다 — 느릴수록
+    #   관문이 넓어져 막으려던 상황에서 문이 열린다. fps는 대신 "이 주기로는
+    #   원리상 통과할 프레임이 없다"를 말하는 데 쓴다.
+    # ------------------------------------------------------------------
+
+    @property
+    def aim_max_age(self) -> float:
+        return self._aim_max_age
+
+    def aim_impossible(self, meta: dict | None = None) -> str | None:
+        """이 발행 주기로는 겨냥이 **원리상** 안 되는가 — 되면 None.
+
+        가장 새 프레임조차 한 주기(1/fps)만큼 낡아 있다. 그게 한계보다 길면
+        아무리 빨리 읽어도 통과할 수 없다. 그 막다른 골목을 "가끔 실패한다"로
+        겪게 두지 않고 미리 이름을 붙인다.
+        """
+        m = meta if meta is not None else (self.meta() or {})
+        got = m.get("measured_fps")
+        try:
+            fps = float(got)
+        except (TypeError, ValueError):
+            return None                    # 아직 모른다 — 모르는 것으로 거절하지 않는다
+        if fps <= 0 or 1.0 / fps <= self._aim_max_age:
+            return None
+        return (f"발행이 {fps:g}fps(한 주기 {1000.0 / fps:.0f}ms)라 겨냥 한계 "
+                f"{self._aim_max_age * 1000:.0f}ms를 **어떤 프레임도** 못 지킨다 — "
+                "노출(D405_EXPOSURE_US)을 줄이거나 조명을 켜라.")
 
     def intrinsics(self) -> Intrinsics:
         m = self._require_meta()
@@ -182,13 +222,18 @@ class DepthView:
     # 픽셀 → 3D
     # ------------------------------------------------------------------
 
-    def depth_mm_at(self, u: float, v: float, patch: int = D405_PATCH_PX) -> float:
+    def depth_mm_at(self, u: float, v: float, patch: int = D405_PATCH_PX,
+                    aiming: bool = False) -> float:
         """(u,v) 주변 패치의 **중앙값** 깊이(mm). 못 믿으면 DepthError.
 
         중앙값을 쓰는 이유 — 평균은 구멍(0)과 튀는 값 하나에 통째로 끌려간다.
         중앙값은 절반이 성할 때까지 버틴다.
+
+        `aiming=True`는 **이 값으로 팔을 보낸다**는 선언이다 — 나이 한계가
+        `aim_max_age`로 좁아진다. 보기만 하는 쪽(probe·열매 목록)은 켜지 마라.
+        이 모듈은 팔이 움직였는지 알 수 없다. 아는 것은 부르는 쪽이다.
         """
-        m = self._require_meta()
+        m = self._require_meta(aiming=aiming)
         depth = self.depth_raw()
         h, w = depth.shape
         ui, vi = int(round(u)), int(round(v))
@@ -219,10 +264,10 @@ class DepthView:
                 "집기에 못 쓴다(계산은 되지만 그래서 더 위험하다).")
         return mm
 
-    def point_at(self, u: float, v: float,
-                 patch: int = D405_PATCH_PX) -> tuple[float, float, float]:
+    def point_at(self, u: float, v: float, patch: int = D405_PATCH_PX,
+                 aiming: bool = False) -> tuple[float, float, float]:
         """(u,v) → 카메라 좌표 3D (mm). 못 믿으면 DepthError."""
-        mm = self.depth_mm_at(u, v, patch)
+        mm = self.depth_mm_at(u, v, patch, aiming=aiming)
         return self.intrinsics().deproject(float(u), float(v), mm)
 
     # ------------------------------------------------------------------
@@ -267,6 +312,9 @@ class DepthView:
             # 옛 발행기에서는 없을 수 있다 — None을 그대로 통과시킨다.
             "publish_fps": m.get("publish_fps"),
             "measured_fps": m.get("measured_fps"),
+            # 겨냥 한계 — 화면이 같은 숫자를 또 적지 않게 여기서 내려보낸다.
+            "aim_max_age": round(self._aim_max_age, 3),
+            "aim_ok": age <= self._aim_max_age,
         }
         band = f"{lo / 10:.0f}~{hi / 10:.0f}cm"
         # ⚠ 이 경고가 2026-08-28 D405 첫 연결에서 실제로 났던 상황이다 — 삼각대가
@@ -305,6 +353,12 @@ class DepthView:
                 "센서가 그만큼 못 낸다. 팔이 움직이는 중에 찍은 화소는 이만큼 "
                 "낡았다고 보고 겨냥하라.")
 
+        # 주기가 겨냥 한계보다 길면 "가끔 실패"가 아니라 **항상 실패**다 — 사람이
+        # 화소를 다시 찍어도 안 되는 상황이므로 원인과 함께 미리 말한다.
+        impossible = self.aim_impossible(m)
+        if impossible:
+            out["aim_warn"] = impossible
+
         p99 = out.get("color_p99")
         if p99 is not None and p99 < 30:
             out["color_warn"] = (
@@ -316,7 +370,7 @@ class DepthView:
 
     # ------------------------------------------------------------------
 
-    def _require_meta(self) -> dict:
+    def _require_meta(self, aiming: bool = False) -> dict:
         m = self.meta()
         if not m:
             raise DepthError(
@@ -327,6 +381,13 @@ class DepthView:
             raise DepthError(
                 f"깊이 프레임이 {age:.0f}초 전 것이다(최대 {self._max_age:.0f}초). "
                 "발행기가 멈췄다 — 굳은 화면으로 팔을 움직이지 않겠다.")
+        if aiming and age > self._aim_max_age:
+            why = self.aim_impossible(m)
+            raise DepthError(
+                f"겨냥하기엔 낡은 화소다 — 프레임이 {age * 1000:.0f}ms 전 것이다"
+                f"(겨냥 한계 {self._aim_max_age * 1000:.0f}ms). 그 사이 팔이 "
+                "움직였으면 겨눈 자리는 이미 남의 자리다. 팔을 멈추고 다시 찍어라."
+                + (" " + why if why else ""))
         return m
 
 

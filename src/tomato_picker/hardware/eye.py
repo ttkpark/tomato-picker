@@ -461,8 +461,14 @@ class Eye:
         return (float(p[0]), float(p[1]), float(p[2]))
 
     def pixel_to_base(self, u: float, v: float) -> tuple[float, float, float]:
-        """화면 픽셀 → 팔 base 좌표 (mm). 깊이가 못 믿을 값이면 DepthError."""
-        return self.cam_to_base(self._view.point_at(u, v))
+        """화면 픽셀 → 팔 base 좌표 (mm). 깊이가 못 믿을 값이면 DepthError.
+
+        ⚠ 여기는 **팔을 보내는 길**이다(`aim`이 이걸 부른다). 그래서 굳음
+          한계(2초)가 아니라 겨냥 한계(`DepthView.aim_max_age`)로 본다 —
+          6fps 화면의 0.17초는 "신선"하지만 그 사이 움직인 팔에게는 남의
+          자리다(T25, 2026-09-18). 거리만 보는 `probe`는 그대로 둔다.
+        """
+        return self.cam_to_base(self._view.point_at(u, v, aiming=True))
 
     def probe(self, u: float, v: float) -> str:
         """그 픽셀이 **얼마나 먼지만** 알려준다 — 팔은 건드리지 않는다.

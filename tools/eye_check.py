@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -666,6 +667,84 @@ def test_publish_rate() -> None:
           old_st["ok"] and old_st["measured_fps"] is None and "fps_warn" not in old_st)
 
 
+# ----------------------------------------------------------------------
+# ⑪ 겨냥은 더 빡빡한 나이로 본다 (T25, 2026-09-18)
+#
+# "발행기가 살아 있는가"(2초)와 "이 화소를 찍은 뒤 팔이 움직이지 않았는가"는
+# 다른 질문이다. 아래는 그 둘이 **따로** 판정되는지, 그리고 한계를 프레임
+# 수로 되돌리는 실수를 하면 걸리는지를 못 박는다.
+# ----------------------------------------------------------------------
+
+def test_aim_freshness() -> None:
+    print("\n[겨냥] 낡은 화소로는 팔을 안 보내는가")
+    cam = FakeCam((0.0, -300.0, 300.0), (0.0, 0.0, 0.0), tag="_aim")
+    truth = (0.0, 0.0, 0.0)
+    (u, v, _z) = cam.bake([truth])[0]
+    view = cam.view()
+
+    check("겨냥 한계는 굳음 한계(2초)보다 짧다",
+          0 < view.aim_max_age < 2.0, f"{view.aim_max_age}s")
+    check("신선한 프레임은 겨냥도 통과한다",
+          view.point_at(u, v, aiming=True)[2] > 0)
+
+    # 6fps 화면의 age 0.17초 — 굳음 검사는 통과하지만 겨냥은 아니다.
+    cam.bake([truth], ts=time.time() - 0.6)
+    check("0.6초 낡은 프레임은 굳음 검사를 통과한다(여기까진 지금까지와 같다)",
+          view.point_at(u, v)[2] > 0)
+    expect_error("같은 프레임으로 겨냥은 거절", lambda: view.point_at(u, v, aiming=True),
+                 "겨냥하기엔 낡은")
+    why = _aim_why(view, u, v)
+    ms = re.search(r"(\d+)ms 전", why)
+    check("거절 문구가 ms로 말한다 — 초로 반올림하면 '0초 전'이 된다",
+          bool(ms) and 590 <= int(ms.group(1)) <= 900, why[:70])
+    st = view.status()
+    check("상태도 겨냥은 안 된다고 말한다(ok는 참인 채로)",
+          st["ok"] is True and st["aim_ok"] is False, str(st.get("aim_ok")))
+
+    # ⚠ 회귀 방어의 핵심 — 한계를 '프레임 2개'로 되돌리면 6fps에서 0.33초,
+    #   3fps에서 0.67초가 되어 **느릴수록 문이 넓어진다.** 그러면 아래가 통과해
+    #   버린다(거절이 안 난다).
+    cam.bake([truth], ts=time.time() - 0.5)
+    _set_fps(cam, want=8.0, got=3.0)
+    expect_error("느린 발행이 관문을 넓히지 않는다(0.5초 < 2프레임 0.67초)",
+                 lambda: view.point_at(u, v, aiming=True), "겨냥하기엔 낡은")
+
+    # 주기가 한계보다 길면 어떤 프레임도 못 지킨다 — 미리 이름을 붙여 준다.
+    cam.bake([truth])
+    _set_fps(cam, want=8.0, got=2.0)
+    st = view.status()
+    check("주기가 한계보다 길면 '겨냥 불가'를 미리 말한다",
+          "어떤 프레임도" in (st.get("aim_warn") or ""), str(st.get("aim_warn"))[:70])
+    check("그래도 지금 이 프레임 자체는 신선하다 — 겨냥이 통과한다",
+          view.point_at(u, v, aiming=True)[2] > 0)
+    _set_fps(cam, want=8.0, got=8.0)
+    check("제 속도면 겨냥 불가 경고가 없다", view.status().get("aim_warn") is None)
+    _set_fps(cam, want=8.0, got=None)
+    check("주기를 모르면(None) 겨냥 불가라고 단정하지 않는다",
+          view.status().get("aim_warn") is None)
+
+    # 보기만 하는 길은 그대로여야 한다 — 열매 목록이 통째로 죽으면 안 된다.
+    cam.bake([truth], ts=time.time() - 0.6)
+    check("거리만 재는 길(aiming 없음)은 좁은 한계를 안 쓴다",
+          view.depth_mm_at(u, v) > 0)
+
+
+def _aim_why(view, u, v) -> str:
+    try:
+        view.point_at(u, v, aiming=True)
+    except Exception as e:                                 # noqa: BLE001
+        return str(e)
+    return ""
+
+
+def _set_fps(cam, want, got) -> None:
+    with open(cam.meta, encoding="utf-8") as f:
+        meta = json.load(f)
+    meta["publish_fps"], meta["measured_fps"] = want, got
+    with open(cam.meta, "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+
+
 def main() -> int:
     print(f"보정→통합 자체검증 — 하드웨어 없이 (임시폴더 {TMP})")
     try:
@@ -679,6 +758,7 @@ def main() -> int:
         test_two_cameras()
         test_publisher_exposure()
         test_publish_rate()
+        test_aim_freshness()
     finally:
         shutil.rmtree(TMP, ignore_errors=True)
 
