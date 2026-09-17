@@ -66,6 +66,46 @@ R_TARGET = 150.0       # 좌표 가드(90mm)에서 충분히 떨어진 곳까지
 #   → a1=80, a2=0, a3=0 이므로 pitch=0(수평), r≈250mm, z≈169mm
 TARGET_DEG = {"shoulder_lift": 80.0, "elbow_flex": -80.0, "wrist_flex": 0.0}
 
+# 정규화 가동범위는 -100..100이다. 98을 쓰는 건 끝에 2칸을 남겨 두려는 것.
+LIMIT_NORM = 98.0
+
+
+def clamp_norm(target_norm, limit=LIMIT_NORM):
+    """목표 정규화값을 가동범위 안으로 **자른다** — 못 간다고 거절하지 않는다.
+
+    왜 자르나 — 2026-09-18: 기본 목표 `elbow_flex=-80°`는 지금 보정표에서
+    정규화 -137.8이다(가동범위 밖). 거절하면 팔이 특이점에 갇힌 채로 아무 데도
+    못 간다. 잘라도 `signed_radius`가 219mm(가드 90mm의 2.4배)라 **목적은 달성된다**
+    — 뻗는 자세의 목적은 pitch 0°가 아니라 가드를 빠져나오는 것이다.
+    자른 관절은 부르는 쪽이 사람에게 말해 준다(무엇이 왜 덜 갔는지 보여야 한다).
+    """
+    out, hit = {}, []
+    for j, v in target_norm.items():
+        c = max(-limit, min(limit, float(v)))
+        if abs(c - float(v)) > 1e-9:
+            hit.append(j)
+        out[j] = c
+    return out, hit
+
+
+def limit_violations(now_norm, step_norm, limit=LIMIT_NORM):
+    """이 구간에서 **더 밖으로 나가는** 관절만 돌려준다.
+
+    ⚠ 이미 범위 밖에 있는 관절을 "한계"라고 막으면 빠져나올 수가 없다 —
+    바닥을 "지금 자리보다 1mm 아래"로 잡았다가 두 번 갇혔던 것과 같은 병이다
+    (위 MOUNT_Z_MM 주석). 2026-09-18 실측: `shoulder_pan`이 정규화 98.81,
+    `elbow_flex`가 103.16으로 **가만히 있는데도** 21구간 전부가 막혀 있었다.
+    기준은 "범위 밖이냐"가 아니라 "이 걸음이 상황을 더 나쁘게 하느냐"다.
+    """
+    bad = []
+    for j, v in step_norm.items():
+        v = float(v)
+        if abs(v) <= limit:
+            continue
+        if abs(v) > abs(float(now_norm.get(j, v))) + 1e-6:
+            bad.append(j)
+    return bad
+
 
 def load_frame():
     cal = json.load(open(CAL))
@@ -132,6 +172,11 @@ def main() -> int:
                                [float(v) for v in args.target.split(",")])))
     else:
         target.update(TARGET_DEG)
+    clamped, hit = clamp_norm(to_norm(target))
+    if hit:
+        print("⚠ 가동범위 밖이라 목표를 잘랐다: " + ", ".join(
+            f"{j} {to_norm(target)[j]:.1f}→{clamped[j]:.1f}" for j in hit))
+    target = to_deg({**now_norms, **clamped})
     pt = kin.forward(target, geom)
     rt = kin.signed_radius(target, geom)
     print(f"목표  " + " ".join(f"{j.split('_')[0]}={target[j]:6.1f}" for j in kin.JOINTS))
@@ -155,9 +200,8 @@ def main() -> int:
             note.append("사거리밖")
         # ⚠ 가동범위는 정규화값 -100..100이다 — 교시 자세 중심의 대칭이 아니다.
         nm = to_norm(degs)
-        for j in kin.JOINTS:
-            if abs(nm[j]) > 98.0:
-                note.append(f"{j}한계")
+        for j in limit_violations(now_norms, nm):
+            note.append(f"{j}한계")
         if note:
             bad.append(i)
         path.append((i, degs, pose, r, " ".join(note)))

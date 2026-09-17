@@ -774,6 +774,92 @@ def test_handeye_identifiability() -> None:
           f"|t|={np.linalg.norm(mir[2]):.0f}mm (정답 113mm)")
 
 
+# ----------------------------------------------------------------------
+# ⑨ 특이점 탈출 (arm_extend)
+# ----------------------------------------------------------------------
+
+# 2026-09-18 젯슨 실측 — 프리셋 "대기"에서 읽은 정규화값. 이 자세가 문제의
+# 출발점이다: shoulder_pan 98.81 · elbow_flex 103.16 이 **이미 범위 밖**이다.
+ESCAPE_NORM_2026_09_18 = {
+    "shoulder_pan": 98.81, "shoulder_lift": -90.86, "elbow_flex": 103.16,
+    "wrist_flex": 5.54, "wrist_roll": 88.84,
+}
+ESCAPE_FRAME_2026_09_18 = {  # ~/arm_cartesian.json + 보정표 span에서 온 눈금
+    "zero": {"shoulder_pan": -11.52, "shoulder_lift": -18.24,
+             "elbow_flex": -60.35, "wrist_flex": -1.76, "wrist_roll": 0.0},
+    "ref": {"shoulder_pan": 0.0, "shoulder_lift": 90.0, "elbow_flex": 0.0,
+            "wrist_flex": 0.0, "wrist_roll": 0.0},
+    "dpn": {"shoulder_pan": 1.2173, "shoulder_lift": 1.0288,
+            "elbow_flex": 1.0332, "wrist_flex": 1.0389, "wrist_roll": 0.999},
+}
+
+
+def _escape_deg(norms: dict) -> dict:
+    f = ESCAPE_FRAME_2026_09_18
+    return {j: f["ref"][j] + (float(norms[j]) - f["zero"][j]) * f["dpn"][j]
+            for j in norms}
+
+
+def _escape_norm(degs: dict) -> dict:
+    f = ESCAPE_FRAME_2026_09_18
+    return {j: f["zero"][j] + (float(degs[j]) - f["ref"][j]) / f["dpn"][j]
+            for j in degs}
+
+
+def test_arm_extend_escape() -> None:
+    """특이점에 갇힌 자세에서 **빠져나올 수 있는가**.
+
+    2026-09-18(T26): `arm_extend.py --dry`가 21구간 전부를 막았다. 막은 이유는
+    `shoulder_pan한계`인데 그 관절은 경로에서 **1도도 안 움직인다** — 지금 자리가
+    이미 정규화 98.81이라 "범위 밖"에 걸린 것이다. 같은 줄에 걸린 elbow_flex는
+    반대로 목표(-80° = 정규화 -137.8)가 범위 밖이었다. 둘 다 "못 간다"가 아니라
+    **검사가 틀린 질문을 한 것**이다. 가둬 놓고 거절하는 병은 바닥 판정에서 한 번
+    (MOUNT_Z_MM 주석), 여기서 두 번째다 — 그래서 검사로 박는다.
+    """
+    print("\n[탈출] arm_extend 관절한계 판정과 목표 자르기")
+    sys.path.insert(0, os.path.join(REPO, "ros2", "tools"))
+    import arm_extend as ax  # noqa: E402
+
+    now = ESCAPE_NORM_2026_09_18
+
+    check("이미 범위 밖인 관절이 그대로 있으면 막지 않는다",
+          ax.limit_violations(now, dict(now)) == [],
+          f"pan={now['shoulder_pan']} elbow={now['elbow_flex']}")
+    check("더 밖으로 나가면 막는다",
+          ax.limit_violations(now, {**now, "shoulder_pan": 99.5}) == ["shoulder_pan"])
+    check("범위 밖에서 안쪽으로 돌아오는 걸음은 막지 않는다",
+          ax.limit_violations(now, {**now, "elbow_flex": 99.0}) == [])
+    check("범위 안에서 밖으로 나가면 막는다",
+          ax.limit_violations(now, {**now, "wrist_flex": -99.9}) == ["wrist_flex"])
+    check("범위 안 걸음은 통과한다",
+          ax.limit_violations(now, {**now, "wrist_flex": 40.0}) == [])
+
+    tgt_deg = {**_escape_deg(now), "shoulder_lift": 80.0,
+               "elbow_flex": -80.0, "wrist_flex": 0.0}
+    clamped, hit = ax.clamp_norm(_escape_norm(tgt_deg))
+    check("기본 목표 elbow -80°는 이 보정표에서 범위 밖이라 잘린다",
+          hit == ["shoulder_pan", "elbow_flex"] or set(hit) == {"shoulder_pan", "elbow_flex"},
+          f"잘린 관절={hit} (elbow 정규화 {_escape_norm(tgt_deg)['elbow_flex']:.1f})")
+    check("자른 값은 정확히 한계값이다",
+          abs(clamped["elbow_flex"] + ax.LIMIT_NORM) < 1e-9
+          and abs(clamped["shoulder_pan"] - ax.LIMIT_NORM) < 1e-9,
+          f"elbow={clamped['elbow_flex']} pan={clamped['shoulder_pan']}")
+    check("자를 것이 없으면 아무것도 안 자른다", ax.clamp_norm(
+        {"elbow_flex": 12.0})[1] == [])
+
+    # **이게 핵심 회귀 검사다** — 자르고 나서도 좌표 가드(90mm)를 넘어야
+    # 이 도구가 제 일을 한 것이다. 목적은 pitch 0°가 아니라 탈출이다.
+    r_now = kin.signed_radius(_escape_deg(now))
+    r_goal = kin.signed_radius(_escape_deg(clamped))
+    check("지금 자세는 좌표 가드 안쪽이다 (그래서 이 도구가 필요하다)",
+          r_now < 90.0, f"signed_r={r_now:.1f}mm")
+    check("잘린 목표는 가드를 넉넉히 넘는다",
+          r_goal > 2.0 * 90.0, f"signed_r={r_goal:.1f}mm (가드 90mm)")
+    check("잘린 목표가 사거리 안이다",
+          abs(r_goal) <= kin.ArmGeometry().reach_max,
+          f"{r_goal:.1f} ≤ {kin.ArmGeometry().reach_max:.1f}mm")
+
+
 def test_selfcheck_deps() -> None:
     """자체검증 4종이 **빈 환경에서 무엇이 없는지 말하고** 죽는가.
 
@@ -868,6 +954,7 @@ def main() -> int:
     test_tf_math()
     test_handeye_gate()
     test_handeye_identifiability()
+    test_arm_extend_escape()
     test_selfcheck_deps()
 
     print()
