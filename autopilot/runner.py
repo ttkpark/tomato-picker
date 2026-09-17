@@ -218,7 +218,26 @@ def build_prompt(c, s, role):
         hw = ("젯슨에 **닿지 않는다**(전원이 꺼졌거나 망이 다르다). 실기가 필요한 일은 "
               "block으로 돌리고, 지금 PC에서 할 수 있는 일(코드·문서·자체검증)로 옮겨라.")
 
+    # 사람의 말이 맨 위다. 자기 일보다 먼저 읽게 — 아래에 묻으면 안 읽은 것과 같다.
+    say = []
+    try:
+        sys.path.insert(0, HERE)
+        import say as say_mod
+        say = say_mod.pending()
+    except Exception:
+        say = []
+    head = ""
+    if say:
+        head = ("# ⚠ 사람이 남긴 말 (autopilot/INBOX.md) — 네 일보다 **먼저** 처리한다\n\n"
+                + "\n".join("- " + x for x in say)
+                + "\n\n처리 방법: 지시면 지금 따르고, 방향을 바꾸는 말이면 작업판에 반영한다"
+                  "(`board.py add/prio/block`). 다 하고 나서 `autopilot/INBOX.md`에서 그 줄의"
+                  " `- [ ]`를 `- [x]`로 바꾸고 같은 줄 끝에 ` → 처리: <무엇을 했는지>`를 붙여라."
+                  " **처리하지 않은 줄은 체크하지 마라.** 내 판단과 어긋나면 사람 말이 이긴다;"
+                  " 그래도 아니라고 보면 따르되 이유를 일지에 한 줄 남겨라.\n\n---\n\n")
+
     parts = [
+        head,
         charter,
         "\n\n---\n# 지금 상황 (러너가 붙임)\n",
         "- 오늘: {} · 자동운전 {}일째 / {}일 · 사이클 {} · 역할 **{}**".format(
@@ -480,6 +499,13 @@ def cmd_status(c):
     print("젯슨: {} · 심장박동: {} ({})".format(
         s.get("jetson_ip") or "없음", hb.get("time", "-"), hb.get("note", "-")))
     print("작업판: " + board(["stats"]))
+    sys.path.insert(0, HERE)
+    try:
+        import say as say_mod
+        p = say_mod.pending()
+    except Exception:
+        p = []
+    print("안 읽힌 내 말: " + (str(len(p)) + "건 — " + p[0][:50] if p else "없음"))
     print(board(["list", "--open"]))
 
 
