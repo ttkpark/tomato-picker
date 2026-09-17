@@ -33,6 +33,7 @@
 
 from __future__ import annotations
 
+import ast
 import fnmatch
 import io
 import json
@@ -43,6 +44,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import xml.etree.ElementTree as ET
 
@@ -2011,6 +2013,104 @@ def test_service_exclusivity() -> None:
           "docs/인수인계-2026-09-03.md §1")
 
 
+# ----------------------------------------------------------------------
+# ⑳ 붙는 순간 팔을 놓지 않는가 (연결)
+# ----------------------------------------------------------------------
+
+# 이 파일들의 `_connect`가 같은 순서를 쓰는가. (경로, 함수, 홀드 가드)
+HOLD_CONNECT_SITES = [
+    ("src/tomato_picker/hardware/arm.py", "_connect", "ARM_HOLD_ON_CONNECT"),
+    ("ros2/src/tomato_bridge/tomato_bridge/follower_io.py", "_connect", "self._hold_torque"),
+]
+# 반드시 이 차례로 나와야 하는 호출. 하나라도 빠지거나 순서가 바뀌면 팔이 떨어진다.
+HOLD_ORDER = ["connect", "Present_Position", "configure", "enable_torque", "Goal_Position"]
+
+
+def _func_src(path: str, name: str) -> str:
+    """파일에서 함수 하나의 원문을 뽑는다(AST의 줄번호로 자른다)."""
+    body = io.open(os.path.join(REPO, path), encoding="utf-8").read()
+    tree = ast.parse(body)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            lines = body.splitlines()
+            return "\n".join(lines[node.lineno - 1:node.end_lineno])
+    return ""
+
+
+def _hold_branch(src: str, guard: str) -> str:
+    """`if <guard>:` 가지의 본문만 — 힘 빼는 옛 가지(else)가 섞이면 검사가 거짓말한다."""
+    tree = ast.parse(textwrap.dedent(src))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and ast.unparse(node.test).replace(" ", "") == guard.replace(" ", ""):
+            return "\n".join(ast.unparse(st) for st in node.body)
+        # follower_io는 `if not self._hold_torque:` 로 뒤집어 적었다 — else가 홀드 가지다.
+        if isinstance(node, ast.If) and ast.unparse(node.test).replace(" ", "") == f"not{guard.replace(' ', '')}":
+            return "\n".join(ast.unparse(st) for st in node.orelse)
+    return ""
+
+
+def _code_only(src: str) -> str:
+    """주석을 떼고 코드만 남긴다 — ⚠ 이 검사가 **자기 주석에 속았다**: 두 파일의
+    `_reconnect`가 "`old.disconnect()`가 아니다"라고 적어 둔 설명 줄을 선언으로
+    세어 둘 다 FAIL이 났다. `_unit_directive`가 systemd 유닛에서 `#`을 떼는 것과
+    같은 이유다 — 설명에 적어 둔 이름이 호출로 세어지면 검사가 거짓말을 한다."""
+    return ast.unparse(ast.parse(textwrap.dedent(src)))
+
+
+def _order_ok(text: str, want: list[str]) -> bool:
+    at = -1
+    for token in want:
+        found = text.find(token, at + 1)
+        if found < 0:
+            return False
+        at = found
+    return True
+
+
+def test_hold_on_connect() -> None:
+    """팔에 **붙는 것만으로** 떨어뜨리지 않는가.
+
+    이 검사가 있는 이유: 2026-09-18, 팔에 지령을 하나도 주지 않고
+    `systemctl start tomato-voice` ↔ `systemctl start click-server`를 오갔더니
+    shoulder_lift가 **77.0°·77.5°**(두 자세에서 재현) 떨어지고 TCP z가
+    433.7mm → **-32.3mm**(바닥 아래)로 내려앉았다. 화분이 그 자리에 있었으면
+    부딪혔다. 원인은 레거시 `arm.py._connect`가 붙자마자 `disable_torque()`로
+    **아예 놓은 것**이고, 되켜지는 것은 다음 이동 때뿐이었다. click-server를
+    다시 켜도 회복되지 않는다 — 다음 도구가 떨어진 자리를 붙들기 때문이다(래칫).
+    실측표 = docs/인수인계-2026-09-04.md §26.
+
+    고친 규칙은 두 계통이 **같아야 한다**: 한쪽만 고치면 그 서비스로 전환하는
+    순간 같은 낙하가 돌아온다. 그래서 순서를 여기서 못 박는다 —
+    버스 → 지금 자세 읽기 → configure(여기서 처진다) → 토크 → 읽어 둔 자세로 복귀.
+    ⚠ 이 검사가 못 보는 것: 젯슨에서 실제로 몇 도 처지는가. 그건 실기로만 안다.
+    """
+    print("\n[연결] 붙는 것만으로 팔을 놓지 않는가")
+    for path, func, guard in HOLD_CONNECT_SITES:
+        src = _func_src(path, func)
+        check(f"{os.path.basename(path)}에 {func}가 있다", bool(src), path)
+        if not src:
+            continue
+        branch = _hold_branch(src, guard)
+        check(f"{os.path.basename(path)}가 {guard}로 홀드 가지를 가른다",
+              bool(branch), "가지를 못 찾았다")
+        check(f"{os.path.basename(path)} 홀드 가지가 읽기→configure→토크→복귀 순서다",
+              _order_ok(branch, HOLD_ORDER), f"필요: {' → '.join(HOLD_ORDER)}")
+        # 홀드 가지 안에서 힘을 빼면 위 순서를 지켜도 팔은 떨어진다.
+        check(f"{os.path.basename(path)} 홀드 가지가 disable_torque를 부르지 않는다",
+              "disable_torque" not in branch, "붙자마자 놓는 그 호출이다")
+        # 재연결도 같다 — 통신이 끊긴 것과 팔을 놓아도 되는 것은 별개다.
+        recon = _code_only(_func_src(path, "_reconnect"))
+        check(f"{os.path.basename(path)}의 _reconnect가 토크를 켠 채 닫는다",
+              "disable_torque=False" in recon and ".disconnect()" not in recon,
+              "lerobot의 disable_torque_on_disconnect 기본값이 True다")
+
+    # 기본값이 False로 뒤집히면 위 가지가 통째로 안 돌고 병이 조용히 돌아온다.
+    sys.path.insert(0, REPO)
+    from src.tomato_picker.config import ARM_HOLD_ON_CONNECT  # noqa: PLC0415
+    check("ARM_HOLD_ON_CONNECT 기본이 True다", ARM_HOLD_ON_CONNECT is True,
+          f"지금 {ARM_HOLD_ON_CONNECT}")
+
+
 def main() -> int:
     print(f"저장소: {REPO}")
     geom = kin.ArmGeometry()
@@ -2036,6 +2136,7 @@ def main() -> int:
     test_record_destination()
     test_line_endings()
     test_service_exclusivity()
+    test_hold_on_connect()
     test_selfcheck_deps()
 
     print()

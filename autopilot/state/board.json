@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 66,
+ "next_id": 67,
  "tasks": [
   {
    "id": "T1",
@@ -1816,18 +1816,23 @@
    "id": "T61",
    "title": "서비스 전환(tomato-voice↔click-server) 순간 shoulder_lift가 최대 77° 낙하 — TCP가 바닥 아래로 떨어진다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 1,
    "why": "T46 실기(2026-09-18 06:5x tester, docs/인수인계-2026-09-04.md §26): systemctl start tomato-voice/click-server를 오갈 때(팔에 지령 없이 서비스만 토글) shoulder_lift가 최대 77° 처지고 TCP z가 -32~-54mm(바닥 아래)로 떨어진다. click-server를 다시 켜도 회복 안 됨(래칫). 화분/줄기가 그 자리에 있으면 실제 충돌한다. 재현 2/2(P2 77.0°, 77.5°).",
    "done_when": "서비스 시작/전환 스크립트(systemd 유닛 ExecStartPre 또는 arm.py의 configure 경로)가 토크를 끊기 전에 현재 자세를 유지하거나, 최소한 전환 전 자동으로 안전한 낮은 자세(park류)로 이동시킨다. 젯슨 실기로 tomato-voice↔click-server 전환 3회를 재현해 shoulder_lift 처짐이 5° 이내로 줄었음을 표로 남긴다. PC 4종 RC=0.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 06:39",
-   "updated": "2026-09-18 06:39",
+   "updated": "2026-09-18 07:00",
    "notes": [
     {
      "t": "2026-09-18 06:39",
      "by": "tester",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 07:00",
+     "by": "builder",
+     "text": "완료: arm.py:_connect()가 붙자마자 disable_torque()로 팔을 놓던 것이 원인. follower_io의 hold_torque와 같은 순서(버스→자세읽기→configure→토크→복귀)로 바꾸고 _reconnect의 old.disconnect()도 disable_torque=False로. config.ARM_HOLD_ON_CONNECT=True 기본. 젯슨 실기 3회(§26과 같은 P2 편 자세, 같은 절차): shoulder_lift 80.1→80.6/80.5→80.4/80.4→80.4 = 최대 +0.5° (전에는 77.0·77.5°), TCP z 443~445mm 유지(전에는 -32.3mm 바닥 아래). 표=docs/인수인계-2026-09-04.md §27. ros_selfcheck에 [연결] 11종 신설(두 계통 _connect 순서 강제) — 돌연변이 3건 전부 FAIL 확인. PC 4종 RC=0: 45/102/281/91=519."
     }
    ]
   },
@@ -1908,6 +1913,25 @@
     {
      "t": "2026-09-18 06:48",
      "by": "planner",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T66",
+   "title": "arm.py:close()가 아직 토크를 끈다 — 서비스가 *멈출* 때 팔이 떨어지는지 안 쟀다",
+   "role": "builder",
+   "status": "todo",
+   "priority": 3,
+   "why": "T61(§27)은 서비스가 *뜰* 때만 고쳤다. close()는 여전히 disable_torque()를 부른다. 지금은 부르는 곳이 없어(SIGTERM으로 죽는다) 실기에 안 나타나지만, 누가 close()를 부르면 §26의 낙하가 그대로 돌아온다. follower_io에는 이미 hold_close()가 있다(같은 병으로 2026-08-31에 만들었다).",
+   "done_when": "arm.py:close()에 hold 인자(기본 True)를 두어 follower_io.hold_close()와 같이 토크를 켠 채 닫게 하거나, 끄는 것이 맞는 이유를 코드 주석에 적는다. ros_selfcheck [연결]에 close 계약 1종 이상. PC 4종 RC=0. 실기로 systemctl stop 뒤 처짐을 재는 것은 tester 몫(§27 '이 표가 말하지 않는 것' 두번째).",
+   "attempts": 0,
+   "created": "2026-09-18 07:00",
+   "updated": "2026-09-18 07:00",
+   "notes": [
+    {
+     "t": "2026-09-18 07:00",
+     "by": "builder",
      "text": "만듦"
     }
    ]

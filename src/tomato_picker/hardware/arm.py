@@ -22,6 +22,7 @@ from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
 
 from ..config import (
     ARM_FOLLOWER_SERIAL,
+    ARM_HOLD_ON_CONNECT,
     ARM_HOME_PRESET,
     ARM_ID,
     ARM_LEADER_ID,
@@ -107,8 +108,38 @@ class LerobotArm(RobotArm):
         #   서비스 전체가 선다(2026-08-12 실사고). 전원 문제는 전원 문제라고 말한다.
         require_live_bus(port)
         follower = SOFollower(SOFollowerRobotConfig(port=port, id=self._arm_id))
-        follower.connect(calibrate=False)
-        follower.bus.disable_torque()
+        if ARM_HOLD_ON_CONNECT:
+            # ⚠ `follower.connect()`는 안에서 `configure()`를 부르고, 그게
+            #   `with bus.torque_disabled():`로 **전 관절 토크를 잠깐 끈다**(EPROM 쓰기).
+            #   여기서 예전에는 그 뒤에 `disable_torque()`까지 불러 아예 놓았다 —
+            #   그래서 `systemctl start tomato-voice` **한 번만으로** 팔이 떨어졌다:
+            #   2026-09-18 실측, shoulder_lift가 79.9°→2.9°(**77.0·77.5° 두 번 재현**),
+            #   TCP z 433.7mm → **-32.3mm**(바닥 아래). 팔에 지령을 준 적이 없는데
+            #   서비스 전환만으로 화분을 칠 수 있는 높이였다(docs/인수인계-2026-09-04.md §26).
+            #   그리고 click-server를 다시 켜도 회복되지 않는다 — 다음 도구가 **떨어진
+            #   자리**를 붙들기 때문이다(래칫).
+            #
+            #   그래서 connect를 풀어서 쓴다: 버스 → **자세 읽기** → configure(처짐) →
+            #   토크 → **읽어 둔 자세로 되돌리기**. 되돌릴 자리는 **토크가 켜져 있던
+            #   관절은 옛 Goal**, 꺼져 있던 관절은 지금 자리다 — 켜진 채 붙들던 관절은
+            #   이미 Goal보다 몇 도 처져 있고, 그 처진 자리를 다시 Goal로 주면 같은
+            #   래칫이 된다. 꺼져 있던 관절의 Goal은 옛 값이라 그리로 보내면 튄다.
+            #   ⚠ ROS 쪽 쌍둥이 = `ros2/src/tomato_bridge/tomato_bridge/follower_io.py`
+            #     (`hold_torque=True` 경로). 둘이 같은 순서를 쓰는지 ros_selfcheck
+            #     [연결]이 강제한다 — 한쪽만 고치면 그 서비스에서 병이 되살아난다.
+            follower.bus.connect()
+            present = follower.bus.sync_read("Present_Position")
+            goal = follower.bus.sync_read("Goal_Position")
+            torque = follower.bus.sync_read("Torque_Enable", normalize=False)
+            before = {m: (goal[m] if torque.get(m) else present[m]) for m in present}
+            follower.configure()
+            follower.bus.enable_torque()
+            follower.bus.sync_write("Goal_Position", before)
+        else:
+            # 힘을 뺀 채 붙는 옛 동작 — 손으로 자세를 잡아 영점을 볼 때만 쓴다.
+            # 팔이 뻗어 있으면 붙는 순간 떨어진다(위 실측).
+            follower.connect(calibrate=False)
+            follower.bus.disable_torque()
         self._follower = follower
         self._port = port
 
@@ -118,7 +149,12 @@ class LerobotArm(RobotArm):
         old, self._follower = self._follower, None
         try:
             if old is not None:
-                old.disconnect()
+                # ⚠ `old.disconnect()`가 아니다 — lerobot의
+                #   `disable_torque_on_disconnect`가 기본 True라 **놓는다**.
+                #   재연결은 "다시 붙는다"이지 "놓는다"가 아니다: 통신이 끊긴 것과
+                #   팔을 놓아도 되는 것은 별개다(2026-09-05에 이 경로가 과부하
+                #   잠금 중 나머지 관절의 토크까지 풀어 팔을 바닥에 떨어뜨렸다).
+                old.bus.disconnect(disable_torque=False)
         except Exception:  # noqa: BLE001 - 이미 죽은 연결이라 실패가 정상
             pass
         self._connect()
