@@ -5,7 +5,8 @@
   "planner": "opus",
   "builder": "opus",
   "auditor": "sonnet",
-  "tester": "sonnet"
+  "tester": "sonnet",
+  "metrologist": "opus"
  },
  "fallback_model": "sonnet",
  "rotation": [
@@ -13,6 +14,7 @@
   "builder",
   "tester",
   "builder",
+  "metrologist",
   "auditor",
   "builder",
   "tester"
@@ -34,5 +36,8 @@
  "jetson_reprobe_cycles": 8,
  "daily_cost_cap_usd": 0,
  "max_consecutive_fails": 6,
- "permission_flag": "--dangerously-skip-permissions"
+ "permission_flag": "--dangerously-skip-permissions",
+ "cheap_when_tight": true,
+ "cheap_below_remaining": 0.1,
+ "rate_reserve": 0.02
 }

@@ -32,7 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BOARD = os.path.join(HERE, "state", "board.json")
 LOCK = BOARD + ".lock"
 
-ROLES = ("planner", "builder", "auditor", "tester")
+ROLES = ("planner", "builder", "auditor", "tester", "metrologist")
 STATUSES = ("todo", "doing", "blocked", "done")
 MAX_NOTES = 12          # 오래된 메모는 잘라낸다(파일이 무한히 자라면 매 사이클 문맥을 먹는다)
 MAX_DONE = 60           # 끝난 일도 같은 이유로 최근 것만 남긴다

@@ -19,6 +19,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -36,6 +37,7 @@ JOURNAL_DIR = os.path.join(HERE, "journal")
 CONFIG = os.path.join(HERE, "config.json")
 STATE = os.path.join(STATE_DIR, "state.json")
 HEARTBEAT = os.path.join(STATE_DIR, "heartbeat.json")
+LIVE = os.path.join(STATE_DIR, "live.json")
 PAUSE = os.path.join(HERE, "PAUSE")
 STOP = os.path.join(HERE, "STOP")
 
@@ -60,6 +62,10 @@ DEFAULTS = {
     "jetson_reprobe_cycles": 8,
     "daily_cost_cap_usd": 0,
     "max_consecutive_fails": 6,
+    "cheap_when_tight": True,      # 한도가 빠듯하면 전 역할을 fallback_model로
+    "cheap_below_remaining": 0.10,
+    "rate_reserve": 0.02,          # 사람이 직접 쓸 몫으로 남겨 두는 주간 한도
+
     "permission_flag": "--dangerously-skip-permissions",
 }
 
@@ -274,14 +280,16 @@ def run_cycle(c, s, role):
               "w", encoding="utf-8") as f:
         f.write(prompt)
 
-    model = (c.get("models") or {}).get(role) or c["model"]
+    model = pick_model(c, s, role)
+    # stream-json으로 받는다 — 끝나야 아는 json과 달리 **도는 중에** 무엇을 하고 있는지
+    # 보인다(monitor.py가 live.json을 읽는다). 한도 경고도 이 스트림에만 실려 온다.
     cmd = [claude_exe(), "-p",
-           "--output-format", "json",
+           "--output-format", "stream-json", "--verbose",
            c["permission_flag"],
            "--model", model,
            "--append-system-prompt", SAFETY,
            "--name", "autopilot-" + role]
-    if c.get("fallback_model"):
+    if c.get("fallback_model") and c["fallback_model"] != model:
         cmd += ["--fallback-model", c["fallback_model"]]
 
     env = dict(os.environ)
@@ -289,44 +297,124 @@ def run_cycle(c, s, role):
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
 
+    res = {"role": role, "model": model, "seconds": 0, "cost": 0.0, "ok": False,
+           "text": "", "turns": 0, "limit_until": None, "rate": None}
+    live = {"cycle": s["cycle"] + 1, "role": role, "model": model,
+            "started": datetime.now().isoformat(timespec="seconds"),
+            "state": "running", "turns": 0, "cost": 0.0,
+            "last_text": "", "tools": [], "rate": s.get("rate")}
+    raw_path = os.path.join(LOG_DIR, "{}-{}.out.jsonl".format(stamp, role))
     t0 = time.time()
+    last_write = [0.0]
+
+    def flush_live(force=False):
+        if force or time.time() - last_write[0] > 1.0:
+            live["elapsed"] = round(time.time() - t0)
+            save_json(LIVE, live)
+            last_write[0] = time.time()
+
+    def on_event(ev):
+        t = ev.get("type")
+        if t == "assistant":
+            for blk in (ev.get("message") or {}).get("content") or []:
+                if blk.get("type") == "text" and blk.get("text", "").strip():
+                    live["last_text"] = blk["text"].strip()[-600:]
+                elif blk.get("type") == "tool_use":
+                    live["tools"].append({
+                        "t": datetime.now().strftime("%H:%M:%S"),
+                        "name": blk.get("name", "?"),
+                        "brief": tool_brief(blk.get("name"), blk.get("input") or {}),
+                    })
+                    del live["tools"][:-14]
+            live["turns"] += 1
+        elif t == "rate_limit_event":
+            info = ev.get("rate_limit_info") or {}
+            if info:
+                live["rate"] = res["rate"] = info
+        elif "total_cost_usd" in ev:            # 마지막 결과 줄
+            res["text"] = (ev.get("result") or "").strip()
+            res["cost"] = float(ev.get("total_cost_usd") or 0.0)
+            res["turns"] = int(ev.get("num_turns") or 0)
+            res["ok"] = not ev.get("is_error")
+            live["cost"] = res["cost"]
+        flush_live()
+
+    def pump(pipe, sink):
+        with open(raw_path, "ab") as raw:
+            for line in iter(pipe.readline, b""):
+                raw.write(line)
+                if sink is None:
+                    continue
+                try:
+                    on_event(json.loads(line.decode("utf-8", "replace")))
+                except (ValueError, KeyError, TypeError):
+                    pass   # 스트림 한 줄이 깨져도 사이클을 죽이지 않는다
+
     p = subprocess.Popen(cmd, cwd=ROOT, env=env, stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    errbuf = []
+    th_out = threading.Thread(target=pump, args=(p.stdout, on_event), daemon=True)
+    th_err = threading.Thread(target=lambda: errbuf.append(p.stderr.read()), daemon=True)
+    th_out.start()
+    th_err.start()
     try:
-        out, err = p.communicate(prompt.encode("utf-8"), timeout=c["cycle_timeout_sec"])
+        p.stdin.write(prompt.encode("utf-8"))
+        p.stdin.close()
+    except OSError:
+        pass
+
+    try:
+        p.wait(timeout=c["cycle_timeout_sec"])
     except subprocess.TimeoutExpired:
         # 자식(및 그 손자들)을 확실히 죽인다 — 남으면 다음 사이클이 포트·팔을 못 연다.
         if os.name == "nt":
             subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True)
         else:
             p.kill()
-        try:
-            out, err = p.communicate(timeout=30)
-        except subprocess.TimeoutExpired:
-            out, err = b"", b""
-        err = (err or b"") + b"\n[runner] cycle timeout"
-    dt = time.time() - t0
+        errbuf.append(b"\n[runner] cycle timeout")
+    th_out.join(10)
+    th_err.join(5)
 
-    out_s = out.decode("utf-8", "replace")
-    err_s = err.decode("utf-8", "replace")
-    with open(os.path.join(LOG_DIR, "{}-{}.out.json".format(stamp, role)),
-              "w", encoding="utf-8") as f:
-        f.write(out_s + ("\n--- stderr ---\n" + err_s if err_s else ""))
-
-    res = {"role": role, "model": model, "seconds": round(dt), "cost": 0.0,
-           "ok": False, "text": "", "turns": 0, "limit_until": None}
-    try:
-        j = json.loads(out_s)
-        res["text"] = (j.get("result") or "").strip()
-        res["cost"] = float(j.get("total_cost_usd") or 0.0)
-        res["turns"] = int(j.get("num_turns") or 0)
-        res["ok"] = not j.get("is_error") and p.returncode == 0
-    except ValueError:
-        res["text"] = (out_s[-1500:] or err_s[-1500:] or "(출력 없음)").strip()
+    res["seconds"] = round(time.time() - t0)
+    err_s = b"".join(x for x in errbuf if x).decode("utf-8", "replace")
+    if p.returncode not in (0, None) and not res["text"]:
         res["ok"] = False
+    if not res["text"]:
+        res["text"] = (live["last_text"] or err_s[-1500:] or "(출력 없음)").strip()
     if not res["ok"]:
         res["limit_until"] = parse_limit(res["text"] + "\n" + err_s)
+    if res["rate"]:
+        s["rate"] = res["rate"]
+        s["rate_seen"] = time.time()
+    live["state"] = "done" if res["ok"] else "failed"
+    flush_live(force=True)
     return res
+
+
+def tool_brief(name, inp) -> str:
+    """도구 호출 한 줄 요약 — 모니터에서 '지금 무엇을 하고 있나'가 보이게."""
+    for key in ("command", "file_path", "pattern", "path", "url", "prompt", "description"):
+        v = inp.get(key)
+        if isinstance(v, str) and v.strip():
+            v = " ".join(v.split())
+            return v[:110] + ("…" if len(v) > 110 else "")
+    return (name or "")[:110]
+
+
+def pick_model(c, s, role):
+    """역할별 모델. 단 **주간 한도가 빠듯하면 싼 쪽으로 내려간다.**
+
+    한도는 돈이 아니라 시간이고, 같은 한도로 사이클을 더 많이 도는 쪽이 일을 더 한다.
+    """
+    model = (c.get("models") or {}).get(role) or c["model"]
+    fb = c.get("fallback_model")
+    if not (c.get("cheap_when_tight", True) and fb):
+        return model
+    r = s.get("rate") or {}
+    left = 1.0 - float(r.get("utilization") or 0.0)
+    if r and left <= float(c.get("cheap_below_remaining", 0.10)):
+        return fb
+    return model
 
 
 def parse_limit(text):
@@ -480,13 +568,49 @@ def loop(c, once_role=None):
             log("실패 — {}분 뒤 재개".format(back // 60))
             time.sleep(back)
         else:
-            # 속도 조절 — 사이클 **시작**을 기준으로 간격을 맞춘다. 15일을 버티는 것이
-            # 하루에 몰아치는 것보다 낫다(한도를 일찍 태우면 그 뒤가 통째로 빈다).
-            gap = max(c["sleep_between_sec"],
-                      c["min_cycle_interval_sec"] - (time.time() - t_start))
-            log("다음 사이클까지 {:.0f}분".format(gap / 60))
+            gap, why = pace(c, s, time.time() - t_start)
+            log("다음 사이클까지 {:.0f}분 — {}".format(gap / 60, why))
             heartbeat(s, role, "idle")
             time.sleep(gap)
+
+
+def pace(c, s, dur):
+    """다음 사이클까지 얼마나 쉴까 — **주간 한도를 리셋 시각에 딱 맞춰 태우도록.**
+
+    여기가 이 장치의 심장이다. 09-18에 하루 만에 주간 한도의 96%를 태웠다.
+    그 속도면 남은 나흘을 통째로 논다 — '안 끊기는 것'이 목적인데 정확히 그게 깨진다.
+    그래서 한 사이클이 한도를 얼마나 먹는지(du)를 **직접 재서**, 남은 예산을 남은
+    시간에 고르게 편다. 사이클이 싸지면(sonnet) 저절로 촘촘해지고, 비싸지면 성겨진다.
+    """
+    base = max(c["sleep_between_sec"], c.get("min_cycle_interval_sec", 0) - dur)
+    r = s.get("rate") or {}
+    u, reset = r.get("utilization"), r.get("resetsAt")
+    if u is None or not reset:
+        return base, "한도 정보 없음"
+
+    prev = s.get("rate_prev_u")
+    s["rate_prev_u"] = float(u)
+    if prev is not None and u >= prev:
+        du = float(u) - float(prev)
+        # 한 번 튄 값에 끌려가지 않게 지수평활. 0은 무시한다(경고가 안 실린 사이클).
+        if du > 0:
+            s["du_ema"] = du if s.get("du_ema") is None else 0.5 * s["du_ema"] + 0.5 * du
+
+    du = s.get("du_ema")
+    left_u = max(0.0, 1.0 - float(c.get("rate_reserve", 0.02)) - float(u))
+    left_t = float(reset) - time.time()
+    if left_t <= 0:
+        return base, "리셋 직전"
+    if not du:
+        return base, "사이클당 소모 미측정(u={:.0%})".format(u)
+
+    cycles = left_u / du
+    if cycles < 0.5:
+        # 예산이 없다. 리셋까지 자는 게 맞다 — 두드려 봐야 거절만 쌓인다.
+        return min(left_t + 120, 6 * 3600), "예산 소진(u={:.1%}) — 리셋까지 대기".format(u)
+    gap = max(base, left_t / cycles - dur)
+    return gap, "u={:.1%} · 사이클당 {:.2%} · 남은 {:.0f}회를 {:.0f}h에 폄".format(
+        u, du, cycles, left_t / 3600)
 
 
 def cmd_status(c):
@@ -498,6 +622,15 @@ def cmd_status(c):
         c["days"], s["cycle"], s["cost_today"], s["fails"]))
     print("젯슨: {} · 심장박동: {} ({})".format(
         s.get("jetson_ip") or "없음", hb.get("time", "-"), hb.get("note", "-")))
+    r = s.get("rate") or {}
+    if r.get("utilization") is not None:
+        left = 1.0 - r["utilization"]
+        reset = datetime.fromtimestamp(r["resetsAt"]) if r.get("resetsAt") else None
+        du = s.get("du_ema")
+        print("주간한도: {:.1%} 소진 · 남은 {:.1%}{} · 리셋 {}".format(
+            r["utilization"], left,
+            " ≈ {:.0f}사이클".format(left / du) if du else "",
+            reset.strftime("%m-%d %H:%M") if reset else "?"))
     print("작업판: " + board(["stats"]))
     sys.path.insert(0, HERE)
     try:
@@ -514,7 +647,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("run")
     p = sub.add_parser("once")
-    p.add_argument("--role", required=True, choices=["planner", "builder", "auditor", "tester"])
+    p.add_argument("--role", required=True, choices=["planner", "builder", "auditor", "tester", "metrologist"])
     sub.add_parser("status")
     sub.add_parser("probe")
     a = ap.parse_args()
