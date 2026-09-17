@@ -43,9 +43,16 @@
  "cheap_below_remaining": 0.1,
  "rate_reserve": 0.02,
  "engines": {
-  "builder": "gemini",
+  "builder": "antigravity",
   "tester": "gemini"
  },
  "gemini_model": "gemini-2.5-pro",
- "saver": true
+ "saver": true,
+ "engine_defs": {
+  "antigravity": {
+    "exe": "antigravity",
+    "args": ["-p", "{ask}", "--yolo", "-m", "{model}"],
+    "ready_files": ["~/.antigravity/credentials.json"]
+  }
+ }
 }

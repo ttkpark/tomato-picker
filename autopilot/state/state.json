@@ -1,25 +1,49 @@
 {
  "started": "2026-09-17T21:45:26",
- "cycle": 55,
- "rot_idx": 55,
+ "cycle": 56,
+ "rot_idx": 56,
  "fails": 0,
  "cost_date": "2026-09-18",
- "cost_today": 196.80590589999994,
+ "cost_today": 199.03720689999994,
  "jetson_ip": "192.168.0.19",
  "jetson_checked_cycle": 48,
  "last": {
   "role": "builder",
   "ok": true,
-  "at": "2026-09-18T07:35:08"
+  "at": "2026-09-18T07:49:09"
  },
  "rate": {
   "status": "allowed_warning",
   "resetsAt": 1790042400,
   "rateLimitType": "seven_day",
-  "utilization": 0.96,
+  "utilization": 0.97,
   "isUsingOverage": false,
   "surpassedThreshold": 0.75
  },
- "rate_seen": 1789684506.0471356,
- "rate_prev_u": 0.96
+ "rate_seen": 1789685346.6789258,
+ "rate_prev_u": 0.96,
+ "attrib": {
+  "seven_day": {
+   "resetsAt": 1790042400,
+   "roles": {
+    "builder:claude": 0.0
+   },
+   "other": 0.0,
+   "opened": "2026-09-18T07:49:06",
+   "start_u": 0.97,
+   "last_u": 0.97,
+   "last_seen": "2026-09-18T07:49:06"
+  }
+ },
+ "rates": {
+  "seven_day": {
+   "status": "allowed_warning",
+   "resetsAt": 1790042400,
+   "rateLimitType": "seven_day",
+   "utilization": 0.97,
+   "isUsingOverage": false,
+   "surpassedThreshold": 0.75
+  }
+ },
+ "last_engine": "claude"
 }

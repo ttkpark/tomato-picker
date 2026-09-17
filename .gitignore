@@ -38,3 +38,4 @@ autopilot/state/*.tmp
 autopilot/state/*.lock
 autopilot/PAUSE
 autopilot/STOP
+autopilot/secrets/

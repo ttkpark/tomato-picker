@@ -75,8 +75,14 @@ DEFAULTS = {
             "args": ["-p", "{ask}", "-o", "stream-json", "--yolo", "-m", "{model}"],
             "model": "gemini-2.5-pro",
             "ready_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-            "ready_files": ["~/.gemini/oauth_creds.json", "~/.gemini/google_accounts.json"],
+            # 개인 OAuth 로그인이 막혀서(2026-09-18, Antigravity로 통합 안내) API 키로 붙는다.
+            # aistudio.google.com/apikey 에서 발급한 키를 이 파일 하나에 넣어 두면
+            # 시스템 환경변수를 안 건드리고도(재로그인 불필요) 다음 사이클부터 바로 쓰인다.
+            "api_key_file": "autopilot/secrets/gemini_api_key.txt",
+            "api_key_env": "GEMINI_API_KEY",
         },
+        # antigravity: 실행파일 자리를 확인하는 대로 exe/args 두 줄만 채우면 된다.
+        # "antigravity": {"exe": "antigravity-cli", "args": ["-p", "{ask}", "--yolo"], ...},
     },
     "saver": False,                # 절약 모드: 클로드 쪽 문맥을 줄이고 값싼 모델을 쓴다
     "cheap_when_tight": True,      # 한도가 빠듯하면 전 역할을 fallback_model로
@@ -335,6 +341,10 @@ def run_cycle(c, s, role):
     env["AUTOPILOT_ROLE"] = role
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    if spec and spec.get("api_key_file") and spec.get("api_key_env"):
+        key = api_key_from_file(spec)
+        if key:
+            env[spec["api_key_env"]] = key   # 이 자식 프로세스에만 준다 — 시스템 환경은 안 건드린다
 
     res = {"role": role, "model": model, "engine": engine, "seconds": 0, "cost": 0.0,
            "ok": False, "text": "", "turns": 0, "limit_until": None, "rate": None}
@@ -489,11 +499,30 @@ def binding_rate(s):
     return max(rs, key=lambda r: r["utilization"])
 
 
+def api_key_from_file(spec):
+    """`api_key_file`에 키가 있으면 읽어 온다. 없거나 비었으면 None.
+
+    시스템 환경변수를 안 건드린다 — 이 러너 프로세스에만 주입되고, 파일 하나를
+    갈아 끼우는 것만으로 다음 사이클부터 반영된다(재로그인·재시작 불필요).
+    """
+    rel = spec.get("api_key_file")
+    if not rel:
+        return None
+    path = rel if os.path.isabs(rel) else os.path.join(ROOT, rel)
+    try:
+        with open(path, encoding="utf-8") as f:
+            key = f.read().strip()
+        return key or None
+    except OSError:
+        return None
+
+
 def engine_blocked(engine, spec):
     """이 엔진으로 못 도는 이유(없으면 None) — **막히면 조용히 클로드로 돌아간다.**
 
     OAuth 로그인은 브라우저가 필요해 무인으로 못 한다. 그래서 자격이 없으면 사이클을
-    실패시키지 않고 엔진만 바꾼다 — 사람이 로그인하는 순간부터 저절로 쓰인다.
+    실패시키지 않고 엔진만 바꾼다 — 사람이 로그인하는 순간부터, 또는 키 파일을
+    채워 넣는 순간부터 저절로 쓰인다.
     """
     if not spec:
         return "engine_defs에 정의가 없다"
@@ -501,13 +530,19 @@ def engine_blocked(engine, spec):
         return "실행파일 " + str(spec.get("exe")) + " 없음"
     env_keys = spec.get("ready_env") or []
     files = spec.get("ready_files") or []
-    if not env_keys and not files:
+    has_key_file = bool(spec.get("api_key_file"))
+    if not env_keys and not files and not has_key_file:
         return None                       # 자격 조건을 안 적었으면 바로 쓴다
     if any(os.environ.get(k) for k in env_keys):
         return None
     if any(os.path.exists(os.path.expanduser(f)) for f in files):
         return None
-    return "인증 없음(로그인 한 번 필요)"
+    if has_key_file and api_key_from_file(spec):
+        return None
+    reason = "인증 없음(로그인 한 번 필요)"
+    if has_key_file:
+        reason = "키 없음 — {} 을 만들고 발급받은 키를 한 줄 넣어라".format(spec["api_key_file"])
+    return reason
 
 
 def on_event_generic(ev, res, live, flush):
