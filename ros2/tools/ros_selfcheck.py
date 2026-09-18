@@ -1517,6 +1517,13 @@ def test_stage_classify() -> None:
         check("그 기록에 정정 note가 남아 있다",
               any("note" in r for r in rows))
 
+    # T72: settle 단계 판정 (한계에 눌림 / 되먹임 포화 표지)
+    check("STAGES에 settle이 들어 있다 (T72)", "settle" in m5.STAGES)
+    check("한계에 눌림 표지가 달린 문장은 settle로 분류된다 (T72)",
+          m5.classify_stage("되먹임 3회 — 오차 12.09° → 1.16° (포화(더 안 줄어듦)) · 한계에 눌림 shoulder_lift,shoulder_pan") == "settle")
+    check("되먹임 포화 문장은 settle로 분류된다 (T72)",
+          m5.classify_stage("되먹임 3회 — 오차 4.83° (포화(더 안 줄어듦)) · 나빠져서 되돌림") == "settle")
+
 
 # ----------------------------------------------------------------------
 # ⑪ 먼 좌표로 쪼개서 가기 (travel_to ↔ /arm/move_to_point)

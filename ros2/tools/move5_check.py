@@ -173,6 +173,7 @@ SAMPLE_JOINT_DEG = {
 #   step     한 걸음 상한 (cartesian._check_step) — 쪼개면 되는 거절 → T30
 #   tf       좌표계 변환 실패 (arm_node._to_arm_base_mm)
 #   path     **목표는 멀쩡한데 가는 길이 막혔다** (cartesian._walk/_run_path)
+#   settle   마지막 걸음 뒤 남은 처짐을 지우다 실패/한계에 눌림 (cartesian._settle / settle.py)
 #   pose     **지금 자세**가 좌표 이동을 못 받는다 (cartesian._require_state)
 #   ik       그 밖 — 사거리·관절한계·너무 작은 지령 등 목표 자체의 문제
 # ⚠ 'pose'와 'ik'를 가르는 것은 **'목표'라는 낱말**이다. 같은 "수평거리"가
@@ -185,7 +186,7 @@ SAMPLE_JOINT_DEG = {
 # **먼저** 보면 둘 다 막힌다 — 고칠 곳이 목표가 아니라 경로임을 기록이 말한다.
 # 다만 **한 걸음 상한만은 그대로 step**이다(걸음 안에서 나기에 문구가 겹치지만,
 # 고치는 방법이 "쪼개라"로 다르다 → T30).
-STAGES = ("timeout", "step", "tf", "path", "pose", "ik", "joint")
+STAGES = ("timeout", "step", "tf", "path", "settle", "pose", "ik", "joint")
 
 # `cartesian`이 경로 실패에 붙이는 표지들. **살아 있는 문장에서 그대로 따왔고**
 # ros_selfcheck [단계]가 그 문장이 아직 이 모양인지 지킨다.
@@ -214,6 +215,8 @@ def classify_stage(detail: str | None) -> str:
         return "tf"
     if PATH_STEP_RE.search(text) or any(m in text for m in PATH_MARKERS):
         return "path"
+    if "한계에 눌림" in text or "되먹임" in text and "포화" in text:
+        return "settle"
     if "목표" not in text and ("몸통 뒤로" in text or "거의 수직" in text
                               or "수평거리" in text):
         return "pose"

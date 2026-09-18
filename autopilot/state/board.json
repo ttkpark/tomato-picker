@@ -1,31 +1,7 @@
 {
  "version": 1,
- "next_id": 72,
+ "next_id": 73,
  "tasks": [
-  {
-   "id": "T4",
-   "title": "URDF 링크 길이와 kinematics.py 상수가 어긋나면 자체검증이 잡게 하기",
-   "role": "builder",
-   "status": "done",
-   "priority": 2,
-   "why": "졸업 기준 1번. 두 곳에 같은 숫자가 따로 적혀 있으면 언젠가 갈라진다.",
-   "done_when": "ros_selfcheck에 URDF↔kinematics 길이 일치 검사가 있고, 한쪽을 1mm 틀어 보면 실패한다",
-   "attempts": 0,
-   "created": "2026-09-17 21:44",
-   "updated": "2026-09-17 21:48",
-   "notes": [
-    {
-     "t": "2026-09-17 21:44",
-     "by": "human",
-     "text": "만듦"
-    },
-    {
-     "t": "2026-09-17 21:48",
-     "by": "planner",
-     "text": "완료: 이미 있었다. ros2/tools/ros_selfcheck.py:303 test_geometry_matches(yaml↔ArmGeometry) + :312 test_urdf_matches_kinematics(xacro 사슬↔forward). 실측 확인: so101_geometry.yaml의 l2를 138.0→139.0으로 틀자 'FAIL l2 일치 yaml 139.0 vs 코드 138.0', 종료코드 1, 69/70. 되돌려 놓음(git diff 없음)."
-    }
-   ]
-  },
   {
    "id": "T5",
    "title": "평행이동 오차가 실측의 3~5배인 원인 후보를 코드에서 좁히기",
@@ -2116,6 +2092,30 @@
      "t": "2026-09-18 23:55",
      "by": "builder",
      "text": "완료: move5_check.py에 load_tag.startswith('config.') 또는 load is None 시 졸업 불가 경고 문구 및 jsonl graduation_blocked=true 기록 추가. PC 및 젯슨 --dry-run 검증 완료, ros_selfcheck 336/337 ok(기존 autopilot CRLF 1건 제외 전부 통과)"
+    }
+   ]
+  },
+  {
+   "id": "T72",
+   "title": "move5_check classify_stage가 clamped 및 settle 실패 표지를 반영하도록 보강",
+   "role": "builder",
+   "status": "done",
+   "priority": 2,
+   "why": "docs/인수인계-2026-09-04.md §24 ②: 서보 토크 한계에 눌려(clamped) 처진 자세의 settle err_deg가 작게 나와도 실제로는 목표보다 70mm 이상 처진 실패다. res.detail의 '한계에 눌림'이나 clamped 표지가 classify_stage에서 'settle' 실패로 명확히 분류되지 않으면 향후 분석이나 진단에서 가짜 정보가 된다.",
+   "done_when": "classify_stage()가 '한계에 눌림' 문구를 settle 단계로 분류하고, ros_selfcheck [단계]에 검증 테스트 추가 및 젯슨 동기화. 4대 자체검증 통과.",
+   "attempts": 1,
+   "created": "2026-09-19 00:49",
+   "updated": "2026-09-19 00:53",
+   "notes": [
+    {
+     "t": "2026-09-19 00:49",
+     "by": "builder",
+     "text": "만듦"
+    },
+    {
+     "t": "2026-09-19 00:53",
+     "by": "builder",
+     "text": "완료: move5_check classify_stage에 settle 단계(한계에 눌림, 되먹임 포화 표지) 추가. STAGES 8종 확장. ros_selfcheck에 T72 검증 3종 추가 (341/342 통과, CRLF 1건 제외 전원 통과). 젯슨 배포 및 --dry-run 실측 완료."
     }
    ]
   }
