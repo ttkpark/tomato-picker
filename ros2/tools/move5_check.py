@@ -420,7 +420,8 @@ def record(path: str, row: dict) -> None:
 
 def run_dry(points: list[dict], geom: kin.ArmGeometry, out_path: str,
             limits_tag: str = "none", load_tag: str = "none",
-            geom_tag: str = "config.ARM_GEOM_*") -> int:
+            geom_tag: str = "config.ARM_GEOM_*",
+            graduation_blocked: bool = False) -> int:
     """ROS 없이 — 같은 IK를 로컬에서 돌려 도구 자체를 검증한다."""
     ok_count = 0
     for i, p in enumerate(points, 1):
@@ -428,7 +429,8 @@ def run_dry(points: list[dict], geom: kin.ArmGeometry, out_path: str,
         target_pose = standoff_pose(p, standoff_mm)
         row = {"trial": i, "dry_run": True, "commanded": p, "standoff_mm": standoff_mm,
                "limits": limits_tag, "load_limits": load_tag,
-               "geometry": geom_tag}
+               "geometry": geom_tag,
+               "graduation_blocked": graduation_blocked}
         try:
             joints = kin.inverse(target_pose, geom)
             reached = kin.forward(joints, geom)
@@ -487,7 +489,7 @@ def _arm_node_geometry() -> tuple[kin.ArmGeometry, str]:
 
 def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
              limits=None, prep: bool = True, load_tag: str = "none",
-             force: bool = False) -> int:
+             force: bool = False, graduation_blocked: bool = False) -> int:
     """ROS2 stage1이 떠 있어야 한다 — /arm/move_to_point를 실제로 부른다."""
     import rclpy
     from geometry_msgs.msg import PointStamped
@@ -538,25 +540,33 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
 
         ⚠ 걷는 것은 `escape.walk`가 한다 — 걸음마다 실제 자세를 되읽어 남은
         길을 다시 짠다. 처음에 짠 걸음들을 그대로 보내면 처짐이 얹혀 두 걸음째가
-        거절된다(T56).
+        바로 거절당한다(T56). 자세 거절 없이 통과한 걸음만 살린다.
         """
         now = joints_now()
+        out = {"needed": None, "extended": False, "detail": ""}
         if now is None:
-            return {"needed": None, "extended": False,
-                    "detail": "/joint_states가 안 온다 — 자세를 몰라 뻗지 않았다"}
-        if limits is None:
-            r = round(kin.signed_radius(now, geom), 1)
-            return {"needed": r < es.GUARD_MM, "signed_r": r, "extended": False,
-                    "detail": "가동범위를 몰라(limits=none) 뻗지 않았다 — "
-                              "관절한계를 못 보고 뻗는 것은 팔을 미는 것이다"}
-        planned = prep_plan(now, limits, geom)
-        out = {"needed": planned["needed"], "signed_r": planned["signed_r"],
-               "extended": False}
-        if not planned["needed"]:
-            out["detail"] = f"가드 밖이라 뻗지 않았다(하한 {es.GUARD_MM:.0f}mm)"
+            out["detail"] = "/joint_states 응답 없음 — 뻗기 판단 불가"
+            print(f"  prep: {out['detail']}")
             return out
+        geom_prep, _ = _arm_node_geometry()
+        r_now = round(kin.signed_radius(now, geom_prep), 1)
+        out["signed_r_before"] = r_now
+        needed = es.needs_escape(now, geom_prep)
+        out["needed"] = needed
+        if not needed:
+            out.update(extended=True, detail=f"이미 가드 밖 (signed_r {r_now}mm >= {es.GUARD_MM:.0f}mm)")
+            print(f"  prep: {out['detail']}")
+            return out
+
+        if limits is None:
+            out["detail"] = "관절 가동범위(limits) 없음 — 안전한 뻗기 경로를 짤 수 없다"
+            print(f"  prep: {out['detail']}")
+            return out
+
+        planned = es.plan_escape(now, limits.norms, geom=geom_prep, limit=limits.limit)
+        out["planned_steps"] = len(planned["steps"])
         if planned["blocked"]:
-            out["detail"] = (f"뻗는 경로가 막혔다 — {len(planned['steps'])}걸음 중 "
+            out["detail"] = (f"뻗기 계획 실패 — "
                              f"{planned['blocked']}번째: "
                              + " ".join(planned["steps"][planned["blocked"][0] - 1]["notes"]))
             return out
@@ -578,34 +588,31 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
             return got
 
         def send(degs: dict) -> None:
-            msg = JointState()
-            msg.name = list(kin.JOINTS)
-            msg.position = [math.radians(degs[j]) for j in kin.JOINTS]
             jres["msg"] = None
+            msg = JointState()
+            msg.name = list(degs.keys())
+            msg.position = [math.radians(v) for v in degs.values()]
             jcmd.publish(msg)
-            # ⚠ 걸음마다 결과를 기다린다 — 토픽은 실패를 안 돌려주므로, 성공했는지
-            #   모르는 채 다음 걸음을 보내면 팔이 어디 있는지 모르는 채 굴러간다.
-            end = time.monotonic() + es.SECS_PER_STEP * 4 + 5.0
+            end = time.monotonic() + 5.0
             while jres["msg"] is None and time.monotonic() < end:
-                rclpy.spin_once(node, timeout_sec=0.1)
+                rclpy.spin_once(node, timeout_sec=0.05)
             answer = jres["msg"]
             if answer is None:
-                raise _PrepStop("걸음에 응답이 없다 — arm_node가 "
-                                "/arm/joint_command를 받는 판인지 확인하라")
+                raise _PrepStop("/arm/joint_command 응답 없음(타임아웃)")
             if not answer.startswith("ok|"):
                 raise _PrepStop("걸음 거절 — " + answer.split("|", 1)[-1])
 
         try:
             walked = es.walk(planned["target"], measure=measure, send=send,
-                             to_norm=limits.norms, geom=geom, limit=limits.limit)
+                             to_norm=limits.norms, geom=geom_prep, limit=limits.limit)
         except _PrepStop as stop:
             got = joints_now()
             out["detail"] = f"뻗다가 멈췄다 — {stop}"
             if got is not None:
-                out["signed_r_after"] = round(kin.signed_radius(got, geom), 1)
+                out["signed_r_after"] = round(kin.signed_radius(got, geom_prep), 1)
             print(f"  prep: {out['detail']}")
             return out
-        r_after = round(kin.signed_radius(walked["last"], geom), 1)
+        r_after = round(kin.signed_radius(walked["last"], geom_prep), 1)
         # **"뻗었다"의 뜻은 '가드를 넘었다'**이지 '걸음을 다 보냈다'가 아니다.
         # 처짐 때문에 목표에 1~2° 못 미쳐도 가드 밖이면 시험은 돌아가고, 반대로
         # 걸음을 다 보내고도 가드 안이면 5회가 전부 거절당한다 — 그 거짓 0/5를
@@ -613,8 +620,7 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
         out.update(extended=r_after >= es.GUARD_MM, signed_r_after=r_after,
                    sent=walked["sent"], gap_deg=walked["gap_deg"],
                    detail=(f"{walked['detail']} — signed_r "
-                           f"{planned['signed_r']} → {r_after}mm"
-                           + ("" if r_after >= es.GUARD_MM else " ⚠ 아직 가드 안쪽이다")))
+                           f"{out.get('signed_r_before')} → {r_after}mm"))
         print(f"  prep: {out['detail']}")
         return out
 
@@ -636,6 +642,7 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
                           "stage": "no-prep", "ok": False, "error_mm": None,
                           "reached": None, "limits": limits_tag,
                           "load_limits": load_tag, "geometry": geom_tag,
+                          "graduation_blocked": graduation_blocked,
                           "prep": prep_row, "joints_cmd": None,
                           "joints_actual": None, "detail": detail})
         rclpy.shutdown()
@@ -672,6 +679,7 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
                # **어떤 팔 길이로** 뽑고 쟀는지(T53). 뽑는 쪽과 재는 쪽이 갈리면
                # 점수 자체가 못 믿을 것이 되므로 그 사실이 줄에 남아야 한다.
                "geometry": geom_tag,
+               "graduation_blocked": graduation_blocked,
                # 이 시험이 **어떤 시작 자세에서** 출발했는지 남긴다 — 기준3의
                # 0/5가 팔의 0인지 시작 자세의 0인지 나중에 가릴 수 있어야 한다.
                "prep": prep_row,
@@ -749,6 +757,12 @@ def main() -> int:
     load, load_note = ld.load_load_limits()
     load_tag = load.source if load else "none"
     print(f"드는 한계: {load_note}")
+    # arm_load_limits.json 없이 실행되면 이 판은 졸업 인정 불가다(T71, OBJECTIVE.md).
+    # 코드 기본값(config.ARM_LOAD_*)이나 none으로 통과한 5/5는 '임의의 자리'를 좁혀
+    # 얻은 거짓 졸업이 될 수 있다.
+    graduation_blocked = (load is None) or load_tag.startswith("config.")
+    if graduation_blocked:
+        print("  경고: arm_load_limits.json 없음 — 이 판은 기준3 졸업 인정 불가")
 
     if args.points:
         points = json.load(open(args.points, encoding="utf-8"))
@@ -801,10 +815,12 @@ def main() -> int:
         print(f"⚠ 이 기록은 커밋되지 않는다 — {RECORD_HOME_WHY}")
 
     if args.dry_run:
-        ok = run_dry(points, geom, out_path, limits_tag, load_tag, geom_tag)
+        ok = run_dry(points, geom, out_path, limits_tag, load_tag, geom_tag,
+                     graduation_blocked=graduation_blocked)
     else:
         ok = run_real(points, out_path, limits_tag, limits=limits,
-                      prep=not args.no_prep, load_tag=load_tag, force=args.force)
+                      prep=not args.no_prep, load_tag=load_tag, force=args.force,
+                      graduation_blocked=graduation_blocked)
         if ok == -2:
             print("\n시험 못 함 — prep 실패로 5회를 돌리지 않았다(--force로 강행 가능)")
             return 1

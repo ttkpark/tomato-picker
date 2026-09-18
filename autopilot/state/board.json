@@ -3,30 +3,6 @@
  "next_id": 72,
  "tasks": [
   {
-   "id": "T2",
-   "title": "젯슨 접속 경로 되살리기(지금 192.168.0.8 응답 없음)",
-   "role": "tester",
-   "status": "done",
-   "priority": 1,
-   "why": "실기 없이는 졸업 기준 3번(5회 중 5회 도달)을 잴 수 없다.",
-   "done_when": "ssh로 hostname이 돌아오고 runner.py probe가 IP를 찍는다. 못 찾으면 [사람] 작업을 만들고 block",
-   "attempts": 0,
-   "created": "2026-09-17 21:44",
-   "updated": "2026-09-17 21:48",
-   "notes": [
-    {
-     "t": "2026-09-17 21:44",
-     "by": "human",
-     "text": "만듦"
-    },
-    {
-     "t": "2026-09-17 21:48",
-     "by": "planner",
-     "text": "완료: 젯슨은 192.168.0.19에서 살아있다(.8은 옛 IP). ssh -i C:/Users/parkg/.ssh/id_ed25519 server@192.168.0.19 'hostname' → localhost.localdomain, up 57분. 서비스: click-server/depth-cam/astra-cam=active, tomato-voice=activating, controller-drive=inactive."
-    }
-   ]
-  },
-  {
    "id": "T3",
    "title": "손-눈 보정 잔차 15mm를 코드가 강제하게 만들기",
    "role": "builder",
@@ -2137,18 +2113,23 @@
    "id": "T71",
    "title": "move5_check가 arm_load_limits.json 없이 실행되면 졸업 불가 경고를 낸다 (기준3 무효화 강제)",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 3,
    "why": "",
    "done_when": "move5_check.py가 load.source에 config 태그('config.ARM_LOAD_R_MAX')가 들어오면 '경고: arm_load_limits.json 없음 — 이 판은 기준3 졸업 인정 불가'를 출력하고 기록 줄에 graduation_blocked=true를 남긴다. ros_selfcheck에 이 경고가 실제로 나오는지 검증 추가.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 23:17",
-   "updated": "2026-09-18 23:17",
+   "updated": "2026-09-18 23:55",
    "notes": [
     {
      "t": "2026-09-18 23:17",
      "by": "metrologist",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 23:55",
+     "by": "builder",
+     "text": "완료: move5_check.py에 load_tag.startswith('config.') 또는 load is None 시 졸업 불가 경고 문구 및 jsonl graduation_blocked=true 기록 추가. PC 및 젯슨 --dry-run 검증 완료, ros_selfcheck 336/337 ok(기존 autopilot CRLF 1건 제외 전부 통과)"
     }
    ]
   }

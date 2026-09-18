@@ -1726,6 +1726,14 @@ def test_sample_within_limits() -> None:
           m5_body.count('"load_limits": load_tag') >= 2,
           "dry-run과 실기 둘 다 남겨야 한다")
 
+    # T71: arm_load_limits.json 없이 실행되면 졸업 불가 경고 및 graduation_blocked 기록
+    check("arm_load_limits.json 부재 시 졸업 불가 경고 문구가 move5_check에 존재한다",
+          "경고: arm_load_limits.json 없음 — 이 판은 기준3 졸업 인정 불가" in m5_body,
+          "T71 기준3 무효화 경고 문구가 있어야 한다")
+    check("기록 줄에 graduation_blocked가 들어간다",
+          m5_body.count('"graduation_blocked": graduation_blocked') >= 2,
+          "dry-run과 실기 둘 다 graduation_blocked를 남겨야 한다")
+
     # ⑤c **뽑는 기하와 재는 기하가 같은 함수에서 오는가**(T53, 2026-09-18).
     #     T37은 재는 쪽(run_real)만 `_arm_node_geometry()`로 옮겼고 `main()`은
     #     `kin.ArmGeometry()` 기본값으로 표적을 뽑고 있었다. `~/arm_cartesian.json`이
