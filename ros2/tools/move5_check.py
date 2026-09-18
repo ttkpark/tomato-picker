@@ -225,6 +225,15 @@ def classify_stage(detail: str | None) -> str:
     return "ik"
 
 
+def is_graduation_blocked(load: ld.LoadLimits | None, load_tag: str) -> bool:
+    """arm_load_limits.json 없이 실행되면 이 판은 졸업 인정 불가다(T71, OBJECTIVE.md).
+
+    코드 기본값(config.ARM_LOAD_*)이나 none으로 통과한 5/5는 '임의의 자리'를 좁혀
+    얻은 거짓 졸업이 될 수 있다.
+    """
+    return (load is None) or load_tag == "none" or load_tag.startswith("config.")
+
+
 def standoff_pose(p: dict, standoff_mm: float = STANDOFF_MM) -> kin.ToolPose:
     """표적 점 → **실제로 명령되는 자리**(접근축 반대로 물러난 지점).
 
@@ -765,7 +774,7 @@ def main() -> int:
     # arm_load_limits.json 없이 실행되면 이 판은 졸업 인정 불가다(T71, OBJECTIVE.md).
     # 코드 기본값(config.ARM_LOAD_*)이나 none으로 통과한 5/5는 '임의의 자리'를 좁혀
     # 얻은 거짓 졸업이 될 수 있다.
-    graduation_blocked = (load is None) or load_tag.startswith("config.")
+    graduation_blocked = is_graduation_blocked(load, load_tag)
     if graduation_blocked:
         print("  경고: arm_load_limits.json 없음 — 이 판은 기준3 졸업 인정 불가")
 

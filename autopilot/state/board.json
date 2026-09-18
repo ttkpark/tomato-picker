@@ -1,31 +1,7 @@
 {
  "version": 1,
- "next_id": 74,
+ "next_id": 75,
  "tasks": [
-  {
-   "id": "T6",
-   "title": "ros2-이행계획 §3 ros.1 표의 ✅ 표시가 실제인지 한 줄씩 확인",
-   "role": "auditor",
-   "status": "done",
-   "priority": 2,
-   "why": "표는 쉽게 썩는다. 거짓 ✅ 하나가 졸업 채점을 통째로 틀리게 한다.",
-   "done_when": "항목마다 근거 파일:줄 또는 '근거 없음'을 적어 문서를 갱신하고, 거짓이던 항목은 작업으로 만듦",
-   "attempts": 0,
-   "created": "2026-09-17 21:44",
-   "updated": "2026-09-17 23:42",
-   "notes": [
-    {
-     "t": "2026-09-17 21:44",
-     "by": "human",
-     "text": "만듦"
-    },
-    {
-     "t": "2026-09-17 23:42",
-     "by": "auditor",
-     "text": "완료: 표 12줄 중 핵심 6줄(URDF/joint_states proxy·direct/cmd_vel C계약+V레거시/D405 거절/손눈보정 static TF/move_to_point)을 코드에서 근거로 확인 — 전부 실재(arm_node.py:57-59,88 · fruit3d.py:22,36-125 · handeye_node.py:44,151,301 · board_contract.py:8,62,276). 어긋난 것: 78행 '69종'이 낡음 — ros_selfcheck.py를 실제로 돌리면 95개(RC=0). 문서를 95종으로 고쳤다. 젯슨 1회성 실측 4줄(빌드/TF/팔직결/카메라)은 스크립트는 실재하나 숫자 재검증은 이번 사이클 범위 밖(하드웨어 필요, 검사가 아니라 일회성 로그라 재현 비용 큼)."
-    }
-   ]
-  },
   {
    "id": "T7",
    "title": "move_to_point 5회 시험을 한 명령으로 돌리고 기록까지 남기는 도구 만들기",
@@ -2111,6 +2087,30 @@
      "t": "2026-09-19 04:30",
      "by": "builder",
      "text": "완료: LoadLimits 및 load_load_limits에 wflex_max_deg(0.0) 추가 및 rejects 검증. move5_check sample_points 및 args.points에 wflex 전달. ros_selfcheck 4종 검증 추가(346/347 통과, CRLF 1건 제외 전원 통과). 젯슨 동기화 및 dry-run 5/5 성공."
+    }
+   ]
+  },
+  {
+   "id": "T74",
+   "title": "move5_check의 graduation_blocked가 config 출처 및 arm_load_limits.json 미존재를 엄격히 감지하고 검증 테스트 보강",
+   "role": "builder",
+   "status": "done",
+   "priority": 2,
+   "why": "OBJECTIVE.md와 move5_check:765-771에 따라 config 기본값이나 arm_load_limits.json 부재 시 기준3 졸업 인정이 차단되는데, 단위테스트에서 graduation_blocked 플래그 세팅 및 레코드 필드 검증이 누락되어 있어 이를 보강한다.",
+   "done_when": "",
+   "attempts": 1,
+   "created": "2026-09-19 04:49",
+   "updated": "2026-09-19 04:51",
+   "notes": [
+    {
+     "t": "2026-09-19 04:49",
+     "by": "builder",
+     "text": "만듦"
+    },
+    {
+     "t": "2026-09-19 04:51",
+     "by": "builder",
+     "text": "완료: is_graduation_blocked 함수 분리 및 ros_selfcheck 검증 4종 추가 (총 351개 중 350개 통과), 젯슨 동기화 및 dry-run 5/5 확인"
     }
    ]
   }

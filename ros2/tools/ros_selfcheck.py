@@ -1759,13 +1759,21 @@ def test_sample_within_limits() -> None:
           m5_body.count('"load_limits": load_tag') >= 2,
           "dry-run과 실기 둘 다 남겨야 한다")
 
-    # T71: arm_load_limits.json 없이 실행되면 졸업 불가 경고 및 graduation_blocked 기록
+    # T71/T74: arm_load_limits.json 없이 실행되면 졸업 불가 경고 및 graduation_blocked 기록
     check("arm_load_limits.json 부재 시 졸업 불가 경고 문구가 move5_check에 존재한다",
           "경고: arm_load_limits.json 없음 — 이 판은 기준3 졸업 인정 불가" in m5_body,
           "T71 기준3 무효화 경고 문구가 있어야 한다")
     check("기록 줄에 graduation_blocked가 들어간다",
           m5_body.count('"graduation_blocked": graduation_blocked') >= 2,
           "dry-run과 실기 둘 다 graduation_blocked를 남겨야 한다")
+    check("is_graduation_blocked() 함수가 존재한다 (T74)",
+          hasattr(m5, "is_graduation_blocked"), "move5_check에 함수가 정의되어야 한다")
+    check("load가 None이면 is_graduation_blocked는 True (T74)",
+          m5.is_graduation_blocked(None, "none") is True)
+    check("출처가 config면 is_graduation_blocked는 True (T74)",
+          m5.is_graduation_blocked(ld.LoadLimits(310.0, "config.ARM_LOAD_R_MAX"), "config.ARM_LOAD_R_MAX") is True)
+    check("출처가 파일(~arm_load_limits.json)이면 is_graduation_blocked는 False (T74)",
+          m5.is_graduation_blocked(ld.LoadLimits(310.0, "/home/server/arm_load_limits.json"), "/home/server/arm_load_limits.json") is False)
 
     # ⑤c **뽑는 기하와 재는 기하가 같은 함수에서 오는가**(T53, 2026-09-18).
     #     T37은 재는 쪽(run_real)만 `_arm_node_geometry()`로 옮겼고 `main()`은
