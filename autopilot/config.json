@@ -43,11 +43,20 @@
  "cheap_below_remaining": 0.1,
  "rate_reserve": 0.02,
  "engines": {
+  "planner": "agy",
+  "metrologist": "agy",
+  "auditor": "agy",
   "builder": "agy",
-  "tester": "agy",
-  "auditor": "agy"
+  "tester": "agy"
+ },
+ "agy_models": {
+  "planner": "claude-sonnet-4-6",
+  "metrologist": "claude-sonnet-4-6",
+  "auditor": "claude-sonnet-4-6",
+  "builder": "gemini-3.8-flash-low",
+  "tester": "gemini-3.8-flash-low"
  },
  "gemini_model": "gemini-2.5-pro",
  "saver": true,
- "agy_model": "claude-sonnet-4-6"
+ "agy_model": "gemini-3.8-flash-low"
 }

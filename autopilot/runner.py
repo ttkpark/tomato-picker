@@ -341,7 +341,8 @@ def run_cycle(c, s, role):
             engine = "claude"
             spec = None
     if spec:
-        model = c.get(engine + "_model") or spec.get("model") or ""
+        role_models = c.get(engine + "_models") or {}
+        model = role_models.get(role) or c.get(engine + "_model") or spec.get("model") or ""
         # 다른 CLI들은 프롬프트를 인자로 받는다(stdin을 안 읽는다). 윈도우 명령줄 32KB
         # 한계가 있으므로 지시는 파일로 주고 인자로는 '읽어라'만 건넨다.
         pfile = os.path.join(LOG_DIR, "{}-{}.prompt.txt".format(stamp, role))
@@ -885,8 +886,17 @@ def loop(c, once_role=None):
             log("실패 — {}분 뒤 재개".format(back // 60))
             time.sleep(back)
         else:
-            gap, why = pace(c, s, time.time() - t_start)
-            log("다음 사이클까지 {:.0f}분 — {}".format(gap / 60, why))
+            next_rot = s["rot_idx"] % len(c["rotation"])
+            next_role = c["rotation"][next_rot]
+            next_eng = engine_for(c, next_role)
+            cooldown = (s.get("engine_cooldown") or {}).get(next_eng)
+            is_cooling = bool(cooldown and time.time() < cooldown)
+            if next_eng != "claude" and not is_cooling:
+                gap = max(c["sleep_between_sec"], c.get("min_cycle_interval_sec", 0))
+                log("다음 사이클까지 {:.0f}초 — {}({}) 정상 주기".format(gap, next_role, next_eng))
+            else:
+                gap, why = pace(c, s, time.time() - t_start)
+                log("다음 사이클까지 {:.0f}분 — {}".format(gap / 60, why))
             heartbeat(s, role, "idle")
             time.sleep(gap)
 

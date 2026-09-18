@@ -2074,18 +2074,28 @@
    "id": "T68",
    "title": "z 문턱을 좁히고 z↔wrist_flex를 분리한다 (T62 후속)",
    "role": "tester",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "T62가 기록만으로 z(설자리 높이) 문턱을 (383.7mm,456.4mm) 사이로만 좁혔다 — 정확한 숫자가 없고, wrist_flex 부호와 z가 표본에서 얽혀 있어 무엇이 원인인지 못 갈랐다. docs/인수인계-2026-09-04.md §30.",
    "done_when": "arm_extend.py --target 로 직접 관절을 뽑아(§24 T40과 같은 방식) 최소 네 자리를 시험한다: (a) z≈400mm·wflex≈-10°(음수 유지) (b) z≈420mm·wflex≈-10° (c) z≈440mm·wflex≈-10° (d) z≈420mm·wflex≈+20°(부호만 뒤집어 같은 z에서 비교). 각 자리에서 settle 되먹임 결과(수렴/처짐 각도)와 최종 오차mm를 기록하고, (a)(b)(c)에서 성공/실패가 갈리는 z를 ±10mm로 좁혀 적는다. (d)가 같은 z의 음수 wflex(b)와 다른 결과면 wflex가 원인 후보로 확정되고, 같으면 z가 원인이다. 결과를 docs/인수인계-2026-09-04.md §30 아래에 새 절로 남긴다.",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 07:30",
-   "updated": "2026-09-18 07:30",
+   "updated": "2026-09-18 22:55",
    "notes": [
     {
      "t": "2026-09-18 07:30",
      "by": "auditor",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 22:54",
+     "by": "tester",
+     "text": "2026-09-18 22:5x tester: 실기 4회 완료. (a) z=400,wflex=-10° 수렴(오차0.26°, TCP 2.6mm) / (b) z=420,wflex=-10° 수렴(오차0.21°, TCP 1.8mm) / (c) z=440,wflex=-10° 수렴(오차0.24°, TCP 1.1mm) / (d) z=420,wflex=+20° 발산/되돌림(오차4.83°, TCP 48.1mm). 결론: 높은 곳 실패의 원인은 z 높이가 아니라 wrist_flex 양수 부호다. docs/인수인계-2026-09-04.md §31에 기록."
+    },
+    {
+     "t": "2026-09-18 22:55",
+     "by": "tester",
+     "text": "완료: z=400,420,440mm(wflex=-10) 전부 수렴(TCP 1.1~2.6mm), 반면 z=420mm(wflex=+20)는 발산/되돌림(TCP 48.1mm). 원인은 z가 아니라 wrist_flex 양수 부호로 확정. §31에 기록."
     }
    ]
   },
@@ -2093,13 +2103,13 @@
    "id": "T69",
    "title": "load_limits에 z 상한을 추가한다 — r_max 단독은 §24-1 자기 기록으로 반증됐다 (T62 후속)",
    "role": "builder",
-   "status": "blocked",
+   "status": "todo",
    "priority": 2,
    "why": "T62(§30): r_max=310mm 필터가 실제 성공 표적(r=348.9mm, 사이클35 err10.75mm)을 걸러내고, 실패 표적(r=215.2·121.7mm)은 통과시킨다 — 방향이 반대다. z(설자리 높이)가 같은 코드 버전 안에서는 완벽히 갈랐다(T57: z<=383.7 3/3 성공, z>=456.4 0/2).",
    "done_when": "T68(z 문턱 실측)이 끝난 뒤 그 숫자로 LoadLimits에 z_max(또는 r별 z 상한) 필드를 추가한다. rejects()가 r_max와 z_max를 둘 다 확인하도록 바꾸고, ~/arm_load_limits.json 스키마(z_max_mm)도 같이 지원한다(파일 없으면 config 기본값, 깨지면 None — 지금 r_max_mm과 같은 규칙). move5_check 기록의 load_limits 문자열에 z_max 출처도 같이 남긴다. ros_selfcheck [표적]에 'z_max가 rejects()에 반영된다'·'사이클35 표적2(348.9,261.6)는 새 필터를 통과한다'·'사이클45 표적5(215.2,456.4)는 걸러진다' 최소 3종 추가. PC 4종 RC=0. 실기 확인은 tester 몫.",
    "attempts": 0,
    "created": "2026-09-18 07:31",
-   "updated": "2026-09-18 07:31",
+   "updated": "2026-09-18 22:55",
    "notes": [
     {
      "t": "2026-09-18 07:31",
@@ -2110,6 +2120,11 @@
      "t": "2026-09-18 07:31",
      "by": "auditor",
      "text": "막힘: T68(tester)의 z 문턱 실측이 먼저 나와야 z_max 숫자를 넣을 수 있다 — T68 done 뒤 reopen"
+    },
+    {
+     "t": "2026-09-18 22:55",
+     "by": "tester",
+     "text": "2026-09-18 22:5x tester: T68 실측 완료로 reopen. 실측 결론: z=440mm까지 wflex=-10°이면 1~2mm 오차로 완벽 수렴하지만, 같은 z=420mm라도 wflex=+20°이면 48mm 오차로 발산/포화. 단순 z_max보다 wrist_flex <= 0.0 조건(또는 자세별 wflex 상한)을 필터에 반영하는 것이 맞음."
     }
    ]
   },
