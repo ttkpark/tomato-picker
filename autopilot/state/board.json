@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 71,
+ "next_id": 72,
  "tasks": [
   {
    "id": "T2",
@@ -1506,7 +1506,7 @@
    "done_when": "젯슨에서 arm_extend.py 또는 cartesian move_to로 알려진 거리(예: 50mm)를 옮기며 걸린 시간을 3회 이상 재고, TCP 속도(mm/s)를 docs/depth-camera.md 2.1.1절 아래 표로 남긴다. 그 값으로 15mm/속도를 계산해 0.35초가 큰지 작은지 판정하고, 고쳐야 하면 그 숫자를 적어 builder 작업으로 넘긴다. 팔은 끝에 A자세로 두고 서비스는 발견한 그대로(click-server active) 되돌린다.",
    "attempts": 0,
    "created": "2026-09-18 04:14",
-   "updated": "2026-09-18 04:14",
+   "updated": "2026-09-18 23:15",
    "notes": [
     {
      "t": "2026-09-18 04:14",
@@ -1517,6 +1517,11 @@
      "t": "2026-09-18 04:14",
      "by": "builder",
      "text": "2026-09-18 04:1x builder(T25): 지금 실측 6.0fps(주기 167ms)이라 0.35초 한계는 현 구성에서 겨냥을 막지 않는다(젯슨 /state aim_impossible=false 확인). 2.9fps 아래로 떨어지면 원리상 막힌다. 이 작업은 '너무 빡빡한가'가 아니라 '너무 느슨한가'를 묻는 것이다 — 15mm/속도가 0.35초보다 작으면 한계를 줄여야 한다."
+    },
+    {
+     "t": "2026-09-18 23:15",
+     "by": "metrologist",
+     "text": "2026-09-18 23:1x metrologist: T48 측정 카드 코드 근거 검산 완료. docs/depth-camera.md ss2.1.1에 기록. 원점=겨냥 순간의 프레임 나이 / 끝점=15mm 허용오차 / 단위=초. 기하 상한(STS3215 6.2deg/s, l2+l3=295.5mm) -> TCP_max=32mm/s -> 15/32=0.47s. 현재 0.35초가 물리 상한보다 짧아 보수적임(OK). 기록 역산: settle 포함 평균 22mm/s -> 0.35s에 7.8mm 이동. 단 타임스탬프에 settle 포함이라 실측 부족 - 아직 열린 작업. 코드 근거: config.py:750, depth_camera.py:140."
     }
    ]
   },
@@ -2124,6 +2129,25 @@
     {
      "t": "2026-09-18 07:48",
      "by": "builder",
+     "text": "만듦"
+    }
+   ]
+  },
+  {
+   "id": "T71",
+   "title": "move5_check가 arm_load_limits.json 없이 실행되면 졸업 불가 경고를 낸다 (기준3 무효화 강제)",
+   "role": "builder",
+   "status": "todo",
+   "priority": 3,
+   "why": "",
+   "done_when": "move5_check.py가 load.source에 config 태그('config.ARM_LOAD_R_MAX')가 들어오면 '경고: arm_load_limits.json 없음 — 이 판은 기준3 졸업 인정 불가'를 출력하고 기록 줄에 graduation_blocked=true를 남긴다. ros_selfcheck에 이 경고가 실제로 나오는지 검증 추가.",
+   "attempts": 0,
+   "created": "2026-09-18 23:17",
+   "updated": "2026-09-18 23:17",
+   "notes": [
+    {
+     "t": "2026-09-18 23:17",
+     "by": "metrologist",
      "text": "만듦"
     }
    ]
