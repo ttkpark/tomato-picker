@@ -134,13 +134,8 @@
    "done_when": "세 숫자를 mm로 적어 docs/인수인계-2026-09-04.md §10에 남긴다 — l1·l2·l3와 같은 축-축 벡터 관례로 (집게가 찌르는 방향 APPROACH, 그 왼쪽 LATERAL, 위 UP). 그 값으로 'python ros2/tools/handeye_resolve.py ~/handeye_samples.json --fix-t A L U'가 잔차 15mm 이하를 내는지까지 확인",
    "attempts": 2,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-19 04:32",
+   "updated": "2026-09-19 04:52",
    "notes": [
-    {
-     "t": "2026-09-17 22:10",
-     "by": "tester",
-     "text": "[사람] 캘리퍼스 실측이 필요해 자동 사이클(tester)에서 처리 불가 — todo로 되돌림. 대신 T9(joint_axis_check 재수집) 진행."
-    },
     {
      "t": "2026-09-17 23:58",
      "by": "builder",
@@ -195,6 +190,11 @@
      "t": "2026-09-19 04:32",
      "by": "tester",
      "text": "2026-09-19 04:32 tester: 4대 자체검증(45/45, 102/102, 346/347 [CRLF 1건], 93/93) 완료. 젯슨 click-server /state 점검(cmean 2.8, cp99 7) 결과 현장 야간 암전 지속으로 D405 카메라 표본 채집 불가 재확인. move5_check dry-run 5/5 확인, 서비스 정상 유지."
+    },
+    {
+     "t": "2026-09-19 04:52",
+     "by": "tester",
+     "text": "2026-09-19 04:53 tester: 4대 자체검증(45/45, 102/102, 350/351 [CRLF 1건], 93/93) 완료. T74(graduation_blocked) 검증 반영 확인. 젯슨 /state 점검 결과 cmean=2.8, cp99=7로 야간 암전 지속(D405 표본 채집 불가). move5_check dry-run PC/젯슨 5/5 확인, 서비스 정상 유지."
     }
    ]
   },
