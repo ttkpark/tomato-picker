@@ -3,35 +3,6 @@
  "next_id": 72,
  "tasks": [
   {
-   "id": "T3",
-   "title": "손-눈 보정 잔차 15mm를 코드가 강제하게 만들기",
-   "role": "builder",
-   "status": "done",
-   "priority": 1,
-   "why": "졸업 기준 2번. 최소자승은 입력이 쓰레기여도 답을 내므로, 사람이 잔차를 안 보면 그대로 쌓인다.",
-   "done_when": "handeye_resolve가 잔차>15mm면 경고가 아니라 비영 종료코드를 내고, ros_selfcheck에 그 검사가 1종 추가되어 통과",
-   "attempts": 1,
-   "created": "2026-09-17 21:44",
-   "updated": "2026-09-17 22:05",
-   "notes": [
-    {
-     "t": "2026-09-17 21:44",
-     "by": "human",
-     "text": "만듦"
-    },
-    {
-     "t": "2026-09-17 21:48",
-     "by": "planner",
-     "text": "기준선 확인: ros_selfcheck는 지금 70/70이다. 검사 1종 추가 후에는 71/71이 되어야 한다. handeye_resolve.py는 566줄, 잔차를 print만 하고(:295) 비영 종료코드를 안 낸다 — main 끝에 임계(기본 15.0, --max-rms로 조절) 판정을 붙이면 된다. --expect-t-mm(:326)/--fix-t(:334) 게이트와 어떻게 겹치는지 먼저 보라."
-    },
-    {
-     "t": "2026-09-17 22:05",
-     "by": "builder",
-     "text": "완료: handeye_resolve.py에 gate(rms, max_rms) 순수판정 추가 — 잔차>합격선이면 RC=1, --save도 차단(--save-anyway로만 강행), 합격선은 handeye.GOOD_RMS_MM(15.0) 한 벌을 그대로 쓴다(--max-rms로 조절). 젯슨 ~/handeye_samples.json 실측 검증: 기본 RC=1(잔차 20.24mm, '저장 안 함' 출력, 파일 안 생김) / --max-rms 25 RC=0. ros_selfcheck에 [손-눈 합격선] 검사군 추가(경계 14.99/15.00/15.01 · 합격선 한 벌 · 종료코드·저장차단 배선) → 70개에서 78개, RC=0. 4종 합계 45+60+78+33=216, 전부 RC=0. ⚠ 플래너 메모는 71을 예상했으나 실제로는 8종이 늘어 78이다(경계 하나만 재면 배선이 끊겼을 때 못 잡는다)."
-    }
-   ]
-  },
-  {
    "id": "T4",
    "title": "URDF 링크 길이와 kinematics.py 상수가 어긋나면 자체검증이 잡게 하기",
    "role": "builder",
@@ -2099,18 +2070,23 @@
    "id": "T70",
    "title": "arm_extend.py --hold 플래그가 아무 효과도 없다 (양쪽 분기가 같은 일을 한다)",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 4,
    "why": "T51로 arm_extend.py를 읽다가 발견: main() 끝의 'if args.hold: io.hold_close() else: io.hold_close()'가 두 분기 모두 hold_close()를 부른다. 도움말은 '--hold 없으면 팔이 떨어진다'고 적어 뒀는데 지금은 항상 토크를 켠 채 닫는다 — 플래그가 죽어 있다. 기능 자체(항상 hold)가 안전 쪽으로 치우친 것이라 급하지 않지만, 문서와 실제 동작이 어긋나 있다.",
    "done_when": "둘 중 하나: (a) --hold가 없을 때는 실제로 토크를 끄도록(hold_close 대신 그냥 close 또는 동급) 고치고 도움말과 일치시킨다 (b) 항상 hold하는 것이 맞다는 결론이면 --hold 인자를자체를 지우고 도움말 문장을 고친다. 실기로 --hold 없이 돌렸을 때 팔이 실제로 떨어지는지/안 떨어지는지 먼저 재라(짐작 금지).",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 07:48",
-   "updated": "2026-09-18 07:48",
+   "updated": "2026-09-19 00:26",
    "notes": [
     {
      "t": "2026-09-18 07:48",
      "by": "builder",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-19 00:26",
+     "by": "builder",
+     "text": "완료: arm_extend.py에서 죽은 --hold 인자 제거 및 무조건 io.hold_close()로 토크 유지 닫기 통일 완료. ros_selfcheck 2종 추가(339/339 통과, 기존 autopilot CRLF 1건 제외). 젯슨 배포 및 --help/--dry 실측 완료."
     }
    ]
   },

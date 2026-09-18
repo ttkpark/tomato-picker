@@ -84,13 +84,13 @@ def load_frame():
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description="특이점에서 빠져나오기 — 관절 공간으로 팔을 뻗은 자세로 옮긴다. "
+                    "종료 시 팔이 떨어지지 않도록 항상 토크를 켠 채 포트를 닫는다(hold_close).")
     ap.add_argument("--dry", action="store_true", help="계산만 하고 안 움직인다")
     ap.add_argument("--target", default="",
                     help="목표 관절각(도) pan,lift,elbow,wflex,wroll. "
                          "비우면 기본 목표(집게가 수평 앞)")
-    ap.add_argument("--hold", action="store_true",
-                    help="끝나고 토크를 켠 채 둔다 (안 그러면 팔이 떨어진다)")
     ap.add_argument("--no-settle", action="store_true",
                     help="마지막 걸음 뒤 되먹임(처짐 지우기)을 하지 않는다")
     ap.add_argument("--record", default="",
@@ -242,11 +242,8 @@ def main() -> int:
     print(f"\n끝  TCP ({fp.x:.1f}, {fp.y:.1f}, {fp.z:.1f}) pitch {fp.pitch:.1f}° "
           f"signed_r {fr:.1f}mm")
     print("좌표 이동 가능" if fr >= 90 else "⚠ 아직 가드 안쪽이다")
-    if args.hold:
-        # 토크를 끄지 않고 닫는다 — 끄면 그 자리에서 떨어진다.
-        io.hold_close()
-    else:
-        io.hold_close()
+    # ⚠ 토크를 끄지 않고 닫는다 — 끄면 그 자리에서 팔이 떨어진다(T70, §26).
+    io.hold_close()
     return 0
 
 

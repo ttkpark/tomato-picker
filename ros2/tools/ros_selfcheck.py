@@ -953,6 +953,16 @@ def test_arm_extend_escape() -> None:
           "TARGET_DEG =" not in cs_src and "STEP_DEG =" not in cs_src,
           "베끼면 escape.py와 조용히 갈라진다")
 
+    # ⚠ T70: arm_extend.py 종료 시 항상 토크를 켠 채 포트를 닫는다(hold_close).
+    #   끄면 팔이 바닥 아래로 떨어진다(§26). 죽은 플래그 --hold는 제거됐다.
+    ax_src = open(os.path.join(ROS2, "tools", "arm_extend.py"), encoding="utf-8").read()
+    check("arm_extend.py에 죽은 --hold 인자가 없다 (T70)",
+          '"--hold"' not in ax_src,
+          "항상 hold하는 것이 안전 쪽 원칙이므로 불필요한 인자를 없앴다")
+    check("arm_extend.py 종료 시 무조건 io.hold_close()를 호출한다 (T70)",
+          "io.hold_close()" in ax_src and "io.close()" not in ax_src,
+          "토크를 끄면 팔이 떨어지므로 예외 없이 hold_close()로 포트를 닫는다")
+
 
 def test_arm_stage_park() -> None:
     """A자세에서 PARK 목표로 가는 경로가 막히지 않는다 (T60, 2026-09-18).
