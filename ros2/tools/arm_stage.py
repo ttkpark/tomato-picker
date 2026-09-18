@@ -120,6 +120,27 @@ def main() -> int:
                 f"r{kin.signed_radius(d, geom):7.1f}")
 
     show("지금", now)
+
+    # ⚠ 목표 정규화값을 ±98 안으로 자른다 — PARK의 wrist_flex=-100처럼 목표 자체가
+    #   경계(|norm|=100)에 있으면 경유점 전부가 98 한계에 걸려 경로가 시작조차 못 한다.
+    #   escape.clamp_norm()과 같은 원칙: 자른 관절을 알려 주고, 그래도 목적(팔을
+    #   대기 자세로 접는 것)은 달성된다 — PARK는 정확히 -100°보다 ~2° 덜 가도 된다.
+    _target_norm = to_norm(target)
+    _clamped_norm: dict[str, float] = {}
+    _clipped: list[str] = []
+    for _j, _v in _target_norm.items():
+        _c = max(-98.0, min(98.0, _v))
+        if abs(_c - _v) > 1e-9:
+            _clipped.append(_j)
+        _clamped_norm[_j] = _c
+    if _clipped:
+        # 자른 관절만 도(°)로 역변환해 목표 업데이트
+        _clamped_deg = to_deg(_clamped_norm)
+        for _j in _clipped:
+            target[_j] = _clamped_deg[_j]
+        print(f"  ⚠ 목표 정규화가 ±98을 넘어 자름: {_clipped} "
+              f"(목적에 영향 없음 — escape.clamp_norm과 같은 원칙)")
+
     show("목표", target)
 
     # ⚠ 진짜 바닥(마운트 아래 76.5mm)을 쓴다. 팔이 늘어져 z가 음수여도 그건

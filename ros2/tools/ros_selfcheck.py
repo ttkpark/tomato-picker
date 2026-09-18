@@ -954,6 +954,96 @@ def test_arm_extend_escape() -> None:
           "베끼면 escape.py와 조용히 갈라진다")
 
 
+def test_arm_stage_park() -> None:
+    """A자세에서 PARK 목표로 가는 경로가 막히지 않는다 (T60, 2026-09-18).
+
+    사이클45·49 실기: park가 A자세뿐 아니라 아무 자세에서나 막힌다.
+    tester 추가확인: wrist_flex+15.2° 남긴 근접 자세에서도 4번 전부 wrist_flex한계.
+    원인: click_server PARK='60,65,0,-100,6'에서 wrist_flex=-100이 정규화 -100이고,
+    arm_stage의 ±98 한계에 걸려 경유점 전부가 막혔다.
+    고침: arm_stage가 목표 정규화값을 ±98로 자른 뒤 경로를 짠다(escape.clamp_norm
+    과 같은 원칙 — 목적은 팔을 접는 것이지 정확히 -100°가 아니다).
+    이 검사는 그 고침이 실제로 코드에 있는지와, 수치로 경로가 막히지 않는지를 확인한다.
+    """
+    print("\n[park] A자세에서 PARK 경로 막힘 수정 (T60)")
+    sys.path.insert(0, os.path.join(REPO, "ros2", "tools"))
+    import arm_stage as astage  # noqa: E402
+
+    st_src = open(os.path.join(ROS2, "tools", "arm_stage.py"), encoding="utf-8").read()
+    # 1) 클램핑 코드가 arm_stage.py에 있는가
+    check("arm_stage가 목표 정규화값을 ±98로 자르는 코드를 갖는다 (T60)",
+          "_target_norm" in st_src and "_clamped_norm" in st_src and "_clipped" in st_src,
+          "wrist_flex=-100 목표가 경로 전체를 막던 원인을 해소한다")
+    check("arm_stage의 클램핑이 escape.clamp_norm()과 같은 98 경계를 쓴다 (T60)",
+          "max(-98.0, min(98.0" in st_src,
+          "escape.py의 LIMIT_NORM = 100 - ARM_CART_NORM_MARGIN = 98")
+
+    # 2) PARK wrist_flex=-100이 이 프레임에서 실제로 98을 넘는가 (막히던 원인 수치 확인)
+    f = ESCAPE_FRAME_2026_09_18
+    # PARK 목표각(도)
+    park_deg = {"shoulder_pan": 60.0, "shoulder_lift": 65.0,
+                "elbow_flex": 0.0, "wrist_flex": -100.0, "wrist_roll": 6.0}
+    park_norm = {j: f["zero"][j] + (park_deg[j] - f["ref"][j]) / f["dpn"][j]
+                 for j in kin.JOINTS}
+    wf_norm = park_norm["wrist_flex"]
+    check("PARK wrist_flex=-100°는 이 프레임에서 정규화 절댓값이 98을 넘는다 (막히던 근거)",
+          abs(wf_norm) > 98.0,
+          f"wrist_flex 정규화={wf_norm:.2f} (|{wf_norm:.2f}|>{98.0})")
+
+    # 3) 클램핑 후 wrist_flex가 ±98 안에 들어오는가
+    clamped_wf = max(-98.0, min(98.0, wf_norm))
+    # 클램핑된 목표를 도(°)로 역변환
+    clamped_deg_wf = f["ref"]["wrist_flex"] + (clamped_wf - f["zero"]["wrist_flex"]) * f["dpn"]["wrist_flex"]
+    park_clamped_deg = {**park_deg, "wrist_flex": clamped_deg_wf}
+    check("클램핑 후 wrist_flex 정규화가 ±98 이내다 (경로 통과)",
+          abs(clamped_wf) <= 98.0 + 1e-9,
+          f"클램핑 후 정규화={clamped_wf:.2f}, 해당 도={clamped_deg_wf:.1f}°")
+
+    # 4) A자세(ESCAPE_NORM_2026_09_18)에서 클램핑된 PARK로 가는 경로가 안전한가
+    #    arm_stage의 leg() 로직을 그대로 시뮬레이션: ±98 한계 + 바닥 검사
+    geom = kin.ArmGeometry()
+    a_deg = _escape_deg(ESCAPE_NORM_2026_09_18)  # A자세 도(°)
+    a_norm = ESCAPE_NORM_2026_09_18
+    z_floor = -astage.MOUNT_Z_MM + astage.FLOOR_MARGIN_MM
+
+    def _stage_check(start_deg, tgt_deg, label):
+        """arm_stage의 leg() 한 구간 시뮬레이션 — 막히는 구간이 없으면 True."""
+        import math as _math
+        blocked_joints = []
+        for joint in kin.JOINTS:
+            delta = abs(tgt_deg[joint] - start_deg[joint])
+            if delta < 0.05:
+                continue
+            steps = max(1, int(_math.ceil(delta / astage.STEP_DEG)))
+            for s in range(1, steps + 1):
+                mid = {j: start_deg[j] + (tgt_deg[j] - start_deg[j]) * s / steps
+                       for j in kin.JOINTS}
+                p = kin.forward(mid, geom)
+                if p.z < z_floor:
+                    blocked_joints.append(f"{joint}:바닥아래@구간{s}")
+                    continue
+                # 정규화 계산 (가짜 프레임으로)
+                mid_norm = _escape_norm(mid)
+                for j in kin.JOINTS:
+                    v = mid_norm[j]
+                    now_abs = abs(a_norm.get(j, 0.0))
+                    if abs(v) > max(98.0, now_abs) + 1e-6:
+                        blocked_joints.append(f"{joint}:{j}한계@구간{s}")
+        return blocked_joints
+
+    # 클램핑된 PARK로의 경로
+    blocked = _stage_check(a_deg, park_clamped_deg, "PARK(클램핑 후)")
+    check("A자세에서 클램핑된 PARK로 가는 경로가 막히지 않는다 (T60 핵심)",
+          len(blocked) == 0,
+          f"막힌 구간: {blocked}" if blocked else "전 구간 통과")
+
+    # 5) click_server의 park가 arm_stage를 부르는지
+    cs_src = open(os.path.join(ROS2, "tools", "click_server.py"), encoding="utf-8").read()
+    check("조작대 park 버튼이 arm_stage.py를 호른다 (실기는 tester 몫)",
+          'if job == "park":' in cs_src and "arm_stage.py" in cs_src,
+          "PC 검증 완료 — 실기 확인은 tester 사이클이 park 버튼으로 한다")
+
+
 # ----------------------------------------------------------------------
 # ⑩ 실패 단계 분류 (move5_check)
 # ----------------------------------------------------------------------
@@ -1691,6 +1781,19 @@ def test_sample_within_limits() -> None:
     check("DirectArm이 팔을 hold_torque=True로 연다 (붙으면서 놓지 않는다)",
           "hold_torque=True" in body,
           "기본값은 connect 직후 토크를 끈다 — 팔이 주저앉는다")
+    # ⚠ T66(2026-09-18): close()도 hold_torque=True로 연 것과 원칙이 같아야 한다.
+    #   close()가 disable_torque() 경로(follower_io.close())로 가면 팔이 주저앉는다.
+    #   hold=True(기본) → hold_close() / hold=False → close() 두 길을 명시적으로
+    #   가진다 — 계약이 코드에 있어야 다음 사이클이 고치지 않는다.
+    check("DirectArm.close(hold=True)가 hold_close()로 간다 (T66)",
+          "hold_close()" in body and "if hold:" in body,
+          "토크를 켠 채로 닫아야 열 때 hold_torque=True와 원칙이 같다")
+    check("DirectArm.close(hold=False)가 self._io.close()로 간다 (T66)",
+          "else:" in body and "self._io.close()" in body,
+          "손으로 움직이거나 완전 종료 때만 토크를 끈다")
+    check("close()의 hold 기본값이 True다 (T66)",
+          "def close(self, hold: bool = True)" in body,
+          "기본이 False면 hold_torque=True로 연 것과 원칙이 어긋난다")
 
 
 def test_joint_record() -> None:
@@ -2359,6 +2462,7 @@ def main() -> int:
     test_handeye_gate()
     test_handeye_identifiability()
     test_arm_extend_escape()
+    test_arm_stage_park()
     test_prep_autoextend()
     test_stage_classify()
     test_travel_split()

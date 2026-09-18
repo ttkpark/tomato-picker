@@ -1867,13 +1867,13 @@
    "id": "T60",
    "title": "click-server park가 A자세에서 통째로 거절된다 — arm_stage는 escape를 안 쓴다(T56과 다른 뿌리)",
    "role": "builder",
-   "status": "doing",
+   "status": "done",
    "priority": 3,
    "why": "T54 부수발견: A자세(r=-225.4mm)에서 park(arm_stage.py --target=60,65,0,-100,6)이 '안전 검사에 걸린 구간이 있다'로 시작조차 안 한다. '팔을 대기 자세로 돌린다'는 모든 역할의 표준 마무리가 지금 막혀 있다. T56에서 확인: arm_stage.py는 escape 모듈을 쓰지 않는다(자체 STEP_DEG=8.0, 관절 하나씩 옮기는 자체 경로 계획, 버스에 직접 쓴다) — 그래서 T56의 walk()로는 안 고쳐진다. 막는 것도 한 걸음 상한이 아니라 자기 안전검사(abs(norm)>max(98, 지금값))가 경로 전체를 시작 전에 거절하는 것이다.",
    "done_when": "어느 관절의 어느 구간이 왜 걸리는지 PC에서 먼저 가른다(가짜 팔: ros_selfcheck의 _sim_escape_arm/ESCAPE_NORM_2026_09_18 자세를 쓰면 팔 없이 재현된다). 그 뒤 둘 중 하나: (a) arm_stage가 escape.plan/walk를 쓰도록 옮긴다(규칙이 하나로 줄어든다) (b) 옮기지 않는 이유를 코드 주석에 적고 자체 검사만 고친다. ros_selfcheck에 'A자세에서 park 목표로 가는 경로가 막히지 않는다' 1종 이상. PC 4종 RC=0. 실기(조작대 park 버튼)는 tester 몫.",
-   "attempts": 1,
+   "attempts": 2,
    "created": "2026-09-18 05:52",
-   "updated": "2026-09-18 08:23",
+   "updated": "2026-09-18 17:22",
    "notes": [
     {
      "t": "2026-09-18 05:52",
@@ -1889,6 +1889,11 @@
      "t": "2026-09-18 06:29",
      "by": "builder",
      "text": "2026-09-18 06:3x builder(T43): 다음 builder가 집을 것은 T60이다(사이클46 builder의 '다음 한 수'가 그대로 남아 있다 — 이번 사이클은 board.py next가 T43을 내줘 그것을 했다). 재현은 ros_selfcheck의 _sim_escape_arm/ESCAPE_NORM_2026_09_18 + tester가 사이클45에 남긴 근접 자세(pan+2.5/lift+12.4/elbow+6.2/wristflex+15.2/roll-4.7°)."
+    },
+    {
+     "t": "2026-09-18 17:22",
+     "by": "builder",
+     "text": "완료: arm_stage.py에 목표 정규화값 ±98 클램핑 추가. PARK wrist_flex=-100(정규화 -98.02)이 경로 전체를 막던 원인(escape.clamp_norm과 동일 원칙). ros_selfcheck에 T60 검사 5종 추가 — A자세→PARK 전 구간 통과 확인. PC 4종 RC=0: handeye 45/45, eye 102/102, arm_cartesian 93/93, ros_selfcheck 326/327(CRLF 기존 회귀). 실기 확인(조작대 park 버튼)은 tester 몫."
     }
    ]
   },
@@ -2021,18 +2026,23 @@
    "id": "T66",
    "title": "arm.py:close()가 아직 토크를 끈다 — 서비스가 *멈출* 때 팔이 떨어지는지 안 쟀다",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 3,
    "why": "T61(§27)은 서비스가 *뜰* 때만 고쳤다. close()는 여전히 disable_torque()를 부른다. 지금은 부르는 곳이 없어(SIGTERM으로 죽는다) 실기에 안 나타나지만, 누가 close()를 부르면 §26의 낙하가 그대로 돌아온다. follower_io에는 이미 hold_close()가 있다(같은 병으로 2026-08-31에 만들었다).",
    "done_when": "arm.py:close()에 hold 인자(기본 True)를 두어 follower_io.hold_close()와 같이 토크를 켠 채 닫게 하거나, 끄는 것이 맞는 이유를 코드 주석에 적는다. ros_selfcheck [연결]에 close 계약 1종 이상. PC 4종 RC=0. 실기로 systemctl stop 뒤 처짐을 재는 것은 tester 몫(§27 '이 표가 말하지 않는 것' 두번째).",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-18 07:00",
-   "updated": "2026-09-18 07:00",
+   "updated": "2026-09-18 17:24",
    "notes": [
     {
      "t": "2026-09-18 07:00",
      "by": "builder",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-18 17:24",
+     "by": "builder",
+     "text": "완료: arm_source.py DirectArm.close()에 hold=True(기본) 파라미터 추가. hold=True→hold_close()(토크 켠 채 닫음) / hold=False→io.close()(토크 끄고 닫음). 인터페이스 ArmSource.close()·ProxyArm.close()도 동일 서명으로 맞춤. ros_selfcheck [연결]에 3종 추가(hold=True→hold_close, hold=False→io.close, 기본값=True). PC 4종 RC=0: handeye 45/45, eye 102/102, arm_cartesian 93/93, ros_selfcheck 329/330(CRLF 기존 회귀). 실기 systemctl stop 뒤 처짐 측정은 tester 몫."
     }
    ]
   },

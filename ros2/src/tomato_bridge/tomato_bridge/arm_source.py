@@ -80,7 +80,16 @@ class ArmSource(Protocol):
     def warning(self) -> str:
         """이 경로를 쓰는 것 자체가 문제일 때의 경고. 없으면 빈 문자열."""
 
-    def close(self) -> None:
+    def close(self, hold: bool = True) -> None:
+        """포트를 닫는다.
+
+        hold=True(기본): 토크를 켠 채로 닫는다 — 팔이 그 자리에 선 채로 있게.
+        hold=False: 토크를 끄고 닫는다 — 팔을 손으로 움직일 때 또는 완전 종료.
+
+        ⚠ hold_torque=True로 열었으면 hold=True로 닫아야 열고 닫는 원칙이 같다.
+           follower_io.close()는 disable_torque() 뒤 disconnect()라 팔이 주저앉는다
+           (2026-08-31 실측, hold_close 신설 이유 — follower_io.py:234 주석).
+        """
         ...
 
 
@@ -204,8 +213,16 @@ class DirectArm:
         return (f"관절 이동 → x={pose.x:.0f} y={pose.y:.0f} z={pose.z:.0f} "
                 f"pitch={pose.pitch:.0f}° signed_r={step['signed_r']:.0f}mm")
 
-    def close(self) -> None:
-        self._io.close()
+    def close(self, hold: bool = True) -> None:
+        # ⚠ 기본값이 True인 이유 — 팔은 hold_torque=True로 열었다(__init__ 주석).
+        #   열 때와 닫을 때의 원칙이 같아야 한다: **토크를 켠 채로** 닫는 것이
+        #   더 안전하다. follower_io.close()는 disable_torque() 뒤 disconnect()라서
+        #   팔이 중력에 주저앉는다(2026-08-31, hold_close 신설 이유). hold=False는
+        #   팔을 손으로 움직이거나 완전히 끄는 특수 경우에만 쓴다.
+        if hold:
+            self._io.hold_close()
+        else:
+            self._io.close()
 
 
 # ----------------------------------------------------------------------
@@ -291,7 +308,8 @@ class ProxyArm:
             "arm_mode:=direct로 띄우거나, 컨테이너를 내리고 "
             "ros2/tools/arm_extend.py로 먼저 뻗어라.")
 
-    def close(self) -> None:
+    def close(self, hold: bool = True) -> None:
+        # 포트를 직접 잡지 않으므로 hold 인자는 효과가 없다 — 인터페이스 계약 일치용.
         pass
 
 
