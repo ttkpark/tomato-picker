@@ -21,24 +21,26 @@ import math
 import os
 from dataclasses import dataclass
 
-from ..config import ARM_LOAD_LIMITS_FILE, ARM_LOAD_R_MAX
+from ..config import ARM_LOAD_LIMITS_FILE, ARM_LOAD_R_MAX, ARM_LOAD_Z_MAX
 
 
 @dataclass(frozen=True)
 class LoadLimits:
-    """이 팔이 버티는 자리의 경계. 지금은 수평 사거리 하나뿐이다.
+    """이 팔이 버티는 자리의 경계. 수평 사거리(r)와 높이(z) 상한을 갖는다.
 
-    왜 r 하나인가 — §24의 9자세에서 **가른 것이 z가 아니라 r**이었다. 같은
-    r에서 z를 138~415mm까지 흔들어도 결과가 안 바뀌었고, r만 넘기면 z와
-    무관하게 눌렸다. 표본이 더 쌓여 r별 z 상한이 필요해지면 그때 여기에
-    항목을 늘린다(읽는 쪽은 `rejects()` 하나만 부르므로 안 바뀐다).
+    §24의 실측과 §30(T62), §31(T68)의 실측으로 확정된 경계다:
+    - 수평 사거리 r: pan축에서 잰 수평거리(mm).
+    - 높이 z: base_link 기준 높이 상한(mm). z=440mm까지는 wflex<=0°에서
+      수렴하지만(T68), z>=456mm는 서보 토크 및 모멘트 암 한계로 처짐이 91~103mm
+      발생하며 실패한다(T57).
     """
 
     r_max: float          # pan축에서 잰 수평 사거리 상한(mm)
-    source: str           # 이 숫자가 어디서 왔나 — 기록에 그대로 들어간다
+    z_max: float = ARM_LOAD_Z_MAX  # base_link 기준 높이 상한(mm)
+    source: str = ""      # 이 숫자가 어디서 왔나 — 기록에 그대로 들어간다
     note: str = ""        # 사람이 읽을 한 줄
 
-    def rejects(self, x: float, y: float) -> str:
+    def rejects(self, x: float, y: float, z: float | None = None) -> str:
         """그 자리가 경계 밖이면 이유 한 줄, 안이면 "".
 
         ⚠ 넣는 자리는 **팔이 실제로 서는 곳**이다. 표적이 아니라 스탠드오프
@@ -47,17 +49,20 @@ class LoadLimits:
         r = math.hypot(x, y)
         if r > self.r_max:
             return f"수평 {r:.0f}mm > 들 수 있는 한계 {self.r_max:.0f}mm"
+        if z is not None and z > self.z_max:
+            return f"높이 {z:.0f}mm > 들 수 있는 한계 {self.z_max:.0f}mm"
         return ""
 
 
 def load_load_limits(path: str = ARM_LOAD_LIMITS_FILE,
                      default_r_max: float = ARM_LOAD_R_MAX,
+                     default_z_max: float = ARM_LOAD_Z_MAX,
                      ) -> tuple[LoadLimits | None, str]:
     """(limits, 한 줄 설명). 모르면 (None, 이유).
 
     ① 파일이 있으면 파일이 이긴다 — 이 팔에서 다시 잰 값이기 때문이다.
     ② 파일이 없으면 config의 실측 당시 값.
-    ③ 파일이 깨졌거나 r_max_mm가 null·0 이하면 **None**. 깨진 파일을 보고
+    ③ 파일이 깨졌거나 r_max_mm/z_max_mm가 null·0 이하면 **None**. 깨진 파일을 보고
        조용히 config로 돌아가면, 넓히려고 쓴 파일이 무시된 줄도 모른 채
        옛 경계로 시험하게 된다(그 기록은 다음 사이클이 사실로 믿는다).
     """
@@ -69,19 +74,34 @@ def load_load_limits(path: str = ARM_LOAD_LIMITS_FILE,
             return None, f"{full}을 읽을 수 없다 ({exc}) — 경계를 모른다"
         if not isinstance(data, dict) or "r_max_mm" not in data:
             return None, f"{full}에 r_max_mm가 없다 — 경계를 모른다"
-        raw = data["r_max_mm"]
-        if raw is None:
+        raw_r = data["r_max_mm"]
+        if raw_r is None:
             return None, f"{full}이 r_max_mm를 모른다고 말한다(null)"
         try:
-            r_max = float(raw)
+            r_max = float(raw_r)
         except (TypeError, ValueError):
-            return None, f"{full}의 r_max_mm가 숫자가 아니다 ({raw!r})"
+            return None, f"{full}의 r_max_mm가 숫자가 아니다 ({raw_r!r})"
         if r_max <= 0:
             return None, f"{full}의 r_max_mm가 {r_max} — 경계로 쓸 수 없다"
+
+        # z_max_mm는 파일에 명시되어 있으면 파싱, 없으면 기본 config값
+        if "z_max_mm" in data:
+            raw_z = data["z_max_mm"]
+            if raw_z is None:
+                return None, f"{full}이 z_max_mm를 모른다고 말한다(null)"
+            try:
+                z_max = float(raw_z)
+            except (TypeError, ValueError):
+                return None, f"{full}의 z_max_mm가 숫자가 아니다 ({raw_z!r})"
+            if z_max <= 0:
+                return None, f"{full}의 z_max_mm가 {z_max} — 경계로 쓸 수 없다"
+        else:
+            z_max = float(default_z_max)
+
         note = str(data.get("note", "")) or f"{full}에서 읽음"
-        return (LoadLimits(r_max=r_max, source=full, note=note),
-                f"수평 한계 {r_max:.0f}mm ← {full}")
-    src = "config.ARM_LOAD_R_MAX"
-    return (LoadLimits(r_max=float(default_r_max), source=src,
-                       note="2026-09-18 실기 9자세(§24) — 310~330mm 사이는 아직 모른다"),
-            f"수평 한계 {default_r_max:.0f}mm ← {src} ({full} 없음)")
+        return (LoadLimits(r_max=r_max, z_max=z_max, source=full, note=note),
+                f"한계 r={r_max:.0f}mm, z={z_max:.0f}mm ← {full}")
+    src = "config.ARM_LOAD_R_MAX+Z_MAX"
+    return (LoadLimits(r_max=float(default_r_max), z_max=float(default_z_max), source=src,
+                       note="2026-09-18 실기 (§24, §30, §31 실측)"),
+            f"한계 r={default_r_max:.0f}mm, z={default_z_max:.0f}mm ← {src} ({full} 없음)")
