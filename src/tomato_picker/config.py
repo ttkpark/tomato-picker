@@ -690,10 +690,12 @@ ARM_CART_ELBOW_UP = True       # 팔꿈치를 현 위로 접는다(아래로 접
 #   "수렴"처럼 보였다. 소프트 한계에 눌린 뒤(clamped) 다시 잰 오차였기 때문이다
 #   (§24 ②). 그래서 이 경계는 err_deg가 아니라 **눌렸는가**로 그었다.
 #   · z 상한: 440mm까지는 wflex<=0°에서 성공(T68), z>=456mm는 처짐 91~103mm로 실패(T57).
+#   · wflex 상한: z=420~440mm에서도 wflex<=-10°는 수렴, wflex=+20°는 발산 실패(T68 실측).
 ARM_LOAD_R_MAX = 310.0
 ARM_LOAD_Z_MAX = 445.0
+ARM_LOAD_WFLEX_MAX_DEG = 0.0
 # 이 팔에서 다시 재면 여기에 남긴다(코드는 실측 당시 값, 파일이 이긴다 —
-# ARM_CART_FILE·BASE_TUNING_FILE과 같은 구조). {"r_max_mm": 310.0, "z_max_mm": 445.0}
+# ARM_CART_FILE·BASE_TUNING_FILE과 같은 구조). {"r_max_mm": 310.0, "z_max_mm": 445.0, "wflex_max_deg": 0.0}
 ARM_LOAD_LIMITS_FILE = "~/arm_load_limits.json"
 
 # --- 마지막 걸음의 처짐을 되먹임으로 지운다 (2026-09-18 추가, hardware/settle.py) ---

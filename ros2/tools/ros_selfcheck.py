@@ -1702,16 +1702,18 @@ def test_sample_within_limits() -> None:
                           ('{"r_max_mm": 0}', "0 이하"),
                           ('{"z_max_mm": null}', "z_max null"),
                           ('{"z_max_mm": -10}', "z_max 0 이하"),
+                          ('{"wflex_max_deg": null}', "wflex null"),
+                          ('{"wflex_max_deg": "문자"}', "wflex 문자열"),
                           ('{"note": "재는 중"}', "키가 없다"),
                           ("{깨진 json", "깨진 파일")):
             open(tmp, "w", encoding="utf-8").write(body)
             got, note = ld.load_load_limits(path=tmp)
             check(f"경계를 못 읽으면 None이고 이유를 말한다 ({why})",
                   got is None and len(note) > 0, note)
-        open(tmp, "w", encoding="utf-8").write('{"r_max_mm": 321.5, "z_max_mm": 430.0}')
+        open(tmp, "w", encoding="utf-8").write('{"r_max_mm": 321.5, "z_max_mm": 430.0, "wflex_max_deg": -5.0}')
         got, note = ld.load_load_limits(path=tmp)
         check("파일이 config를 이긴다 (이 팔에서 다시 잰 값)",
-              got is not None and abs(got.r_max - 321.5) < 1e-9 and abs(got.z_max - 430.0) < 1e-9 and got.source == tmp,
+              got is not None and abs(got.r_max - 321.5) < 1e-9 and abs(got.z_max - 430.0) < 1e-9 and abs(got.wflex_max_deg - (-5.0)) < 1e-9 and got.source == tmp,
               note)
     finally:
         os.path.exists(tmp) and os.remove(tmp)
@@ -1722,6 +1724,13 @@ def test_sample_within_limits() -> None:
     check("z_max가 rejects()에 반영된다",
           bool(custom_limits.rejects(100.0, 100.0, z=450.0)) and not custom_limits.rejects(100.0, 100.0, z=350.0),
           "z가 z_max 초과 시 거절되고 이하 시 통과해야 한다")
+
+    # T73: wflex_max_deg 검증 (T68 실측: wflex<=0.0 통과, wflex=+20.0 거절)
+    wflex_limits = ld.LoadLimits(r_max=400.0, z_max=500.0, wflex_max_deg=0.0, source="wflex테스트")
+    check("wflex_max_deg가 rejects()에 반영된다 (T73)",
+          bool(wflex_limits.rejects(100.0, 100.0, z=400.0, wflex_deg=20.0))
+          and not wflex_limits.rejects(100.0, 100.0, z=400.0, wflex_deg=-10.0),
+          "wflex > wflex_max_deg 초과 시 거절되고 이하 시 통과해야 한다")
 
     # 사이클35 표적2(348.9, 261.6): stand r=348.9mm, z=261.6mm
     # 사이클45 표적5(215.2, 456.4): stand r=215.2mm, z=456.4mm
@@ -1736,6 +1745,13 @@ def test_sample_within_limits() -> None:
     check("사이클45 표적5(215.2,456.4)는 걸러진다",
           bool(load_filt.rejects(stand_c45_5.x, stand_c45_5.y, stand_c45_5.z)),
           f"stand r={math.hypot(stand_c45_5.x, stand_c45_5.y):.1f} z={stand_c45_5.z:.1f}")
+
+    # T73: T68 실측 자세 비교 (b) z=420,wflex=-10° 통과 vs (d) z=420,wflex=+20° 거절
+    load_t68 = ld.LoadLimits(r_max=400.0, z_max=445.0, wflex_max_deg=0.0, source="T68검증")
+    check("T68 자세(b) wflex=-10도는 통과한다 (T73)",
+          not load_t68.rejects(243.0, 0.0, z=420.1, wflex_deg=-10.0))
+    check("T68 자세(d) wflex=+20도는 걸러진다 (T73)",
+          bool(load_t68.rejects(250.7, 0.0, z=420.1, wflex_deg=20.0)))
 
     # 기록에 남는가 — 남지 않으면 그 0/5가 팔의 0인지 도구의 0인지 못 가린다.
     m5_body = m5_source()

@@ -359,8 +359,10 @@ def sample_points(n: int, geom: kin.ArmGeometry, seed: int,
         stand_pose = standoff_pose(p, standoff_mm)
         if workspace_reject(stand_pose, geom):
             continue
-        if load is not None and load.rejects(stand_pose.x, stand_pose.y, stand_pose.z):
-            continue   # 갈 수는 있지만 **못 드는** 자리 — 서보 토크의 벽(§24)
+        stand_wflex = stand.get("wrist_flex")
+        if load is not None and load.rejects(stand_pose.x, stand_pose.y, stand_pose.z,
+                                            wflex_deg=stand_wflex):
+            continue   # 갈 수는 있지만 **못 드는** 자리 — 서보 토크 및 모멘트 암 벽(§24, §31)
         if limits is not None and limit_violations(p, geom, limits, standoff_mm):
             continue
         pts.append(p)
@@ -784,7 +786,10 @@ def main() -> int:
             # 사람이 고른 자리도 **드는지**는 봐 준다 — 막지는 않는다(위와 같은 이유).
             for i, p in enumerate(points, 1):
                 stand_pose = standoff_pose(p)
-                over = load.rejects(stand_pose.x, stand_pose.y, stand_pose.z)
+                cmd_j = commanded_joints(p, geom)
+                wflex_cmd = cmd_j.get("wrist_flex") if cmd_j else None
+                over = load.rejects(stand_pose.x, stand_pose.y, stand_pose.z,
+                                    wflex_deg=wflex_cmd)
                 if over:
                     print(f"  ⚠ 표적 {i}는 팔이 못 드는 자리로 보인다 — {over}")
     else:
