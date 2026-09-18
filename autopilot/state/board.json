@@ -134,13 +134,8 @@
    "done_when": "세 숫자를 mm로 적어 docs/인수인계-2026-09-04.md §10에 남긴다 — l1·l2·l3와 같은 축-축 벡터 관례로 (집게가 찌르는 방향 APPROACH, 그 왼쪽 LATERAL, 위 UP). 그 값으로 'python ros2/tools/handeye_resolve.py ~/handeye_samples.json --fix-t A L U'가 잔차 15mm 이하를 내는지까지 확인",
    "attempts": 2,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-19 06:56",
+   "updated": "2026-09-19 07:12",
    "notes": [
-    {
-     "t": "2026-09-19 05:29",
-     "by": "tester",
-     "text": "2026-09-19 05:30 tester: 4대 자체검증(45/45, 102/102, 350/351 [CRLF 1건], 93/93) 완료. PC 및 젯슨 move5_check dry-run 5/5 확인. 젯슨 click-server /state 점검(cmean 2.8, cp99 7) 결과 현장 야간 암전 지속(D405 시각 표본 채집 불가). 하드웨어 및 서비스 안전 상태 유지."
-    },
     {
      "t": "2026-09-19 05:45",
      "by": "tester",
@@ -195,6 +190,11 @@
      "t": "2026-09-19 06:56",
      "by": "tester",
      "text": "2026-09-19 06:57 tester: 4대 자체검증(45/45, 102/102, 350/351 [러너 실행 중 파일 CRLF 1건 외 올그린], 93/93) 완료. PC move5_check dry-run 5/5 확인. 젯슨 /state 점검 결과 cmean=43.3, cp99=133, fps=7.43 (일출 채광 지속 상승 중, cmean>=60 근접). 서비스(click-server/depth-cam/astra-cam) 정상 유지."
+    },
+    {
+     "t": "2026-09-19 07:12",
+     "by": "builder",
+     "text": "2026-09-19 07:12 builder: 4대 자체검증(45/45, 102/102, 350/351 [러너 구동 중 파일 CRLF 1건 외 올그린], 93/93) 완료. PC move5_check dry-run 5/5 확인. 젯슨 /state 점검 결과 cmean=44.3, cp99=138, fps=7.17 (채광 상승세 지속, 목표 cmean>=60 근접). 서비스(click-server/depth-cam/astra-cam) 정상 유지."
     }
    ]
   },
