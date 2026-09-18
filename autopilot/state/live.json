@@ -1,85 +1,14 @@
 {
- "cycle": 60,
- "role": "tester",
+ "cycle": 61,
+ "role": "planner",
  "model": "sonnet",
  "engine": "claude",
- "started": "2026-09-18T08:49:31",
- "state": "done",
- "turns": 55,
- "cost": 1.8531888000000003,
- "last_text": "-voice/controller-drive inactive(정상). target_check.py 재실행 →\n| 항목 | 값 |\n|---|---|\n| 점 검출 | **4/4**(07:2x의 2/4에서 개선) |\n| cmean/cp99/fps/깊이유효 | 127.1 / 183 / 7.38 / 85.5% |\n| 전체 판정 | 7/9 FAIL(평면·스케일) |\n| 벽-광축 각도 | **71.9°(스침각)** — 스케일오차 평균 +211% |\n\n기록: `docs/시험기록/target-check-2026-09-18.jsonl` 신설.\n\n## 회귀·새 결함\n새 결함: 마커판이 카메라 광축과 71.9° 각도(거의 옆에서 봄)라 깊이 잡음이 스케일을 200~500%까지 부풀린다. 이 상태로는 T13 손-눈 표본 채집이 무의미하다 — 마커판을 30° 이내로 더 수직하게 놓아야 함(T9 note에 기록).\n\n## 넘긴 작업\n**T23 done**(자동노출 전환은 이미 커밋 9cb4f54에 반영돼 있었음을 확인·판정 완료). **T9에 새 사실 기록**(4/4 검출 성공, 다만 스침각 문제로 T13 전 마커판 각도 조정 필요 — 다음 tester가 조작대로 각도 줄이고 재검증).",
- "tools": [
-  {
-   "t": "08:51:34",
-   "name": "Grep",
-   "brief": "\"id\": \"T23\""
-  },
-  {
-   "t": "08:51:37",
-   "name": "Read",
-   "brief": "C:\\Users\\parkg\\Desktop\\AIWorkspace\\tomato-picker\\autopilot\\state\\board.json"
-  },
-  {
-   "t": "08:51:44",
-   "name": "Bash",
-   "brief": "git log --oneline -3 -- deploy/depth-cam.service; git log -p -1 --follow -- deploy/depth-cam.service | grep -m…"
-  },
-  {
-   "t": "08:51:48",
-   "name": "Bash",
-   "brief": "git status --short deploy/depth-cam.service; git diff --stat deploy/depth-cam.service"
-  },
-  {
-   "t": "08:51:54",
-   "name": "Bash",
-   "brief": "git show 9cb4f54 --stat | head -20; echo ---; git show 9cb4f54 -- deploy/depth-cam.service | head -60"
-  },
-  {
-   "t": "08:52:21",
-   "name": "Bash",
-   "brief": "python autopilot/board.py done T23 --note \"2026-09-18 08:5x tester: done_when 재확인 — 이미 커밋 9cb4f54(07:45)가 자동노출…"
-  },
-  {
-   "t": "08:52:26",
-   "name": "Bash",
-   "brief": "python autopilot/board.py done T23 --by tester --result \"2026-09-18 08:5x tester: done_when 재확인 — 이미 커밋 9cb4f5…"
-  },
-  {
-   "t": "08:52:40",
-   "name": "Bash",
-   "brief": "python autopilot/board.py note T9 --by tester --text \"2026-09-18 08:5x tester: T23 판정을 겸해 target_check.py를 다시 …"
-  },
-  {
-   "t": "08:52:43",
-   "name": "Bash",
-   "brief": "python autopilot/board.py note --help"
-  },
-  {
-   "t": "08:52:50",
-   "name": "Bash",
-   "brief": "python autopilot/board.py note T9 \"2026-09-18 08:5x tester: T23 판정을 겸해 target_check.py를 다시 돌렸다(젯슨, 자동노출 확정 후).…"
-  },
-  {
-   "t": "08:52:54",
-   "name": "Glob",
-   "brief": "docs/시험기록/*.jsonl"
-  },
-  {
-   "t": "08:52:57",
-   "name": "Read",
-   "brief": "C:\\Users\\parkg\\Desktop\\AIWorkspace\\tomato-picker\\docs\\시험기록\\arm-load-boundary-2026-09-18.jsonl"
-  },
-  {
-   "t": "08:53:06",
-   "name": "Write",
-   "brief": "C:\\Users\\parkg\\Desktop\\AIWorkspace\\tomato-picker\\docs\\시험기록\\target-check-2026-09-18.jsonl"
-  },
-  {
-   "t": "08:53:11",
-   "name": "Bash",
-   "brief": "git status --short"
-  }
- ],
+ "started": "2026-09-18T17:10:03",
+ "state": "failed",
+ "turns": 1,
+ "cost": 0.0,
+ "last_text": "You've hit your weekly limit · resets Sep 22, 11am (Asia/Seoul)",
+ "tools": [],
  "rate": {
   "status": "allowed_warning",
   "resetsAt": 1790042400,
@@ -88,5 +17,5 @@
   "isUsingOverage": false,
   "surpassedThreshold": 0.75
  },
- "elapsed": 234
+ "elapsed": 6
 }
