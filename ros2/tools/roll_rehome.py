@@ -18,6 +18,8 @@
    (5번은 원래 0..4095다).
 ⚠ 둘 다 하드웨어와 JSON(`~/.cache/huggingface/lerobot/calibration/robots/so_follower/*.json`)을
    **같이** 바꾼다 — 둘이 어긋나면 다음 연결 때 JSON이 하드웨어를 덮어쓴다.
+⚠ wrist_roll 영점이 바뀌면 `~/grip_uv.json`(파지 화면좌표) 및 `~/arm_eye.json`
+   (손-눈 보정 변환)이 무효화된다. 롤을 변경한 후에는 반드시 두 보정을 재확인/재측정하라.
 """
 from __future__ import annotations
 
@@ -110,6 +112,8 @@ def main() -> int:
             print(f"{CART}: zero.{J} = 0.0")
         if abs(after - 2047) > 3:
             print(f"⚠ 중앙이 2047이 아니다({after}) — set_half_turn_homings 결과를 확인할 것")
+        print("⚠ 주의: wrist_roll 영점이 바뀌었으므로 ~/grip_uv.json(파지 픽셀) 및 "
+              "~/arm_eye.json(손-눈 보정)이 무효화될 수 있습니다. 필요 시 재측정하십시오.")
     io.hold_close()
     return 0
 

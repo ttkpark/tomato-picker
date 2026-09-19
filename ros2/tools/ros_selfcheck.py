@@ -334,10 +334,33 @@ def _urdf_fk(joints_deg: dict, geom: kin.ArmGeometry) -> np.ndarray:
 def test_geometry_matches() -> None:
     print("\n[기하] yaml ↔ ArmGeometry")
     cfg = _geometry_yaml()["arm"]
+    mount_cfg = _geometry_yaml().get("mount", {})
     default = kin.ArmGeometry()
     for key in ("z0", "d0", "l1", "l2", "l3"):
         check(f"{key} 일치", abs(float(cfg[key]) - getattr(default, key)) < 1e-9,
               f"yaml {cfg[key]} vs 코드 {getattr(default, key)}")
+
+    # ⚠ 계측 검증 (단위·부호 규약)
+    check("yaml 링크 단위가 mm다 (m 단위 오독 방지: l1/l2/l3/z0 > 10)",
+          cfg["l1"] > 10.0 and cfg["l2"] > 10.0 and cfg["l3"] > 10.0 and cfg["z0"] > 10.0,
+          f"l1={cfg['l1']}, l2={cfg['l2']}, l3={cfg['l3']}, z0={cfg['z0']}")
+    check("d0는 음수다 (2번 lift 축이 1번 pan 축 뒤에 있다)",
+          cfg["d0"] < -10.0,
+          f"d0={cfg['d0']} — 양수면 팔이 앞으로 쏠려 모델링된다")
+    check("mount.z 단위가 mm다 (z > 10)",
+          float(mount_cfg.get("z", 0.0)) > 10.0,
+          f"mount.z={mount_cfg.get('z')}")
+
+    yraw = open(os.path.join(SRC, "tomato_description", "config", "so101_geometry.yaml"),
+                encoding="utf-8").read()
+    check("so101_geometry.yaml 링크 길이에 2026-08-31 실측 주석이 있다",
+          "실측" in yraw and "2026-08-31" in yraw)
+    check("mount.x는 아직 미실측(T12) 상태임이 명시돼 있다",
+          "아직 안 쟀다" in yraw)
+
+    rr_src = open(os.path.join(ROS2, "tools", "roll_rehome.py"), encoding="utf-8").read()
+    check("roll_rehome이 grip_uv 및 arm_eye 무효화 가능성을 경고한다",
+          "grip_uv" in rr_src and "arm_eye" in rr_src)
 
 
 def test_urdf_matches_kinematics() -> None:
