@@ -134,13 +134,8 @@
    "done_when": "세 숫자를 mm로 적어 docs/인수인계-2026-09-04.md §10에 남긴다 — l1·l2·l3와 같은 축-축 벡터 관례로 (집게가 찌르는 방향 APPROACH, 그 왼쪽 LATERAL, 위 UP). 그 값으로 'python ros2/tools/handeye_resolve.py ~/handeye_samples.json --fix-t A L U'가 잔차 15mm 이하를 내는지까지 확인",
    "attempts": 2,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-19 11:34",
+   "updated": "2026-09-19 11:36",
    "notes": [
-    {
-     "t": "2026-09-19 10:42",
-     "by": "tester",
-     "text": "2026-09-19 10:42 tester: 4대 자체검증(45/45, 102/102, 350/351 [러너 실행 중 autopilot CRLF 1건 외 올그린], 93/93) 완료. PC move5_check dry-run 5/5 확인. 젯슨 /state 점검 결과 cmean=92.2, cp99=251, fps=7.43 (채광 기준 cmean>=60 안정 유지). 서비스(click-server/depth-cam/astra-cam active, tomato-voice/controller-drive inactive) 정상 대기 유지."
-    },
     {
      "t": "2026-09-19 10:44",
      "by": "builder",
@@ -195,6 +190,11 @@
      "t": "2026-09-19 11:34",
      "by": "builder",
      "text": "2026-09-19 11:34 builder: 4대 자체검증(45/45, 102/102, 350/351 [러너 구동 중 autopilot CRLF 1건 외 올그린], 93/93) 및 move5 dry-run 5/5 확인. 젯슨(192.168.0.19) /state 점검 결과 cmean=94.9, cp99=254, fps=7.31 (채광 기준 cmean>=60 안정 유지). 서비스(click-server/depth-cam/astra-cam active, tomato-voice/controller-drive inactive) 정상 대기 유지."
+    },
+    {
+     "t": "2026-09-19 11:36",
+     "by": "tester",
+     "text": "2026-09-19 11:36 tester: 4대 자체검증(45/45, 102/102, 350/351 [러너 실행 중 autopilot CRLF 1건 외 올그린], 93/93) 완료. PC move5_check dry-run 5/5 확인. 젯슨 /state 점검 결과 cmean=95.5, cp99=254, fps=7.31 (채광 기준 cmean>=60 안정 유지). 서비스(click-server/depth-cam/astra-cam active, tomato-voice/controller-drive inactive) 정상 대기 유지."
     }
    ]
   },
