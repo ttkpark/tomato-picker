@@ -119,13 +119,16 @@ def snapshot():
             hb_age = (datetime.now() - datetime.fromisoformat(hb["time"])).total_seconds()
         except ValueError:
             pass
+    cfg = jread(os.path.join(HERE, "config.json"), {})
     return {
         "now": datetime.now().strftime("%m-%d %H:%M:%S"),
         "day": day, "cycle": st.get("cycle", 0), "cost_today": st.get("cost_today", 0.0),
         "fails": st.get("fails", 0), "jetson": st.get("jetson_ip"),
         "hb": hb, "hb_age": hb_age, "paused": paused, "stopped": stopped,
         "live": live, "rate": rate, "rates": rates, "attrib": attrib,
-        "du": st.get("du_ema"), "engines": {},
+        "du": st.get("du_ema"), "engines": cfg.get("engines", {}),
+        "last_engine": st.get("last_engine", "claude"),
+        "engine_cooldown": st.get("engine_cooldown", {}),
         "tasks": tasks, "done": done, "total": total,
         "say": pending_say(), "journal": today_journal(),
         "cycles": recent_cycles(),
@@ -213,49 +216,60 @@ async function tick(){
  }
  document.getElementById("live").innerHTML=h;
 
- // 한도 — 창(5시간/7일)마다 한 덩이. 누가 먹었는지까지.
- const NAMES={five_hour:"5시간 창",seven_day:"7일 창",unknown:"창 미상"};
- const rs=d.rates||{}; const keys=Object.keys(rs);
- if(keys.length){
-   let out="", worst=0;
-   for(const k of keys){
-     const r=rs[k]||{}, u=r.utilization; if(u==null) continue;
-     worst=Math.max(worst,u);
-     const col=u>0.95?"var(--bad)":u>0.8?"var(--warn)":"var(--ok)";
-     const hrs=r.resetsAt?((r.resetsAt*1000-Date.now())/3.6e6):null;
-     const a=(d.attrib||{})[k]||{}; const roles=a.roles||{};
-     const mine=Object.values(roles).reduce((x,y)=>x+y,0), other=a.other||0;
-     const seen=mine+other, unseen=Math.max(0,(u-(a.start_u!=null?a.start_u:u))-seen);
-     out+=`<div style="margin-bottom:12px">`
-       +`<div><b>${NAMES[k]||k}</b> <span class="big" style="color:${col}">${(u*100).toFixed(1)}%</span>`
-       +(hrs!=null?` <span class="dim">리셋 ${hrs.toFixed(1)}시간 뒤 (${new Date(r.resetsAt*1000).toLocaleString("ko-KR")})</span>`:"")+`</div>`
-       +`<div class="bar"><i style="width:${(u*100).toFixed(1)}%;background:${col}"></i></div>`;
-     if(seen>0){
-       out+=`<table><tr><td class="dim">자동운전이 먹은 몫</td><td><b>${(mine*100).toFixed(2)}%p</b>`
-         +` <span class="dim">(관측 구간에서)</span></td></tr>`
-         +`<tr><td class="dim">그 밖(내 대화 등)</td><td>${(other*100).toFixed(2)}%p</td></tr>`;
-       const top=Object.entries(roles).sort((x,y)=>y[1]-x[1]).slice(0,6);
-       for(const [name,v] of top){
-         if(v<=0) continue;
-         const [role,eng]=name.split(":");
-         out+=`<tr><td class="dim" style="padding-left:14px">${pill(role)} <span class="mono">${esc(eng)}</span></td>`
-           +`<td class="mono">${(v*100).toFixed(2)}%p</td></tr>`;
-       }
-       if(unseen>0.0001) out+=`<tr><td class="dim">못 본 구간</td><td class="mono">${(unseen*100).toFixed(2)}%p</td></tr>`;
-       out+=`</table>`;
-     } else {
-       out+=`<div class="dim">아직 이 창에서 귀속할 만큼 신호를 못 봤다.</div>`;
-     }
-     out+=`</div>`;
-   }
-   out+=`<div class="dim">사이클당 소모 ${d.du?(d.du*100).toFixed(2)+"%":"측정 중"}`
-     +(d.du?` · 남은 사이클 ≈ ${Math.floor((1-worst)/d.du)}회`:"")+`</div>`;
-   document.getElementById("rate").innerHTML=out;
-   const wc=worst>0.95?"var(--bad)":worst>0.8?"var(--warn)":"var(--ok)";
-   document.getElementById("hrate").innerHTML=`<b style="color:${wc}">한도 ${(worst*100).toFixed(0)}%</b>`;
- }else{
-   document.getElementById("rate").innerHTML='<div class="dim">아직 한도 신호를 못 받았다(사이클 하나가 끝나면 보인다).</div>';
- }
+  // 한도 — 창(5시간/7일)마다 한 덩이. 누가 먹었는지까지.
+  const isAgy = Object.values(d.engines||{}).includes("agy") || d.last_engine === "agy";
+  const NAMES={five_hour:"5시간 창(Claude)",seven_day:"7일 창(Claude)",unknown:"창 미상"};
+  const rs=d.rates||{}; const keys=Object.keys(rs);
+  let rateHtml = "";
+  if (isAgy) {
+    rateHtml += `<div style="padding:8px 10px;margin-bottom:12px;background:#182838;border-left:3px solid var(--ok);border-radius:4px">`
+      + `<b class="ok">현재 엔진: Antigravity (agy) 정상 운용 중</b><br>`
+      + `<span class="dim">아래 수치는 이전에 기록된 Claude API 주간 사용량(9월 22일 리셋)이며, agy 자율 운전에는 영향을 주지 않습니다.</span></div>`;
+  }
+  if(keys.length){
+    let out="", worst=0;
+    for(const k of keys){
+      const r=rs[k]||{}, u=r.utilization; if(u==null) continue;
+      worst=Math.max(worst,u);
+      const col=u>0.95?"var(--bad)":u>0.8?"var(--warn)":"var(--ok)";
+      const hrs=r.resetsAt?((r.resetsAt*1000-Date.now())/3.6e6):null;
+      const a=(d.attrib||{})[k]||{}; const roles=a.roles||{};
+      const mine=Object.values(roles).reduce((x,y)=>x+y,0), other=a.other||0;
+      const seen=mine+other, unseen=Math.max(0,(u-(a.start_u!=null?a.start_u:u))-seen);
+      out+=`<div style="margin-bottom:12px">`
+        +`<div><b>${NAMES[k]||k}</b> <span class="big" style="color:${col}">${(u*100).toFixed(1)}%</span>`
+        +(hrs!=null?` <span class="dim">리셋 ${hrs.toFixed(1)}시간 뒤 (${new Date(r.resetsAt*1000).toLocaleString("ko-KR")})</span>`:"")+`</div>`
+        +`<div class="bar"><i style="width:${(u*100).toFixed(1)}%;background:${col}"></i></div>`;
+      if(seen>0){
+        out+=`<table><tr><td class="dim">자동운전이 먹은 몫</td><td><b>${(mine*100).toFixed(2)}%p</b>`
+          +` <span class="dim">(관측 구간에서)</span></td></tr>`
+          +`<tr><td class="dim">그 밖(내 대화 등)</td><td>${(other*100).toFixed(2)}%p</td></tr>`;
+        const top=Object.entries(roles).sort((x,y)=>y[1]-x[1]).slice(0,6);
+        for(const [name,v] of top){
+          if(v<=0) continue;
+          const [role,eng]=name.split(":");
+          out+=`<tr><td class="dim" style="padding-left:14px">${pill(role)} <span class="mono">${esc(eng)}</span></td>`
+            +`<td class="mono">${(v*100).toFixed(2)}%p</td></tr>`;
+        }
+        if(unseen>0.0001) out+=`<tr><td class="dim">못 본 구간</td><td class="mono">${(unseen*100).toFixed(2)}%p</td></tr>`;
+        out+=`</table>`;
+      } else {
+        out+=`<div class="dim">아직 이 창에서 귀속할 만큼 신호를 못 봤다.</div>`;
+      }
+      out+=`</div>`;
+    }
+    out+=`<div class="dim">Claude 사이클당 소모 ${d.du?(d.du*100).toFixed(2)+"%":"측정 중"}`
+      +(d.du?` · 남은 사이클 ≈ ${Math.floor((1-worst)/d.du)}회`:"")+`</div>`;
+    document.getElementById("rate").innerHTML=rateHtml + out;
+    if (isAgy) {
+      document.getElementById("hrate").innerHTML=`<b class="ok">엔진: agy</b> <span class="dim mono">(Claude ${(worst*100).toFixed(0)}%)</span>`;
+    } else {
+      const wc=worst>0.95?"var(--bad)":worst>0.8?"var(--warn)":"var(--ok)";
+      document.getElementById("hrate").innerHTML=`<b style="color:${wc}">한도 ${(worst*100).toFixed(0)}%</b>`;
+    }
+  }else{
+    document.getElementById("rate").innerHTML=rateHtml + '<div class="dim">아직 한도 신호를 못 받았다(사이클 하나가 끝나면 보인다).</div>';
+  }
 
  // 작업판
  document.getElementById("board").innerHTML=
