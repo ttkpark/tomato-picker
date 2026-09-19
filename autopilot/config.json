@@ -50,9 +50,9 @@
   "tester": "agy"
  },
  "agy_models": {
-  "planner": "claude-sonnet-4-6",
-  "metrologist": "claude-sonnet-4-6",
-  "auditor": "claude-sonnet-4-6",
+  "planner": "gemini-3.1-pro-high",
+  "metrologist": "gemini-3.8-flash-high",
+  "auditor": "gemini-3.8-flash-high",
   "builder": "gemini-3.8-flash-low",
   "tester": "gemini-3.8-flash-low"
  },
