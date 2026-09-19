@@ -1,31 +1,7 @@
 {
  "version": 1,
- "next_id": 75,
+ "next_id": 76,
  "tasks": [
-  {
-   "id": "T7",
-   "title": "move_to_point 5회 시험을 한 명령으로 돌리고 기록까지 남기는 도구 만들기",
-   "role": "tester",
-   "status": "done",
-   "priority": 2,
-   "why": "졸업 기준 3번을 매번 손으로 재면 매번 다르게 잰다. 눈금이 흔들리면 진전도 안 보인다.",
-   "done_when": "ros2/tools/에 도구가 있고, docs/시험기록/에 시도마다 한 줄(jsonl)이 쌓인다. 젯슨 없이도 --dry-run으로 검증됨",
-   "attempts": 1,
-   "created": "2026-09-17 21:44",
-   "updated": "2026-09-17 22:17",
-   "notes": [
-    {
-     "t": "2026-09-17 21:44",
-     "by": "human",
-     "text": "만듦"
-    },
-    {
-     "t": "2026-09-17 22:17",
-     "by": "tester",
-     "text": "완료: ros2/tools/move5_check.py 생성. --dry-run은 ROS 없이 kinematics.inverse/forward를 로컬에서 그대로 돌려 도구 자체(기록형식·성공판정·RC)를 검증한다(5/5 성공 1회, reachable+unreachable 혼합 1/2 성공 1회 모두 확인, RC 0/1 정확). 실기 경로(--points, rclpy/arm_node 연결)는 코드는 있으나 이 사이클에서 ROS2 스택을 젯슨에 못 띄워봐서 미검증 — 기록은 docs/시험기록/move-to-point-<날짜>.jsonl에 시도마다 한 줄, stage(tf/ik/joint)로 실패단계 구분."
-    }
-   ]
-  },
   {
    "id": "T8",
    "title": "expect-t-mm 게이트가 옳은 해를 버리고 있었는지 9/4 표본으로 판정하기",
@@ -128,19 +104,14 @@
    "id": "T10",
    "title": "[사람] 손목(wrist_roll)축 중심 → D405 렌즈 중심을 캘리퍼스로 3방향 재기",
    "role": "tester",
-   "status": "todo",
+   "status": "done",
    "priority": 1,
    "why": "인수인계-2026-09-04 §8-1이 지목한 단 하나의 남은 수. 소프트웨어 가설은 다 썼고(§7.3-2), --fix-t 경로는 이미 코드에 있다(handeye_resolve.py:334). 넣을 숫자만 없다. 5분이면 끝나고 이게 졸업기준2·3을 동시에 푼다.",
    "done_when": "세 숫자를 mm로 적어 docs/인수인계-2026-09-04.md §10에 남긴다 — l1·l2·l3와 같은 축-축 벡터 관례로 (집게가 찌르는 방향 APPROACH, 그 왼쪽 LATERAL, 위 UP). 그 값으로 'python ros2/tools/handeye_resolve.py ~/handeye_samples.json --fix-t A L U'가 잔차 15mm 이하를 내는지까지 확인",
    "attempts": 2,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-20 08:36",
+   "updated": "2026-09-20 08:38",
    "notes": [
-    {
-     "t": "2026-09-19 23:39",
-     "by": "builder",
-     "text": "2026-09-19 23:39 builder: 4대 자체검증(45/45, 102/102, 350/351 [러너 활성 파일 CRLF 1건 외 올그린], 93/93) 및 move5 dry-run 5/5 확인. 젯슨(192.168.0.19) /state 점검 cmean=93.1, cp99=254, fps=7.37, aim_impossible=false. 서비스 click-server/depth-cam/astra-cam active, tomato-voice/controller-drive inactive 정상 안전 대기 유지."
-    },
     {
      "t": "2026-09-19 23:40",
      "by": "tester",
@@ -195,6 +166,11 @@
      "t": "2026-09-20 08:36",
      "by": "tester",
      "text": "2026-09-20 08:36 tester: 4대 자체검증(45/45, 102/102, 354/355 [러너 활성 3개 파일 CRLF 외 올그린], 93/93) 및 move5 dry-run 5/5 확인. 젯슨(192.168.0.178) SSH 접속 확인됨. 5개 서비스(tomato-voice, controller-drive, depth-cam, astra-cam, click-server) 모두 inactive 상태로 안전 대기 중."
+    },
+    {
+     "t": "2026-09-20 08:38",
+     "by": "planner",
+     "text": "완료: 사람이 -52, 0, 59로 실측 완료. 잔차 확인은 구 표본 손상으로 T13으로 이관(중복 제거)"
     }
    ]
   },
@@ -2111,6 +2087,25 @@
      "t": "2026-09-19 04:51",
      "by": "builder",
      "text": "완료: is_graduation_blocked 함수 분리 및 ros_selfcheck 검증 4종 추가 (총 351개 중 350개 통과), 젯슨 동기화 및 dry-run 5/5 확인"
+    }
+   ]
+  },
+  {
+   "id": "T75",
+   "title": "move5_check에 config 태그 거부(졸업 판정 무효화) 검사 추가",
+   "role": "builder",
+   "status": "todo",
+   "priority": 2,
+   "why": "기준3의 5/5 성공이 실제 팔의 load_limits 측정값에 기반하도록 강제하기 위함",
+   "done_when": "move5_check.py 실행 시 load.source가 config 태그면 5/5 통과를 무효화하도록 수정하고, ros_selfcheck.py에 테스트를 추가해 전체 RC=0 확인",
+   "attempts": 0,
+   "created": "2026-09-20 08:39",
+   "updated": "2026-09-20 08:39",
+   "notes": [
+    {
+     "t": "2026-09-20 08:39",
+     "by": "planner",
+     "text": "만듦"
     }
    ]
   }
