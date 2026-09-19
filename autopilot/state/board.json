@@ -60,12 +60,12 @@
    "title": "지금 하드웨어로 joint_axis_check를 재수집해 handeye_from_axes를 다시 돌리기",
    "role": "tester",
    "status": "todo",
-   "priority": 2,
+   "priority": 1,
    "why": "손에 든 유일한 독립 해(|t|=119mm)는 젯슨 ~/joint_axes.json 2026-09-01자다 — 브래킷 재접착(09-04)·팔 재교시·wrist_roll 재영점 **전**이라 현재 하드웨어의 값이 아니다. 이걸 갱신해야 --fix-t에 넣을 숫자가 생긴다.",
    "done_when": "젯슨에서 joint_axis_check.py로 새 ~/joint_axes.json을 만들고(tomato-voice 내린 뒤, 끝나면 되돌림), PC에서 handeye_from_axes.py --home=<수집 홈자세>로 풀어 t_tool_cam 3성분·|t|·거리잔차RMS·회전 평균어긋남을 기록. 09-01 값(-98.2,33.5,57.8 / 119mm / 7.8mm / 0.68도)과 나란히 표로 남긴다",
    "attempts": 1,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-18 08:52",
+   "updated": "2026-09-20 00:10",
    "notes": [
     {
      "t": "2026-09-17 21:49",
