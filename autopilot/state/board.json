@@ -134,13 +134,8 @@
    "done_when": "세 숫자를 mm로 적어 docs/인수인계-2026-09-04.md §10에 남긴다 — l1·l2·l3와 같은 축-축 벡터 관례로 (집게가 찌르는 방향 APPROACH, 그 왼쪽 LATERAL, 위 UP). 그 값으로 'python ros2/tools/handeye_resolve.py ~/handeye_samples.json --fix-t A L U'가 잔차 15mm 이하를 내는지까지 확인",
    "attempts": 2,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-20 00:34",
+   "updated": "2026-09-20 08:33",
    "notes": [
-    {
-     "t": "2026-09-19 23:28",
-     "by": "builder",
-     "text": "2026-09-19 23:28 builder: 4대 자체검증(45/45, 102/102, 350/351 [러너 활성 파일 CRLF 1건 외 올그린], 93/93) 및 move5 dry-run 5/5 확인. 젯슨(192.168.0.19) /state 점검 cmean=93.5, cp99=254, fps=7.44, aim_impossible=false. 서비스 click-server/depth-cam/astra-cam active, tomato-voice/controller-drive inactive 정상 안전 대기 유지."
-    },
     {
      "t": "2026-09-19 23:30",
      "by": "tester",
@@ -195,6 +190,11 @@
      "t": "2026-09-20 00:34",
      "by": "tester",
      "text": "2026-09-20 00:34 tester: 4대 자체검증(45/45, 102/102, 350/351 [러너 활성 파일 CRLF 1건 외 올그린], 93/93) 및 move5 dry-run 5/5 확인. 젯슨 네트워크 일시 미도달(타임아웃). 사람 물리 실측(T10/T12) 대기 유지."
+    },
+    {
+     "t": "2026-09-20 08:33",
+     "by": "auditor",
+     "text": "2026-09-20 auditor: 기준2 감사 완료(docs/ros2-이행계획.md §기준2 채점표). 사람 물리 실측은 2026-09-18 §28에서 이미 완료(-52, 0, 59 mm, 원점=TCP 규약 일치). 현재 블로커는 사람 실측 대기가 아니라 T9 마커판 각도 정렬 후 T13 신규 표본 채집임. 테스터는 사람을 기다리지 말고 T9/T13 실기 절차를 수행할 것."
     }
    ]
   },

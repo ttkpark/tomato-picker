@@ -843,6 +843,28 @@ def test_handeye_identifiability() -> None:
           float(np.linalg.norm(mir[2])) > 400.0,
           f"|t|={np.linalg.norm(mir[2]):.0f}mm (정답 113mm)")
 
+    # ── ⑦ solve_fixed_t는 자로 잰 t_x를 정확히 보존하고 회전을 푼다 (T10/T13/기준2) ──
+    # 사람이 자로 잰 t_x(§28: -52, 0, 59 mm)를 상수로 박고 회전만 훑을 때:
+    # (1) t_x가 입력값 그대로 고정되어 출력되는가
+    # (2) 정답 t_x에서 rms가 수렴(<0.5mm)하고 회전행렬이 직교하는가
+    # (3) 틀린 t_x(20mm 오프셋)를 넣으면 잔차가 증가해 잘못된 입력을 걸러내는가
+    S_fix = _synthetic_handeye([-52.0, 0.0, 59.0])
+    fixed_res = hr.solve_fixed_t(S_fix, geom, +1.0, ("mid",), [-52.0, 0.0, 59.0], tries=2000)
+    check("solve_fixed_t가 입력 t_x를 그대로 보존한다",
+          float(np.max(np.abs(fixed_res[2] - np.array([-52.0, 0.0, 59.0])))) < 1e-9,
+          f"t_x: {fixed_res[2]}")
+    check("정답 t_x에서 solve_fixed_t의 rms가 0.5mm 이하로 수렴한다",
+          fixed_res[0] < 0.5, f"rms={fixed_res[0]:.4f}mm")
+    R_fix = fixed_res[1]
+    check("solve_fixed_t가 구한 회전행렬이 정규직교 오른손 회전이다",
+          abs(float(np.linalg.det(R_fix)) - 1.0) < 1e-6
+          and float(np.max(np.abs(R_fix.T @ R_fix - np.eye(3)))) < 1e-6,
+          f"det={np.linalg.det(R_fix):.6f}")
+    wrong_res = hr.solve_fixed_t(S_fix, geom, +1.0, ("mid",), [-72.0, 0.0, 59.0], tries=2000)
+    check("t_x가 20mm 틀리면 solve_fixed_t 잔차가 확실히 증가한다 (거짓 통과 방지)",
+          wrong_res[0] > fixed_res[0] + 1.0,
+          f"정답 {fixed_res[0]:.2f}mm vs 틀림 {wrong_res[0]:.2f}mm")
+
 
 # ----------------------------------------------------------------------
 # ⑨ 특이점 탈출 (arm_extend)
