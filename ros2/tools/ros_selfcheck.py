@@ -559,6 +559,14 @@ def test_board_contract() -> None:
     nan = bc.plan(float("nan"), 0, 0)
     check("NaN 지령은 거절하고 세운다", nan.rejected and nan.payload == "S", nan.reason[:50])
 
+    inf_cmd = bc.plan(float("inf"), 0, 0)
+    check("inf/-inf 지령은 거절하고 세운다 (math.isfinite 가드)",
+          inf_cmd.rejected and inf_cmd.payload == "S", inf_cmd.reason[:50])
+
+    w_tiny = bc.plan(0, 0, math.radians(0.02))
+    check("문턱 미만 각속도(0.02°/s < EPS_MDEGS 500mdeg/s)는 S(정지)로 귀착된다",
+          w_tiny.payload == "S" and w_tiny.duty is None, str(w_tiny.physical))
+
     # 정지마찰: 아주 작은 지령도 문턱을 넘어야 한다 (안 그러면 물리적으로 0이다)
     calib = bc.DutyCalib()
     tiny = bc.plan(0.002, 0, 0, calib=calib)
@@ -570,6 +578,8 @@ def test_board_contract() -> None:
           f"{calib.duty_linear(99999.0)}")
     check("클수록 커진다(단조)",
           calib.duty_linear(50) < calib.duty_linear(150) < calib.duty_linear(400))
+    check("DutyCalib wmax_degs 및 duty_angular가 정지마찰 ks_w를 반영한다",
+          calib.wmax_degs == (255 - 90) / 1.1 and calib.duty_angular(90.0) == 189 and calib.duty_angular(-90.0) == -189)
 
     check("실측 전에는 그렇다고 말한다",
           any("실측이 아니다" in n for n in bc.plan(0.3, 0, 0).notes))
@@ -583,6 +593,9 @@ def test_board_contract() -> None:
     check("cap 파싱", v2.units and v2.calib and v2.vmax_mms == 800, str(v2.board))
     check("cap 못 알아들으면 예외", _raises(lambda: bc.Caps.parse("hb 1234 rx=5")))
     check("모르는 필드는 무시", bc.Caps.parse("cap proto=2 quantum=42").proto == 2)
+    leg = bc.Caps.legacy()
+    check("Caps.legacy()가 uno-moebius 및 units=False/calib=False 계약을 유지한다",
+          leg.proto == 1 and leg.board == "uno-moebius" and not leg.units and not leg.calib)
 
     physical = bc.plan(0.3, 0, 0, caps=v2)
     check("물리 단위 보드는 C를 받는다", physical.payload == "C 300 0 0", physical.payload)
