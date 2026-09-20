@@ -447,6 +447,45 @@ def test_geometry_matches() -> None:
           "default=(407, 350)" in sw_src,
           "실측 기본값 (407, 350) px")
 
+    # ARM_CART_SIGNS 5관절 부호 및 kin.JOINTS 일치 검증
+    from tomato_picker.config import ARM_CART_SIGNS
+    check("config.ARM_CART_SIGNS 5개 관절 부호가 전부 +1이고 kin.JOINTS와 일치한다",
+          set(ARM_CART_SIGNS.keys()) == set(kin.JOINTS) and all(v == 1 for v in ARM_CART_SIGNS.values()),
+          str(ARM_CART_SIGNS))
+
+    # click_server 3D 미리보기 roll 부호 ↔ handeye_collect ROLL_SIGN 일치 검증
+    import handeye_collect as hc
+    check("click_server.CAM_ROLL_SIGN(-1.0)이 handeye_collect.ROLL_SIGN(-1.0)과 일치한다",
+          "var CAM_ROLL_SIGN = -1.0;" in cs_src and abs(hc.ROLL_SIGN - (-1.0)) < 1e-9,
+          f"CAM_ROLL_SIGN=-1.0, hc.ROLL_SIGN={hc.ROLL_SIGN}")
+
+    # arm_calib MOUNT_Z_MM 및 FLOOR_MARGIN_MM 일치 검증
+    sys.path.insert(0, os.path.join(ROS2, "tools"))
+    import arm_calib
+    from tomato_picker.hardware import escape as es
+    check("arm_calib.MOUNT_Z_MM(76.5) 및 FLOOR_MARGIN_MM(10.0)이 escape 및 yaml mount.z와 일치한다",
+          abs(arm_calib.MOUNT_Z_MM - float(mount_cfg["z"])) < 1e-9 and
+          abs(arm_calib.FLOOR_MARGIN_MM - es.FLOOR_MARGIN_MM) < 1e-9 and
+          abs(arm_calib.MOUNT_Z_MM - es.MOUNT_Z_MM) < 1e-9,
+          f"mount.z={arm_calib.MOUNT_Z_MM} margin={arm_calib.FLOOR_MARGIN_MM}")
+
+    # 6대 하드웨어 측정 도구의 MOUNT_Z_MM(76.5) 및 FLOOR_MARGIN_MM(10.0) 하드코딩 일치 검증
+    hw_tools = ["handeye_collect.py", "joint_axis_check.py", "repeat_check.py",
+                "target_sweep.py", "visual_servo.py", "wall_find.py"]
+    hw_tools_ok = all(
+        "MOUNT_Z_MM = 76.5" in open(os.path.join(ROS2, "tools", t), encoding="utf-8").read() and
+        "FLOOR_MARGIN_MM = 10.0" in open(os.path.join(ROS2, "tools", t), encoding="utf-8").read()
+        for t in hw_tools
+    )
+    check("6대 하드웨어 측정 도구(handeye_collect 등)의 MOUNT_Z_MM(76.5) 및 FLOOR_MARGIN(10.0)이 일치한다",
+          hw_tools_ok, f"6개 도구 전수 점검={len(hw_tools)}")
+
+    # 비상 탈출 바닥 z(-66.5mm)와 무대 작업 z 하한(+15.0mm)의 기하학적 계층 분리 검증
+    from tomato_picker.config import ARM_CART_Z_MIN
+    check("비상탈출 바닥(-66.5mm)이 무대 작업 하한 ARM_CART_Z_MIN(+15.0mm)보다 엄격히 아래다 (지면 vs 무대 분리)",
+          es.floor_z() == -66.5 and es.floor_z() < 0.0 < ARM_CART_Z_MIN,
+          f"floor_z={es.floor_z()}mm < 0 < Z_MIN={ARM_CART_Z_MIN}mm")
+
     # tomato_robot.urdf.xacro xacro:arg 기본값 ↔ so101_geometry.yaml 일치 검증
     # launch 없이 xacro를 독립 실행할 때도 동일한 기하 및 관절 한계가 유지되도록 보증
     xacro_path = os.path.join(SRC, "tomato_description", "urdf", "tomato_robot.urdf.xacro")

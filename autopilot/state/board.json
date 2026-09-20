@@ -110,7 +110,7 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-20 20:19",
+   "updated": "2026-09-21 00:17",
    "notes": [
     {
      "t": "2026-09-17 21:49",
@@ -146,6 +146,11 @@
      "t": "2026-09-20 08:50",
      "by": "metrologist",
      "text": "2026-09-20 metrologist: T12 측정 카드 확립 완료(docs/인수인계-2026-09-04.md §35). 원점=base_link(차체 중심 박스, 지면), 끝점=1번 pan축 중심, 축=+x앞/+y좌/+z상/+yaw반시계, 단위=mm, 예상범위=mount.x 40~80mm/mount.y +-10mm/mount.z 70~85mm/yaw +-5deg. ros_selfcheck에 단위·부호·주석 계측 강제 6종 추가 완료. 사람 측정 시 차체 길이 L을 함께 재어 환산식(mount.x = L/2 - d_front) 적용 필요."
+    },
+    {
+     "t": "2026-09-21 00:17",
+     "by": "metrologist",
+     "text": "2026-09-21 metrologist: 지면-마운트 기하(mount.z=76.5mm) 및 차체 바닥 안전 한계(floor_z=-66.5mm) 계측 카드 확립(§45). ARM_CART_SIGNS 5관절(+1), CAM_ROLL_SIGN(-1.0), 6대 도구 기하상수 일치 등 5종 신설로 4대 자체검증 645종(45/102/405/93 All RC=0) 전수 통과 확인. T12 사람 줄자 실측(차체 실측 L 병행, §35) 대기 지속."
     }
    ]
   },
