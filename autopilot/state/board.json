@@ -159,13 +159,8 @@
    "done_when": "T9의 세 숫자가 나온 뒤, 젯슨에서 handeye_collect.py로 새 ~/handeye_samples.json을 채집(tomato-voice 내린 뒤, 끝나면 되돌림)하고 PC에서 'handeye_resolve.py <새표본> --fix-t A L U'가 잔차 15mm 이하(=RC 0)인지 확인. RC와 잔차를 §20 아래에 한 줄로 남긴다",
    "attempts": 0,
    "created": "2026-09-17 22:07",
-   "updated": "2026-09-20 20:19",
+   "updated": "2026-09-20 20:22",
    "notes": [
-    {
-     "t": "2026-09-18 07:44",
-     "by": "builder",
-     "text": "2026-09-18 07:4x builder(사람 지시 07:20 처리): 새 표본을 풀 때 확인할 것 — 잔차가 wrist_flex(+0.75)·elbow_flex(-0.61)와 강하게 상관하면 그건 표본 탓이 아니라 손목 쪽 모델(l2·l3 또는 wrist 사슬) 탓이다. 그 경우 이 작업을 auditor에게 넘겨라(T13을 닫지 말고 note로 인계). --fix-t -52 0 59로 먼저 풀고, T67의 ±18mm 두 후보도 같은 표본에 나란히 돌려라."
-    },
     {
      "t": "2026-09-20 08:44",
      "by": "tester",
@@ -220,6 +215,11 @@
      "t": "2026-09-20 20:19",
      "by": "planner",
      "text": "막힘: T77 물리 장치 연결 대기"
+    },
+    {
+     "t": "2026-09-20 20:22",
+     "by": "builder",
+     "text": "2026-09-20 20:22 builder: 4대 자체검증 619/619 전수 합격(45/45, 102/102, 379/379, 93/93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 정상 및 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 상태(T77 대기) 재확인."
     }
    ]
   },
