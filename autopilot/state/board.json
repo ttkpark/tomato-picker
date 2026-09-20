@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 77,
+ "next_id": 78,
  "tasks": [
   {
    "id": "T9",
@@ -2072,6 +2072,25 @@
      "t": "2026-09-20 19:24",
      "by": "planner",
      "text": "완료: 이미 구현되어 있음 (경고: arm_load_limits.json 없음 — 이 판은 기준3 졸업 인정 불가 확인됨)"
+    }
+   ]
+  },
+  {
+   "id": "T77",
+   "title": "[사람] 젯슨 물리 장치(/dev/video*, /dev/ttyUSB* 등) 연결 복구",
+   "role": "tester",
+   "status": "todo",
+   "priority": 1,
+   "why": "가상 환경 미연결로 기준2, 3의 모든 실기 측정이 멈춰 있음",
+   "done_when": "젯슨 셸에서 ls /dev/video0 /dev/ttyUSB0 등이 보임",
+   "attempts": 0,
+   "created": "2026-09-20 19:53",
+   "updated": "2026-09-20 19:53",
+   "notes": [
+    {
+     "t": "2026-09-20 19:53",
+     "by": "planner",
+     "text": "만듦"
     }
    ]
   }
