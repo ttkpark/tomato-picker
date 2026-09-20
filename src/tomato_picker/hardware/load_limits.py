@@ -35,15 +35,15 @@ class LoadLimits:
 
     §24의 실측과 §30(T62), §31(T68)의 실측으로 확정된 경계다:
     - 수평 사거리 r: pan축에서 잰 수평거리(mm).
-    - 높이 z: base_link 기준 높이 상한(mm). z=440mm까지는 wflex<=0°에서
+    - 높이 z: arm_base(마운트 평면) 기준 높이 상한(mm). z=440mm까지는 wflex<=0°에서
       수렴하지만(T68), z>=456mm는 서보 토크 및 모멘트 암 한계로 처짐이 91~103mm
-      발생하며 실패한다(T57).
+      발생하며 실패한다(T57). ⚠ base_link(지면)가 아니라 arm_base(마운트 평면) 기준이다.
     - 손목 굽힘 wflex: wrist_flex 각도 상한(도). wflex>0°(위로 꺾임)는 모멘트 암을
       비틀어 되먹임 진동 및 발산(오차 48.1mm)을 유발하므로 거절한다(T68).
     """
 
     r_max: float          # pan축에서 잰 수평 사거리 상한(mm)
-    z_max: float = ARM_LOAD_Z_MAX  # base_link 기준 높이 상한(mm)
+    z_max: float = ARM_LOAD_Z_MAX  # arm_base(마운트 평면) 기준 높이 상한(mm)
     wflex_max_deg: float = ARM_LOAD_WFLEX_MAX_DEG  # wrist_flex 각도 상한(도)
     source: str = ""      # 이 숫자가 어디서 왔나 — 기록에 그대로 들어간다
     note: str = ""        # 사람이 읽을 한 줄

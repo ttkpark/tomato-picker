@@ -1877,6 +1877,17 @@ def test_sample_within_limits() -> None:
     check("T68 자세(d) wflex=+20도는 걸러진다 (T73)",
           bool(load_t68.rejects(250.7, 0.0, z=420.1, wflex_deg=20.0)))
 
+    # 계측 검증 (load_limits z_max 기준계 규약)
+    ld_src = open(os.path.join(REPO, "src", "tomato_picker", "hardware", "load_limits.py"),
+                  encoding="utf-8").read()
+    check("load_limits의 z_max 규약이 arm_base 마운트 평면 기준이다 (base_link 오독 방지)",
+          "arm_base(마운트 평면) 기준" in ld_src and "base_link 기준" not in ld_src,
+          "kin.forward() 출력을 직접 검사하므로 arm_base 기준이어야 한다")
+    z_max_reach = geom.z0 + geom.l1 + geom.l2 + geom.l3
+    check("ARM_LOAD_Z_MAX가 마운트 높이 z0(119.5mm)보다 높고 수직 사거리 이내다",
+          geom.z0 < ld.ARM_LOAD_Z_MAX < z_max_reach,
+          f"z0={geom.z0} < z_max={ld.ARM_LOAD_Z_MAX} < reach={z_max_reach}")
+
     # 기록에 남는가 — 남지 않으면 그 0/5가 팔의 0인지 도구의 0인지 못 가린다.
     m5_body = m5_source()
     check("기록 줄에 load_limits가 들어간다",
@@ -2553,6 +2564,15 @@ def test_service_exclusivity() -> None:
     check("운영 정책이 문서에 적혀 있다(어느 쪽이 부팅 자동실행인가)",
           "Conflicts" in policy and "disable tomato-voice" in policy,
           "docs/인수인계-2026-09-03.md §1")
+
+    # T77/배치 검증: docker-compose가 카메라 및 시리얼 통신에 필요한 cgroup/마운트를 선언했는가
+    dc_text = open(os.path.join(REPO, "ros2", "docker", "docker-compose.yml"),
+                   encoding="utf-8").read()
+    check("docker-compose가 video4linux와 USB major 규칙을 허용한다 (T77 장치 연결 요건)",
+          "c 81:* rmw" in dc_text and "c 189:* rmw" in dc_text,
+          "D405 스트림 및 USB 컨트롤 cgroup 권한")
+    check("docker-compose에 /dev/serial 마운트가 포함되어 있다 (팔 포트 식별)",
+          "/dev/serial:/dev/serial:ro" in dc_text)
 
 
 # ----------------------------------------------------------------------
