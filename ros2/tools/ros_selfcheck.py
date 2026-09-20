@@ -1813,10 +1813,10 @@ def test_sample_within_limits() -> None:
           "310" not in m5_source(),
           "경계는 config 또는 ~/arm_load_limits.json에서만 온다")
     check("09-18 실측 경계는 못 든 자리(r=331)를 거절한다",
-          bool(ld.LoadLimits(ARM_LOAD_R_MAX, "테스트").rejects(331.0, 0.0)),
+          bool(ld.LoadLimits(ARM_LOAD_R_MAX, source="테스트").rejects(331.0, 0.0)),
           f"한계 {ARM_LOAD_R_MAX}mm")
     check("그러면서 든 자리(r=308)는 통과시킨다",
-          not ld.LoadLimits(ARM_LOAD_R_MAX, "테스트").rejects(308.0, 0.0))
+          not ld.LoadLimits(ARM_LOAD_R_MAX, source="테스트").rejects(308.0, 0.0))
 
     # 모르면 **모른다고 말한다** — 깨진 파일을 보고 조용히 config로 돌아가면,
     # 넓히려고 쓴 파일이 무시된 줄 모른 채 옛 경계로 시험하게 된다.
@@ -1887,6 +1887,16 @@ def test_sample_within_limits() -> None:
     check("ARM_LOAD_Z_MAX가 마운트 높이 z0(119.5mm)보다 높고 수직 사거리 이내다",
           geom.z0 < ld.ARM_LOAD_Z_MAX < z_max_reach,
           f"z0={geom.z0} < z_max={ld.ARM_LOAD_Z_MAX} < reach={z_max_reach}")
+    check("ARM_LOAD_R_MAX가 가드 최소거리(ARM_CART_R_MIN)보다 크고 최대 수평 사거리(geom.reach_max) 이내다",
+          ARM_CART_R_MIN < ld.ARM_LOAD_R_MAX <= geom.reach_max,
+          f"min={ARM_CART_R_MIN} < r_max={ld.ARM_LOAD_R_MAX} <= reach_max={geom.reach_max}")
+    yaml_wflex = _geometry_yaml()["arm"]["limits_deg"]["wrist_flex"]
+    check("ARM_LOAD_WFLEX_MAX_DEG가 so101_geometry.yaml의 wrist_flex 관절 범위 내에 있다",
+          yaml_wflex[0] <= ld.ARM_LOAD_WFLEX_MAX_DEG <= yaml_wflex[1],
+          f"wflex_range={yaml_wflex} 안 wflex_max={ld.ARM_LOAD_WFLEX_MAX_DEG}")
+    check("LoadLimits가 z_max/r_max 등에 비숫자 주입 시 TypeError를 발생시킨다 (타입 가드)",
+          _raises(lambda: ld.LoadLimits(310.0, "문자열주입")),
+          "위치 인자 오지정으로 z_max에 source 문자열이 주입되는 버그 방어")
 
     # 기록에 남는가 — 남지 않으면 그 0/5가 팔의 0인지 도구의 0인지 못 가린다.
     m5_body = m5_source()
@@ -1906,9 +1916,9 @@ def test_sample_within_limits() -> None:
     check("load가 None이면 is_graduation_blocked는 True (T74)",
           m5.is_graduation_blocked(None, "none") is True)
     check("출처가 config면 is_graduation_blocked는 True (T74)",
-          m5.is_graduation_blocked(ld.LoadLimits(310.0, "config.ARM_LOAD_R_MAX"), "config.ARM_LOAD_R_MAX") is True)
+          m5.is_graduation_blocked(ld.LoadLimits(310.0, source="config.ARM_LOAD_R_MAX"), "config.ARM_LOAD_R_MAX") is True)
     check("출처가 파일(~arm_load_limits.json)이면 is_graduation_blocked는 False (T74)",
-          m5.is_graduation_blocked(ld.LoadLimits(310.0, "/home/server/arm_load_limits.json"), "/home/server/arm_load_limits.json") is False)
+          m5.is_graduation_blocked(ld.LoadLimits(310.0, source="/home/server/arm_load_limits.json"), "/home/server/arm_load_limits.json") is False)
 
     # ⑤b-2 기준3 합격선 강제 (15mm 도달 오차 상한 및 5/5 전회차 성공 강제)
     check("move5_check에 SUCCESS_ERR_MAX_MM(15.0mm) 상수가 정의되어 있다",

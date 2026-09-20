@@ -48,6 +48,14 @@ class LoadLimits:
     source: str = ""      # 이 숫자가 어디서 왔나 — 기록에 그대로 들어간다
     note: str = ""        # 사람이 읽을 한 줄
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.r_max, (int, float)) or isinstance(self.r_max, bool):
+            raise TypeError(f"r_max는 숫자여야 한다 (got {type(self.r_max).__name__}: {self.r_max!r})")
+        if not isinstance(self.z_max, (int, float)) or isinstance(self.z_max, bool):
+            raise TypeError(f"z_max는 숫자여야 한다 (got {type(self.z_max).__name__}: {self.z_max!r})")
+        if not isinstance(self.wflex_max_deg, (int, float)) or isinstance(self.wflex_max_deg, bool):
+            raise TypeError(f"wflex_max_deg는 숫자여야 한다 (got {type(self.wflex_max_deg).__name__}: {self.wflex_max_deg!r})")
+
     def rejects(self, x: float, y: float, z: float | None = None,
                 wflex_deg: float | None = None) -> str:
         """그 자리가 경계 밖이면 이유 한 줄, 안이면 "".
