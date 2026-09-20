@@ -62,15 +62,27 @@ def main() -> int:
     print(f"\n지금 정규화값: " + " ".join(f"{j.split('_')[0]}={norms.get(j, 0.0):7.2f}"
                                       for j in kin.JOINTS))
 
+    spans = io.spans_deg()
+
+    # ⚠ **실측 눈금이 보정표를 이긴다.** 2026-09-01: `wrist_roll`은 우리가
+    #   계산한 각도의 0.56배만 실제로 돌았다(관절축 측정 잔차 24.8mm → 2.6mm,
+    #   화면회전 실측 0.549와도 일치). 손목 굴림에 감속이 들어 있다는 뜻이다.
+    #   보정표의 틱→도 환산(360/4096)은 그 감속을 모른다. 그래서 `~/arm_cartesian.json`
+    #   의 `deg_per_norm`에 실측값을 넣고, 두 계통이 그걸 같이 쓴다.
+    def per_scale(j: str) -> float:
+        override = cfg.deg_per_norm_override(j)
+        if override is not None:
+            return abs(float(override))
+        s = spans.get(j)
+        return abs(float(s)) / 200.0 if s else (1.8 if j == "wrist_roll" else 0.9)
+
     if cfg.has_zero:
         old_zero = cfg.zero()
-        spans = io.spans_deg()
         print("\n옛 영점과의 차이:")
         worst = 0.0
         for j in kin.JOINTS:
             dn = float(norms.get(j, 0.0)) - old_zero[j]
-            per = abs(spans.get(j, 180.0)) / 200.0 if spans.get(j) else 0.9
-            dd = dn * per * cfg.sign(j)
+            dd = dn * per_scale(j) * cfg.sign(j)
             worst = max(worst, abs(dd))
             print(f"  {j:<15}{dn:+8.2f} 정규화 = {dd:+7.2f}°")
         print(f"  가장 큰 틀어짐 {worst:.2f}°")
@@ -95,23 +107,8 @@ def main() -> int:
     # ── 검증: 지금 자세를 새 영점으로 읽으면 교시 자세가 나와야 한다 ──
     print("\n[검증] 지금 자세를 새 영점으로 읽는다")
     zero, ref = cfg.zero(), cfg.ref_deg()
-    spans = io.spans_deg()
 
-    # ⚠ **실측 눈금이 보정표를 이긴다.** 2026-09-01: `wrist_roll`은 우리가
-    #   계산한 각도의 0.56배만 실제로 돌았다(관절축 측정 잔차 24.8mm → 2.6mm,
-    #   화면회전 실측 0.549와도 일치). 손목 굴림에 감속이 들어 있다는 뜻이다.
-    #   보정표의 틱→도 환산(360/4096)은 그 감속을 모른다. 그래서 `~/arm_cartesian.json`
-    #   의 `deg_per_norm`에 실측값을 넣고, 두 계통이 그걸 같이 쓴다.
-    over = cfg._data.get("deg_per_norm") or {}
-
-    def per(j):
-        v = over.get(j)
-        if v:
-            return abs(float(v))
-        s = spans.get(j)
-        return abs(s) / 200.0 if s else (1.8 if j == "wrist_roll" else 0.9)
-
-    degs = {j: ref[j] + cfg.sign(j) * (float(norms.get(j, 0.0)) - zero[j]) * per(j)
+    degs = {j: ref[j] + cfg.sign(j) * (float(norms.get(j, 0.0)) - zero[j]) * per_scale(j)
             for j in kin.JOINTS}
     ok = True
     for j in kin.JOINTS:

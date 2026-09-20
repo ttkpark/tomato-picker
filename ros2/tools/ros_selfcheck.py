@@ -365,9 +365,12 @@ def test_geometry_matches() -> None:
     sz_src = open(os.path.join(ROS2, "tools", "set_zero.py"), encoding="utf-8").read()
     check("set_zero가 grip_uv 및 arm_eye 무효화 가능성을 경고한다",
           "grip_uv" in sz_src and "arm_eye" in sz_src)
-    check("set_zero.py에 미정의 변수 cart 참조가 없다 (cfg._data 정합성)",
-          "cart.get" not in sz_src and "cfg._data" in sz_src,
-          "cfg._data.get('deg_per_norm')으로 런타임 NameError 방지")
+    check("set_zero.py에 미정의 변수 cart 참조가 없다 (FrameConfig 정합성)",
+          "cart.get" not in sz_src and ("cfg._data" in sz_src or "cfg.deg_per_norm_override" in sz_src),
+          "FrameConfig API로 런타임 NameError 방지")
+    check("set_zero.py가 옛 영점 차이와 검증에 동일한 per_scale(deg_per_norm_override)을 사용한다",
+          "def per_scale" in sz_src and "per_scale(j)" in sz_src,
+          "옛 영점 편차 각도 왜곡 방지 및 서보 스케일 통일")
 
     # 교시 자세 및 영점 기구학 규약 검증
     from tomato_picker.config import ARM_CART_ZERO_POSE_DEG
