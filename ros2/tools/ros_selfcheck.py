@@ -362,6 +362,21 @@ def test_geometry_matches() -> None:
     check("roll_rehome이 grip_uv 및 arm_eye 무효화 가능성을 경고한다",
           "grip_uv" in rr_src and "arm_eye" in rr_src)
 
+    sz_src = open(os.path.join(ROS2, "tools", "set_zero.py"), encoding="utf-8").read()
+    check("set_zero가 grip_uv 및 arm_eye 무효화 가능성을 경고한다",
+          "grip_uv" in sz_src and "arm_eye" in sz_src)
+
+    check("so101_geometry.yaml의 base.length에 가정치 및 T12 실측 주의 주석이 있다",
+          "가정치" in yraw and "L" in yraw)
+
+    t_t10 = np.array([-52.0, 0.0, 59.0])
+    norm_t10 = float(np.linalg.norm(t_t10))
+    check("T10 실측 |t|(78.6mm)가 집게 링크 l3(168mm) 기하 상한보다 작다",
+          norm_t10 < float(cfg["l3"]), f"|t|={norm_t10:.2f}mm < l3={cfg['l3']}mm")
+    norm_t10_alt = float(np.linalg.norm(np.array([-52.0, 18.0, 59.0])))
+    check("D405 18mm 창 애매성 후보(|t|=80.7mm)도 물리 허용 범위(60~100mm) 안이다",
+          60.0 <= norm_t10_alt <= 100.0, f"|t|={norm_t10_alt:.2f}mm")
+
 
 def test_urdf_matches_kinematics() -> None:
     print("\n[URDF] xacro 사슬 ↔ kinematics.forward()")
