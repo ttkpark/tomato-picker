@@ -388,6 +388,46 @@ def test_geometry_matches() -> None:
     check("so101_geometry.yaml에 mount.y 및 mount.yaw_deg 가정치 주석이 있다",
           "좌우 대칭 가정치" in yraw and "브래킷 정면 정렬 가정치" in yraw)
 
+    # tomato_robot.urdf.xacro xacro:arg 기본값 ↔ so101_geometry.yaml 일치 검증
+    # launch 없이 xacro를 독립 실행할 때도 동일한 기하 및 관절 한계가 유지되도록 보증
+    xacro_path = os.path.join(SRC, "tomato_description", "urdf", "tomato_robot.urdf.xacro")
+    xtree = ET.parse(xacro_path)
+    xns = {"xacro": "http://www.ros.org/wiki/xacro"}
+    xargs = {elem.get("name"): float(elem.get("default"))
+             for elem in xtree.getroot().findall("xacro:arg", xns)
+             if elem.get("default") is not None}
+
+    base_cfg = _geometry_yaml().get("base", {})
+    lim_cfg = cfg.get("limits_deg", {})
+
+    expected_xargs = {
+        "z0_mm": float(cfg["z0"]), "d0_mm": float(cfg["d0"]),
+        "l1_mm": float(cfg["l1"]), "l2_mm": float(cfg["l2"]), "l3_mm": float(cfg["l3"]),
+        "mount_x_mm": mx, "mount_y_mm": my, "mount_z_mm": mz, "mount_yaw_deg": myaw,
+        "base_length_mm": float(base_cfg.get("length", 0.0)),
+        "base_width_mm": float(base_cfg.get("width", 0.0)),
+        "base_height_mm": float(base_cfg.get("height", 0.0)),
+        "wheel_radius_mm": float(base_cfg.get("wheel_radius", 0.0)),
+        "pan_min_deg": float(lim_cfg["shoulder_pan"][0]), "pan_max_deg": float(lim_cfg["shoulder_pan"][1]),
+        "lift_min_deg": float(lim_cfg["shoulder_lift"][0]), "lift_max_deg": float(lim_cfg["shoulder_lift"][1]),
+        "elbow_min_deg": float(lim_cfg["elbow_flex"][0]), "elbow_max_deg": float(lim_cfg["elbow_flex"][1]),
+        "wflex_min_deg": float(lim_cfg["wrist_flex"][0]), "wflex_max_deg": float(lim_cfg["wrist_flex"][1]),
+        "wroll_min_deg": float(lim_cfg["wrist_roll"][0]), "wroll_max_deg": float(lim_cfg["wrist_roll"][1]),
+        "grip_min_deg": float(lim_cfg["gripper"][0]), "grip_max_deg": float(lim_cfg["gripper"][1]),
+    }
+
+    xarg_diffs = [f"{k}: xacro={xargs.get(k)} vs yaml={v}"
+                  for k, v in expected_xargs.items()
+                  if k not in xargs or abs(xargs[k] - v) > 1e-6]
+    check("tomato_robot.urdf.xacro 기본 인자 25종이 so101_geometry.yaml과 일치한다",
+          not xarg_diffs, ", ".join(xarg_diffs) if xarg_diffs else "25종 전수 일치")
+
+    all_joints = kin.JOINTS + ("gripper",)
+    lim_keys_ok = all(j in lim_cfg and len(lim_cfg[j]) == 2 and float(lim_cfg[j][0]) < float(lim_cfg[j][1])
+                      for j in all_joints)
+    check("so101_geometry.yaml의 limits_deg가 6개 전 관절의 유효 범위(min < max)를 정의한다",
+          lim_keys_ok, f"관절 {len(lim_cfg)}개 정의됨")
+
 
 def test_urdf_matches_kinematics() -> None:
     print("\n[URDF] xacro 사슬 ↔ kinematics.forward()")

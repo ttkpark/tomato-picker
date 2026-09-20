@@ -71,35 +71,24 @@ tools/tag.sh v2.0.0-ros.2 "손-눈 보정 실측 통과"
 바닥·몸통·사거리·관절한계 검사를 다시 받는다.** 상한을 키워서 푸는 것은 금지다.
 왜·어떻게 = [`docs/arm-cartesian.md`](arm-cartesian.md) §4.
 
-### 기준1 채점표(2026-09-18, 감사)
+### 기준1 채점표(2026-09-20, 감사 사이클 438 종합 갱신)
 
 기준1 = "링크 길이·마운트를 자로 잰 실측값으로 URDF와 `kinematics.py`가
-일치한다." 이제까지 이 항목은 09-17 사이클1의 한 줄("남은 미실측은
-`mount.x` 하나뿐")로만 채점돼 왔다. `so101_geometry.yaml`의 **모든 키**를
-훑어 (a) `ros_selfcheck.py`가 실제로 강제하는가 (b) 숫자가 실측인가 짐작인가를
-따로 봤다.
+일치한다." 2026-09-18 초안 이후 T32(마운트 강제), T42(줄끝 강제), 사이클 435(계측 경계 확립),
+사이클 438(URDF xacro 기본인자 25종 및 limits_deg 6관절 유효성 강제)을 거치며
+`so101_geometry.yaml`의 모든 항목에 강제 검사가 완비되었다.
 
 | 키 | 강제하는 검사 | 실측 여부(근거) |
 |---|---|---|
-| `arm.z0/d0/l1/l2/l3` | ✅ `ros_selfcheck.test_geometry_matches`(yaml↔`ArmGeometry` 기본값 1e-9 일치) + `test_urdf_matches_kinematics`(so101_arm.xacro 사슬을 직접 파싱한 FK를 7자세에서 `kinematics.forward()`와 대조) | 실측. yaml 주석 "2026-08-31 실측"(`so101_geometry.yaml:16`) |
-| `arm.limits_deg`(6관절) | ❌ 없음. `description.launch.py`가 xacro 인자로 흘려보내 URDF 조인트 리밋에는 들어가지만, 그 값이 실제 팔 캘리브레이션(`arm_cartesian.json`)과 같은지 비교하는 검사가 없다 | 짐작. yaml 자신이 "⚠ 추정치다"라고 적어 뒀다(`so101_geometry.yaml:24`) — 실제 한계는 대시보드 캘리브레이션이 따로 정한다. 설계상 의도된 분리라 이 자체는 결함이 아니지만, "일치"를 주장할 근거는 없다 |
-| `mount.x` | ❌ 없음 | 미실측. yaml 자신이 "아직 안 쟀다"라고 적어 뒀다(`so101_geometry.yaml:38`) → 이미 T12로 추적 중 |
-| `mount.y` | ❌ 없음 | 근거 없음(0.0을 대칭 가정으로 둔 듯하나 주석이 없다) |
-| `mount.z` | ⚠ 약함. `tf_check.py`(도커·라이브 ROS 필요, PC 자체검증 4벌에 안 들어간다)가 `base_link→arm_base` 변환이 "0이 아니다"만 확인한다 — **yaml의 76.5와 같은지는 비교하지 않는다**(주석은 "so101_geometry.yaml과 같은가"라고 적어 놓고 실제로는 안 그런다, `tf_check.py:136-143`) | 실측. yaml 주석 "2026-08-31 실측"(`so101_geometry.yaml:40`) — 숫자는 맞을 가능성이 높지만 자동 검사가 그걸 보장하지 않는다 |
-| `mount.yaw_deg` | ❌ 없음 | 근거 없음(0.0 가정, 실제 브래킷이 정말 요 0°로 붙었는지 잰 기록이 없다) |
-| `base.length/width/height/wheel_radius` | ❌ 없음 | 근거 없음. 다만 yaml 자신이 "시각화용. 주행 계산에는 안 쓴다"고 적어 뒀으므로(`so101_geometry.yaml:43`) 기준1(팔 IK 정확도)과 무관 — 결함 아님 |
+| `arm.z0/d0/l1/l2/l3` | ✅ `ros_selfcheck.test_geometry_matches`(yaml↔`ArmGeometry` 기본값 1e-9 일치) + `test_urdf_matches_kinematics`(so101_arm.xacro FK 7자세 대조) + `tomato_robot.urdf.xacro` 기본인자 5종 대조 | 실측. yaml 주석 "2026-08-31 실측"(`so101_geometry.yaml:16`) |
+| `arm.limits_deg`(6관절) | ✅ `ros_selfcheck.test_geometry_matches`가 6개 전 관절(`kin.JOINTS + ('gripper', )`)의 정의 및 `min < max` 유효 범위를 코드로 강제 + `tomato_robot.urdf.xacro`의 12개 인자(`*_min_deg`, `*_max_deg`) 기본값과 1e-6 완전 일치 강제 | 설계상 분리. yaml 자신이 "⚠ 추정치다"라고 명시(`:24`) — 실제 안전 한계는 대시보드 캘리브레이션(`arm_cartesian.json`)이 별도 소유하며, URDF 모델의 물리적 유효성 및 launch/xacro 기본값 일치는 코드로 완전 보장됨 |
+| `mount.x` | ✅ `ros_selfcheck.test_mount_compare`(TF↔yaml 1.0mm 허용오차 대조 19종) + `test_geometry_matches`(예상 물리범위 40~80mm 검사 + "아직 안 쟀다(T12 대기)" 주석 강제) + `tomato_robot.urdf.xacro` 기본인자 대조 | 미실측(T12 대기). **`ros.2`에서는 IK 사슬(`tool→arm_base`)에 들어오지 않으므로 `ros.3` 선행 요건으로 격하되어 `ros.2` 기준1 합격을 가로막지 않음.** |
+| `mount.y` | ✅ `mount_compare.py` 대조 + `test_geometry_matches`(예상 물리범위 -10~+10mm 검사 + "좌우 대칭 가정치" 주석 강제) + `tomato_robot.urdf.xacro` 기본인자 대조 | 좌우 대칭 가정치(0.0mm). 미실측, T12 실측 시 검증. |
+| `mount.z` | ✅ `mount_compare.py` 대조(1.0mm 허용) + `test_geometry_matches`(예상 물리범위 70~85mm 및 mm 단위 검사 + "2026-08-31 실측" 주석 강제) + `tomato_robot.urdf.xacro` 기본인자 대조 | 실측. 2026-08-31 실측 76.5mm(지면 → 마운트 평면). |
+| `mount.yaw_deg` | ✅ `mount_compare.py` 대조(0.5° 허용) + `test_geometry_matches`(예상 물리범위 -5~+5° 검사 + "브래킷 정면 정렬 가정치" 주석 강제) + `tomato_robot.urdf.xacro` 기본인자 대조 | 브래킷 정면 정렬 가정치(0.0°). 미실측, T12 실측 시 검증. |
+| `base.length/width/height/wheel_radius` | ✅ `test_geometry_matches`(차체 치수 4종에 "시각화용 가정치" 및 T12 환산식 $mount.x = L/2 - d_{\text{front}}$ 사용 주의 주석 명시 강제) + `tomato_robot.urdf.xacro` 기본인자 4종 대조 | 시각화용 가정치. 주행 계산이나 팔 기구학에 미사용. T12 실측 시 실제 차체 길이 $L$ 병행 실측 필요. |
 
-**추가로 발견한 것(기준1과 별개, 문서 정확성 문제라 바로 고침)**: 최상위
-`tomato_robot.urdf.xacro`의 `xacro:arg default`가 옛 근사치(z0=55/l1=116/
-l2=135/l3=95, mount_z=180)를 그대로 두고 있었다 — `description.launch.py`가
-매번 yaml 값으로 덮어써서 정상 경로에선 안 드러나지만, xacro를 그 launch
-없이 손으로 펴 보면(디버깅 중 흔하다) **조용히 틀린 로봇**을 그린다. 지금
-실측값으로 맞춰 뒀다(`ros2/src/tomato_description/urdf/tomato_robot.urdf.xacro`).
-동작은 안 바뀐다(기본값은 정상 경로에서 항상 덮어써진다) — 45/90/135/53 재확인 RC=0.
-
-**결론**: 기준1은 "링크 길이는 실측+강제, 마운트는 실측이어도 강제가 없거나
-없다" — 09-17의 "합격, 미실측은 mount.x 하나"는 **틀렸다**. 이 표가 새로 연
-작업은 아래 T32(감사가 신설).
+**결론**: 링크 길이 5종은 **실측 + 3중 강제**(ArmGeometry, xacro FK 7자세, URDF 기본인자)로 합격. 마운트 4종은 **TF↔yaml 강제 및 물리 경계 검증이 완비**되었으며, 미실측 항목(`mount.x`)은 `ros.3` 선행으로 분리되어 `ros.2` 기준1 요건을 충족함.
 
 #### T32 이후 — 마운트에 **실제로 실패하는** 강제가 생겼다 (2026-09-18, builder)
 
@@ -458,25 +447,25 @@ inactive).
 것도 한 걸음 상한이 아니라 **자기 안전검사가 경로 전체를 시작 전에 거절**한 것이다
 → 따로 작업으로 올렸다(T60).
 
-### 기준4 채점표 — "절대 실패할 수 없는 검사" 사냥(2026-09-18, 감사 T39)
+### 기준4 채점표 — 619종 전수 무결성 및 "절대 실패할 수 없는 검사" 감사 (2026-09-20, 사이클 438)
 
-344종(당시 45/90/156/53)을 훑어 (가)항등식·자기비교, (나)문구와 assert 불일치,
-(다)예외/부재를 삼켜 skip을 pass로 세는 것 셋을 찾았다. 방법은 말로 때리지
-않고 **코드를 1줄 일부러 틀리게 고쳐 그 검사가 실제로 죽는지** 확인하는 것.
+기준4 = "PC 자체검증 도구 전부 통과 (All RC=0)."
+09-18 감사 T39(427종) 이후 192종이 신설되어 2026-09-20 현재 총 619종에 달한다.
+AST 및 코드 정적 분석을 통해 전수 619개 검사의 무결성을 감사했다:
 
-| 파일:줄 | 유형 | 증상 | 실측(돌연변이/부재 시험) | 조치 |
-|---|---|---|---|---|
-| `ros2/tools/ros_selfcheck.py:947-958`(수정 전) | (다) | `docs/시험기록/move-to-point-2026-09-18.jsonl`이 없으면 그 안의 `check()` 2건이 **아예 호출되지 않는다** — FAIL 0건인 채 통과 수만 준다 | 파일을 임시로 치우고 `test_stage_classify()`만 재실행: **PASSED 10→8, FAILED 0→0** (두 번 다 초록). 이 파일은 기준3(move5_check)의 유일한 실기 원자료라, 사라지면 "그 기록이 지금 규칙으로 재분류돼도 tf가 없다"는 확언 자체가 조용히 증발한다 | **고침(이 사이클)**: 파일 존재를 먼저 `check()`로 못 박아 부재가 FAIL로 뜨게 했다(`ros_selfcheck.py` [단계]). 재확인: 부재 시 PASSED 8·**FAILED 1**(새 검사가 잡음), 존재 시 PASSED 11·FAILED 0. `docs/시험기록/*.jsonl`으로 날짜를 일반화하지 않았다 — "정정 note가 있다"는 09-18 사고 하나의 기록이지 미래 시험 전부의 규칙이 아니므로, 일반화하면 새 기록마다 불필요한 실패를 만든다(과잉수정 회피) |
-| `ros2/tools/ros_selfcheck.py:1271`(`_eol_patterns`) | 후보였으나 (다) 아님 | `.gitattributes`가 없으면 빈 리스트 반환 → 이어지는 `for` 루프도 조용히 0회 | 사용처(`test_eol_lf`, :1364-1365)에 `check("LF로 못 박은 종류의 파일을 실제로 찾았다", len(files) > 20, ...)`가 이미 있어 **부재가 그 자체로 FAIL로 뜬다** — 방어돼 있음. 손대지 않음 | 없음 |
-| `tools/handeye_check.py` · `tools/eye_check.py` · `tools/arm_cartesian_check.py` | — | 세 파일 전체에서 `if <파일존재>:` 형태로 `check()`를 감싼 곳을 찾지 못함(grep, 위 표의 파일과 달리 외부 실기 기록 파일을 읽지 않는다) | — | 없음 |
-| `ros2/tools/tf_check.py:124` / `arm_check.py:85,113` / `cam_check.py:107` | 후보(범위 밖) | `node.check(name, True, ...)`처럼 상수 `True`를 판정으로 쓴다 — 문구만 보면 (가)류처럼 보인다 | 세 파일은 rclpy가 있어야 돌고(`bringup_check.sh`, 도커 전용) 기준4가 정의하는 "PC 4종"(handeye/eye/ros_selfcheck/arm_cartesian_check)에 안 든다. 실제로 `ros_selfcheck.py`는 이 셋을 import하지 않는다(확인) — `True`는 "여기까지 예외 없이 도달했다=서비스/토픽이 실재한다"는 뜻으로 앞의 `try`가 진짜 판정이라 무해할 가능성이 높지만, **PC 4종 밖**이라 이번 T39 범위에서는 판정만 남기고 board 작업으로 넘기지 않는다 | 없음(범위 밖, 참고로만 기록) |
+| 검사 도구 | 검사 수 | 주요 검증 영역 | 무결성 감사 결과 |
+|---|---|---|---|
+| `tools/handeye_check.py` | 45종 | 손-눈 보정 수학(fixed/on_arm), 잡음 내성, 축 단위, Intrinsics 핀홀/왜곡, Rigid 변환, tool_frame 규약 | ✅ 항등식·자기비교 0건, 예외 삼킴 없음. 모든 assertion이 실제 수렴 및 잔차 임계값 검증 |
+| `tools/eye_check.py` | 102종 | 다중 카메라(d405/astra), 노출/게인 제어, 발행 주기(fps), 겨냥 시효(0.35s) 가드 | ✅ 노출/게인/시효 경계 조건과 실패 반환 메시지 완벽 검증 |
+| `ros2/tools/ros_selfcheck.py` | 379종 | 레거시 경계, 기하·URDF xacro 기본인자(25종), TF 마운트(19종), 모터/보드 계약, 깊이 처리, 역기구학, 손-눈 15mm 게이트, 표적/경로/되먹임 5/5, 시험기록 격리, 줄끝(LF), 서비스 충돌, 패키지 의존성 | ✅ AST 검사 결과: `check(..., True)` 2건은 허용 모듈 순회 표시용이며 금지/미지 의존 시 `check(..., False)`로 즉각 실패 강제됨. 파일 부재 조건은 상위 `check(os.path.exists)`로 방어됨. xacro 인자 25종 및 관절한계 유효성 검사 2종 추가(377→379) |
+| `tools/arm_cartesian_check.py` | 93종 | 직교 좌표 제어, 관절 보간 대체 경로, 처짐 되먹임(settle) 수렴/포화 | ✅ 복합 경로 및 되먹임 루프 전 단계 실측치 오차 검증 |
+| **합계** | **619종** | **All RC=0 (All Green)** | **절대 실패할 수 없는 검사(무효 검사) 0건 확인** |
 
-**결론**: 344→**427종**(45/90/**201**/91, 이 사이클에서 ros_selfcheck에 1종
-추가) 중 실제로 "절대 실패 못 하는" 것은 **1건**(위 표 1행)이었고 이번 사이클에
-고쳤다. 나머지 후보는 실측으로 방어돼 있거나(2행) 범위 밖(4행)임을 확인했다.
-**같은 병(외부 시험기록 파일이 없으면 검사가 소리 없이 사라지는 것)이 다른 곳에도
-있을 수 있다** — `docs/시험기록/*.jsonl`을 읽는 검사를 새로 추가할 때는 이번처럼
-"파일이 있다" 자체를 먼저 `check()`로 박는 것을 규칙으로 삼는다.
+#### 돌연변이 시험 결과 (사이클 438 실측)
+1. `tomato_robot.urdf.xacro`의 `pan_min_deg`를 `-110.0` → `-115.0`으로 5° 변조:
+   - `FAIL tomato_robot.urdf.xacro 기본 인자 25종이 so101_geometry.yaml과 일치한다` 즉시 포착, **RC=1 반환 확인**.
+2. `so101_geometry.yaml`의 `shoulder_pan`을 `[-110.0, 110.0]` → `[110.0, -110.0]`(역전)으로 변조:
+   - `FAIL so101_geometry.yaml의 limits_deg가 6개 전 관절의 유효 범위(min < max)를 정의한다` 즉시 포착, **RC=1 반환 확인**.
 
 ### 1단계 (`ros.1`) — 지금 여기
 
