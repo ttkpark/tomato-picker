@@ -147,6 +147,7 @@ def local_zone() -> str:
 
 
 STANDOFF_MM = 30.0
+SUCCESS_ERR_MAX_MM = 15.0  # 기준3 도달 오차 상한 (15mm)
 # 표적 뽑기가 포기하기까지 던져 보는 횟수. 가동범위가 좁으면 기각이 잦은데,
 # 무한히 도는 것보다 "이 한계로는 n개를 못 뽑는다"고 말하고 멈추는 편이 낫다.
 MAX_SAMPLE_TRIES = 20000
@@ -451,7 +452,8 @@ def run_dry(points: list[dict], geom: kin.ArmGeometry, out_path: str,
             err = math.dist((reached.x, reached.y, reached.z),
                              (target_pose.x, target_pose.y, target_pose.z))
             joints_rounded = {j: round(v, 2) for j, v in joints.items()}
-            row.update(ok=True, stage=None, error_mm=round(err, 3),
+            ok = err <= SUCCESS_ERR_MAX_MM
+            row.update(ok=ok, stage=None if ok else "joint", error_mm=round(err, 3),
                        reached=reached.as_dict(),
                        joints_cmd=joints_rounded,
                        # dry-run엔 실제 서보가 없다 — IK가 곧 "이상적 실행"이므로
@@ -459,7 +461,8 @@ def run_dry(points: list[dict], geom: kin.ArmGeometry, out_path: str,
                        # 못 본다, 파일 머리말에 이미 적혀 있다).
                        joints_actual=joints_rounded,
                        detail=f"IK 풀림: {', '.join(f'{j}={v:.1f}°' for j, v in joints.items())}")
-            ok_count += 1
+            if ok:
+                ok_count += 1
         except kin.Unreachable as exc:
             row.update(ok=False, stage="ik", error_mm=None, reached=None,
                        joints_cmd=None, joints_actual=None, detail=str(exc))
@@ -726,7 +729,7 @@ def run_real(points: list[dict], out_path: str, limits_tag: str = "none",
         target_reached_mm = (res.reached.x * 1000.0, res.reached.y * 1000.0,
                               res.reached.z * 1000.0)
         err = math.dist((pose.x, pose.y, pose.z), target_reached_mm)
-        success = err <= 15.0
+        success = err <= SUCCESS_ERR_MAX_MM
         row.update(ok=success, stage=None if success else "joint",
                    error_mm=round(err, 2), reached=pose.as_dict(),
                    joints_actual=joints_actual, detail=res.detail)

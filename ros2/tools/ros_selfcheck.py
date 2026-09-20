@@ -1835,6 +1835,17 @@ def test_sample_within_limits() -> None:
     check("출처가 파일(~arm_load_limits.json)이면 is_graduation_blocked는 False (T74)",
           m5.is_graduation_blocked(ld.LoadLimits(310.0, "/home/server/arm_load_limits.json"), "/home/server/arm_load_limits.json") is False)
 
+    # ⑤b-2 기준3 합격선 강제 (15mm 도달 오차 상한 및 5/5 전회차 성공 강제)
+    check("move5_check에 SUCCESS_ERR_MAX_MM(15.0mm) 상수가 정의되어 있다",
+          hasattr(m5, "SUCCESS_ERR_MAX_MM") and abs(m5.SUCCESS_ERR_MAX_MM - 15.0) < 1e-9,
+          f"SUCCESS_ERR_MAX_MM={getattr(m5, 'SUCCESS_ERR_MAX_MM', None)}")
+    check("move5_check가 err <= SUCCESS_ERR_MAX_MM으로 합격을 판정한다",
+          "err <= SUCCESS_ERR_MAX_MM" in m5_body,
+          "하드코딩이나 임의 문턱이 아닌 15mm 규격 상수를 써야 한다")
+    check("move5_check는 전회차 성공 시에만 0을 반환한다 (5/5 강제)",
+          "return 0 if ok == len(points) else 1" in m5_body,
+          "4/5 등 부분 성공은 종료코드 1이어야 한다")
+
     # ⑤c **뽑는 기하와 재는 기하가 같은 함수에서 오는가**(T53, 2026-09-18).
     #     T37은 재는 쪽(run_real)만 `_arm_node_geometry()`로 옮겼고 `main()`은
     #     `kin.ArmGeometry()` 기본값으로 표적을 뽑고 있었다. `~/arm_cartesian.json`이
@@ -2171,9 +2182,9 @@ def _eol_patterns() -> tuple[list[str], set[str]]:
     return lf, binary
 
 
-# 검사 대상이 아닌 곳 — 가상환경·빌드산출물, 그리고 3D(바이너리만 있다).
+# 검사 대상이 아닌 곳 — 가상환경·빌드산출물, 3D(바이너리), 그리고 호스트 러너(autopilot, 비배포).
 EOL_SKIP_DIRS = {".git", ".venv", "__pycache__", ".work", "node_modules",
-                 "build", "install", "log", "3D"}
+                 "build", "install", "log", "3D", "autopilot"}
 
 
 def _worktree_files(patterns: list[str]) -> list[str]:
