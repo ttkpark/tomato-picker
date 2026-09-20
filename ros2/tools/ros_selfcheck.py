@@ -81,7 +81,7 @@ from tomato_bridge import board_contract as bc  # noqa: E402
 from tomato_bridge.arm_source import EXTRA_JOINTS, JOINT_NAMES  # noqa: E402
 from tomato_handeye import store  # noqa: E402
 from tomato_perception.fruit3d import (  # noqa: E402
-    MAX_SPREAD_MM, Blob, read_blob,
+    MAX_SPREAD_MM, Blob, core_mask, read_all, read_blob,
 )
 
 FAILED: list[str] = []
@@ -736,6 +736,40 @@ def test_fruit3d() -> None:
     r_noise = read_blob(INTR, noisy, blob, disk)
     check("적당한 잡음은 통과", r_noise.ok and r_noise.spread_mm < MAX_SPREAD_MM,
           f"퍼짐 {r_noise.spread_mm:.1f}mm")
+
+    near = depth.copy()
+    near[disk] = 40.0
+    r_near = read_blob(INTR, near, blob, disk)
+    check("D405 근거리 블라인드(하한 60mm 미만)는 거절한다 (사각지대 원점 오인 방어)",
+          not r_near.ok and "유효 깊이" in r_near.reason,
+          r_near.reason[:60])
+
+    empty_mask = np.zeros((200, 200), dtype=bool)
+    r_empty = read_blob(INTR, depth, blob, empty_mask)
+    check("화소 없는 극소형 덩이(candidates==0)는 안전 거절한다",
+          not r_empty.ok and "화소가 없다" in r_empty.reason,
+          r_empty.reason[:60])
+
+    # 복수 층 잠입 — 중앙값 300mm가 65%라 MAD=0(spread=0)이지만 inlier 비율 < 70%
+    core = core_mask((200, 200), blob) & disk
+    core_idx = np.where(core)
+    split_layer = depth.copy()
+    split_cut = int(len(core_idx[0]) * 0.65)
+    split_layer[core_idx[0][split_cut:], core_idx[1][split_cut:]] = 340.0
+    r_split = read_blob(INTR, split_layer, blob, disk)
+    check("중앙값 편차(MAD) 0이어도 inlier 비율 70% 미만이면 거절 (복수 층 잠입 가드)",
+          not r_split.ok and r_split.spread_mm == 0.0 and "깊이가 한 층이 아니다" in r_split.reason,
+          r_split.reason[:60])
+
+    readings = read_all(INTR, depth, [blob, blob], masks=[disk, empty_mask])
+    check("read_all()이 정상 및 거절 열매를 누락 없이 순서대로 반환한다",
+          len(readings) == 2 and readings[0].ok and not readings[1].ok,
+          f"0={readings[0].ok}, 1={readings[1].ok}")
+
+    expected_r_mm = 30.0 * 300.0 / ((INTR.fx + INTR.fy) / 2.0)
+    check("열매 물리 반지름(radius_mm)이 깊이와 초점거리 비례식과 엄밀 일치한다",
+          abs(r.radius_mm - expected_r_mm) < 1e-9 and r.point_mm == (0.0, 0.0, 300.0),
+          f"calced={r.radius_mm} expected={expected_r_mm}")
 
 
 # ----------------------------------------------------------------------
