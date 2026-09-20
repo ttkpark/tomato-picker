@@ -365,6 +365,31 @@ def test_geometry_matches() -> None:
     sz_src = open(os.path.join(ROS2, "tools", "set_zero.py"), encoding="utf-8").read()
     check("set_zero가 grip_uv 및 arm_eye 무효화 가능성을 경고한다",
           "grip_uv" in sz_src and "arm_eye" in sz_src)
+    check("set_zero.py에 미정의 변수 cart 참조가 없다 (cfg._data 정합성)",
+          "cart.get" not in sz_src and "cfg._data" in sz_src,
+          "cfg._data.get('deg_per_norm')으로 런타임 NameError 방지")
+
+    # 교시 자세 및 영점 기구학 규약 검증
+    from tomato_picker.config import ARM_CART_ZERO_POSE_DEG
+    pose_teach = kin.forward(ARM_CART_ZERO_POSE_DEG, default)
+    z_reach_up = default.z0 + default.l1 + default.l2 + default.l3
+    check("교시 자세(ARM_CART_ZERO_POSE_DEG)의 TCP x가 d0(-31.5mm)와 일치한다",
+          abs(pose_teach.x - default.d0) < 1e-9 and abs(pose_teach.y) < 1e-9,
+          f"pose_teach.x={pose_teach.x:.2f}, d0={default.d0}")
+    check("교시 자세의 TCP z가 수직 최대 도달 높이(542.0mm)와 일치한다",
+          abs(pose_teach.z - z_reach_up) < 1e-9 and abs(pose_teach.pitch - 90.0) < 1e-9,
+          f"pose_teach.z={pose_teach.z:.2f}, reach_up={z_reach_up}")
+
+    pose_zero = kin.forward({j: 0.0 for j in kin.JOINTS}, default)
+    check("관절 0도(수평 정면) 자세의 TCP x가 최대 수평 사거리(391.0mm)와 일치한다",
+          abs(pose_zero.x - default.reach_max) < 1e-9 and abs(pose_zero.z - default.z0) < 1e-9,
+          f"pose_zero.x={pose_zero.x:.2f}, reach_max={default.reach_max}")
+
+    # 실측 프레임 deg_per_norm 전 관절 물리 서보 범위 검증 (0.5 ~ 2.0 deg/norm)
+    dpn = ESCAPE_FRAME_2026_09_18["dpn"]
+    dpn_ok = all(0.5 <= dpn[j] <= 2.0 for j in kin.JOINTS)
+    check("실측 프레임(ESCAPE_FRAME) deg_per_norm 전 관절이 물리 서보 범위(0.5~2.0도/단위) 안이다",
+          dpn_ok, f"dpn={dpn}")
 
     check("so101_geometry.yaml의 base.length에 가정치 및 T12 실측 주의 주석이 있다",
           "가정치" in yraw and "L" in yraw)

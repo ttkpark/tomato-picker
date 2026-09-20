@@ -102,7 +102,7 @@ def main() -> int:
     #   화면회전 실측 0.549와도 일치). 손목 굴림에 감속이 들어 있다는 뜻이다.
     #   보정표의 틱→도 환산(360/4096)은 그 감속을 모른다. 그래서 `~/arm_cartesian.json`
     #   의 `deg_per_norm`에 실측값을 넣고, 두 계통이 그걸 같이 쓴다.
-    over = cart.get("deg_per_norm") or {}
+    over = cfg._data.get("deg_per_norm") or {}
 
     def per(j):
         v = over.get(j)
