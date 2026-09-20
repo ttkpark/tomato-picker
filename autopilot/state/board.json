@@ -2110,12 +2110,17 @@
    "done_when": "젯슨 셸에서 ls /dev/video0 /dev/ttyUSB0 등이 보임",
    "attempts": 0,
    "created": "2026-09-20 19:53",
-   "updated": "2026-09-20 19:53",
+   "updated": "2026-09-20 20:23",
    "notes": [
     {
      "t": "2026-09-20 19:53",
      "by": "planner",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-20 20:23",
+     "by": "tester",
+     "text": "2026-09-20 20:23 tester: 4대 자체검증 619/619 전수 합격(45/45, 102/102, 379/379, 93/93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 정상 응답 및 5대 서비스 inactive 유지 확인. 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 상태 지속 확인."
     }
    ]
   }
