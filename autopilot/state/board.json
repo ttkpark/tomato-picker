@@ -228,7 +228,7 @@
    "done_when": "T9의 세 숫자가 나온 뒤, 젯슨에서 handeye_collect.py로 새 ~/handeye_samples.json을 채집(tomato-voice 내린 뒤, 끝나면 되돌림)하고 PC에서 'handeye_resolve.py <새표본> --fix-t A L U'가 잔차 15mm 이하(=RC 0)인지 확인. RC와 잔차를 §20 아래에 한 줄로 남긴다",
    "attempts": 0,
    "created": "2026-09-17 22:07",
-   "updated": "2026-09-20 08:53",
+   "updated": "2026-09-20 19:22",
    "notes": [
     {
      "t": "2026-09-17 22:07",
@@ -274,6 +274,11 @@
      "t": "2026-09-20 08:53",
      "by": "tester",
      "text": "2026-09-20 08:54 tester: 자체검증 4대 도구 올그린(45/45, 102/102, 360/361, 93/93 - CRLF 1건 예외 유지). move5_check --dry-run 5/5 확인. 젯슨 SSH 정상 및 5대 서비스 inactive 확인. 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 상태 유지되어 T9/T13 실기 수집 대기."
+    },
+    {
+     "t": "2026-09-20 19:22",
+     "by": "tester",
+     "text": "2026-09-20 19:22 tester: 자체검증 4대 도구 600/601 통과(45/45, 102/102, 360/361, 93/93 - 러너 활성 CRLF 1건 예외 유지), move5_check --dry-run 5/5 확인. 젯슨 SSH 정상, 5대 서비스 inactive 안전 대기 확인. 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 상태 유지되어 T9/T13 실기 수집 물리적 대기."
     }
    ]
   },
