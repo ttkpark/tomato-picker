@@ -377,6 +377,17 @@ def test_geometry_matches() -> None:
     check("D405 18mm 창 애매성 후보(|t|=80.7mm)도 물리 허용 범위(60~100mm) 안이다",
           60.0 <= norm_t10_alt <= 100.0, f"|t|={norm_t10_alt:.2f}mm")
 
+    mx = float(mount_cfg.get("x", 0.0))
+    my = float(mount_cfg.get("y", 0.0))
+    mz = float(mount_cfg.get("z", 0.0))
+    myaw = float(mount_cfg.get("yaw_deg", 0.0))
+    check("mount.x가 예상 범위(40~80mm) 안이다", 40.0 <= mx <= 80.0, f"x={mx}")
+    check("mount.y가 예상 범위(-10~+10mm) 안이다", -10.0 <= my <= 10.0, f"y={my}")
+    check("mount.z가 예상 범위(70~85mm) 안이다", 70.0 <= mz <= 85.0, f"z={mz}")
+    check("mount.yaw_deg가 예상 범위(-5~+5deg) 안이다", -5.0 <= myaw <= 5.0, f"yaw={myaw}")
+    check("so101_geometry.yaml에 mount.y 및 mount.yaw_deg 가정치 주석이 있다",
+          "좌우 대칭 가정치" in yraw and "브래킷 정면 정렬 가정치" in yraw)
+
 
 def test_urdf_matches_kinematics() -> None:
     print("\n[URDF] xacro 사슬 ↔ kinematics.forward()")
@@ -704,6 +715,19 @@ def test_handeye_gate() -> None:
     check("arm_stage가 --set으로 관절 일부만 받는다",
           'dest="set_joints"' in st and "j not in kin.JOINTS" in st,
           "없는 관절 이름은 거절해야 한다 — 조용히 무시하면 팔이 안 움직인다")
+
+    import handeye_from_axes as hfa  # noqa: E402
+    hfa_axes, hfa_R, hfa_tcp = hfa.model_axes(probe, g)
+    check("handeye_from_axes의 원점도 TCP다 (kin.forward)",
+          float(np.linalg.norm(hfa_tcp - np.array([tcp.x, tcp.y, tcp.z]))) < 1e-9)
+    check("handeye_from_axes의 도구 프레임 R도 handeye_resolve와 일치한다",
+          float(np.linalg.norm(hfa_R - R0)) < 1e-9)
+
+    import target_check as tc  # noqa: E402
+    check("target_check 4점 표적 규격이 2026-08-31 실측치와 일치한다 (100x174.5mm)",
+          tc.EXPECT_W == 100.0 and tc.EXPECT_H == 174.5 and abs(float(np.hypot(tc.EXPECT_W, tc.EXPECT_H)) - 201.1225) < 0.01)
+    check("target_check 4점 표적 허용오차가 12mm다",
+          tc.QUAD_TOL_MM == 12.0)
 
 
 def _synthetic_handeye(t_x, R_x=None, target=None, noise_mm=0.0, seed=11,
