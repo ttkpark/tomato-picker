@@ -416,6 +416,37 @@ def test_geometry_matches() -> None:
     check("so101_geometry.yaml에 mount.y 및 mount.yaw_deg 가정치 주석이 있다",
           "좌우 대칭 가정치" in yraw and "브래킷 정면 정렬 가정치" in yraw)
 
+    # config.py ARM_GEOM_* 5종과 yaml / ArmGeometry 전수 일치 검증
+    from tomato_picker.config import (
+        ARM_GEOM_Z0, ARM_GEOM_D0, ARM_GEOM_L1, ARM_GEOM_L2, ARM_GEOM_L3,
+    )
+    geom_cfg_matches = (
+        abs(ARM_GEOM_Z0 - float(cfg["z0"])) < 1e-9 and
+        abs(ARM_GEOM_D0 - float(cfg["d0"])) < 1e-9 and
+        abs(ARM_GEOM_L1 - float(cfg["l1"])) < 1e-9 and
+        abs(ARM_GEOM_L2 - float(cfg["l2"])) < 1e-9 and
+        abs(ARM_GEOM_L3 - float(cfg["l3"])) < 1e-9
+    )
+    check("config.py ARM_GEOM_* 5종이 so101_geometry.yaml과 전수 일치한다",
+          geom_cfg_matches,
+          f"z0={ARM_GEOM_Z0}, d0={ARM_GEOM_D0}, l1={ARM_GEOM_L1}, l2={ARM_GEOM_L2}, l3={ARM_GEOM_L3}")
+
+    # so101_geometry.yaml 링크 길이 합산 reach_max(391.0mm) 기하 항등성
+    yaml_reach = float(cfg["d0"]) + float(cfg["l1"]) + float(cfg["l2"]) + float(cfg["l3"])
+    check("so101_geometry.yaml의 최대 수평 사거리(d0+l1+l2+l3)가 391.0mm와 일치한다",
+          abs(yaml_reach - 391.0) < 1e-9, f"reach={yaml_reach}mm")
+
+    # 파지 화면좌표(grip_uv) 기본값 및 검출 영역 검증
+    cs_src = open(os.path.join(ROS2, "tools", "click_server.py"), encoding="utf-8").read()
+    vs_src = open(os.path.join(ROS2, "tools", "visual_servo.py"), encoding="utf-8").read()
+    sw_src = open(os.path.join(ROS2, "tools", "swab_trials.py"), encoding="utf-8").read()
+    check("click_server·visual_servo 파지좌표 기본값 (471, 395)이 검출 유효영역(350..550, 300..450) 안이다",
+          "GRIP_UV = (471, 395)" in cs_src and "TARGET_UV = (471.0, 395.0)" in vs_src,
+          "기본값 (471, 395) px")
+    check("swab_trials.py bite_uv 기본값 (407, 350)이 검출 유효영역(350..550, 300..450) 안이다",
+          "default=(407, 350)" in sw_src,
+          "실측 기본값 (407, 350) px")
+
     # tomato_robot.urdf.xacro xacro:arg 기본값 ↔ so101_geometry.yaml 일치 검증
     # launch 없이 xacro를 독립 실행할 때도 동일한 기하 및 관절 한계가 유지되도록 보증
     xacro_path = os.path.join(SRC, "tomato_description", "urdf", "tomato_robot.urdf.xacro")
