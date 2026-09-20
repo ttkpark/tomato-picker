@@ -1,16 +1,16 @@
 {
  "started": "2026-09-17T21:45:26",
- "cycle": 487,
- "rot_idx": 487,
+ "cycle": 488,
+ "rot_idx": 488,
  "fails": 0,
  "cost_date": "2026-09-21",
  "cost_today": 0.0,
  "jetson_ip": "192.168.0.178",
  "jetson_checked_cycle": 480,
  "last": {
-  "role": "tester",
+  "role": "auditor",
   "ok": true,
-  "at": "2026-09-21T00:20:59"
+  "at": "2026-09-21T00:25:46"
  },
  "rate": {
   "status": "allowed_warning",
