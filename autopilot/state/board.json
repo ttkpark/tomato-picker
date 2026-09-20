@@ -2110,13 +2110,8 @@
    "done_when": "젯슨 셸에서 ls /dev/video0 /dev/ttyUSB0 등이 보임",
    "attempts": 0,
    "created": "2026-09-20 19:53",
-   "updated": "2026-09-20 21:10",
+   "updated": "2026-09-20 21:12",
    "notes": [
-    {
-     "t": "2026-09-20 20:35",
-     "by": "tester",
-     "text": "2026-09-20 20:35 tester: 4대 자체검증 623/623 전수 합격(45, 102, 383, 93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 정상 및 5대 서비스 inactive 유지, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/serial/by-id) 미인식 지속 확인(사람 T77 대기)."
-    },
     {
      "t": "2026-09-20 20:41",
      "by": "auditor",
@@ -2171,6 +2166,11 @@
      "t": "2026-09-20 21:10",
      "by": "builder",
      "text": "2026-09-20 21:11 builder: 4대 자체검증 632/632 전수 합격(45, 102, 392, 93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/serial/by-id) 미인식 지속 확인(사람 T77 대기)."
+    },
+    {
+     "t": "2026-09-20 21:12",
+     "by": "tester",
+     "text": "2026-09-20 21:12 tester: 4대 자체검증 632/632 전수 합격(45, 102, 392, 93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*, /dev/serial/by-id) 미인식 지속 확인(사람 T77 대기)."
     }
    ]
   }
