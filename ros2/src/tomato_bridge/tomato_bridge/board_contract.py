@@ -440,7 +440,7 @@ def _clamp(value: int, limit: int, name: str, unit: str) -> tuple[int, list[str]
 # Telemetry & MobileBase 프로토콜 — 보드계약 §11.1
 # ----------------------------------------------------------------------
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -654,8 +654,89 @@ class SimBase:
         return Telemetry(ms=self._ms, tgt=self._tgt, act=self._act, st=st_val, vin_mv=12600, amp_ma=450)
 
 
+class UnoAdapterBase:
+    """현행 Arduino Uno + 캘리브레이션 테이블 기반 어댑터 베이스 (보드계약 §11.2, §13 단계 1).
+
+    개루프 Uno 모터보드에 캘리브레이션 테이블(DutyCalib)을 결합하여,
+    상위 FSM 및 노드가 요구하는 MobileBase 물리 단위 인터페이스(mm/s, mdeg/s)를
+    제공한다. 또한 진단 및 레거시 화면 호환을 위해 LegacyDutyControl(set_duty)도 구현한다.
+    """
+
+    def __init__(self, motor_link: Any = None, calib: DutyCalib | None = None,
+                 signs: AxisSigns | None = None) -> None:
+        self._link = motor_link
+        self._calib = calib or DutyCalib()
+        self._signs = signs or AxisSigns()
+        self._caps = Caps.legacy()
+        self._tgt = (0, 0, 0)
+        self._last_duty = (0, 0, 0)
+        self._estopped = False
+        self._stopped = False
+
+    def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
+        self._tgt = (vx_mms, vy_mms, w_mdegs)
+        if self._estopped:
+            self.stop()
+            return
+        cmd = plan(vx_mms / 1000.0, vy_mms / 1000.0, math.radians(w_mdegs / 1000.0),
+                   caps=self._caps, calib=self._calib, signs=self._signs, estop=self._estopped)
+        if cmd.rejected:
+            self.stop()
+            return
+        self._stopped = False
+        if cmd.duty is not None:
+            self._last_duty = cmd.duty
+            if self._link is not None:
+                self._link.set_velocity(*cmd.duty)
+
+    def set_duty(self, dx: int, dy: int, dw: int) -> None:
+        """LegacyDutyControl 프로토콜 지원 (선택적 레거시 duty 제어)."""
+        if self._estopped:
+            return
+        self._last_duty = (dx, dy, dw)
+        if self._link is not None:
+            self._link.set_velocity(dx, dy, dw)
+
+    def stop(self) -> None:
+        self._tgt = (0, 0, 0)
+        self._last_duty = (0, 0, 0)
+        self._stopped = True
+        if self._link is not None:
+            self._link.stop()
+
+    def estop(self, on: bool) -> None:
+        self._estopped = on
+        if on:
+            self.stop()
+
+    def caps(self) -> Caps:
+        return self._caps
+
+    def telemetry(self) -> Telemetry:
+        if self._link is not None and hasattr(self._link, "stats"):
+            st = self._link.stats()
+            # Uno 하트비트 st 및 링크 통계에서 Telemetry 합성
+            st_val = 0x01 if self._estopped else 0x08
+            if not self._calib.measured:
+                st_val &= ~0x08  # calib 미실측이면 calib_valid 비트 클리어
+            return Telemetry(
+                ms=st.get("fw_ms", 0),
+                rx=st.get("fw_rx", 0),
+                bad=st.get("fw_bad", 0),
+                i2c=st.get("i2c_err", 0),
+                wdt=st.get("wdt_near", 0),
+                st=st_val,
+                tgt=self._tgt,
+                act=None,  # Uno 개루프는 act 속도 센서 없음
+                vin_mv=None,
+                amp_ma=None,
+            )
+        st_val = 0x01 if self._estopped else (0x08 if self._calib.measured else 0x00)
+        return Telemetry(tgt=self._tgt, act=None, st=st_val)
+
+
 __all__ = ["AxisSigns", "Caps", "Command", "DutyCalib", "Heartbeat", "LegacyDutyControl",
-           "MockBase", "MobileBase", "SimBase", "Telemetry",
+           "MockBase", "MobileBase", "SimBase", "Telemetry", "UnoAdapterBase",
            "checksum", "framed", "plan", "to_physical", "EPS_MMS", "EPS_MDEGS"]
 
 

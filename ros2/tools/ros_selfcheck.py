@@ -855,6 +855,49 @@ def test_board_contract() -> None:
           sim_sat.caps().vmax_mms < 1382 and calib.vmax_mms < 1382 and sim_sat._ks_mms > 0,
           f"sim_vmax={sim_sat.caps().vmax_mms} calib_vmax={calib.vmax_mms:.1f}")
 
+    # ⑩ [보드계약 v2] UnoAdapterBase (Uno 개루프 + DutyCalib 어댑터) 검증 (docs/보드-계약.md §11.2, §13 단계 1)
+    class _DummyMotorLink:
+        def __init__(self) -> None:
+            self.last_cmd = (0, 0, 0)
+            self.stopped = False
+        def set_velocity(self, vx: int = 0, vy: int = 0, w: int = 0) -> None:
+            self.last_cmd = (vx, vy, w)
+            self.stopped = False
+        def stop(self) -> None:
+            self.last_cmd = (0, 0, 0)
+            self.stopped = True
+        def stats(self) -> dict:
+            return {"fw_ms": 15000, "fw_rx": 250, "fw_bad": 0, "i2c_err": 0, "wdt_near": 0}
+
+    dummy_link = _DummyMotorLink()
+    uno_base = bc.UnoAdapterBase(motor_link=dummy_link, calib=calib)
+    check("보드계약 §11.2 UnoAdapterBase가 MobileBase 및 LegacyDutyControl 프로토콜을 모두 만족한다",
+          isinstance(uno_base, bc.MobileBase) and isinstance(uno_base, bc.LegacyDutyControl),
+          "MobileBase + LegacyDutyControl 다중 프로토콜 충족")
+
+    uno_base.set_velocity(300, 0, 0)
+    # 300 mm/s -> duty = Ks(90) + Kv(0.35)*300 = 195
+    check("보드계약 §11.2 UnoAdapterBase가 물리 속도 지령(300mm/s)을 DutyCalib(duty 195)로 올바르게 변환하여 링크에 전달한다",
+          dummy_link.last_cmd == (195, 0, 0) and uno_base._last_duty == (195, 0, 0),
+          f"cmd={dummy_link.last_cmd}")
+
+    uno_base.set_duty(120, -50, 80)
+    check("보드계약 §11.2 UnoAdapterBase가 LegacyDutyControl.set_duty 직통 지령을 지원한다",
+          dummy_link.last_cmd == (120, -50, 80),
+          f"cmd={dummy_link.last_cmd}")
+
+    uno_base.stop()
+    check("보드계약 §11.2 UnoAdapterBase stop() 호출 시 링크 stop()이 수행되고 목표/duty가 0으로 정지된다",
+          dummy_link.stopped and uno_base._last_duty == (0, 0, 0) and uno_base._tgt == (0, 0, 0),
+          f"stopped={dummy_link.stopped} duty={uno_base._last_duty}")
+
+    uno_base.estop(True)
+    uno_base.set_velocity(200, 0, 0)
+    telem_uno = uno_base.telemetry()
+    check("보드계약 §11.2 UnoAdapterBase 비상정지 래치 시 지령이 차단되고 telemetry st에 estop 플래그가 반영된다",
+          dummy_link.last_cmd == (0, 0, 0) and telem_uno.estop_latched and telem_uno.ms == 15000,
+          f"last_cmd={dummy_link.last_cmd} st=0x{telem_uno.st:02X} ms={telem_uno.ms}")
+
 
 
 

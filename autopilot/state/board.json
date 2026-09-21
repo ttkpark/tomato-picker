@@ -110,13 +110,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-21 13:13",
+   "updated": "2026-09-21 13:17",
    "notes": [
-    {
-     "t": "2026-09-18 07:17",
-     "by": "builder",
-     "text": "2026-09-18 07:3x builder(사람 지시 처리): **mount.x의 정의를 못 박는다** — base_link 원점(차체 중심·바닥면, +x 앞)에서 **1번 shoulder_pan 회전축**까지의 앞뒤 거리다. 근거: so101_arm.xacro의 shoulder_pan joint origin이 xyz='0 0 0'이라 arm_base 원점 = pan 축이고, tomato_robot.urdf.xacro:116이 mount_x_mm을 base_link→arm_base 변위로 쓴다. mount.z=76.5는 지면→마운트 평면(이미 실측). **줄자로 재기 쉬운 환산식**: 차체 앞끝에서 pan축까지를 d_front, 차체 전체 길이를 L이라 하면 mount.x = L/2 − d_front. 뒤끝 기준이면 mount.x = d_rear − L/2. ⚠ **L도 같이 재야 한다** — so101_geometry.yaml의 base.length=300은 시각화용 가정치이지 실측이 아니다(그 값을 그대로 쓰면 L/2가 틀려 mount.x가 통째로 틀린다). 여유 있으면 mount.y(좌우, 왼쪽이 +y)와 mount.yaw_deg(브래킷이 정면에서 돌아간 각)도 같이 적어라(감사 T29 요청)."
-    },
     {
      "t": "2026-09-18 07:19",
      "by": "builder",
@@ -171,6 +166,11 @@
      "t": "2026-09-21 13:13",
      "by": "metrologist",
      "text": "2026-09-21 metrologist: SimBase 물리 한계(포화·정지마찰·1차지연) 계측 감사 및 DutyCalib ↔ 물리 속도 변환 검산(docs/인수인계-2026-09-04.md §55). SimBase 축별 속도 상한(vmax=800mm/s, vymax=600mm/s, wmax=180000mdeg/s) 클램프 및 Telemetry 7대 상태 비트(output_saturated 등) 연동 5종 신설로 4대 자체검증 695종(45/102/455/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
+    },
+    {
+     "t": "2026-09-21 13:17",
+     "by": "builder",
+     "text": "2026-09-21 builder: 보드 계약 v2 UnoAdapterBase 어댑터 및 다중 프로토콜 구현(docs/인수인계-2026-09-04.md §56). UnoAdapterBase(MobileBase + LegacyDutyControl 병행 구현, 물리 단위 plan->DutyCalib feedforward duty 변환, stop/estop 차단, Telemetry 합성) 5종 신설로 4대 자체검증 700종(45/102/460/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
     }
    ]
   },
