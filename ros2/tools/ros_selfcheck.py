@@ -681,6 +681,39 @@ def test_board_contract() -> None:
           base_cfg.get("sign_vx") == 1 and base_cfg.get("sign_vy") == 1 and base_cfg.get("sign_w") == 1,
           f"vx={base_cfg.get('sign_vx')} vy={base_cfg.get('sign_vy')} w={base_cfg.get('sign_w')}")
 
+    # ⑤ [감사] 보드 계약 v2 5층 데드맨 안전 시한 크로스 레이어 실물 검증 (docs/보드-계약.md §9)
+    # 1층 & 2층: 펌웨어(mecanum_stable.ino) 하드 1000ms / 소프트 300ms
+    ino_path = os.path.join(REPO, "firmware", "mecanum_stable", "mecanum_stable.ino")
+    ino_text = open(ino_path, encoding="utf-8").read()
+    m_hard = re.search(r"HARD_TIMEOUT\s*=\s*(\d+)", ino_text)
+    m_cmd = re.search(r"CMD_TIMEOUT\s*=\s*(\d+)", ino_text)
+    hard_ms = int(m_hard.group(1)) if m_hard else 0
+    cmd_ms = int(m_cmd.group(1)) if m_cmd else 0
+    check("보드 1층 하드 데드맨(HARD_TIMEOUT=1000ms)이 펌웨어에 선언되어 있다",
+          hard_ms == 1000, f"hard={hard_ms}ms")
+    check("보드 2층 소프트 데드맨(CMD_TIMEOUT=300ms)이 펌웨어에 선언되어 있다",
+          cmd_ms == 300, f"cmd={cmd_ms}ms")
+
+    # 3층: 젯슨 MotorLink 재전송 스레드 (주기 20ms, stale 500ms)
+    from tomato_picker.hardware.motor_link import MotorLink
+    check("젯슨 3층 재전송 주기(SEND_INTERVAL_SEC=0.02s) 및 STALE_SEC(0.5s)가 선언되어 있다",
+          MotorLink.SEND_INTERVAL_SEC == 0.02 and MotorLink.STALE_SEC == 0.5,
+          f"send={MotorLink.SEND_INTERVAL_SEC}s stale={MotorLink.STALE_SEC}s")
+
+    # 4층: ROS 2 cmd_vel_node.py의 데드맨 감시 주기(0.05s) 및 기본 cmd_timeout(0.3s)
+    cmd_node_path = os.path.join(SRC, "tomato_bridge", "tomato_bridge", "cmd_vel_node.py")
+    cmd_node_text = open(cmd_node_path, encoding="utf-8").read()
+    check("ROS 4층 cmd_vel_node가 cmd_timeout 0.3s 기본값 및 0.05s 감시 타이머를 선언한다",
+          'self.declare_parameter("cmd_timeout", 0.3)' in cmd_node_text
+          and "self.create_timer(0.05, self._watch)" in cmd_node_text,
+          "cmd_vel_node 데드맨 감시")
+
+    # 5층: 하드웨어 비상정지 래치 시 거절 및 S 지령
+    cmd_estop_real = bc.plan(0.35, 0.0, 0.0, estop=True)
+    check("5층 비상정지(estop=True) 시 즉시 S 페이로드 반환 및 사유를 명시하여 거절한다",
+          cmd_estop_real.rejected and cmd_estop_real.payload == "S" and "비상정지" in cmd_estop_real.reason,
+          f"payload={cmd_estop_real.payload} reason={cmd_estop_real.reason}")
+
 
 def _raises(fn) -> bool:
     try:
