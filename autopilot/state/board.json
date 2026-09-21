@@ -110,7 +110,7 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-21 12:02",
+   "updated": "2026-09-21 12:33",
    "notes": [
     {
      "t": "2026-09-17 21:49",
@@ -156,6 +156,11 @@
      "t": "2026-09-21 12:02",
      "by": "metrologist",
      "text": "2026-09-21 metrologist: 스탠드오프(standoff_m, standoff_mm)·접근축 기하 변환 및 집게(gripper) 단위 분리 계측 카드 확립(docs/인수인계-2026-09-04.md §47). 3대 구현(eye·move5_check·kinematics) 변위 완전 일치(오차<1e-15mm) 및 왕복 가역성 등 5종 신설로 4대 자체검증 655종(45/102/415/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 실측 L 병행, §35) 대기 지속."
+    },
+    {
+     "t": "2026-09-21 12:33",
+     "by": "metrologist",
+     "text": "2026-09-21 metrologist: 프리셋·캘리브레이션 변환 및 높이 앵커 보간 계측 카드 확립(docs/인수인계-2026-09-04.md §49). remap_presets/convert 항등성·cartesian 가역성·blend 앵커 보간 등 5종 신설로 4대 자체검증 665종(45/102/425/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 실측 L 병행, §35) 대기 지속."
     }
    ]
   },

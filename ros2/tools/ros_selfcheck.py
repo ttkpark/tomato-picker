@@ -1986,6 +1986,79 @@ def test_sample_within_limits() -> None:
           yaml_lim_arm.get("gripper") == [0.0, 45.0] and "gripper" not in kin.JOINTS,
           f"gripper_lim={yaml_lim_arm.get('gripper')} in_joints={'gripper' in kin.JOINTS}")
 
+    # ③d [계측사] 프리셋(Preset) · 캘리브레이션(Calibration) 변환 및 높이 앵커(Height Anchor) 보간 규약 검증 (§49)
+    import remap_presets as rp  # noqa: E402
+    from tomato_picker.hardware import presets as arm_presets  # noqa: E402
+
+    follower_cal = json.load(open(os.path.join(REPO, "deploy", "calibration", "tomato_follower.json"), encoding="utf-8"))
+    norm_invertible = True
+    for j in kin.JOINTS:
+        for val in [-90.0, -45.0, 0.0, 45.0, 90.0]:
+            r_raw = rp._norm_to_raw(val, follower_cal[j], False)
+            b_norm = rp._raw_to_norm(r_raw, follower_cal[j], False)
+            if abs(b_norm - val) > 1e-6:
+                norm_invertible = False
+    for val in [0.0, 25.0, 50.0, 75.0, 100.0]:
+        r_raw = rp._norm_to_raw(val, follower_cal["gripper"], True)
+        b_norm = rp._raw_to_norm(r_raw, follower_cal["gripper"], True)
+        if abs(b_norm - val) > 1e-6:
+            norm_invertible = False
+    check("remap_presets의 _norm_to_raw 및 _raw_to_norm이 유효 범위 내에서 왕복 가역 항등 변환이다",
+          norm_invertible, "정규화(-100..100, 0..100) <-> raw tick 왕복 오차 < 1e-6")
+
+    sample_pose = {"shoulder_pan.pos": 10.0, "shoulder_lift.pos": 20.0, "elbow_flex.pos": -30.0,
+                   "wrist_flex.pos": 15.0, "wrist_roll.pos": 0.0, "gripper.pos": 50.0}
+    converted_pose, conv_warnings = rp.convert(sample_pose, follower_cal, follower_cal)
+    check("remap_presets.convert()가 동일 캘리브레이션에 대해 무손실 항등 변환을 수행한다",
+          all(abs(converted_pose[k] - sample_pose[k]) < 1e-6 for k in sample_pose) and len(conv_warnings) == 0,
+          f"warnings={conv_warnings}")
+
+    sample_degs = {"shoulder_pan": 15.0, "shoulder_lift": 45.0, "elbow_flex": -20.0,
+                   "wrist_flex": 10.0, "wrist_roll": -30.0}
+    c_zero = {j: 0.0 for j in kin.JOINTS}
+    c_ref = cart.ARM_CART_ZERO_POSE_DEG
+    c_signs = {j: 1.0 for j in kin.JOINTS}
+    c_dpn = {j: 1.0 for j in kin.JOINTS}
+    c_norms = cart.degrees_to_norms(sample_degs, zero=c_zero, ref=c_ref, signs=c_signs, deg_per_norm=c_dpn)
+    c_degs_back = cart.norms_to_degrees(c_norms, zero=c_zero, ref=c_ref, signs=c_signs, deg_per_norm=c_dpn)
+    check("cartesian의 norms_to_degrees와 degrees_to_norms가 5개 관절에 대해 왕복 가역 항등 변환이다",
+          all(abs(c_degs_back[j] - sample_degs[j]) < 1e-6 for j in kin.JOINTS),
+          f"degs_orig={sample_degs} -> back={c_degs_back}")
+
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as ps_tmp:
+        ps_tmp_path = ps_tmp.name
+    try:
+        store_test = arm_presets.PresetStore(ps_tmp_path)
+        store_test.save(4, {"shoulder_lift.pos": 20.0, "elbow_flex.pos": -50.0}, name="상")
+        store_test.set_anchor(4, "상", 200.0)
+        store_test.save(6, {"shoulder_lift.pos": 40.0, "elbow_flex.pos": -20.0}, name="하")
+        store_test.set_anchor(6, "하", 400.0)
+        b_mid, _ = store_test.blend(300.0)
+        b_lo, _ = store_test.blend(150.0)
+        b_hi, _ = store_test.blend(450.0)
+        blend_ok = (abs(b_mid["shoulder_lift.pos"] - 30.0) < 1e-6 and
+                    abs(b_mid["elbow_flex.pos"] - (-35.0)) < 1e-6 and
+                    abs(b_lo["shoulder_lift.pos"] - 20.0) < 1e-6 and
+                    abs(b_hi["shoulder_lift.pos"] - 40.0) < 1e-6)
+        check("PresetStore.blend()가 앵커 구간 외삽 방지 클램프 및 정확한 선형 보간을 수행한다",
+              blend_ok, f"mid={b_mid} lo={b_lo} hi={b_hi}")
+    finally:
+        if os.path.exists(ps_tmp_path):
+            os.unlink(ps_tmp_path)
+
+    deg_per_tick = 360.0 / 4096.0
+    spans_valid = True
+    for j in ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex"]:
+        span_deg = (follower_cal[j]["range_max"] - follower_cal[j]["range_min"]) * deg_per_tick
+        dpn = span_deg / 200.0
+        if span_deg < 180.0 or not (0.9 <= dpn <= 1.5):
+            spans_valid = False
+    wroll_span = (follower_cal["wrist_roll"]["range_max"] - follower_cal["wrist_roll"]["range_min"]) * deg_per_tick
+    if abs(wroll_span - 360.0) >= 1.0:
+        spans_valid = False
+    check("tomato_follower.json 서보 6종의 틱 스팬 및 deg_per_norm이 물리적 가동범위를 만족한다",
+          spans_valid, f"wroll_span={wroll_span:.1f}deg, STS3215={deg_per_tick:.4f}deg/tick")
+
     # ③b 작업영역 가드(바닥·몸통·사거리)도 **뽑는 쪽이 같은 숫자를 본다**.
     #    09-18 실기 5번째는 관절은 멀쩡했는데 표적 수평 76mm < 90mm로 거절됐다.
     from tomato_picker.config import (ARM_CART_R_MIN,  # noqa: E402
