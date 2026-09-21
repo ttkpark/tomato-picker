@@ -659,6 +659,28 @@ def test_board_contract() -> None:
     check("세 축이 포화되면 경고한다",
           any("포화" in n for n in big.notes), " | ".join(big.notes)[:80])
 
+    with open(os.path.join(SRC, "tomato_bringup", "config", "stage1.yaml"),
+              encoding="utf-8") as f:
+        stage1_cfg = yaml.safe_load(f)
+    base_cfg = stage1_cfg.get("tomato_base", {}).get("ros__parameters", {})
+
+    check("stage1.yaml의 tomato_base duty 환산 기본값이 DutyCalib과 일치한다",
+          base_cfg.get("duty_ks") == calib.ks
+          and base_cfg.get("duty_ks_w") == calib.ks_w
+          and abs(base_cfg.get("duty_kv", 0) - calib.kv) < 1e-6
+          and abs(base_cfg.get("duty_kv_w", 0) - calib.kv_w) < 1e-6
+          and base_cfg.get("duty_max") == calib.max_duty
+          and base_cfg.get("duty_measured") is False,
+          f"ks={base_cfg.get('duty_ks')} kv={base_cfg.get('duty_kv')} measured={base_cfg.get('duty_measured')}")
+
+    check("stage1.yaml의 tomato_base 데드맨 타임아웃(0.3s)이 보드계약 §9 4층 규약과 일치한다",
+          base_cfg.get("cmd_timeout") == 0.3,
+          f"cmd_timeout={base_cfg.get('cmd_timeout')}")
+
+    check("stage1.yaml의 tomato_base 축부호(sign_vx=1, sign_vy=1, sign_w=1)가 AxisSigns 규약과 일치한다",
+          base_cfg.get("sign_vx") == 1 and base_cfg.get("sign_vy") == 1 and base_cfg.get("sign_w") == 1,
+          f"vx={base_cfg.get('sign_vx')} vy={base_cfg.get('sign_vy')} w={base_cfg.get('sign_w')}")
+
 
 def _raises(fn) -> bool:
     try:
@@ -770,6 +792,50 @@ def test_fruit3d() -> None:
     check("열매 물리 반지름(radius_mm)이 깊이와 초점거리 비례식과 엄밀 일치한다",
           abs(r.radius_mm - expected_r_mm) < 1e-9 and r.point_mm == (0.0, 0.0, 300.0),
           f"calced={r.radius_mm} expected={expected_r_mm}")
+
+    import ast
+    from tomato_picker import config as tp_config
+
+    with open(os.path.join(SRC, "tomato_perception", "tomato_perception", "detect_node.py"),
+              encoding="utf-8") as f:
+        detect_tree = ast.parse(f.read())
+    dn_red, dn_green = None, None
+    for stmt in detect_tree.body:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            if stmt.targets[0].id == "RED_RANGES":
+                dn_red = ast.literal_eval(stmt.value)
+            elif stmt.targets[0].id == "GREEN_RANGE":
+                dn_green = ast.literal_eval(stmt.value)
+
+    with open(os.path.join(SRC, "tomato_bringup", "config", "stage1.yaml"),
+              encoding="utf-8") as f:
+        stage1_cfg = yaml.safe_load(f)
+    det_cfg = stage1_cfg.get("tomato_detect", {}).get("ros__parameters", {})
+    eye_cfg = stage1_cfg.get("tomato_handeye", {}).get("ros__parameters", {})
+
+    expected_red_ranges = [[lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]] for lo, hi in tp_config.RED_HSV_RANGES]
+    expected_green_range = [tp_config.GREEN_HSV_RANGE[0][0], tp_config.GREEN_HSV_RANGE[0][1], tp_config.GREEN_HSV_RANGE[0][2],
+                            tp_config.GREEN_HSV_RANGE[1][0], tp_config.GREEN_HSV_RANGE[1][1], tp_config.GREEN_HSV_RANGE[1][2]]
+    expected_red_flat = [float(v) for pair in tp_config.RED_HSV_RANGES for bound in pair for v in bound]
+    expected_green_flat = [float(v) for bound in tp_config.GREEN_HSV_RANGE for v in bound]
+
+    check("detect_node.py 및 stage1.yaml의 HSV 색상 범위와 min_pixels가 config.py와 일치한다",
+          dn_red == expected_red_ranges
+          and dn_green == expected_green_range
+          and det_cfg.get("red_ranges") == expected_red_flat
+          and det_cfg.get("green_range") == expected_green_flat
+          and det_cfg.get("min_pixels") == tp_config.MIN_FRUIT_AREA_PX,
+          f"min_px={det_cfg.get('min_pixels')} red_matches={det_cfg.get('red_ranges') == expected_red_flat}")
+
+    camera_topics = (
+        "/camera/camera/color/image_raw",
+        "/camera/camera/aligned_depth_to_color/image_raw",
+        "/camera/camera/color/camera_info",
+    )
+    check("stage1.yaml의 tomato_detect/tomato_handeye 3대 카메라 토픽이 stage1.launch.py와 일치한다",
+          (det_cfg.get("color_topic"), det_cfg.get("depth_topic"), det_cfg.get("info_topic")) == camera_topics
+          and (eye_cfg.get("color_topic"), eye_cfg.get("depth_topic"), eye_cfg.get("info_topic")) == camera_topics,
+          f"detect={det_cfg.get('color_topic')} eye={eye_cfg.get('color_topic')}")
 
 
 # ----------------------------------------------------------------------

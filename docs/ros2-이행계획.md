@@ -447,27 +447,31 @@ inactive).
 것도 한 걸음 상한이 아니라 **자기 안전검사가 경로 전체를 시작 전에 거절**한 것이다
 → 따로 작업으로 올렸다(T60).
 
-### 기준4 채점표 — 655종 전수 무결성 및 깊이 거절/스탠드오프/보드계약 검증 감사 (2026-09-21, 사이클 495)
+### 기준4 채점표 — 660종 전수 무결성 및 주행보드/검출 파라미터/카메라 토픽 계약 검증 감사 (2026-09-21, 사이클 498)
 
 기준4 = "PC 자체검증 도구 전부 통과 (All RC=0)."
-09-18 감사 T39(427종) 이후 228종이 신설되어 2026-09-21 현재 총 655종에 달한다.
-AST 및 코드 정적 분석을 통해 전수 655개 검사의 무결성을 감사했다:
+09-18 감사 T39(427종) 이후 233종이 신설되어 2026-09-21 현재 총 660종에 달한다.
+AST 및 코드 정적 분석을 통해 전수 660개 검사의 무결성을 감사했다:
 
 | 검사 도구 | 검사 수 | 주요 검증 영역 | 무결성 감사 결과 |
 |---|---|---|---|
 | `tools/handeye_check.py` | 45종 | 손-눈 보정 수학(fixed/on_arm), 잡음 내성, 축 단위, Intrinsics 핀홀/왜곡, Rigid 변환, tool_frame 규약 | ✅ 항등식·자기비교 0건, 예외 삼킴 없음. 모든 assertion이 실제 수렴 및 잔차 임계값 검증 |
 | `tools/eye_check.py` | 102종 | 다중 카메라(d405/astra), 노출/게인 제어, 발행 주기(fps), 겨냥 시효(0.35s) 가드 | ✅ 노출/게인/시효 경계 조건과 실패 반환 메시지 완벽 검증 |
-| `ros2/tools/ros_selfcheck.py` | 415종 | 레거시 경계, 기하·URDF xacro 기본인자(25종), TF 마운트(19종), 모터/보드 계약(24종), 깊이 처리(13종), 스탠드오프 3대 구현 일치/가역 항등성/단위 환산/물리 안전범위/집게 규약 분리(5종 신설 410→415), 역기구학, 손-눈 15mm 게이트(20종)+식별성(15종), 표적/경로/되먹임 5/5, 시험기록 격리, 줄끝(LF), 서비스 충돌, 패키지 의존성, LoadLimits 마운트평면/타입가드(7종), docker-compose 장치요건(2종), 교시자세 FK/deg_per_norm 한계/set_zero 무결성(6종), config ARM_GEOM 5종 일치/reach_max 항등성/grip_uv 기본값 검출범위, ARM_CART_SIGNS 5관절부호/CAM_ROLL_SIGN/arm_calib MOUNT_Z_MM 및 FLOOR_MARGIN/6대 하드웨어 도구 상수/floor_z 기하분리 | ✅ AST 검사 결과: `check(..., True)` 2건은 허용 모듈 순회 표시용이며 금지/미지 의존 시 `check(..., False)`로 즉각 실패 강제됨. 파일 부재 조건은 상위 `check(os.path.exists)`로 방어됨. standoff/gripper 5종 신설(410→415) |
+| `ros2/tools/ros_selfcheck.py` | 420종 | 레거시 경계, 기하·URDF xacro 기본인자(25종), TF 마운트(19종), 모터/보드 계약(27종: stage1 duty/timeout/signs 일치 3종 신설 24→27), 깊이/검출 처리(15종: fruit3d/stage1 HSV·min_px 일치 및 카메라 3대 토픽 일치 2종 신설 13→15), 스탠드오프 3대 구현 일치/가역 항등성/단위 환산/물리 안전범위/집게 규약 분리(5종), 역기구학, 손-눈 15mm 게이트(20종)+식별성(15종), 표적/경로/되먹임 5/5, 시험기록 격리, 줄끝(LF), 서비스 충돌, 패키지 의존성, LoadLimits 마운트평면/타입가드(7종), docker-compose 장치요건(2종), 교시자세 FK/deg_per_norm 한계/set_zero 무결성(6종), config ARM_GEOM 5종 일치/reach_max 항등성/grip_uv 기본값 검출범위, ARM_CART_SIGNS 5관절부호/CAM_ROLL_SIGN/arm_calib MOUNT_Z_MM 및 FLOOR_MARGIN/6대 하드웨어 도구 상수/floor_z 기하분리 | ✅ AST 검사 결과: `check(..., True)` 2건은 허용 모듈 순회 표시용이며 금지/미지 의존 시 `check(..., False)`로 즉각 실패 강제됨. 파일 부재 조건은 상위 `check(os.path.exists)`로 방어됨. 보드계약 파라미터/검출 HSV/카메라 토픽 5종 신설(415→420) |
 | `tools/arm_cartesian_check.py` | 93종 | 직교 좌표 제어, 관절 보간 대체 경로, 처짐 되먹임(settle) 수렴/포화 | ✅ 복합 경로 및 되먹임 루프 전 단계 실측치 오차 검증 |
-| **합계** | **655종** | **All RC=0 (All Green)** | **절대 실패할 수 없는 검사(무효 검사) 0건 확인** |
+| **합계** | **660종** | **All RC=0 (All Green)** | **절대 실패할 수 없는 검사(무효 검사) 0건 확인** |
 
-#### 돌연변이 및 오류 방어 시험 결과 (사이클 448 실측)
+#### 돌연변이 및 오류 방어 시험 결과 (사이클 448 및 498 실측)
 1. `tomato_robot.urdf.xacro`의 `pan_min_deg`를 `-110.0` → `-115.0`으로 5° 변조:
    - `FAIL tomato_robot.urdf.xacro 기본 인자 25종이 so101_geometry.yaml과 일치한다` 즉시 포착, **RC=1 반환 확인**.
 2. `so101_geometry.yaml`의 `shoulder_pan`을 `[-110.0, 110.0]` → `[110.0, -110.0]`(역전)으로 변조:
    - `FAIL so101_geometry.yaml의 limits_deg가 6개 전 관절의 유효 범위(min < max)를 정의한다` 즉시 포착, **RC=1 반환 확인**.
 3. `LoadLimits(310.0, "테스트")` 위치 인자 오지정 시:
    - `TypeError: z_max는 숫자여야 한다 (got str: '테스트')` 즉시 발생 및 `_raises` 포착, **위치 인자 오지정으로 z_max에 source 문자열이 주입되는 런타임 버그 방어 실측 검증**.
+4. `stage1.yaml`의 `tomato_base.duty_ks`를 `90` → `80`으로 변조 시:
+   - `FAIL stage1.yaml의 tomato_base duty 환산 기본값이 DutyCalib과 일치한다` 즉시 포착, **RC=1 반환 확인**.
+5. `stage1.yaml`의 `tomato_detect.min_pixels`를 `400` → `300`으로 변조 시:
+   - `FAIL detect_node.py 및 stage1.yaml의 HSV 색상 범위와 min_pixels가 config.py와 일치한다` 즉시 포착, **RC=1 반환 확인**.
 
 ### 1단계 (`ros.1`) — 지금 여기
 
@@ -475,11 +479,11 @@ AST 및 코드 정적 분석을 통해 전수 655개 검사의 무결성을 감�
 |---|---|
 | URDF(xacro) + robot_state_publisher | ✅ |
 | `/joint_states` (proxy/direct 두 길) | ✅ |
-| `/cmd_vel` → 보드 (`C` 계약 + `V` 레거시) | ✅ (duty 곡선은 미실측) |
-| D405 → `/fruits` (3D, 못 믿을 깊이는 **거절**) | ✅ |
+| `/cmd_vel` → 보드 (`C` 계약 + `V` 레거시) | ✅ (duty 곡선은 미실측, stage1.yaml 파라미터-DutyCalib 일치 강제) |
+| D405 → `/fruits` (3D, 못 믿을 깊이는 **거절**) | ✅ (detect_node-stage1.yaml-config.py 색상/토픽 일치 강제) |
 | 손-눈 보정 (수집·풀이·static TF·잔차) | ✅ |
 | `/arm/move_to_point` (TF → IK → 이동) | ✅ |
-| ROS 없이 도는 자체검증 | ✅ `ros2/tools/ros_selfcheck.py` (415종, PC에서 — 2026-09-21 감사 재확인. 깊이 거절·스탠드오프·보드계약 가드·영점·기하상수 검사군 완비) |
+| ROS 없이 도는 자체검증 | ✅ `ros2/tools/ros_selfcheck.py` (420종, PC에서 — 2026-09-21 감사 재확인. 깊이 거절·스탠드오프·보드계약 파라미터·영점·기하상수·카메라토픽 검사군 완비) |
 | 손눈보정 수학 자체검증 | ✅ `tools/handeye_check.py` (45종, PC에서) |
 | **젯슨에서 실제 빌드** | ✅ 2026-08-28 — 도커 이미지 3.02GB, `colcon build` 6패키지 1분 12초 |
 | **로봇 위에서 TF 확인** | ✅ `bringup_check.sh` 0~2단 — RSP가 만든 TF가 `kinematics.forward()`와 **0.000mm** 일치 (7자세) |

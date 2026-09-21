@@ -69,10 +69,10 @@ behavior the task requires stay in.
   — 카메라가 본 3D 점을 팔 좌표로 옮기는 강체 변환 하나를 **실측에서 푼다**(자로 재지 않는다).
   numpy만 쓰며 `fixed`(카메라 고정)와 `on_arm`(손목 장착) 두 식이 있다.
   ⚠ **잔차를 보라** — 최소자승은 입력이 쓰레기여도 답을 낸다. 15mm를 넘으면 집게가 헛집는다.
-- **ROS 없이 PC에서 도는 4대 자체검증 (총 655종)** (이 저장소의 규칙: 숫자는 젯슨에 올리기 전에 확인한다)
+- **ROS 없이 PC에서 도는 4대 자체검증 (총 660종)** (이 저장소의 규칙: 숫자는 젯슨에 올리기 전에 확인한다)
   `python tools/handeye_check.py` (보정 수학 45종) ·
   `python tools/eye_check.py` (보정→통합 배선 102종 — 카메라 둘 포함) ·
-  `python ros2/tools/ros_selfcheck.py` (레거시 경계·URDF↔기구학 일치·보드계약·깊이 거절·스탠드오프 등 415종) ·
+  `python ros2/tools/ros_selfcheck.py` (레거시 경계·URDF↔기구학 일치·보드계약·깊이 거절·스탠드오프·토픽일치 등 420종) ·
   `python tools/arm_cartesian_check.py` (직교 좌표 제어·관절 보간 대체·처짐 되먹임 93종).
 
 ## 하드웨어 제어 — **현재 구성 (중요: 옛 문서와 혼동 주의)**
