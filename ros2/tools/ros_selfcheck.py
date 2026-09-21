@@ -972,6 +972,65 @@ def test_board_contract() -> None:
           and not t_u2.estop_latched and dummy_link.last_cmd == (160, 0, 0) and t_u2.tgt == (200, 0, 0),
           f"u1_cmd={cmd1} u2_tgt={t_u2.tgt}")
 
+    # 6. 보드계약 §12 단위 계약: SimBase 폐루프 구현체 3축(vx=350, vy=-200, w=90000 mdeg/s) 지령 정상 상태 도달
+    sim_unit = bc.SimBase()
+    sim_unit.set_velocity(350, -200, 90000)
+    for _ in range(40):
+        sim_unit.step(0.05)
+    t_unit = sim_unit.telemetry()
+    check("보드계약 §12 SimBase가 물리 지령(vx=350, vy=-200, w=90000)을 정상 상태(±1 이내)로 추종한다",
+          abs(t_unit.act[0] - 350) <= 1 and abs(t_unit.act[1] - (-200)) <= 1 and abs(t_unit.act[2] - 90000) <= 1,
+          f"act={t_unit.act}")
+
+    # 7. 보드계약 §12 안전 계약: 지령 단절 시 300ms 후 소프트 데드맨(감속) 진입 및 1000ms 후 하드 데드맨(완전 정지)
+    sim_deadman = bc.SimBase(deadman_enabled=True)
+    sim_deadman.set_velocity(400, 0, 0)
+    sim_deadman.step(0.05)  # 50ms 주행
+    t_dm0 = sim_deadman.telemetry()
+    # 추가 지령 없이 300ms 초과(총 350ms) 시뮬레이션 진행
+    for _ in range(6):
+        sim_deadman.step(0.05)  # +300ms -> 총 350ms 경과
+    t_dm_soft = sim_deadman.telemetry()
+    # 총 1050ms 경과까지 추가 진행
+    for _ in range(14):
+        sim_deadman.step(0.05)  # +700ms -> 총 1050ms 경과
+    t_dm_hard = sim_deadman.telemetry()
+    check("보드계약 §12 SimBase가 지령 단절 300ms 후 소프트 데드맨 감속(st bit1) 및 1000ms 후 하드 데드맨 완전 정지(st bit2)를 수행한다",
+          t_dm0.act[0] > 0 and (t_dm_soft.st & 0x02 != 0) and t_dm_hard.act == (0, 0, 0) and (t_dm_hard.st & 0x04 != 0),
+          f"dm0_act={t_dm0.act} dm_soft_st=0x{t_dm_soft.st:02X} dm_hard_act={t_dm_hard.act} dm_hard_st=0x{t_dm_hard.st:02X}")
+
+    # 8. 보드계약 §12 안전 계약: S(stop) 호출 시 슬루를 무시하고 즉시 0
+    sim_stop = bc.SimBase()
+    sim_stop.set_velocity(500, 300, -60000)
+    for _ in range(10):
+        sim_stop.step(0.05)
+    sim_stop.stop()
+    t_stop = sim_stop.telemetry()
+    check("보드계약 §12 SimBase stop() 호출 시 슬루를 무시하고 act/tgt가 즉시 0으로 소멸한다",
+          t_stop.act == (0, 0, 0) and t_stop.tgt == (0, 0, 0),
+          f"act={t_stop.act} tgt={t_stop.tgt}")
+
+    # 9. 보드계약 §12 물리 모델 계약: 정지마찰 문턱(ks_mms=50, ks_w=15000) 미만 지령은 물리적으로 0 수렴
+    sim_fric = bc.SimBase(ks_mms=50, ks_w_mdegs=15000)
+    sim_fric.set_velocity(40, -30, 10000)
+    for _ in range(10):
+        sim_fric.step(0.05)
+    t_fric = sim_fric.telemetry()
+    check("보드계약 §12 SimBase가 정지마찰 문턱 미만 지령에 대해 물리적으로 0(안 움직임)을 유지한다",
+          t_fric.act == (0, 0, 0),
+          f"fric_act={t_fric.act}")
+
+    # 10. 보드계약 §12 교체 가능성 계약: MockBase, SimBase, UnoAdapterBase가 동일 stop/estop 호출 인터페이스 및 0 수렴 일관성을 보장한다
+    bases: list[bc.MobileBase] = [bc.MockBase(), bc.SimBase(), bc.UnoAdapterBase(motor_link=dummy_link, calib=calib)]
+    stop_results = []
+    for b in bases:
+        b.set_velocity(200, 0, 0)
+        b.stop()
+        stop_results.append(b.telemetry().tgt == (0, 0, 0))
+    check("보드계약 §12 다중 MobileBase 구현체(MockBase, SimBase, UnoAdapterBase)가 일관된 stop/0수렴 계약을 보장한다",
+          all(stop_results),
+          f"stop_results={stop_results}")
+
     # ⑫ [보드계약 v2] cmd_vel_node MobileBase 인터페이스 및 UnoAdapterBase 주입 연동 검증 (docs/보드-계약.md §11.1, §13 단계 1)
     # AST 및 정적 검사: cmd_vel_node가 MobileBase 및 UnoAdapterBase를 import하고 의존 주입 지원
     import ast

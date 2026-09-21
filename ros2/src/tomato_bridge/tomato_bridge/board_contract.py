@@ -585,7 +585,8 @@ class MockBase:
 class SimBase:
     """1차 지연 + 정지마찰 물리 모델을 갖는 시뮬레이터 베이스 (보드계약 §11.2)."""
 
-    def __init__(self, caps: Caps | None = None, ks_mms: int = 50, ks_w_mdegs: int = 15000) -> None:
+    def __init__(self, caps: Caps | None = None, ks_mms: int = 50, ks_w_mdegs: int = 15000,
+                 deadman_enabled: bool = False) -> None:
         self._caps = caps or Caps.parse("cap proto=2 fw=3.0.0 board=sim id=SIM001 "
                                         "units=1 closed_loop=1 calib=1 vmax=800 vymax=600 wmax=180000")
         self._ks_mms = ks_mms
@@ -595,17 +596,26 @@ class SimBase:
         self._estopped = False
         self._saturated = False
         self._ms = 0
+        self._deadman_enabled = deadman_enabled
+        self._last_cmd_ms = 0
+        self._soft_deadman = False
+        self._hard_deadman = False
 
     def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
         if self._estopped:
             self._tgt = (0, 0, 0)
             return
         self._tgt = (vx_mms, vy_mms, w_mdegs)
+        self._last_cmd_ms = self._ms
+        self._soft_deadman = False
+        self._hard_deadman = False
 
     def stop(self) -> None:
         self._tgt = (0, 0, 0)
         self._act = (0, 0, 0)
         self._saturated = False
+        self._soft_deadman = False
+        self._hard_deadman = False
 
     def estop(self, on: bool) -> None:
         self._estopped = on
@@ -613,12 +623,33 @@ class SimBase:
             self.stop()
 
     def step(self, dt_sec: float = 0.05) -> None:
-        """물리 시뮬레이션 한 스텝 진행 (1차 지연 + 정지마찰 문턱 + 물리 상한 클램프)."""
+        """물리 시뮬레이션 한 스텝 진행 (1차 지연 + 정지마찰 문턱 + 물리 상한 클램프 + 데드맨 계층)."""
         self._ms += int(dt_sec * 1000)
         if self._estopped:
             self._act = (0, 0, 0)
             self._saturated = False
             return
+
+        # 데드맨 계층 감시 (보드계약 §9, §12)
+        # deadman_enabled=True일 때, 지령 수신 후 300ms 초과 시 소프트 데드맨(감속), 1000ms 초과 시 하드 데드맨(즉시 0)
+        effective_tgt_tuple = self._tgt
+        if self._deadman_enabled and (self._tgt[0] != 0 or self._tgt[1] != 0 or self._tgt[2] != 0 or self._hard_deadman):
+            elapsed_ms = self._ms - self._last_cmd_ms
+            if elapsed_ms >= 1000 or self._hard_deadman:
+                self._hard_deadman = True
+                self._soft_deadman = False
+                self._act = (0, 0, 0)
+                self._saturated = False
+                return
+            elif elapsed_ms >= 300:
+                self._soft_deadman = True
+                effective_tgt_tuple = (0, 0, 0)
+            else:
+                self._soft_deadman = False
+                self._hard_deadman = False
+        else:
+            self._soft_deadman = False
+            self._hard_deadman = False
 
         def _sim_axis(tgt_val: int, act_val: int, ks_val: int, limit_val: int) -> tuple[int, bool]:
             saturated = False
@@ -627,25 +658,35 @@ class SimBase:
                 effective_tgt = int(math.copysign(limit_val, tgt_val))
                 saturated = True
 
+            if abs(effective_tgt) < ks_val and abs(effective_tgt) == 0:
+                # 감속 정지
+                if abs(act_val) <= 2:
+                    return 0, saturated
+                return int(act_val * 0.7), saturated
+
             if abs(effective_tgt) < ks_val:
                 # 정지마찰 문턱 미만이면 물리적으로 0
                 return int(act_val * 0.5), saturated
 
             # 1차 지연 필터
-            if abs(effective_tgt - act_val) <= 1:
+            diff = effective_tgt - act_val
+            if abs(diff) <= 2:
                 next_act = effective_tgt
             else:
                 alpha = min(1.0, dt_sec / 0.15)
-                next_act = int(round(act_val + alpha * (effective_tgt - act_val)))
+                delta = alpha * diff
+                if abs(delta) < 1.0:
+                    delta = math.copysign(1.0, diff)
+                next_act = int(round(act_val + delta))
 
             if limit_val > 0 and abs(next_act) >= limit_val:
                 next_act = int(math.copysign(limit_val, next_act))
                 saturated = True
             return next_act, saturated
 
-        act_x, sat_x = _sim_axis(self._tgt[0], self._act[0], self._ks_mms, self._caps.vmax_mms)
-        act_y, sat_y = _sim_axis(self._tgt[1], self._act[1], self._ks_mms, self._caps.vymax_mms)
-        act_w, sat_w = _sim_axis(self._tgt[2], self._act[2], self._ks_w, self._caps.wmax_mdegs)
+        act_x, sat_x = _sim_axis(effective_tgt_tuple[0], self._act[0], self._ks_mms, self._caps.vmax_mms)
+        act_y, sat_y = _sim_axis(effective_tgt_tuple[1], self._act[1], self._ks_mms, self._caps.vymax_mms)
+        act_w, sat_w = _sim_axis(effective_tgt_tuple[2], self._act[2], self._ks_w, self._caps.wmax_mdegs)
         self._act = (act_x, act_y, act_w)
         self._saturated = sat_x or sat_y or sat_w
 
@@ -654,6 +695,10 @@ class SimBase:
 
     def telemetry(self) -> Telemetry:
         st_val = 0x01 if self._estopped else 0x00
+        if self._soft_deadman:
+            st_val |= 0x02
+        if self._hard_deadman:
+            st_val |= 0x04
         if self._caps.calib:
             st_val |= 0x08
         if getattr(self, "_saturated", False):
