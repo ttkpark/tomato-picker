@@ -447,19 +447,19 @@ inactive).
 것도 한 걸음 상한이 아니라 **자기 안전검사가 경로 전체를 시작 전에 거절**한 것이다
 → 따로 작업으로 올렸다(T60).
 
-### 기준4 채점표 — 695종 전수 무결성 및 SimBase 물리 한계/포화 감사 (2026-09-21, 사이클 515)
+### 기준4 채점표 — 705종 전수 무결성 및 보드계약 v2 계약테스트/0속도정지 감사 (2026-09-21, 사이클 518)
 
 기준4 = "PC 자체검증 도구 전부 통과 (All RC=0)."
-09-18 감사 T39(427종) 이후 268종이 신설되어 2026-09-21 현재 총 695종에 달한다.
-AST 및 코드 정적 분석을 통해 전수 695개 검사의 무결성을 감사했다:
+09-18 감사 T39(427종) 이후 278종이 신설되어 2026-09-21 현재 총 705종에 달한다.
+AST 및 코드 정적 분석을 통해 전수 705개 검사의 무결성을 감사했다:
 
 | 검사 도구 | 검사 수 | 주요 검증 영역 | 무결성 감사 결과 |
 |---|---|---|---|
 | `tools/handeye_check.py` | 45종 | 손-눈 보정 수학(fixed/on_arm), 잡음 내성, 축 단위, Intrinsics 핀홀/왜곡, Rigid 변환, tool_frame 규약 | ✅ 항등식·자기비교 0건, 예외 삼킴 없음. 모든 assertion이 실제 수렴 및 잔차 임계값 검증 |
 | `tools/eye_check.py` | 102종 | 다중 카메라(d405/astra), 노출/게인 제어, 발행 주기(fps), 겨냥 시효(0.35s) 가드 | ✅ 노출/게인/시효 경계 조건과 실패 반환 메시지 완벽 검증 |
-| `ros2/tools/ros_selfcheck.py` | 455종 | 레거시 경계, 기하·URDF xacro 기본인자(25종), TF 마운트(19종), 모터/보드 계약(47종), 깊이/검출 처리(15종), 스탠드오프 3대 구현 일치/가역 항등성/단위 환산/물리 안전범위/집게 규약 분리(5종), 프리셋·캘리브레이션 raw/norm 가역 항등성/convert 항등 변환/cartesian 각도 가역성/blend 외삽 방지 클램프/서보 틱스팬 물리범위(5종), 보드 계약 v2(MobileBase) 및 5층 데드맨 안전 시한 펌웨어/MotorLink/cmd_vel_node/estop 크로스레이어 실물 검증(10종), cap 확장/hb 상태 비트/속도 벡터 파싱(5종), MobileBase 프로토콜 및 Telemetry 스냅샷(5종), LegacyDutyControl 격리 및 MockBase/SimBase(5종), SimBase 물리 한계(속도상한/포화플래그/정지마찰) 및 DutyCalib 물리검산(5종), 역기구학, 손-눈 15mm 게이트(20종)+식별성(15종), 표적/경로/되먹임 5/5, 시험기록 격리, 줄끝(LF), 서비스 충돌, 패키지 의존성, LoadLimits 마운트평면/타입가드(7종), docker-compose 장치요건(2종), 교시자세 FK/deg_per_norm 한계/set_zero 무결성(6종), config ARM_GEOM 5종 일치/reach_max 항등성/grip_uv 기본값 검출범위, ARM_CART_SIGNS 5관절부호/CAM_ROLL_SIGN/arm_calib MOUNT_Z_MM 및 FLOOR_MARGIN/6대 하드웨어 도구 상수/floor_z 기하분리 | ✅ AST 검사 결과: `check(..., True)` 2건은 허용 모듈 순회 표시용이며 금지/미지 의존 시 `check(..., False)`로 즉각 실패 강제됨. 파일 부재 조건은 상위 `check(os.path.exists)`로 방어됨. SimBase 속도상한 클램프/output_saturated/물리한계 검산 5종 추가(450→455) |
+| `ros2/tools/ros_selfcheck.py` | 465종 | 레거시 경계, 기하·URDF xacro 기본인자(25종), TF 마운트(19종), 모터/보드 계약(57종), 깊이/검출 처리(15종), 스탠드오프 3대 구현 일치/가역 항등성/단위 환산/물리 안전범위/집게 규약 분리(5종), 프리셋·캘리브레이션 raw/norm 가역 항등성/convert 항등 변환/cartesian 각도 가역성/blend 외삽 방지 클램프/서보 틱스팬 물리범위(5종), 보드 계약 v2(MobileBase) 및 5층 데드맨 안전 시한 펌웨어/MotorLink/cmd_vel_node/estop 크로스레이어 실물 검증(10종), cap 확장/hb 상태 비트/속도 벡터 파싱(5종), MobileBase 프로토콜 및 Telemetry 스냅샷(5종), LegacyDutyControl 격리 및 MockBase/SimBase(5종), SimBase 물리 한계(속도상한/포화플래그/정지마찰) 및 DutyCalib 물리검산(5종), UnoAdapterBase 어댑터 및 다중프로토콜(5종), §12 계약테스트 스위트 및 0속도 정지 안전/MockBase estop(5종), 역기구학, 손-눈 15mm 게이트(20종)+식별성(15종), 표적/경로/되먹임 5/5, 시험기록 격리, 줄끝(LF), 서비스 충돌, 패키지 의존성, LoadLimits 마운트평면/타입가드(7종), docker-compose 장치요건(2종), 교시자세 FK/deg_per_norm 한계/set_zero 무결성(6종), config ARM_GEOM 5종 일치/reach_max 항등성/grip_uv 기본값 검출범위, ARM_CART_SIGNS 5관절부호/CAM_ROLL_SIGN/arm_calib MOUNT_Z_MM 및 FLOOR_MARGIN/6대 하드웨어 도구 상수/floor_z 기하분리 | ✅ AST 검사 결과: `check(..., True)` 2건은 허용 모듈 순회 표시용이며 금지/미지 의존 시 `check(..., False)`로 즉각 실패 강제됨. 파일 부재 조건은 상위 `check(os.path.exists)`로 방어됨. UnoAdapterBase 및 §12 계약테스트/0속도정지 10종 추가(455→465) |
 | `tools/arm_cartesian_check.py` | 93종 | 직교 좌표 제어, 관절 보간 대체 경로, 처짐 되먹임(settle) 수렴/포화 | ✅ 복합 경로 및 되먹임 루프 전 단계 실측치 오차 검증 |
-| **합계** | **695종** | **All RC=0 (All Green)** | **절대 실패할 수 없는 검사(무효 검사) 0건 확인** |
+| **합계** | **705종** | **All RC=0 (All Green)** | **절대 실패할 수 없는 검사(무효 검사) 0건 확인** |
 
 
 #### 돌연변이 및 오류 방어 시험 결과 (사이클 448 및 498 실측)
@@ -484,7 +484,7 @@ AST 및 코드 정적 분석을 통해 전수 695개 검사의 무결성을 감�
 | D405 → `/fruits` (3D, 못 믿을 깊이는 **거절**) | ✅ (detect_node-stage1.yaml-config.py 색상/토픽 일치 강제) |
 | 손-눈 보정 (수집·풀이·static TF·잔차) | ✅ |
 | `/arm/move_to_point` (TF → IK → 이동) | ✅ |
-| ROS 없이 도는 자체검증 | ✅ `ros2/tools/ros_selfcheck.py` (435종, PC에서 — 2026-09-21 감사 재확인. 깊이 거절·스탠드오프·보드계약 5층 데드맨·프리셋/캘리브레이션·영점·기하상수·카메라토픽 검사군 완비) |
+| ROS 없이 도는 자체검증 | ✅ `ros2/tools/ros_selfcheck.py` (465종, PC에서 — 2026-09-21 감사 재확인. 깊이 거절·스탠드오프·보드계약 5층 데드맨·계약테스트/0속도정지·프리셋/캘리브레이션·영점·기하상수·카메라토픽 검사군 완비) |
 | 손눈보정 수학 자체검증 | ✅ `tools/handeye_check.py` (45종, PC에서) |
 | **젯슨에서 실제 빌드** | ✅ 2026-08-28 — 도커 이미지 3.02GB, `colcon build` 6패키지 1분 12초 |
 | **로봇 위에서 TF 확인** | ✅ `bringup_check.sh` 0~2단 — RSP가 만든 TF가 `kinematics.forward()`와 **0.000mm** 일치 (7자세) |

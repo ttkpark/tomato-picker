@@ -552,12 +552,14 @@ class MockBase:
 
     def __init__(self, caps: Caps | None = None) -> None:
         self._caps = caps or Caps.legacy()
-        self._telem = Telemetry()
         self._stopped = False
         self._estopped = False
         self._last_cmd = (0, 0, 0)
 
     def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
+        if self._estopped or (vx_mms == 0 and vy_mms == 0 and w_mdegs == 0):
+            self.stop()
+            return
         self._last_cmd = (vx_mms, vy_mms, w_mdegs)
         self._stopped = False
 
@@ -574,7 +576,10 @@ class MockBase:
         return self._caps
 
     def telemetry(self) -> Telemetry:
-        return self._telem
+        st_val = 0x01 if self._estopped else 0x00
+        if self._caps.calib:
+            st_val |= 0x08
+        return Telemetry(tgt=self._last_cmd, act=(0, 0, 0) if self._caps.closed_loop else None, st=st_val)
 
 
 class SimBase:
@@ -648,7 +653,9 @@ class SimBase:
         return self._caps
 
     def telemetry(self) -> Telemetry:
-        st_val = 0x01 if self._estopped else 0x08
+        st_val = 0x01 if self._estopped else 0x00
+        if self._caps.calib:
+            st_val |= 0x08
         if getattr(self, "_saturated", False):
             st_val |= 0x20
         return Telemetry(ms=self._ms, tgt=self._tgt, act=self._act, st=st_val, vin_mv=12600, amp_ma=450)
@@ -680,20 +687,23 @@ class UnoAdapterBase:
             return
         cmd = plan(vx_mms / 1000.0, vy_mms / 1000.0, math.radians(w_mdegs / 1000.0),
                    caps=self._caps, calib=self._calib, signs=self._signs, estop=self._estopped)
-        if cmd.rejected:
+        if cmd.rejected or cmd.payload == "S" or cmd.duty is None:
             self.stop()
             return
         self._stopped = False
-        if cmd.duty is not None:
-            self._last_duty = cmd.duty
-            if self._link is not None:
-                self._link.set_velocity(*cmd.duty)
+        self._last_duty = cmd.duty
+        if self._link is not None:
+            self._link.set_velocity(*cmd.duty)
 
     def set_duty(self, dx: int, dy: int, dw: int) -> None:
         """LegacyDutyControl 프로토콜 지원 (선택적 레거시 duty 제어)."""
         if self._estopped:
             return
+        if dx == 0 and dy == 0 and dw == 0:
+            self.stop()
+            return
         self._last_duty = (dx, dy, dw)
+        self._stopped = False
         if self._link is not None:
             self._link.set_velocity(dx, dy, dw)
 
@@ -713,12 +723,12 @@ class UnoAdapterBase:
         return self._caps
 
     def telemetry(self) -> Telemetry:
+        st_val = 0x01 if self._estopped else 0x00
+        if self._calib.measured:
+            st_val |= 0x08
         if self._link is not None and hasattr(self._link, "stats"):
             st = self._link.stats()
             # Uno 하트비트 st 및 링크 통계에서 Telemetry 합성
-            st_val = 0x01 if self._estopped else 0x08
-            if not self._calib.measured:
-                st_val &= ~0x08  # calib 미실측이면 calib_valid 비트 클리어
             return Telemetry(
                 ms=st.get("fw_ms", 0),
                 rx=st.get("fw_rx", 0),
@@ -731,7 +741,6 @@ class UnoAdapterBase:
                 vin_mv=None,
                 amp_ma=None,
             )
-        st_val = 0x01 if self._estopped else (0x08 if self._calib.measured else 0x00)
         return Telemetry(tgt=self._tgt, act=None, st=st_val)
 
 

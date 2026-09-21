@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 78,
+ "next_id": 79,
  "tasks": [
   {
    "id": "T9",
@@ -110,13 +110,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-21 13:17",
+   "updated": "2026-09-21 13:26",
    "notes": [
-    {
-     "t": "2026-09-18 07:19",
-     "by": "builder",
-     "text": "2026-09-18 07:4x builder(사람 지시 07:17): **p2→p4로 내리고 사람 아침 목록에서 뺐다.** 근거(사람이 준 것을 코드로 확인): arm_node.py:68이 base_frame 기본값을 'arm_base'로 두고 :155가 목표점을 _to_arm_base_mm()으로 arm_base에 옮긴다 — 지금 사슬은 카메라→tool→arm_base이고 **base_link를 지나지 않는다**. mount.x/y/yaw는 IK에 한 mm도 안 들어온다. 걸리는 곳은 rviz 그림과 ros.3 이후(주행 뒤 좌표 재사용)뿐이다. blocked는 유지한다. ⚠ 되살리기 전에 먼저 정할 것: **base_link 원점이 몸통 중심인가 바퀴 사각형 중심인가**(지금 yaml은 몸통 중심이라 적었지만 주행이 도는 축은 바퀴 중심이다 — 다르면 제자리 회전 뒤 좌표가 TF 예측과 어긋난다). 무엇을 재야 하는지가 그 결정에 달려 있다. 문서 = docs/ros2-이행계획.md 기준1 채점표 아래 '2026-09-18 (사람 판단)' 절과 그 안의 'ros.3에서 먼저 결정할 것'."
-    },
     {
      "t": "2026-09-20 08:50",
      "by": "metrologist",
@@ -171,6 +166,11 @@
      "t": "2026-09-21 13:17",
      "by": "builder",
      "text": "2026-09-21 builder: 보드 계약 v2 UnoAdapterBase 어댑터 및 다중 프로토콜 구현(docs/인수인계-2026-09-04.md §56). UnoAdapterBase(MobileBase + LegacyDutyControl 병행 구현, 물리 단위 plan->DutyCalib feedforward duty 변환, stop/estop 차단, Telemetry 합성) 5종 신설로 4대 자체검증 700종(45/102/460/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
+    },
+    {
+     "t": "2026-09-21 13:26",
+     "by": "auditor",
+     "text": "2026-09-21 auditor: 보드 계약 v2 구현체 감사 및 UnoAdapterBase 0속도 정지 결함 정정·계약 테스트 확립(docs/인수인계-2026-09-04.md §57). UnoAdapterBase set_velocity(0,0,0) 수신 시 plan()의 Command(payload='S', duty=None) 무시 결함(주행 지속 결함)을 self.stop() 즉시 호출로 정정. MockBase estop 및 Telemetry st 일관성 정정. §12 계약 테스트 스위트 5종 신설로 4대 자체검증 705종(45/102/465/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
     }
    ]
   },
@@ -2206,6 +2206,25 @@
      "t": "2026-09-21 13:19",
      "by": "tester",
      "text": "4대 자체검증 700/700 전수 합격(45, 102, 460, 93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77 대기)."
+    }
+   ]
+  },
+  {
+   "id": "T78",
+   "title": "cmd_vel_node에 MobileBase 인터페이스 및 UnoAdapterBase 주입 연동",
+   "role": "builder",
+   "status": "todo",
+   "priority": 3,
+   "why": "보드계약 §11.1, §13 단계 1에 따라 cmd_vel_node가 raw MotorLink 대신 MobileBase 인터페이스를 의존하도록 결합하여 향후 SimBase/Stm32Base 무개조 교체 경로를 완성한다.",
+   "done_when": "cmd_vel_node가 MobileBase 인터페이스(UnoAdapterBase 기본 주입)를 통해 set_velocity/stop/estop을 호출하고, ros_selfcheck에서 cmd_vel_node MobileBase 연동 검증이 RC=0 통과",
+   "attempts": 0,
+   "created": "2026-09-21 13:26",
+   "updated": "2026-09-21 13:26",
+   "notes": [
+    {
+     "t": "2026-09-21 13:26",
+     "by": "auditor",
+     "text": "만듦"
     }
    ]
   }

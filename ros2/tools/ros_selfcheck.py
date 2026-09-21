@@ -898,6 +898,80 @@ def test_board_contract() -> None:
           dummy_link.last_cmd == (0, 0, 0) and telem_uno.estop_latched and telem_uno.ms == 15000,
           f"last_cmd={dummy_link.last_cmd} st=0x{telem_uno.st:02X} ms={telem_uno.ms}")
 
+    # ⑪ [감사] 보드 계약 v2 §12 계약 테스트 스위트 및 0속도 정지 안전 검증 (docs/보드-계약.md §11.2, §12)
+    # 1. 0 속도 지령 안전 정지 (UnoAdapterBase): 300mm/s 주행 중 set_velocity(0,0,0) 수신 시 즉시 정지 및 duty 0
+    uno_base.estop(False)
+    uno_base.set_velocity(300, 0, 0)
+    check("보드계약 §12 UnoAdapterBase가 300mm/s 주행 후 set_velocity(0,0,0) 수신 시 즉시 링크 stop을 호출하고 duty를 0으로 리셋한다",
+          dummy_link.last_cmd == (195, 0, 0) and not dummy_link.stopped and (
+              uno_base.set_velocity(0, 0, 0) is None
+              and dummy_link.stopped
+              and uno_base._last_duty == (0, 0, 0)
+              and uno_base._tgt == (0, 0, 0)
+          ),
+          f"stopped={dummy_link.stopped} duty={uno_base._last_duty}")
+
+    # 2. LegacyDutyControl set_duty(0,0,0) 수신 시 즉시 정지
+    uno_base.set_duty(100, 50, -30)
+    check("보드계약 §12 UnoAdapterBase가 set_duty(0,0,0) 수신 시 즉시 링크 stop을 호출하고 duty를 0으로 리셋한다",
+          dummy_link.last_cmd == (100, 50, -30) and (
+              uno_base.set_duty(0, 0, 0) is None
+              and dummy_link.stopped
+              and uno_base._last_duty == (0, 0, 0)
+          ),
+          f"stopped={dummy_link.stopped} duty={uno_base._last_duty}")
+
+    # 3. MockBase 계약 테스트: estop 차단, estop 해제 복구, 0 지령 정지, telemetry 일관성
+    mock_base = bc.MockBase()
+    mock_base.set_velocity(100, 0, 0)
+    t_m1 = mock_base.telemetry()
+    mock_base.estop(True)
+    mock_base.set_velocity(150, 0, 0)
+    t_m2 = mock_base.telemetry()
+    mock_base.estop(False)
+    mock_base.set_velocity(150, 0, 0)
+    t_m3 = mock_base.telemetry()
+    mock_base.set_velocity(0, 0, 0)
+    t_m4 = mock_base.telemetry()
+    check("보드계약 §12 MockBase가 계약 테스트(정상 지령·estop 차단·해제 복구·0정지)를 충족한다",
+          t_m1.tgt == (100, 0, 0) and not t_m1.estop_latched
+          and t_m2.tgt == (0, 0, 0) and t_m2.estop_latched
+          and t_m3.tgt == (150, 0, 0) and not t_m3.estop_latched
+          and t_m4.tgt == (0, 0, 0),
+          f"m1={t_m1.tgt} m2={t_m2.tgt} m3={t_m3.tgt} m4={t_m4.tgt}")
+
+    # 4. SimBase 계약 테스트: estop 차단, estop 해제 복구, 0 지령 정지
+    sim_base = bc.SimBase()
+    sim_base.set_velocity(200, 0, 0)
+    t_s1 = sim_base.telemetry()
+    sim_base.estop(True)
+    sim_base.set_velocity(200, 0, 0)
+    t_s2 = sim_base.telemetry()
+    sim_base.estop(False)
+    sim_base.set_velocity(200, 0, 0)
+    t_s3 = sim_base.telemetry()
+    sim_base.set_velocity(0, 0, 0)
+    t_s4 = sim_base.telemetry()
+    check("보드계약 §12 SimBase가 계약 테스트(정상 지령·estop 차단·해제 복구·0정지)를 충족한다",
+          t_s1.tgt == (200, 0, 0) and not t_s1.estop_latched
+          and t_s2.tgt == (0, 0, 0) and t_s2.estop_latched
+          and t_s3.tgt == (200, 0, 0) and not t_s3.estop_latched
+          and t_s4.tgt == (0, 0, 0),
+          f"s1={t_s1.tgt} s2={t_s2.tgt} s3={t_s3.tgt} s4={t_s4.tgt}")
+
+    # 5. UnoAdapterBase 계약 테스트: estop 해제 후 주행 복구
+    uno_base.estop(True)
+    uno_base.set_velocity(200, 0, 0)
+    t_u1 = uno_base.telemetry()
+    cmd1 = dummy_link.last_cmd
+    uno_base.estop(False)
+    uno_base.set_velocity(200, 0, 0)
+    t_u2 = uno_base.telemetry()
+    check("보드계약 §12 UnoAdapterBase가 estop 해제 시 지령 수신을 정상 복구한다",
+          t_u1.estop_latched and cmd1 == (0, 0, 0)
+          and not t_u2.estop_latched and dummy_link.last_cmd == (160, 0, 0) and t_u2.tgt == (200, 0, 0),
+          f"u1_cmd={cmd1} u2_tgt={t_u2.tgt}")
+
 
 
 
