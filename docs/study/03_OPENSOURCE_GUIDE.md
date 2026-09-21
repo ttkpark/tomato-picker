@@ -199,3 +199,4 @@
 ---
 
 다음 문서인 [`04_END_EFFECTOR_MANIPULATION.md`](04_END_EFFECTOR_MANIPULATION.md)에서는 줄기 스켈레톤 추출, 6-DoF Grasp Pose 계산 및 커터 엔드이펙터 설계 원리를 다룹니다.
+

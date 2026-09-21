@@ -224,3 +224,4 @@ def clean_tomato_pointcloud(pcd: o3d.geometry.PointCloud,
 ```
 
 다음 문서인 [`02_PAPERS_CATALOG.md`](02_PAPERS_CATALOG.md)에서는 전 세계 연구진들이 검증한 **24편의 핵심 수확 로봇 논문**을 집중 분석합니다.
+
