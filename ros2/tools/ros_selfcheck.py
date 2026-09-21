@@ -714,6 +714,37 @@ def test_board_contract() -> None:
           cmd_estop_real.rejected and cmd_estop_real.payload == "S" and "비상정지" in cmd_estop_real.reason,
           f"payload={cmd_estop_real.payload} reason={cmd_estop_real.reason}")
 
+    # ⑥ [보드계약 v2] 능력선언(cap) 확장 필드 및 하트비트(hb) 상태 파싱 검증 (docs/보드-계약.md §6, §7)
+    v2_full = bc.Caps.parse("cap proto=2 fw=3.0.0 board=stm32f411 id=A3F2C918 drive=mecanum wheels=4 "
+                            "units=1 closed_loop=1 enc=4 calib=1 "
+                            "vmax=800 vymax=600 wmax=180000 "
+                            "vin=1 amp=1 estop_hw=1 pwm_hz=20000")
+    check("보드계약 §6 cap 확장 필드(enc, vin, amp, pwm_hz)를 정확히 파싱한다",
+          v2_full.enc == 4 and v2_full.vin and v2_full.amp and v2_full.pwm_hz == 20000,
+          f"enc={v2_full.enc} vin={v2_full.vin} amp={v2_full.amp} pwm_hz={v2_full.pwm_hz}")
+
+    hb_full = bc.Heartbeat.parse("hb 124500 rx=102 bad=0 i2c=0 wdt=0 st=0x29 "
+                                 "tgt=300,0,0 act=295,-2,5 vin=12400 amp=850")
+    check("보드계약 §7 hb 기본 필드 및 전원(vin, amp)을 정확히 파싱한다",
+          hb_full.ms == 124500 and hb_full.rx == 102 and hb_full.vin_mv == 12400 and hb_full.amp_ma == 850,
+          f"ms={hb_full.ms} vin={hb_full.vin_mv} amp={hb_full.amp_ma}")
+
+    check("보드계약 §7 hb tgt/act 3축 속도 벡터를 정확히 파싱한다",
+          hb_full.tgt == (300, 0, 0) and hb_full.act == (295, -2, 5),
+          f"tgt={hb_full.tgt} act={hb_full.act}")
+
+    # st=0x29 = 0b00101001: 비트 0(estop), 비트 3(calib_valid), 비트 5(output_saturated)
+    check("보드계약 §7 st 상태 비트 플래그(estop, calib_valid, output_saturated)를 정확히 해석한다",
+          hb_full.estop_latched and hb_full.calib_valid and hb_full.output_saturated
+          and not hb_full.soft_deadman and not hb_full.hard_deadman and not hb_full.driver_fault,
+          f"st=0x{hb_full.st:02X} estop={hb_full.estop_latched} calib={hb_full.calib_valid} sat={hb_full.output_saturated}")
+
+    hb_soft = bc.Heartbeat.parse("hb 500 rx=1 bad=0 i2c=0 wdt=0 st=0x02")
+    check("보드계약 §7 st 소프트 데드맨 감속 비트(비트 1)를 정확히 감지한다",
+          hb_soft.soft_deadman and not hb_soft.hard_deadman,
+          f"st=0x{hb_soft.st:02X} soft={hb_soft.soft_deadman}")
+
+
 
 def _raises(fn) -> bool:
     try:

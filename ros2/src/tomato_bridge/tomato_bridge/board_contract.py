@@ -78,6 +78,10 @@ class Caps:
     closed_loop: bool = False
     calib: bool = False
     estop_hw: bool = False
+    enc: int = 0
+    vin: bool = False
+    amp: bool = False
+    pwm_hz: int = 0
     vmax_mms: int = 0
     vymax_mms: int = 0
     wmax_mdegs: int = 0
@@ -118,10 +122,134 @@ class Caps:
             closed_loop=_int("closed_loop") == 1,
             calib=_int("calib") == 1,
             estop_hw=_int("estop_hw") == 1,
+            enc=_int("enc"),
+            vin=_int("vin") == 1,
+            amp=_int("amp") == 1,
+            pwm_hz=_int("pwm_hz"),
             vmax_mms=_int("vmax"),
             vymax_mms=_int("vymax"),
             wmax_mdegs=_int("wmax"),
         )
+
+
+# ----------------------------------------------------------------------
+# hb — 하트비트 파싱 (보드계약 §7)
+# ----------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Heartbeat:
+    """`hb <ms> rx=... st=...` 한 줄을 파싱한 것 (보드계약 §7).
+
+    비트 0: 비상정지 래치
+    비트 1: 소프트 데드맨 작동 중
+    비트 2: 하드 데드맨 작동 중
+    비트 3: 캘리브레이션 유효
+    비트 4: 드라이버 폴트
+    비트 5: 출력 포화
+    비트 6: 저전압 경고
+    """
+
+    ms: int = 0
+    rx: int = 0
+    bad: int = 0
+    i2c: int = 0
+    wdt: int = 0
+    st: int = 0
+    tgt: tuple[int, int, int] = (0, 0, 0)
+    act: tuple[int, int, int] | None = None
+    vin_mv: int | None = None
+    amp_ma: int | None = None
+
+    @property
+    def estop_latched(self) -> bool:
+        return bool(self.st & (1 << 0))
+
+    @property
+    def soft_deadman(self) -> bool:
+        return bool(self.st & (1 << 1))
+
+    @property
+    def hard_deadman(self) -> bool:
+        return bool(self.st & (1 << 2))
+
+    @property
+    def calib_valid(self) -> bool:
+        return bool(self.st & (1 << 3))
+
+    @property
+    def driver_fault(self) -> bool:
+        return bool(self.st & (1 << 4))
+
+    @property
+    def output_saturated(self) -> bool:
+        return bool(self.st & (1 << 5))
+
+    @property
+    def low_voltage(self) -> bool:
+        return bool(self.st & (1 << 6))
+
+    @staticmethod
+    def parse(line: str) -> "Heartbeat":
+        """`hb <ms> rx=... bad=... i2c=... wdt=... st=...` → Heartbeat."""
+        if not line or not line.strip().startswith("hb"):
+            raise ValueError(f"hb 줄이 아니다: {line!r}")
+        tokens = line.split()
+        ms = 0
+        if len(tokens) >= 2 and tokens[1].isdigit():
+            ms = int(tokens[1])
+
+        fields: dict[str, str] = {}
+        for token in tokens[1:]:
+            if "=" in token:
+                k, _, v = token.partition("=")
+                fields[k] = v
+
+        def _int(key: str, default: int = 0, base: int = 10) -> int:
+            try:
+                return int(fields.get(key, str(default)), base)
+            except ValueError:
+                return default
+
+        def _triplet(key: str) -> tuple[int, int, int] | None:
+            if key not in fields:
+                return None
+            parts = fields[key].split(",")
+            if len(parts) == 3:
+                try:
+                    return (int(parts[0]), int(parts[1]), int(parts[2]))
+                except ValueError:
+                    return (0, 0, 0)
+            return None
+
+        st_val = 0
+        if "st" in fields:
+            st_str = fields["st"]
+            if st_str.startswith("0x") or st_str.startswith("0X"):
+                st_val = _int("st", 0, 16)
+            else:
+                try:
+                    st_val = int(st_str, 16)
+                except ValueError:
+                    st_val = 0
+
+        tgt = _triplet("tgt") or (0, 0, 0)
+        act = _triplet("act")
+        vin = _int("vin", -1) if "vin" in fields else None
+        amp = _int("amp", -1) if "amp" in fields else None
+
+        return Heartbeat(
+            ms=ms,
+            rx=_int("rx"),
+            bad=_int("bad"),
+            i2c=_int("i2c"),
+            wdt=_int("wdt"),
+            st=st_val,
+            tgt=tgt,
+            act=act,
+            vin_mv=vin,
+            amp_ma=amp,
+        )
+
 
 
 # ----------------------------------------------------------------------
@@ -308,5 +436,6 @@ def _clamp(value: int, limit: int, name: str, unit: str) -> tuple[int, list[str]
     return clamped, [f"{name} {value}{unit} → {clamped}{unit} (보드가 말한 상한)"]
 
 
-__all__ = ["AxisSigns", "Caps", "Command", "DutyCalib", "checksum", "framed",
+__all__ = ["AxisSigns", "Caps", "Command", "DutyCalib", "Heartbeat", "checksum", "framed",
            "plan", "to_physical", "EPS_MMS", "EPS_MDEGS"]
+
