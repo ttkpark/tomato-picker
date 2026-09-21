@@ -77,30 +77,6 @@
    ]
   },
   {
-   "id": "T11",
-   "title": "PC 자체검증이 빈 환경에서도 돌게 의존성을 못 박기",
-   "role": "builder",
-   "status": "done",
-   "priority": 2,
-   "why": "ros_selfcheck가 pyyaml 없이 ModuleNotFoundError로 죽고 있었는데, 파이프 뒤 종료코드가 0이라 '통과'로 오독됐다. 졸업기준4는 이 4종이 실제로 도는 것을 전제한다.",
-   "done_when": "requirements(또는 그에 해당하는 파일)에 pyyaml·numpy가 명시돼 있고, 네 검증 스크립트가 필수 모듈이 없으면 '설치하라'는 한 줄과 함께 비영 종료코드로 죽는다. 새 venv에서 4종이 45/60/70/33으로 도는 것을 확인",
-   "attempts": 1,
-   "created": "2026-09-17 21:49",
-   "updated": "2026-09-17 23:39",
-   "notes": [
-    {
-     "t": "2026-09-17 21:49",
-     "by": "planner",
-     "text": "만듦"
-    },
-    {
-     "t": "2026-09-17 23:39",
-     "by": "builder",
-     "text": "완료: requirements.txt에 PyYAML 명시 + tools/selfcheck_deps.py(require/missing) 신설, 4종이 서드파티 import 전에 묻는다. 없으면 '설치하라 pip install …' 한 줄 + 종료코드 2(=환경이 없다, 1=검사실패와 구분). ros_selfcheck에 [의존성] 검사군 신설(78→95종). 빈 venv 실측: 빈 상태 RC=2 각각 numpy/numpy+opencv-python/numpy+PyYAML, 'pip install numpy PyYAML opencv-python' 뒤 45/60/95/33 전부 RC=0. eye_check은 Eye.fruits()의 늦은 cv2 import 때문에 cv2도 필요하다는 것을 빈 venv에서 실측해 표에 반영."
-    }
-   ]
-  },
-  {
    "id": "T12",
    "title": "[사람] 차체 중심 → 팔 마운트 평면의 앞뒤 거리(mount.x)를 자로 재기",
    "role": "tester",
@@ -110,13 +86,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-21 13:26",
+   "updated": "2026-09-21 13:33",
    "notes": [
-    {
-     "t": "2026-09-20 08:50",
-     "by": "metrologist",
-     "text": "2026-09-20 metrologist: T12 측정 카드 확립 완료(docs/인수인계-2026-09-04.md §35). 원점=base_link(차체 중심 박스, 지면), 끝점=1번 pan축 중심, 축=+x앞/+y좌/+z상/+yaw반시계, 단위=mm, 예상범위=mount.x 40~80mm/mount.y +-10mm/mount.z 70~85mm/yaw +-5deg. ros_selfcheck에 단위·부호·주석 계측 강제 6종 추가 완료. 사람 측정 시 차체 길이 L을 함께 재어 환산식(mount.x = L/2 - d_front) 적용 필요."
-    },
     {
      "t": "2026-09-21 00:17",
      "by": "metrologist",
@@ -171,6 +142,11 @@
      "t": "2026-09-21 13:26",
      "by": "auditor",
      "text": "2026-09-21 auditor: 보드 계약 v2 구현체 감사 및 UnoAdapterBase 0속도 정지 결함 정정·계약 테스트 확립(docs/인수인계-2026-09-04.md §57). UnoAdapterBase set_velocity(0,0,0) 수신 시 plan()의 Command(payload='S', duty=None) 무시 결함(주행 지속 결함)을 self.stop() 즉시 호출로 정정. MockBase estop 및 Telemetry st 일관성 정정. §12 계약 테스트 스위트 5종 신설로 4대 자체검증 705종(45/102/465/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
+    },
+    {
+     "t": "2026-09-21 13:33",
+     "by": "builder",
+     "text": "2026-09-21 builder: cmd_vel_node MobileBase 의존 주입 및 UnoAdapterBase 기본 연동(docs/인수인계-2026-09-04.md §58). CmdVelNode(base) 주입 인터페이스, 물리 단위(mm/s, mdeg/s) 전달, stop/estop/close 안전 자원 해제 및 5종 신설로 4대 자체검증 710종(45/102/470/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
     }
    ]
   },
@@ -2213,18 +2189,23 @@
    "id": "T78",
    "title": "cmd_vel_node에 MobileBase 인터페이스 및 UnoAdapterBase 주입 연동",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 3,
    "why": "보드계약 §11.1, §13 단계 1에 따라 cmd_vel_node가 raw MotorLink 대신 MobileBase 인터페이스를 의존하도록 결합하여 향후 SimBase/Stm32Base 무개조 교체 경로를 완성한다.",
    "done_when": "cmd_vel_node가 MobileBase 인터페이스(UnoAdapterBase 기본 주입)를 통해 set_velocity/stop/estop을 호출하고, ros_selfcheck에서 cmd_vel_node MobileBase 연동 검증이 RC=0 통과",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-21 13:26",
-   "updated": "2026-09-21 13:26",
+   "updated": "2026-09-21 13:33",
    "notes": [
     {
      "t": "2026-09-21 13:26",
      "by": "auditor",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-21 13:33",
+     "by": "builder",
+     "text": "완료: cmd_vel_node MobileBase 의존 주입 및 UnoAdapterBase 기본 연동 완료. 자체검증 5종 추가(465->470종, 4대 자체검증 710종 All RC=0)"
     }
    ]
   }

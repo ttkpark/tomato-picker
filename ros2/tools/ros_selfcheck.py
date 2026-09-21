@@ -972,6 +972,73 @@ def test_board_contract() -> None:
           and not t_u2.estop_latched and dummy_link.last_cmd == (160, 0, 0) and t_u2.tgt == (200, 0, 0),
           f"u1_cmd={cmd1} u2_tgt={t_u2.tgt}")
 
+    # ⑫ [보드계약 v2] cmd_vel_node MobileBase 인터페이스 및 UnoAdapterBase 주입 연동 검증 (docs/보드-계약.md §11.1, §13 단계 1)
+    # AST 및 정적 검사: cmd_vel_node가 MobileBase 및 UnoAdapterBase를 import하고 의존 주입 지원
+    import ast
+    parsed_cmd_node = ast.parse(cmd_node_text)
+    
+    # 1. MobileBase 및 UnoAdapterBase import 확인
+    imported_names = set()
+    for node_item in ast.walk(parsed_cmd_node):
+        if isinstance(node_item, ast.ImportFrom):
+            for alias in node_item.names:
+                imported_names.add(alias.name)
+    check("보드계약 §11.1 cmd_vel_node가 MobileBase 및 UnoAdapterBase를 의존 선언한다",
+          "MobileBase" in imported_names and "UnoAdapterBase" in imported_names,
+          f"imported={imported_names}")
+
+    # 2. CmdVelNode.__init__이 MobileBase 주입 인자를 수용하고 기본 UnoAdapterBase 생성 지원
+    init_def = None
+    on_cmd_def = None
+    halt_def = None
+    destroy_def = None
+    for item in parsed_cmd_node.body:
+        if isinstance(item, ast.ClassDef) and item.name == "CmdVelNode":
+            for m in item.body:
+                if isinstance(m, ast.FunctionDef):
+                    if m.name == "__init__":
+                        init_def = m
+                    elif m.name == "_on_cmd":
+                        on_cmd_def = m
+                    elif m.name == "_halt":
+                        halt_def = m
+                    elif m.name == "destroy_node":
+                        destroy_def = m
+
+    init_args = [a.arg for a in init_def.args.args] if init_def else []
+    check("보드계약 §11.1 CmdVelNode.__init__이 MobileBase 주입 파라미터(base)를 지원한다",
+          "base" in init_args,
+          f"init_args={init_args}")
+
+    # 3. _on_cmd 콜백이 self._base.set_velocity()를 호출하는지 검증
+    on_cmd_calls = []
+    if on_cmd_def:
+        for n in ast.walk(on_cmd_def):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                if isinstance(n.func.value, ast.Attribute) and n.func.value.attr == "_base":
+                    on_cmd_calls.append(n.func.attr)
+    check("보드계약 §11.1 cmd_vel_node _on_cmd 콜백이 MobileBase.set_velocity 인터페이스를 호출한다",
+          "set_velocity" in on_cmd_calls,
+          f"on_cmd_base_calls={on_cmd_calls}")
+
+    # 4. _halt 메서드가 self._base.stop()을 호출하여 즉시 정지하는지 검증
+    halt_calls = []
+    if halt_def:
+        for n in ast.walk(halt_def):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                if isinstance(n.func.value, ast.Attribute) and n.func.value.attr == "_base":
+                    halt_calls.append(n.func.attr)
+    check("보드계약 §11.1 cmd_vel_node _halt가 MobileBase.stop()을 호출하여 하위 베이스를 정지시킨다",
+          "stop" in halt_calls,
+          f"halt_base_calls={halt_calls}")
+
+    # 5. CmdVelNode 기본 생성 시 UnoAdapterBase 인스턴스화 및 destroy_node 리소스 해제 보장
+    check("보드계약 §13 단계 1 cmd_vel_node가 기본 UnoAdapterBase 주입 및 destroy_node 안전 정지/자원 해제를 구현한다",
+          "UnoAdapterBase(motor_link=" in cmd_node_text
+          and "self._base.close()" in cmd_node_text
+          and "self._base.stop()" in cmd_node_text,
+          "UnoAdapterBase 기본 주입 및 안전 종료 검증")
+
 
 
 

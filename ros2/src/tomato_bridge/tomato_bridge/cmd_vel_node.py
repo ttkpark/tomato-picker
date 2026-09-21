@@ -21,12 +21,14 @@ DTR을 내린 채 열기(Uno 리셋 방지), 전용 스레드의 20ms 재전송(
 from __future__ import annotations
 
 
+import math
+
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from std_msgs.msg import String
 
-from .board_contract import AxisSigns, Caps, DutyCalib, plan
+from .board_contract import AxisSigns, Caps, DutyCalib, MobileBase, UnoAdapterBase, plan
 
 try:
     from tomato_picker.hardware.motor_link import MotorLink
@@ -39,7 +41,7 @@ except ImportError as exc:  # pragma: no cover
 
 class CmdVelNode(Node):
 
-    def __init__(self) -> None:
+    def __init__(self, base: MobileBase | None = None) -> None:
         super().__init__("tomato_base")
 
         self.declare_parameter("cmd_timeout", 0.3)   # 보드계약 §9 4층
@@ -58,8 +60,6 @@ class CmdVelNode(Node):
         self.declare_parameter("duty_measured", False)
 
         port = self.get_parameter("serial_port").value
-        self._link = MotorLink(**({"port": port} if port else {}))
-        self._caps = Caps.legacy()  # 지금 펌웨어는 `cap`을 안 뱉는다 (보드계약 §6)
         self._calib = DutyCalib(
             ks=int(self.get_parameter("duty_ks").value),
             kv=float(self.get_parameter("duty_kv").value),
@@ -73,6 +73,16 @@ class CmdVelNode(Node):
             vy=int(self.get_parameter("sign_vy").value),
             w=int(self.get_parameter("sign_w").value),
         )
+
+        if base is not None:
+            self._base: MobileBase = base
+            self._link = getattr(base, "_link", None)
+            self._caps = base.caps()
+        else:
+            self._link = MotorLink(**({"port": port} if port else {}))
+            self._base = UnoAdapterBase(motor_link=self._link, calib=self._calib, signs=self._signs)
+            self._caps = self._base.caps()
+
         if not self._calib.measured:
             self.get_logger().warning(
                 "duty 환산이 실측이 아니다 — /cmd_vel의 m/s는 방향과 비율만 맞다. "
@@ -89,35 +99,33 @@ class CmdVelNode(Node):
 
     def _on_cmd(self, msg: Twist) -> None:
         self._last_cmd_ns = self.get_clock().now().nanoseconds
-        command = plan(msg.linear.x, msg.linear.y, msg.angular.z,
-                       caps=self._caps, calib=self._calib, signs=self._signs)
 
-        if command.notes != self._last_notes:
-            self._last_notes = command.notes
-            for note in command.notes:
-                self.get_logger().warning(note)
+        # 물리 단위(m/s -> mm/s, rad/s -> mdeg/s)로 변환하여 MobileBase 인터페이스 호출
+        vx_mms = int(round(msg.linear.x * 1000.0))
+        vy_mms = int(round(msg.linear.y * 1000.0))
+        w_mdegs = int(round(math.degrees(msg.angular.z) * 1000.0))
 
-        if command.rejected:
-            self._halt(command.reason)
-            return
+        self._base.set_velocity(vx_mms, vy_mms, w_mdegs)
 
-        if command.duty is not None:
-            self._link.set_velocity(*command.duty)
-            self._stopped = not command.moving
-            return
+        # UnoAdapterBase 또는 구현체의 plan 결과 노트 로깅
+        last_cmd = getattr(self._base, "_last_cmd", None)
+        if last_cmd is not None:
+            if last_cmd.notes != self._last_notes:
+                self._last_notes = last_cmd.notes
+                for note in last_cmd.notes:
+                    self.get_logger().warning(note)
 
-        if command.payload == "S":
-            self._halt("정지 지령")
-            return
+            if last_cmd.rejected:
+                self._halt(last_cmd.reason)
+                return
 
-        # 물리 단위 경로(`C`)는 계약대로 계산은 되지만 **보낼 길이 아직 없다** —
-        # MotorLink의 재전송 스레드는 `V`를 되풀이하므로 `C`와 섞으면 마지막에
-        # 온 것이 이겨서 서로를 지운다(보드계약 §5.1). 물리 단위 보드가 실제로
-        # 생기면 계약 v2 전용 링크를 만들어 여기 물린다. 그때까지는 **거절**한다.
-        self._halt(
-            f"보드가 물리 단위를 지원한다고 나왔지만({command.payload}) 지금 전송 "
-            "계층은 duty(`V`) 전용이다. 계약 v2 링크가 필요하다 — 조용히 duty로 "
-            "바꾸지 않는다.")
+            if last_cmd.payload == "S":
+                self._halt("정지 지령")
+                return
+
+            self._stopped = not last_cmd.moving
+        else:
+            self._stopped = (vx_mms == 0 and vy_mms == 0 and w_mdegs == 0)
 
     def _watch(self) -> None:
         """지령이 끊기면 선다 (보드계약 §9 4층)."""
@@ -129,7 +137,7 @@ class CmdVelNode(Node):
                        "/cmd_vel이 없었다 — 데드맨 정지")
 
     def _halt(self, why: str) -> None:
-        self._link.stop()
+        self._base.stop()
         if not self._stopped:
             self.get_logger().info(f"정지: {why}")
             self._status.publish(String(data=why))
@@ -139,8 +147,12 @@ class CmdVelNode(Node):
         # 노드가 죽을 때 바퀴가 돌고 있으면 안 된다. 보드 데드맨이 1초 뒤 세우긴
         # 하지만, 그 1초는 부스에서 충분히 길다.
         try:
-            self._link.stop()
-            self._link.close()
+            if hasattr(self._base, "close"):
+                self._base.close()
+            else:
+                self._base.stop()
+                if self._link is not None and hasattr(self._link, "close"):
+                    self._link.close()
         except Exception:  # noqa: BLE001 - 종료 경로
             pass
         return super().destroy_node()

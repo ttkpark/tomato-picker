@@ -687,6 +687,7 @@ class UnoAdapterBase:
             return
         cmd = plan(vx_mms / 1000.0, vy_mms / 1000.0, math.radians(w_mdegs / 1000.0),
                    caps=self._caps, calib=self._calib, signs=self._signs, estop=self._estopped)
+        self._last_cmd = cmd
         if cmd.rejected or cmd.payload == "S" or cmd.duty is None:
             self.stop()
             return
@@ -718,6 +719,15 @@ class UnoAdapterBase:
         self._estopped = on
         if on:
             self.stop()
+
+    def close(self) -> None:
+        """하위 링크 자원 해제."""
+        self.stop()
+        if self._link is not None and hasattr(self._link, "close"):
+            try:
+                self._link.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def caps(self) -> Caps:
         return self._caps
