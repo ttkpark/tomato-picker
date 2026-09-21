@@ -744,6 +744,46 @@ def test_board_contract() -> None:
           hb_soft.soft_deadman and not hb_soft.hard_deadman,
           f"st=0x{hb_soft.st:02X} soft={hb_soft.soft_deadman}")
 
+    # ⑦ [보드계약 v2] MobileBase 프로토콜 및 Telemetry 스냅샷 검증 (docs/보드-계약.md §11.1)
+    telem = bc.Telemetry.from_heartbeat(hb_full)
+    check("보드계약 §11.1 Telemetry가 Heartbeat로부터 무손실 복제 생성된다",
+          telem.ms == hb_full.ms and telem.st == hb_full.st and telem.tgt == hb_full.tgt and telem.act == hb_full.act and telem.vin_mv == hb_full.vin_mv,
+          f"ms={telem.ms} tgt={telem.tgt} act={telem.act}")
+
+    class _ValidBase:
+        def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
+            pass
+        def stop(self) -> None:
+            pass
+        def estop(self, on: bool) -> None:
+            pass
+        def caps(self) -> bc.Caps:
+            return v2_full
+        def telemetry(self) -> bc.Telemetry:
+            return telem
+
+    check("보드계약 §11.1 MobileBase 프로토콜을 만족하는 구현체가 isinstance 검사를 통과한다",
+          isinstance(_ValidBase(), bc.MobileBase),
+          "MobileBase 프로토콜 5대 메서드(set_velocity, stop, estop, caps, telemetry) 만족")
+
+    class _IncompleteBase:
+        def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
+            pass
+
+    check("보드계약 §11.1 누락된 메서드가 있는 클래스는 MobileBase 프로토콜을 통과하지 못한다",
+          not isinstance(_IncompleteBase(), bc.MobileBase),
+          "불완전 구현체 거절")
+
+    check("board_contract.__all__에 MobileBase 및 Telemetry가 포함되어 있다",
+          "MobileBase" in bc.__all__ and "Telemetry" in bc.__all__,
+          f"__all__={bc.__all__}")
+
+    from tomato_picker.hardware.base import MobileBase as LegacyBase
+    check("레거시 hardware.base.MobileBase(ABC)와 새 tomato_bridge.board_contract.MobileBase(Protocol)의 역할이 분리되어 있다",
+          LegacyBase is not bc.MobileBase and hasattr(LegacyBase, "drive_to") and not hasattr(bc.MobileBase, "drive_to"),
+          "레거시 상위 스킬 ABC vs 보드계약 v2 물리 인터페이스 Protocol")
+
+
 
 
 def _raises(fn) -> bool:

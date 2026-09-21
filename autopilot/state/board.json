@@ -110,13 +110,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-21 12:54",
+   "updated": "2026-09-21 13:01",
    "notes": [
-    {
-     "t": "2026-09-18 00:10",
-     "by": "planner",
-     "text": "막힘: [사람] 줄자 실측(차체 중심→팔 마운트 평면 앞뒤 거리) — 자동 사이클이 못 한다. 같은 이유로 blocked. 사람이 mount.x를 재 주면 즉시 reopen."
-    },
     {
      "t": "2026-09-18 01:42",
      "by": "auditor",
@@ -171,6 +166,11 @@
      "t": "2026-09-21 12:54",
      "by": "builder",
      "text": "2026-09-21 builder: 보드 계약 v2 cap 확장 및 hb 상태 파싱 계측 카드 확립(docs/인수인계-2026-09-04.md §52). Caps 확장 필드(enc,vin,amp,pwm_hz) 및 Heartbeat 상태 비트(7종 플래그)·속도 벡터 파싱 5종 신설로 4대 자체검증 680종(45/102/440/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
+    },
+    {
+     "t": "2026-09-21 13:01",
+     "by": "builder",
+     "text": "2026-09-21 builder: 보드 계약 v2 MobileBase 프로토콜 및 Telemetry 스냅샷 계측 카드 확립(docs/인수인계-2026-09-04.md §53). MobileBase(Protocol: set_velocity, stop, estop, caps, telemetry) 및 Telemetry 데이터클래스 팩토리 파싱 5종 신설로 4대 자체검증 685종(45/102/445/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
     }
    ]
   },

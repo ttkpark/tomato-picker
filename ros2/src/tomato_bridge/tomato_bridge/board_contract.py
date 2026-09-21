@@ -436,6 +436,77 @@ def _clamp(value: int, limit: int, name: str, unit: str) -> tuple[int, list[str]
     return clamped, [f"{name} {value}{unit} → {clamped}{unit} (보드가 말한 상한)"]
 
 
-__all__ = ["AxisSigns", "Caps", "Command", "DutyCalib", "Heartbeat", "checksum", "framed",
-           "plan", "to_physical", "EPS_MMS", "EPS_MDEGS"]
+# ----------------------------------------------------------------------
+# Telemetry & MobileBase 프로토콜 — 보드계약 §11.1
+# ----------------------------------------------------------------------
+
+from typing import Protocol, runtime_checkable
+
+
+@dataclass(frozen=True)
+class Telemetry:
+    """보드 텔레메트리 스냅샷 (보드계약 §11.1).
+
+    `hb` 하트비트 파싱 결과(Heartbeat)와 링크 품질 통계를 상위 계층에 전달한다.
+    """
+
+    ms: int = 0
+    rx: int = 0
+    bad: int = 0
+    i2c: int = 0
+    wdt: int = 0
+    st: int = 0
+    tgt: tuple[int, int, int] = (0, 0, 0)
+    act: tuple[int, int, int] | None = None
+    vin_mv: int | None = None
+    amp_ma: int | None = None
+
+    @classmethod
+    def from_heartbeat(cls, hb: Heartbeat) -> "Telemetry":
+        return cls(
+            ms=hb.ms,
+            rx=hb.rx,
+            bad=hb.bad,
+            i2c=hb.i2c,
+            wdt=hb.wdt,
+            st=hb.st,
+            tgt=hb.tgt,
+            act=hb.act,
+            vin_mv=hb.vin_mv,
+            amp_ma=hb.amp_ma,
+        )
+
+
+@runtime_checkable
+class MobileBase(Protocol):
+    """보드 계약 v2를 만족하는 이동 베이스 인터페이스 (보드계약 §11.1).
+
+    Uno(개루프)든 STM32(폐루프)든 시뮬레이터든, 이 계약을 만족하면
+    위쪽 코드를 고치지 않고 갈아끼울 수 있다.
+    """
+
+    def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
+        """물리 단위 차체 속도 지령 (mm/s, mm/s, mdeg/s)."""
+        ...
+
+    def stop(self) -> None:
+        """즉시 정지 (슬루 무시 S 지령)."""
+        ...
+
+    def estop(self, on: bool) -> None:
+        """비상정지 래치 (X 1 / X 0)."""
+        ...
+
+    def caps(self) -> Caps:
+        """보드 능력 선언 (없으면 레거시 프로파일)."""
+        ...
+
+    def telemetry(self) -> Telemetry:
+        """tgt/act/vin/amp/st/링크품질 텔레메트리 스냅샷."""
+        ...
+
+
+__all__ = ["AxisSigns", "Caps", "Command", "DutyCalib", "Heartbeat", "MobileBase", "Telemetry",
+           "checksum", "framed", "plan", "to_physical", "EPS_MMS", "EPS_MDEGS"]
+
 
