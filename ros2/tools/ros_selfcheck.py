@@ -2059,6 +2059,41 @@ def test_sample_within_limits() -> None:
     check("tomato_follower.json 서보 6종의 틱 스팬 및 deg_per_norm이 물리적 가동범위를 만족한다",
           spans_valid, f"wroll_span={wroll_span:.1f}deg, STS3215={deg_per_tick:.4f}deg/tick")
 
+    # ③e [빌더] 보드 계약 v2(MobileBase) 및 5층 데드맨 안전 시한 검증 (§50)
+    from tomato_bridge.board_contract import (Caps, DutyCalib, AxisSigns, Command,
+                                              checksum, framed, plan, to_physical)
+    # 1) 프레이밍 검증: <payload>*<XOR>\n
+    chk_test = checksum("C 350 0 0")
+    frame_test = framed("C 350 0 0")
+    check("board_contract.framed() 및 checksum()이 보드계약 §4 프레이밍 규약을 준수한다",
+          chk_test == "55" and frame_test == b"C 350 0 0*55\n",
+          f"chk={chk_test} frame={frame_test}")
+
+    # 2) to_physical 단위 변환: m/s -> mm/s, rad/s -> mdeg/s (정수)
+    phys = to_physical(0.35, -0.2, math.radians(45.0), AxisSigns(1, 1, 1))
+    check("board_contract.to_physical()이 m/s 및 rad/s를 mm/s 및 mdeg/s 정수로 정확히 변환한다",
+          phys == (350, -200, 45000), f"phys={phys}")
+
+    # 3) units=1 & calib=0 -> nocalib 거절 (조용한 실패 차단)
+    cap_nocalib = Caps.parse("cap proto=2 units=1 calib=0 vmax=800 wmax=180000")
+    cmd_nocalib = plan(0.3, 0.0, 0.0, caps=cap_nocalib)
+    check("board_contract.plan()이 units=1이고 calib=0일 때 nocalib으로 거절한다",
+          cmd_nocalib.rejected and "cap.calib=0" in cmd_nocalib.reason,
+          f"rejected={cmd_nocalib.rejected} reason={cmd_nocalib.reason}")
+
+    # 4) estop=True -> S 명령 및 거절 (비상정지 래치)
+    cmd_estop = plan(0.3, 0.0, 0.0, estop=True)
+    check("board_contract.plan()이 estop=True일 때 S 페이로드 및 거절을 반환한다",
+          cmd_estop.rejected and cmd_estop.payload == "S" and "비상정지" in cmd_estop.reason,
+          f"payload={cmd_estop.payload} reason={cmd_estop.reason}")
+
+    # 5) units=1 & calib=1 -> 물리 C 지령 발행
+    cap_v2 = Caps.parse("cap proto=2 units=1 calib=1 vmax=800 vymax=600 wmax=180000")
+    cmd_v2 = plan(0.35, 0.0, math.radians(30.0), caps=cap_v2)
+    check("board_contract.plan()이 정상 v2 보드에 대해 C 물리 지령 문자열을 생성한다",
+          not cmd_v2.rejected and cmd_v2.payload == "C 350 0 30000" and cmd_v2.physical == (350, 0, 30000),
+          f"cmd={cmd_v2}")
+
     # ③b 작업영역 가드(바닥·몸통·사거리)도 **뽑는 쪽이 같은 숫자를 본다**.
     #    09-18 실기 5번째는 관절은 멀쩡했는데 표적 수평 76mm < 90mm로 거절됐다.
     from tomato_picker.config import (ARM_CART_R_MIN,  # noqa: E402
