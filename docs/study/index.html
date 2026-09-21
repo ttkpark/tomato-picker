@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>토마토 수확 로봇 마스터 학습 포털 | Tomato Harvesting Robotics</title>
+  <!-- KaTeX for math rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <!-- Lucide icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --bg-primary: #0f172a;
+      --bg-secondary: #1e293b;
+      --bg-card: #1e293b;
+      --bg-card-hover: #334155;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --accent: #ef4444; /* Tomato Red */
+      --accent-hover: #dc2626;
+      --accent-light: rgba(239, 68, 68, 0.15);
+      --green-leaf: #22c55e;
+      --green-light: rgba(34, 197, 94, 0.15);
+      --blue-cam: #38bdf8;
+      --blue-light: rgba(56, 189, 248, 0.15);
+      --border: #334155;
+      --code-bg: #090d16;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* Sidebar Navigation */
+    aside {
+      width: 280px;
+      background-color: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      z-index: 50;
+    }
+
+    .brand {
+      padding: 24px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand-icon {
+      font-size: 28px;
+    }
+    .brand-title {
+      font-weight: 700;
+      font-size: 1.1rem;
+      letter-spacing: -0.5px;
+      color: #fff;
+    }
+    .brand-sub {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    .nav-menu {
+      padding: 16px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+
+    .nav-item:hover, .nav-item.active {
+      background-color: var(--accent-light);
+      color: var(--accent);
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      background: var(--border);
+      color: #fff;
+      font-size: 0.7rem;
+      padding: 2px 7px;
+      border-radius: 12px;
+    }
+
+    /* Main Content Area */
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 32px 48px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    header.main-header {
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .header-title h1 {
+      font-size: 2.2rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 8px;
+      background: linear-gradient(90deg, #f87171, #ef4444, #fb923c);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-title p {
+      color: var(--text-secondary);
+      font-size: 1.05rem;
+    }
+
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      background: var(--accent-light);
+      color: var(--accent);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    /* Tab Containers */
+    .tab-content {
+      display: none;
+      animation: fadeIn 0.3s ease;
+    }
+    .tab-content.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Grid & Card Styles */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 20px;
+      margin-top: 20px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      transition: all 0.25s ease;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .card:hover {
+      border-color: #475569;
+      transform: translateY(-2px);
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.4;
+    }
+
+    .card-meta {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      margin-bottom: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tag {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: #cbd5e1;
+    }
+    .tag-red { background: var(--accent-light); color: #f87171; }
+    .tag-green { background: var(--green-light); color: #4ade80; }
+    .tag-blue { background: var(--blue-light); color: #38bdf8; }
+
+    .card-desc {
+      font-size: 0.9rem;
+      color: #cbd5e1;
+      margin-bottom: 16px;
+      flex: 1;
+    }
+
+    .card-footer {
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding-top: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s ease;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+    }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+    .btn-outline:hover {
+      border-color: #94a3b8;
+      color: #fff;
+    }
+
+    /* Filter & Search Toolbar */
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 24px;
+      background: var(--bg-secondary);
+      padding: 16px 20px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+
+    .search-box {
+      flex: 1;
+      min-width: 260px;
+      position: relative;
+    }
+
+    .search-box input {
+      width: 100%;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px 10px 38px;
+      color: #fff;
+      font-size: 0.9rem;
+      outline: none;
+    }
+    .search-box input:focus {
+      border-color: var(--accent);
+    }
+    .search-box i {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-secondary);
+    }
+
+    .filter-pills {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    /* Simulator / Interactive Tool */
+    .sim-panel {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 30px;
+    }
+    .sim-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 16px;
+    }
+    .sim-controls label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text-secondary);
+    }
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .slider-row input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+    }
+    .slider-val {
+      min-width: 60px;
+      font-family: monospace;
+      font-weight: 700;
+      color: var(--blue-cam);
+    }
+    .sim-display {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 12px;
+    }
+    .display-metric {
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      padding-bottom: 8px;
+    }
+    .metric-name { color: var(--text-secondary); font-size: 0.9rem; }
+    .metric-val { font-family: monospace; font-size: 1.1rem; font-weight: 700; color: #4ade80; }
+
+    /* Code Blocks */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      font-family: "Fira Code", monospace;
+      font-size: 0.85rem;
+      color: #e2e8f0;
+      margin: 14px 0;
+      position: relative;
+    }
+    .copy-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(255,255,255,0.1);
+      border: none;
+      padding: 4px 8px;
+      border-radius: 4px;
+      color: #94a3b8;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    .copy-btn:hover { background: rgba(255,255,255,0.2); color: #fff; }
+
+    /* Modal for Paper Deep-Dive */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-content {
+      background: var(--bg-secondary);
+      border: 1px solid #475569;
+      border-radius: 14px;
+      max-width: 800px;
+      width: 100%;
+      max-height: 85vh;
+      overflow-y: auto;
+      padding: 32px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    .modal-close {
+      float: right;
+      cursor: pointer;
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 1.5rem;
+    }
+
+    /* Pipeline Architecture Visualization */
+    .pipeline-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin: 24px 0;
+    }
+    .step-card {
+      display: flex;
+      gap: 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      align-items: center;
+      transition: all 0.2s;
+    }
+    .step-card:hover {
+      border-color: var(--accent);
+      background: rgba(239, 68, 68, 0.04);
+    }
+    .step-num {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--accent-light);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+    .step-info h4 { font-size: 1rem; color: #fff; margin-bottom: 2px; }
+    .step-info p { font-size: 0.85rem; color: var(--text-secondary); }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      body { flex-direction: column; }
+      aside { width: 100%; height: auto; position: relative; }
+      main { padding: 20px; }
+      .sim-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <aside>
+    <div class="brand">
+      <span class="brand-icon">🍅</span>
+      <div>
+        <div class="brand-title">Tomato Picker AI</div>
+        <div class="brand-sub">Robotic Harvesting Study Portal</div>
+      </div>
+    </div>
+    <div class="nav-menu">
+      <div class="nav-item active" onclick="switchTab('overview')">
+        <i data-lucide="layout-dashboard"></i>
+        <span>시스템 개요 & 로드맵</span>
+      </div>
+      <div class="nav-item" onclick="switchTab('perception')">
+        <i data-lucide="eye"></i>
+        <span>3D 공간지각 & 시뮬레이터</span>
+      </div>
+      <div class="nav-item" onclick="switchTab('papers')">
+        <i data-lucide="book-open"></i>
+        <span>24편 핵심 논문 카탈로그</span>
+        <span class="nav-badge">24</span>
+      </div>
+      <div class="nav-item" onclick="switchTab('opensource')">
+        <i data-lucide="git-branch"></i>
+        <span>12대 오픈소스 라이브러리</span>
+        <span class="nav-badge">12</span>
+      </div>
+      <div class="nav-item" onclick="switchTab('manipulation')">
+        <i data-lucide="scissors"></i>
+        <span>엔드이펙터 & 절단 기구학</span>
+      </div>
+      <div class="nav-item" onclick="switchTab('practice')">
+        <i data-lucide="terminal"></i>
+        <span>실장비 Jetson & ROS 2</span>
+      </div>
+      <div class="nav-item" onclick="switchTab('quiz')">
+        <i data-lucide="help-circle"></i>
+        <span>학습 점검 퀴즈</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main>
+    <header class="main-header">
+      <div class="header-title">
+        <h1 id="page-heading">시스템 개요 & 7단계 수확 파이프라인</h1>
+        <p id="page-sub">비정형 온실 환경에서 토마토를 안전하고 정밀하게 수확하기 위한 마스터 가이드</p>
+      </div>
+      <div class="badge-pill">
+        <i data-lucide="check-circle-2"></i> RealSense D405 + Astra Pro + SO-101
+      </div>
+    </header>
+
+    <!-- TAB 1: OVERVIEW -->
+    <div id="tab-overview" class="tab-content active">
+      <div class="card" style="margin-bottom: 24px;">
+        <h3 style="color:#fff; margin-bottom:8px;">왜 토마토 수확은 고난이도 기술인가?</h3>
+        <p style="color:var(--text-secondary); font-size:0.95rem;">
+          토마토는 사과나 오렌지와 달리 <b>껍질이 얇고 부드러워 과실을 강하게 잡으면 즉시 상품성이 손상</b>됩니다. 또한 과실이 낱개로 자라지 않고 화방(Truss) 단위로 잎사귀와 와이어 속에 뒤엉켜 결실을 맺습니다. 따라서 현대 농업 로봇은 <b>"열매를 직접 당겨 따는 방식"을 버리고, "초근접 3D 비전으로 꼭지 줄기(Peduncle)를 찾아 전단 커터로 순간 절단하는 방식"</b>을 표준으로 채택하고 있습니다.
+        </p>
+      </div>
+
+      <h3 style="color:#fff; margin-top:20px; margin-bottom:12px;">전주기 7단계 수확 파이프라인 (Pipeline)</h3>
+      <div class="pipeline-wrapper">
+        <div class="step-card">
+          <div class="step-num">1</div>
+          <div class="step-info">
+            <h4>글로벌 작물 스캔 (Orbbec Astra Pro, 0.6~4m)</h4>
+            <p>메카넘 베이스 주행 중 대략적인 화방 군집의 3차원 위치를 탐색하고 로봇 팔 작업 반경 내로 접근합니다.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">2</div>
+          <div class="step-info">
+            <h4>초근접 3D 공간지각 (Intel RealSense D405, 7~50cm)</h4>
+            <p>0.1mm 단위의 고정밀 능동 IR 스테레오를 통해 과실 표면과 줄기(1~3mm)의 깊이 맵을 노이즈 없이 캡처합니다.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">3</div>
+          <div class="step-info">
+            <h4>인스턴스 세그멘테이션 & 숙도 판별 (YOLOv8/11-seg)</h4>
+            <p>화상에서 완숙 토마토(Red), 미숙 토마토(Green), 꽃받침(Calyx), 줄기(Peduncle) 마스크를 분리합니다.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">4</div>
+          <div class="step-info">
+            <h4>줄기 스켈레톤 추출 & 6D 절단 포즈 합성</h4>
+            <p>Zhang-Suen 세선화 알고리즘으로 줄기 골격선을 구하고 꽃받침 상단 12mm 지점의 3D 절단 위치와 진입 방향을 계산합니다.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">5</div>
+          <div class="step-info">
+            <h4>Hand-Eye 좌표 변환 & 충돌 회피 모션 플래닝</h4>
+            <p>카메라 좌표계를 로봇 팔 베이스 좌표계로 변환(Tsai-Lenz)하고, MoveIt 2를 통해 잎과 줄기를 피해 Pre-grasp 자세로 접근합니다.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">6</div>
+          <div class="step-info">
+            <h4>복합 엔드이펙터 수확 실행 (파지 & 절단)</h4>
+            <p>진공 흡착 패드로 과실을 안전하게 지지한 상태에서 소형 전단 커터를 구동하여 줄기를 0.3초 내에 절단합니다.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">7</div>
+          <div class="step-info">
+            <h4>과실 후퇴 & 수확 바구니 배출</h4>
+            <p>과실을 안전 영역으로 후퇴(Retract)시킨 뒤 차체 바구니 슬롯으로 회전 이동하여 진공을 해제하고 배출합니다.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: PERCEPTION & SIMULATOR -->
+    <div id="tab-perception" class="tab-content">
+      <div class="sim-panel">
+        <h3 style="color:#fff; margin-bottom:8px;">인터랙티브 2D-to-3D De-projection 계산기</h3>
+        <p style="color:var(--text-secondary); font-size:0.9rem;">
+          카메라의 핀홀 기하학 $K$ 행렬과 픽셀 화소 좌표 $(u, v)$, 깊이 $d$를 조작하여 3차원 물리 공간 좌표 $(X_c, Y_c, Z_c)$가 어떻게 변환되는지 실시간으로 관찰하세요.
+        </p>
+
+        <div class="sim-grid">
+          <div class="sim-controls">
+            <div class="slider-row">
+              <label>픽셀 X (u):</label>
+              <input type="range" id="u-slider" min="0" max="640" value="320" oninput="updateSim()">
+              <span class="slider-val" id="u-val">320 px</span>
+            </div>
+            <div class="slider-row">
+              <label>픽셀 Y (v):</label>
+              <input type="range" id="v-slider" min="0" max="480" value="240" oninput="updateSim()">
+              <span class="slider-val" id="v-val">240 px</span>
+            </div>
+            <div class="slider-row">
+              <label>측정 깊이 (d):</label>
+              <input type="range" id="d-slider" min="70" max="500" value="250" oninput="updateSim()">
+              <span class="slider-val" id="d-val">250 mm</span>
+            </div>
+            <div class="slider-row">
+              <label>초점거리 (fx, fy):</label>
+              <input type="range" id="f-slider" min="300" max="800" value="480" oninput="updateSim()">
+              <span class="slider-val" id="f-val">480</span>
+            </div>
+          </div>
+
+          <div class="sim-display">
+            <div class="display-metric">
+              <span class="metric-name">물리 좌표 X (좌우):</span>
+              <span class="metric-val" id="calc-x">0.0 mm</span>
+            </div>
+            <div class="display-metric">
+              <span class="metric-name">물리 좌표 Y (상하):</span>
+              <span class="metric-val" id="calc-y">0.0 mm</span>
+            </div>
+            <div class="display-metric">
+              <span class="metric-name">물리 좌표 Z (전방 깊이):</span>
+              <span class="metric-val" id="calc-z">250.0 mm</span>
+            </div>
+            <div class="display-metric">
+              <span class="metric-name">D405 유효성 판별:</span>
+              <span class="metric-val" id="calc-valid" style="color:#4ade80;">최적 동작 범위 (OK)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-grid">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">통계적 이상치 제거 (SOR 필터)</span>
+            <span class="tag tag-blue">Open3D</span>
+          </div>
+          <p class="card-desc">
+            주변 $k$개 이웃 점들과의 평균 거리를 계산하여 $\mu + 1.5\sigma$를 초과하는 부유 노이즈 점들을 제거하여 맑은 포인트 클라우드를 만듭니다.
+          </p>
+          <pre><code>clean_pcd, ind = pcd.remove_statistical_outlier(
+    nb_neighbors=20, std_ratio=1.5)</code></pre>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">RANSAC 구체 피팅 (과실 중심)</span>
+            <span class="tag tag-red">Geometry</span>
+          </div>
+          <p class="card-desc">
+            과실 표면의 불완전한 점군으로부터 구의 중심 $(X_0, Y_0, Z_0)$과 반지름 $R$을 반복 피팅하여 과실 질량 중심을 구합니다.
+          </p>
+          <pre><code>(X - X0)^2 + (Y - Y0)^2 + (Z - Z0)^2 = R^2</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: 24 PAPERS -->
+    <div id="tab-papers" class="tab-content">
+      <div class="toolbar">
+        <div class="search-box">
+          <i data-lucide="search"></i>
+          <input type="text" id="paper-search" placeholder="논문 제목, 저자, 키워드 검색..." onkeyup="filterPapers()">
+        </div>
+        <div class="filter-pills">
+          <button class="filter-btn active" onclick="setPaperFilter('all')">전체 (24)</button>
+          <button class="filter-btn" onclick="setPaperFilter('cat-a')">A. 검출/숙도 (5)</button>
+          <button class="filter-btn" onclick="setPaperFilter('cat-b')">B. 3D 공간/포즈 (5)</button>
+          <button class="filter-btn" onclick="setPaperFilter('cat-c')">C. 줄기/절단 (5)</button>
+          <button class="filter-btn" onclick="setPaperFilter('cat-d')">D. 엔드이펙터 (4)</button>
+          <button class="filter-btn" onclick="setPaperFilter('cat-e')">E. 비주얼 서보잉/시스템 (5)</button>
+        </div>
+      </div>
+
+      <div class="card-grid" id="papers-container">
+        <!-- Rendered by JavaScript -->
+      </div>
+    </div>
+
+    <!-- TAB 4: 12 OPEN SOURCES -->
+    <div id="tab-opensource" class="tab-content">
+      <div class="card-grid" id="opensource-container">
+        <!-- Rendered by JavaScript -->
+      </div>
+    </div>
+
+    <!-- TAB 5: MANIPULATION & END-EFFECTOR -->
+    <div id="tab-manipulation" class="tab-content">
+      <div class="card" style="margin-bottom: 24px;">
+        <h3 style="color:#fff; margin-bottom:8px;">5-DoF 매니퓰레이터의 기구학적 특성과 한계</h3>
+        <p style="color:var(--text-secondary); font-size:0.95rem;">
+          SO-101 팔은 5개의 자유도(Base Yaw, Shoulder Pitch, Elbow Pitch, Wrist Pitch, Wrist Roll)를 갖습니다. 산업용 6축 로봇과 달리 <b>임의의 자세에서 제자리 Yaw 회전이 불가능</b>하며, 집게가 바닥을 수직으로 내려다볼 때만(`Pitch ≈ -90°`) Wrist Roll이 물리적 Yaw 역할을 수행합니다.
+        </p>
+      </div>
+
+      <div class="card-grid">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Zhang-Suen 스켈레톤 추출</span>
+            <span class="tag tag-green">Peduncle</span>
+          </div>
+          <p class="card-desc">
+            줄기 2D 마스크를 1픽셀 두께의 중심선으로 세선화한 후 꽃받침 위 10~15mm 지점을 기하학적으로 특정합니다.
+          </p>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">6-DoF Cutting Pose 합성</span>
+            <span class="tag tag-blue">Vector Math</span>
+          </div>
+          <p class="card-desc">
+            줄기의 접선 벡터 $\mathbf{t}_{stem}$과 카메라 시선 벡터의 외적을 통해 커터 진입 벡터 $\mathbf{a}$를 산출합니다.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 6: PRACTICE & JETSON -->
+    <div id="tab-practice" class="tab-content">
+      <div class="card">
+        <h3 style="color:#fff; margin-bottom:8px;">Jetson Orin Nano + ROS 2 Humble 실전 수확 노드</h3>
+        <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:14px;">
+          D405 깊이 뷰어, Hand-Eye 캘리브레이션 행렬, YOLOv8 인스턴스 세그멘테이션, 그리고 역기구학 모션 제어가 결합된 통합 파이썬 스크립트입니다.
+        </p>
+        <pre><button class="copy-btn" onclick="copyCode(this)">복사</button><code># 젯슨 사전 검증 실행
+python tools/handeye_check.py          # 보정 수학 검증
+python tools/eye_check.py              # 배선 검증
+python ros2/tools/ros_selfcheck.py      # ROS 2 시스템 종합 검증
+
+# 자동 수확 노드 실행 예시
+python src/tomato_picker/autonomous_harvester.py</code></pre>
+      </div>
+    </div>
+
+    <!-- TAB 7: QUIZ -->
+    <div id="tab-quiz" class="tab-content">
+      <div id="quiz-container">
+        <!-- Rendered by JS -->
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Paper Deep-Dive Modal -->
+  <div class="modal-overlay" id="paper-modal" onclick="closeModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+      <div id="modal-body">
+        <!-- Modal content loaded via JS -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Tab switching
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      
+      const targetTab = document.getElementById('tab-' + tabId);
+      if (targetTab) targetTab.classList.add('active');
+
+      const navItems = document.querySelectorAll('.nav-item');
+      const tabMap = {
+        'overview': 0, 'perception': 1, 'papers': 2, 'opensource': 3,
+        'manipulation': 4, 'practice': 5, 'quiz': 6
+      };
+      if (navItems[tabMap[tabId]]) navItems[tabMap[tabId]].classList.add('active');
+
+      // Update titles
+      const titles = {
+        'overview': ['시스템 개요 & 7단계 수확 파이프라인', '비정형 온실 환경에서 토마토를 안전하고 정밀하게 수확하기 위한 마스터 가이드'],
+        'perception': ['3D 공간지각 & 센서 시뮬레이터', '핀홀 카메라 역투영, RANSAC 피팅, Hand-Eye 보정 수학'],
+        'papers': ['24편 핵심 논문 카탈로그 (SOTA Review)', '글로벌 최고 연구진들의 수확 로봇 아키텍처 및 알고리즘 심층 분석'],
+        'opensource': ['12대 오픈소스 라이브러리 & 툴체인', '실무 프로젝트에 즉시 적용 가능한 검증된 프레임워크 및 데이터셋'],
+        'manipulation': ['엔드이펙터 & 절단 기구학', '줄기 3D 스켈레톤 추출, 6-DoF 파지 포즈 합성 및 충돌 회피 모션'],
+        'practice': ['실장비 Jetson & ROS 2 구현', 'RealSense D405, SO-101 팔, 메카넘 베이스 통합 제어'],
+        'quiz': ['학습 점검 퀴즈', '공간지각 및 수확 로봇 핵심 개념 자가 진단']
+      };
+      document.getElementById('page-heading').innerText = titles[tabId][0];
+      document.getElementById('page-sub').innerText = titles[tabId][1];
+      lucide.createIcons();
+    }
+
+    // Interactive Simulator
+    function updateSim() {
+      const u = parseFloat(document.getElementById('u-slider').value);
+      const v = parseFloat(document.getElementById('v-slider').value);
+      const d = parseFloat(document.getElementById('d-slider').value);
+      const f = parseFloat(document.getElementById('f-slider').value);
+      const cx = 320.0, cy = 240.0;
+
+      document.getElementById('u-val').innerText = u + ' px';
+      document.getElementById('v-val').innerText = v + ' px';
+      document.getElementById('d-val').innerText = d + ' mm';
+      document.getElementById('f-val').innerText = f;
+
+      const x = ((u - cx) * d) / f;
+      const y = ((v - cy) * d) / f;
+      const z = d;
+
+      document.getElementById('calc-x').innerText = x.toFixed(1) + ' mm';
+      document.getElementById('calc-y').innerText = y.toFixed(1) + ' mm';
+      document.getElementById('calc-z').innerText = z.toFixed(1) + ' mm';
+
+      const validEl = document.getElementById('calc-valid');
+      if (d < 70) {
+        validEl.innerText = 'D405 불감대 (너무 가까움 <7cm)';
+        validEl.style.color = '#ef4444';
+      } else if (d > 500) {
+        validEl.innerText = 'D405 오차 증가 구간 (>50cm, Astra 권장)';
+        validEl.style.color = '#f59e0b';
+      } else {
+        validEl.innerText = 'D405 최적 정밀 측정 구간 (OK)';
+        validEl.style.color = '#4ade80';
+      }
+    }
+
+    // 24 Papers Data
+    const papersData = [
+      {
+        id: 1, cat: 'cat-a', title: 'Deep Fruit Detection in Orchards',
+        author: 'Bargoti & Underwood (2017)', journal: 'Journal of Field Robotics',
+        tags: ['Faster R-CNN', 'Outdoor Vision', 'Detection'],
+        desc: '과수원 야외 환경에서 딥러닝(Faster R-CNN)을 최초로 대규모 적용하여 과실 검출을 체계화한 고전 명저.',
+        problem: '자연광의 급격한 변화, 그림자, 나뭇잎 가림 현상으로 인한 기존 색상 임계값 검출의 실패.',
+        method: 'VGG16 기반 Faster R-CNN을 과실 특화 종횡비 1:1 앵커 박스로 최적화하여 조명 강인성 확보.',
+        result: 'F1-score 0.90 이상 달성, 다양한 조명 조건에서도 92% 이상의 정밀도 유지.',
+        takeaway: '토마토의 종횡비는 1:1에 가까우므로 기본 직사각형 앵커 대신 원형 타겟 앵커 설정이 필수적임.'
+      },
+      {
+        id: 2, cat: 'cat-a', title: 'YOLO-Tomato: A Robust Algorithm for Tomato Detection',
+        author: 'Lawal (2021)', journal: 'Frontiers in Plant Science',
+        tags: ['YOLOv3', 'DenseNet', 'Attention'],
+        desc: 'DenseNet 구조와 공간 피라미드 풀링(SPP)을 결합하여 복잡한 온실 가려짐을 극복한 토마토 특화망.',
+        problem: '잎과 인접 과실에 심하게 가려진 복합 화방(Truss) 구조에서 미검출 발생.',
+        method: 'Mish 활성화 함수와 Dense 연결 구조를 통해 특징 맵의 소실을 방지하고 수용 영역 극대화.',
+        result: 'mAP 96.4% 달성, 50% 이상 잎에 가려진 상황에서도 91.2% 검출 성공률 기록.',
+        takeaway: '밀집 화방 검출을 위해서는 다중 스케일 피라미드 레이어가 필수적임.'
+      },
+      {
+        id: 3, cat: 'cat-a', title: 'Tomato Maturity Detection Based on Improved YOLOv4-Tiny',
+        author: 'Liu et al. (2020)', journal: 'Computers and Electronics in Agriculture',
+        tags: ['Edge AI', 'Ripeness', 'Jetson'],
+        desc: 'Jetson 엣지 보드 실시간(38.5 FPS) 구동을 위한 YOLOv4-Tiny 경량화 및 3단계 숙도 분류.',
+        problem: '온보드 임베디드 컴퓨터의 제한된 연산 자원과 익은 토마토/덜익은 토마토 분별 필요성.',
+        method: 'CBAM(공간/채널 어텐션)을 삽입하여 완숙(Red), 변색기(Orange), 미숙(Green)을 정밀 분리.',
+        result: '38.5 FPS 실시간 추론, 완숙 토마토 정확도 94.8% 달성.',
+        takeaway: '수확 대상뿐 아니라 미숙 과실도 함께 검출하여 로봇 팔의 회피 영역으로 지정해야 함.'
+      },
+      {
+        id: 4, cat: 'cat-a', title: 'Real-time Tomato Detection Based on Improved YOLOv7',
+        author: 'Rong et al. (2022)', journal: 'Frontiers in Plant Science',
+        tags: ['YOLOv7', 'ECA-Net', 'Realtime'],
+        desc: 'ECA 채널 어텐션을 도입하여 초록색 미숙 토마토와 잎사귀 배경 간의 미세한 텍스처를 분리.',
+        problem: '초록색 과실과 초록색 잎이 동일한 색공간에 있어 색상 기반 분할이 불가능함.',
+        method: '채널 간 상호작용을 보존하는 효율적인 1D 합성곱 어텐션(ECA) 적용.',
+        result: 'mAP@0.5 97.2%, 12.8ms 초고속 추론.',
+        takeaway: '색상 차이가 없는 작물 분할에는 형상 곡률과 채널 어텐션이 핵심.'
+      },
+      {
+        id: 5, cat: 'cat-a', title: 'Laboro Tomato: Dataset and Benchmark in Greenhouse',
+        author: 'Wang et al. (Laboro.AI, 2022)', journal: 'arXiv:2009.05244',
+        tags: ['Dataset', 'Instance Seg', 'Benchmark'],
+        desc: '상업 온실에서 직접 촬영된 고해상도 인스턴스 세그멘테이션 글로벌 디팩토 표준 데이터셋.',
+        problem: '고품질의 토마토 폴리곤 마스크(Polygon Mask) 공공 데이터셋 부재.',
+        method: '방울토마토/일반토마토 및 완숙/반완숙/미숙의 정밀 COCO 포맷 세그멘테이션 제공.',
+        result: '글로벌 연구진의 베이스라인 벤치마크로 채택됨.',
+        takeaway: '자체 데이터 수집 전 사전 학습(Pre-training) 모델로 활용하기에 최적.'
+      },
+      {
+        id: 6, cat: 'cat-b', title: 'DaSNet-v2: Detection, Segmentation & 3D Pose Estimation',
+        author: 'Kang & Chen (2020)', journal: 'IEEE Trans. on Cybernetics',
+        tags: ['6D Pose', 'DaSNet', '3D Vision'],
+        desc: '단일 신경망에서 검출, 세그멘테이션, 그리고 6자유도 자세(3D Pose)를 동시에 추정하는 프레임워크.',
+        problem: '과실 검출 후 별도의 기구학/포즈 파이프라인을 돌리면 누적 오차와 지연 시간 발생.',
+        method: 'RGB-D 점군을 결합하여 가려진 영역의 곡률을 추정하는 형상 완성(Shape completion) 네트워크.',
+        result: '3D 중심점 위치 추정 오차 8.2mm, 수확 적합 자세 90% 이상 도출.',
+        takeaway: '잎에 반쯤 가려져 있어도 가시 영역 곡률을 통해 중심 좌표를 수학적으로 복원 가능.'
+      },
+      {
+        id: 7, cat: 'cat-b', title: '3D Perception of Greenhouse Tomatoes Using RGB-D',
+        author: 'Sun et al. (2020)', journal: 'Biosystems Engineering',
+        tags: ['RGB-D', 'Point Cloud', 'RANSAC'],
+        desc: 'RGB-D 점군 전처리, 복셀화, 유클리디안 클러스터링 및 RANSAC 구체 피팅 파이프라인 정립.',
+        problem: '점군 노이즈로 인한 과실 직경 측정 왜곡 및 중심점 오차.',
+        method: 'HSV 마스킹 후 SOR 노이즈 제거와 RANSAC 구체 피팅 적용.',
+        result: '과실 직경 오차 3.5mm 이하, 3D 위치 오차 6.8mm 이하 달성.',
+        takeaway: '복셀 다운샘플링 크기를 과실 반경의 약 5~10%(2~4mm)로 설정하는 것이 최적.'
+      },
+      {
+        id: 8, cat: 'cat-b', title: 'Harvesting Robot Visual System Based on Point Cloud & Pose',
+        author: 'Lin et al. (2020)', journal: 'Computers and Electronics in Agriculture',
+        tags: ['PointNet++', 'Surface Normal', 'Approach Vector'],
+        desc: 'PointNet++을 통한 3D 점군 세그멘테이션 및 표면 법선 벡터 기반 로봇 접근 방향 도출.',
+        problem: '단순 3D 중심점만 알면 집게가 과실 표면에 비스듬히 접근하여 튕겨나감.',
+        method: '과실 표면 점군의 주성분 분석(PCA)으로 표면 법선 벡터를 계산하여 접근 방향 일치.',
+        result: '자세 추정 성공률 92.5%, 접근 성공률 89%.',
+        takeaway: '엔드이펙터 접근 벡터(Approach Vector)는 과실 표면 법선과 일치해야 안전함.'
+      },
+      {
+        id: 9, cat: 'cat-b', title: 'Deep-ToMaToS: Synthetic Dataset for 6D Pose Estimation',
+        author: 'Kim et al. (2023)', journal: 'IEEE Access',
+        tags: ['Sim-to-Real', 'Synthetic', '6D Pose'],
+        desc: '언리얼 엔진 기반 시뮬레이터에서 10만 장 이상의 토마토 합성 RGB-D 데이터를 생성하여 Sim-to-Real 검증.',
+        problem: '실제 농업 환경 6D 포즈 라벨링의 극단적인 비용과 데이터 부족.',
+        method: '조명, 질감, 물리 변형을 도메인 랜덤화(Domain Randomization)하여 사전 학습.',
+        result: '실제 환경 6D Pose ADD 기준 84.6% 정확도 달성.',
+        takeaway: '시뮬레이터 합성 데이터를 활용하여 실제 필드 튜닝 비용을 대폭 절감 가능.'
+      },
+      {
+        id: 10, cat: 'cat-b', title: 'Human-Robot Co-Working: Tomato 3D Tracking',
+        author: 'Magrini et al. (2020)', journal: 'Autonomous Robots',
+        tags: ['Stereo Vision', 'EKF', 'Tracking'],
+        desc: '고정밀 스테레오 비전과 확장 칼만 필터(EKF)를 결합하여 바람에 흔들리는 토마토 3D 실시간 추적.',
+        problem: '로봇 팔이 접근하면서 발생하는 기류나 가지 접촉으로 인해 타겟이 흔들림.',
+        method: 'EKF 기반 3D 위치 및 속도 벡터 실시간 갱신.',
+        result: '흔들림 변위 ±30mm 환경에서도 95% 이상 추적 성공.',
+        takeaway: '접근 막바지 단계에서 실시간 3D 위치 피드백(Visual Servoing)이 필요함.'
+      },
+      {
+        id: 11, cat: 'cat-c', title: 'Peduncle Detection & Picking Point Location for Tomato',
+        author: 'Chen et al. (2021)', journal: 'Computers and Electronics in Agriculture',
+        tags: ['Peduncle', 'Cutting Point', 'Hybrid Pipeline'],
+        desc: 'Mask R-CNN과 3D 점군을 결합하여 꽃받침 상단 10~15mm 줄기 절단점을 자동 추출.',
+        problem: '과실을 직접 잡으면 터지므로 줄기 절단이 필수이나 줄기가 너무 얇음(1~3mm).',
+        method: '2D 마스크에서 줄기-꽃받침 연결부를 찾고 깊이 역투영으로 3D 절단점 산출.',
+        result: '줄기 검출 91.4%, 3D 절단 위치 오차 4.7mm.',
+        takeaway: '절단점은 꽃받침 바로 위(0~5mm)가 아니라 10~15mm 지점을 노려야 과실 손상이 없음.'
+      },
+      {
+        id: 12, cat: 'cat-c', title: 'Cutting Point Location Based on Skeleton Extraction',
+        author: 'Rong et al. (2023)', journal: 'Computers and Electronics in Agriculture',
+        tags: ['Skeleton', 'Zhang-Suen', 'Thinning'],
+        desc: 'Zhang-Suen 세선화 알고리즘으로 1픽셀 두께의 스켈레톤을 추출하고 탈리층(Abscission zone) 탐색.',
+        problem: '3D 점군만으로는 얇은 줄기가 노이즈로 인해 점군이 흩어짐.',
+        method: '2D 스켈레톤 중심선을 먼저 구한 뒤 국소 중앙값 깊이를 맵핑하여 3D 복원.',
+        result: '절단점 검출 정확도 89.2%, 계산 시간 110ms.',
+        takeaway: '2D 스켈레톤 세선화 후 3D 역투영하는 2-Stage 기법이 가장 노이즈에 강인함.'
+      },
+      {
+        id: 13, cat: 'cat-c', title: 'Peduncle Detection & Grasp Pose Based on PointNet++',
+        author: 'Li et al. (2021)', journal: 'IEEE RA-L',
+        tags: ['PointNet++', 'Grasp Frame', 'Orientation'],
+        desc: 'PointNet++으로 줄기 점군을 분할하고 고유벡터(Eigenvectors)를 이용해 국소 6D 절단 좌표계 구축.',
+        problem: '절단기(가위)의 날이 줄기 축과 평행하면 줄기가 미끄러져 잘리지 않음.',
+        method: '줄기 접선 벡터와 정확히 직교하는 방향으로 커터 자세를 정렬하는 변환 행렬 도출.',
+        result: '6D 파지 자세 추정 성공률 87.8%, 각도 오차 6.2도 이내.',
+        takeaway: '줄기 축에 직교하도록 가위 날 각도를 회전시켜야 깔끔하게 절단됨.'
+      },
+      {
+        id: 14, cat: 'cat-c', title: 'Stem Segmentation & Cutting Point in Cluttered Canopy',
+        author: 'Taqi et al. (2023)', journal: 'Frontiers in Plant Science',
+        tags: ['Main Stem vs Peduncle', 'Canopy', 'Semantic'],
+        desc: '밀집된 잎사귀 속에서 주줄기(Main stem)와 과실 줄기(Fruit peduncle)를 식별하여 오절단 방지.',
+        problem: '실수로 주줄기를 자르면 작물 전체가 고사하는 치명적 참사 발생.',
+        method: '줄기의 굵기, 방향성, 과실과의 연결성을 조건부 검사하여 과실 꼭지 줄기만 필터링.',
+        result: '잎 가림 환경에서 주줄기 오인식률 2% 미만 달성.',
+        takeaway: '과실과 직접 닿아 있는 꼭지 줄기인지 확인하는 연결성(Connectivity) 검증 필수.'
+      },
+      {
+        id: 15, cat: 'cat-c', title: 'Collision-free Motion Planning & Peduncle Detection',
+        author: 'Luo et al. (2018)', journal: 'IJABE',
+        tags: ['RRT*', 'Collision-Free', 'Motion Planning'],
+        desc: '줄기 인식 모듈과 RRT* 경로 생성기를 연동하여 인접 미수확 과실 및 지지대 회피.',
+        problem: '줄기에 다가가는 도중 로봇 링크가 주변 토마토를 쳐서 떨어뜨리는 문제.',
+        method: '인식된 주변 과실을 Bounding Sphere로 등록하여 실시간 충돌 검사.',
+        result: '무충돌 접근 성공률 88.5%, 경로 생성 시간 0.85초.',
+        takeaway: '시각적으로 인식된 모든 객체를 충돌 방지 장애물(Obstacle)로 등록해야 함.'
+      },
+      {
+        id: 16, cat: 'cat-d', title: 'Dual-Arm Harvesting Robot for Cherry Tomatoes',
+        author: 'Ling et al. (2019)', journal: 'Computers and Electronics in Agriculture',
+        tags: ['Dual-Arm', 'Cherry Tomato', 'Soft Gripper'],
+        desc: '양팔 로봇: Arm 1이 실리콘 소프트 핑거로 과실을 받치고, Arm 2가 전단 가위로 줄기를 절단.',
+        problem: '단일 집게로 자르면 절단 순간 과실이 바닥으로 낙하하여 깨짐.',
+        method: '파지와 절단의 물리적 역할을 분리하여 절단 시 과실 완전 무손상 실현.',
+        result: '수확 사이클 타임 9.2초, 수확 성공률 91.8%, 과실 손상률 0%.',
+        takeaway: '단일 팔인 경우 그리퍼 내부에 "물고 자르는 일체형 메커니즘"이 반드시 필요함.'
+      },
+      {
+        id: 17, cat: 'cat-d', title: 'End-Effector Based on Vacuum Suction & Flexible Finger',
+        author: 'Wang et al. (2019)', journal: 'Trans. of the ASABE',
+        tags: ['Vacuum Suction', 'Flexible Finger', 'Damage-Free'],
+        desc: '진공 흡착 패드로 과실을 먼저 끌어당겨 정렬한 뒤 3지 유연 핑거로 감싸 쥐는 메커니즘.',
+        problem: '밀집된 잎사귀 속에서 핑거가 과실 뒤로 들어가지 못하는 공간적 한계.',
+        method: '진공 흡착 컵이 전방에서 먼저 과실을 당겨 핑거 안으로 인입.',
+        result: '흡착 실패율 4.2% 미만, 과피 압력 35kPa 이하 유지(무손상).',
+        takeaway: '진공 흡착은 좁은 틈에 있는 과실을 꺼내오는 데 매우 효과적임.'
+      },
+      {
+        id: 18, cat: 'cat-d', title: 'Soft Robotic Gripper with Integrated Cutting Mechanism',
+        author: 'Ji et al. (2021)', journal: 'IEEE RA-L',
+        tags: ['Fin-Ray', 'Integrated Cutter', 'Cluster'],
+        desc: '생체 모방 Fin-Ray 유연 핑거 사이에 마이크로 전동 가위를 내장한 일체형 엔드이펙터.',
+        problem: '추가 모터를 장착하면 팔 무게 중심이 무너지고 페이로드 초과 발생.',
+        method: '그리퍼 스트로크 끝단에서 기계적 링크로 가위가 함께 작동하도록 설계.',
+        result: '엔드이펙터 무게 450g 경량화, 수확 성공률 86.7%.',
+        takeaway: 'SO-101 같은 경량 팔에는 단일 서보로 파지와 절단을 연동하는 설계가 유리함.'
+      },
+      {
+        id: 19, cat: 'cat-d', title: 'Review on Robotic Harvesting: Grippers, Sensors & Cutters',
+        author: 'Sepúlveda et al. (2020)', journal: 'Agronomy',
+        tags: ['Survey', 'Grippers', 'Cutting Methods'],
+        desc: '50여 종 이상의 수확 엔드이펙터 비교 분석: 전단 날, 톱날, 레이저, 비틀림 방식 종합 평가.',
+        problem: '절단 방식에 따른 에너지 효율, 수명, 작물 병원균 전파 리스크 비교 필요성.',
+        method: '현업 상용화 가능성에 대한 실증 데이터 기반 벤치마크.',
+        result: '전단 가위(Shear blade) 방식이 신뢰성 1위(성공률 >90%)로 도출.',
+        takeaway: '화재 및 전력 소모 위험이 있는 열선/레이저 대신 전단 가위가 최선의 선택.'
+      },
+      {
+        id: 20, cat: 'cat-e', title: 'Autonomous Sweet Pepper Harvesting (Harvey Robot)',
+        author: 'Lehnert et al. (2017)', journal: 'IEEE RA-L',
+        tags: ['Harvey', 'Protected Cropping', 'Field Robot'],
+        desc: '농업 자율 수확 로봇의 세계적 벤치마크 Harvey 시스템의 전주기 아키텍처.',
+        problem: '온실 내 비대칭적 작업 공간과 기구학적 도달 불가능성(Unreachability).',
+        method: 'RGB-D 장애물 맵 구축 및 다단계 역기구학 탐색 알고리즘.',
+        result: '필드 수확 성공률 76%, 사이클 타임 42초.',
+        takeaway: '수확 실패의 60% 이상은 인식이 아니라 팔의 도달 불가능 및 충돌에 기인함.'
+      },
+      {
+        id: 21, cat: 'cat-e', title: 'Harvesting Robots for High-Value Crops: Review & Challenges',
+        author: 'Bac et al. (2014)', journal: 'Computers and Electronics in Agriculture',
+        tags: ['Review', 'Economics', 'Cycle Time'],
+        desc: '고부가가치 작물 수확 로봇의 사이클 타임 분석 및 상용화 허들 규명.',
+        problem: '상용화를 위해서는 사이클 타임이 15초 이내여야 하나 대다수 연구가 30초 이상 소요.',
+        method: '탐색(15%) + 계획(10%) + 이동(45%) + 절단(20%) 시간 소모 비율 분석.',
+        result: '이동 시간(45%)을 단축하기 위한 메카넘 베이스와의 비동기 협업 필요성 제시.',
+        takeaway: '팔만 움직이지 말고 차체 이동과 팔 동작을 병렬로 제어해야 시간을 줄임.'
+      },
+      {
+        id: 22, cat: 'cat-e', title: 'Eye-in-Hand Visual Servoing in Dense Greenhouse Foliage',
+        author: 'Barth et al. (2016)', journal: 'Biosystems Engineering',
+        tags: ['IBVS', 'Visual Servoing', 'Closed-Loop'],
+        desc: '손목 카메라 기반 영상 서보잉(IBVS)을 통해 로봇 팔 처짐(Sagging)을 실시간(30Hz) 닫힌 루프 보상.',
+        problem: '오픈 루프 제어 시 로봇 팔 링크의 유연성과 서보 모터 처짐으로 10~20mm 오차 발생.',
+        method: '영상 자코비안(Image Jacobian)을 실시간 계산하여 화면 중심에 타겟 유지.',
+        result: '최종 안착 오차 18.4mm에서 2.1mm로 88% 급감.',
+        takeaway: '저비용 로봇 팔에서는 사전 계산 좌표 이동 대신 종단 비주얼 서보잉이 필수적임.'
+      },
+      {
+        id: 23, cat: 'cat-e', title: 'Sweet Pepper Harvesting Robot (SWEEPER)',
+        author: 'Arad et al. (2020)', journal: 'Journal of Field Robotics',
+        tags: ['SWEEPER', 'EU Horizon 2020', 'Active Perception'],
+        desc: 'EU 다국적 프로젝트 SWEEPER: 잎을 살짝 밀어내며 시야를 확보하는 능동 시각 탐색(Active Perception).',
+        problem: '잎사귀 뒤에 완전히 숨어 있는 과실의 수확 불가 한계.',
+        method: '엔드이펙터로 가벼운 잎을 쓸어내리며(Pushing aside) 내부를 재스캔.',
+        result: '상용 온실 조건 수확 성공률 84% 달성.',
+        takeaway: '물리적 상호작용으로 잎을 걷어내는 인터랙티브 모션이 수확률을 획기적으로 개선.'
+      },
+      {
+        id: 24, cat: 'cat-e', title: 'Design & Field Evaluation of a Robotic Harvesting System',
+        author: 'Silwal et al. (2017)', journal: 'Trans. of the ASABE',
+        tags: ['Field Evaluation', 'Hierarchical Vision', 'Orchard'],
+        desc: '글로벌 카메라(원거리)와 로컬 카메라(초근접)의 계층적 역할 분담 2단계 비전 아키텍처.',
+        problem: '단일 카메라로 넓은 화각과 초근접 고해상도를 동시 달성 불가.',
+        method: 'Eye-to-Hand로 접근 후 Eye-in-Hand로 정밀 도킹.',
+        result: '150회 야외 테스트에서 사이클 타임 7.2초 달성.',
+        takeaway: '우리 시스템의 Astra Pro(원거리) + D405(초근접) 전략의 유효성을 완벽히 지지함.'
+      }
+    ];
+
+    // 12 Open Sources Data
+    const openSourcesData = [
+      {
+        title: 'Laboro Tomato Dataset',
+        repo: 'LaboroAI/Laboro-Tomato',
+        url: 'https://github.com/LaboroAI/Laboro-Tomato',
+        license: 'Apache-2.0',
+        tags: ['PyTorch', 'COCO', 'Dataset'],
+        desc: '상업 온실 토마토 인스턴스 세그멘테이션 데이터셋. 크기별/숙도별 폴리곤 마스크 제공.',
+        install: 'git clone https://github.com/LaboroAI/Laboro-Tomato.git\npython download.py'
+      },
+      {
+        title: 'Ultralytics YOLOv8 / YOLO11',
+        repo: 'ultralytics/ultralytics',
+        url: 'https://github.com/ultralytics/ultralytics',
+        license: 'AGPL-3.0',
+        tags: ['YOLO', 'TensorRT', 'Edge AI'],
+        desc: '실시간 객체 검출 및 인스턴스 분할 디팩토 표준. Jetson TensorRT 엔진 가속 지원.',
+        install: 'pip install ultralytics\nyolo export model=yolov8n-seg.pt format=engine'
+      },
+      {
+        title: 'Open3D',
+        repo: 'isl-org/Open3D',
+        url: 'https://github.com/isl-org/Open3D',
+        license: 'MIT',
+        tags: ['3D Vision', 'Point Cloud', 'C++/Python'],
+        desc: 'RGB-D 점군 생성, 복셀 다운샘플링, SOR 이상치 제거, RANSAC 구체/원통 피팅 지원.',
+        install: 'pip install open3d'
+      },
+      {
+        title: 'AnyGrasp & GraspNet-1B',
+        repo: 'graspnet/anygrasp_sdk',
+        url: 'https://github.com/graspnet/anygrasp_sdk',
+        license: 'Custom',
+        tags: ['6-DoF Grasp', 'Point Cloud', 'GraspNet'],
+        desc: '대규모 3D 점군 데이터 기반 비정형 물체의 6자유도 최적 파지 자세 추정 SDK.',
+        install: 'git clone https://github.com/graspnet/anygrasp_sdk.git'
+      },
+      {
+        title: 'Contact-GraspNet',
+        repo: 'NVlabs/contact_graspnet',
+        url: 'https://github.com/NVlabs/contact_graspnet',
+        license: 'CC-BY-NC-SA',
+        tags: ['NVIDIA', 'Grasp Synthesis', 'TF2'],
+        desc: '복잡한 점군 표면의 3D 접촉면 기하 구조를 분석하여 6자유도 그리퍼 자세 생성.',
+        install: 'git clone https://github.com/NVlabs/contact_graspnet.git'
+      },
+      {
+        title: 'MoveIt 2',
+        repo: 'moveit/moveit2',
+        url: 'https://github.com/moveit/moveit2',
+        license: 'BSD-3-Clause',
+        tags: ['ROS 2', 'Motion Planning', 'OMPL'],
+        desc: 'ROS 2 표준 조작 프레임워크. 충돌 회피 경로 생성 및 역기구학 풀이.',
+        install: 'sudo apt install ros-humble-moveit'
+      },
+      {
+        title: 'easy_handeye',
+        repo: 'marcoesposito1988/easy_handeye',
+        url: 'https://github.com/marcoesposito1988/easy_handeye',
+        license: 'LGPL',
+        tags: ['Hand-Eye', 'Calibration', 'ROS 2'],
+        desc: 'Eye-in-Hand / Eye-to-Hand 캘리브레이션 GUI 툴. Tsai-Lenz / Park-Martin 내장.',
+        install: 'sudo apt install ros-humble-easy-handeye'
+      },
+      {
+        title: 'ViSP (Visual Servoing Platform)',
+        repo: 'lagadic/visp',
+        url: 'https://github.com/lagadic/visp',
+        license: 'GPL-2.0',
+        tags: ['IBVS', 'PBVS', 'Closed-Loop'],
+        desc: '실시간 비주얼 서보잉 전문 라이브러리. 로봇 팔 처짐 오차 실시간 보상.',
+        install: 'sudo apt install ros-humble-vision-visp'
+      },
+      {
+        title: 'Hugging Face LeRobot',
+        repo: 'huggingface/lerobot',
+        url: 'https://github.com/huggingface/lerobot',
+        license: 'Apache-2.0',
+        tags: ['SO-101', 'Imitation Learning', 'ACT'],
+        desc: '저비용 로봇 팔(SO-101) 텔레오퍼레이션 및 모작 학습(ACT/Diffusion Policy) 라이브러리.',
+        install: 'pip install lerobot'
+      },
+      {
+        title: 'Tomato-Harvesting-Robot',
+        repo: 'richard98hess444/Tomato-Harvesting-Robot',
+        url: 'https://github.com/richard98hess444/Tomato-Harvesting-Robot',
+        license: 'MIT',
+        tags: ['ROS', 'RealSense', 'Demo'],
+        desc: 'RealSense 깊이 맵 기반 토마토 3D 좌표 추정 및 로봇 팔 수확 레퍼런스 노드.',
+        install: 'git clone https://github.com/richard98hess444/Tomato-Harvesting-Robot.git'
+      },
+      {
+        title: 'NVIDIA Isaac Lab',
+        repo: 'isaac-sim/IsaacLab',
+        url: 'https://github.com/isaac-sim/IsaacLab',
+        license: 'BSD-3-Clause',
+        tags: ['Omniverse', 'Sim-to-Real', 'Physics'],
+        desc: '농업 환경 물리 시뮬레이션 및 초고속 병렬 GPU 합성 점군 생성.',
+        install: 'git clone https://github.com/isaac-sim/IsaacLab.git'
+      },
+      {
+        title: 'PointNeXt',
+        repo: 'guochengqian/PointNeXt',
+        url: 'https://github.com/guochengqian/PointNeXt',
+        license: 'MIT',
+        tags: ['PointNet++', 'Point Cloud Seg', 'SOTA'],
+        desc: 'PointNet++ 현대적 개선판. 복잡한 잎사귀 속 줄기 3D 점군 세그멘테이션 백본.',
+        install: 'pip install pointnext'
+      }
+    ];
+
+    // Render Papers
+    let currentFilter = 'all';
+    function renderPapers() {
+      const container = document.getElementById('papers-container');
+      const searchTxt = document.getElementById('paper-search').value.toLowerCase();
+      container.innerHTML = '';
+
+      papersData.forEach(p => {
+        const matchesFilter = (currentFilter === 'all' || p.cat === currentFilter);
+        const matchesSearch = p.title.toLowerCase().includes(searchTxt) ||
+                              p.author.toLowerCase().includes(searchTxt) ||
+                              p.desc.toLowerCase().includes(searchTxt);
+
+        if (matchesFilter && matchesSearch) {
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `
+            <div class="card-header">
+              <span class="card-title">${p.title}</span>
+              <span class="tag tag-red">#${p.id}</span>
+            </div>
+            <div class="card-meta">
+              <span><strong>${p.author}</strong></span> • <span>${p.journal}</span>
+            </div>
+            <div style="margin-bottom:12px; display:flex; gap:6px; flex-wrap:wrap;">
+              ${p.tags.map(t => `<span class="tag">${t}</span>`).join('')}
+            </div>
+            <p class="card-desc">${p.desc}</p>
+            <div class="card-footer">
+              <span style="color:#94a3b8; font-size:0.8rem;">💡 ${p.takeaway.substring(0, 32)}...</span>
+              <button class="btn btn-outline" onclick="openPaperModal(${p.id})">상세 분석 & 수식</button>
+            </div>
+          `;
+          container.appendChild(card);
+        }
+      });
+    }
+
+    function setPaperFilter(cat) {
+      currentFilter = cat;
+      document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+      renderPapers();
+    }
+
+    function filterPapers() {
+      renderPapers();
+    }
+
+    function openPaperModal(id) {
+      const p = papersData.find(x => x.id === id);
+      if (!p) return;
+      const modal = document.getElementById('paper-modal');
+      const body = document.getElementById('modal-body');
+      body.innerHTML = `
+        <h2 style="color:#fff; margin-bottom:6px;">${p.title}</h2>
+        <p style="color:var(--text-secondary); margin-bottom:16px;">${p.author} | <i>${p.journal}</i></p>
+        
+        <h4 style="color:#f87171; margin-top:16px;">1. 연구 문제 및 배경</h4>
+        <p style="color:#cbd5e1; font-size:0.92rem;">${p.problem}</p>
+
+        <h4 style="color:#38bdf8; margin-top:16px;">2. 핵심 기술 및 알고리즘 원리</h4>
+        <p style="color:#cbd5e1; font-size:0.92rem;">${p.method}</p>
+
+        <h4 style="color:#4ade80; margin-top:16px;">3. 실험 결과 및 성능 지표</h4>
+        <p style="color:#cbd5e1; font-size:0.92rem;">${p.result}</p>
+
+        <div style="background:var(--accent-light); border:1px solid rgba(239,68,68,0.3); border-radius:8px; padding:14px; margin-top:20px;">
+          <h4 style="color:#ef4444; margin-bottom:4px;">🚀 우리 토마토 로봇 적용 실무 팁 (Takeaway)</h4>
+          <p style="color:#fff; font-size:0.95rem; font-weight:500;">${p.takeaway}</p>
+        </div>
+      `;
+      modal.classList.add('active');
+    }
+
+    function closeModal(e) {
+      document.getElementById('paper-modal').classList.remove('active');
+    }
+
+    // Render Open Sources
+    function renderOpenSources() {
+      const container = document.getElementById('opensource-container');
+      container.innerHTML = '';
+      openSourcesData.forEach(os => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <div class="card-header">
+            <span class="card-title">${os.title}</span>
+            <span class="tag tag-blue">${os.license}</span>
+          </div>
+          <div class="card-meta">
+            <span><code>${os.repo}</code></span>
+          </div>
+          <div style="margin-bottom:12px; display:flex; gap:6px; flex-wrap:wrap;">
+            ${os.tags.map(t => `<span class="tag">${t}</span>`).join('')}
+          </div>
+          <p class="card-desc">${os.desc}</p>
+          <pre><button class="copy-btn" onclick="copyCode(this)">복사</button><code>${os.install}</code></pre>
+          <div class="card-footer">
+            <a href="${os.url}" target="_blank" class="btn btn-outline" style="width:100%; justify-content:center;">GitHub 저장소 열기 ↗</a>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    // Quiz System
+    const quizData = [
+      {
+        q: "1. 토마토 수확 시 과실을 직접 당겨 뜯지 않고 줄기(Peduncle) 절단을 표준으로 삼는 가장 큰 이유는?",
+        opts: [
+          "줄기를 잘라야만 열매 무게가 가벼워지기 때문",
+          "과실 표면이 부드러워 직접 파지 시 멍/터짐 손상이 발생하고 꼭지를 보존해야 신선도가 유지되기 때문",
+          "토마토 줄기는 금속처럼 단단하여 잡아당길 수 없기 때문",
+          "로봇 팔 모터가 회전 운동을 지원하지 않기 때문"
+        ],
+        ans: 1,
+        exp: "토마토는 과피가 약해 직접 당기면 과즙이 터지며, 꼭지(꽃받침)가 유지되어야 수분 손실을 막고 높은 상품 가치를 인정받습니다."
+      },
+      {
+        q: "2. 우리 시스템의 센서 구성에서 Orbbec Astra Pro와 Intel RealSense D405의 올바른 역할 분담은?",
+        opts: [
+          "D405로 3m 밖에서 탐색하고, Astra Pro로 10cm 근접 절단한다.",
+          "Astra Pro로 0.6~4m 원거리 탐색/접근하고, D405(7~50cm)로 초근접 정밀 줄기 절단을 수행한다.",
+          "두 카메라 모두 같은 거리를 보며 단순 스테레오 쌍을 형성한다.",
+          "Astra Pro는 온도를 재고 D405는 소리를 듣는다."
+        ],
+        ans: 1,
+        exp: "Astra Pro는 60cm 이하에서 맹점(Blind zone)이 생기며, D405는 7~50cm 초근접 능동 IR 스테레오에 특화되어 있습니다."
+      },
+      {
+        q: "3. 얇은 줄기(Peduncle, 1~3mm)의 3D 절단 위치를 노이즈 없이 가장 안정적으로 찾는 알고리즘은?",
+        opts: [
+          "3D 점군에서 점 하나를 무작위로 선택하기",
+          "2D 마스크 상에서 Zhang-Suen 세선화로 1픽셀 스켈레톤을 구한 뒤 깊이 맵과 2차 역투영하기",
+          "단순 RGB 색상값의 평균 좌표 구하기",
+          "로봇 팔을 무작정 휘둘러 줄기에 닿을 때까지 전진하기"
+        ],
+        ans: 1,
+        exp: "1~3mm의 가는 줄기는 3D 포인트 클라우드에서 점이 끊어지므로 2D 스켈레톤 중심선을 먼저 구한 후 국소 깊이를 맵핑하는 2단계 기법이 정석입니다."
+      },
+      {
+        q: "4. SO-101과 같은 5자유도(5-DoF) 매니퓰레이터의 주요 기구학적 한계점과 극복법은?",
+        opts: [
+          "손목에 독립적인 Yaw 축이 없으므로, 집게가 바닥을 향할 때(Pitch≈-90°) Wrist Roll을 Yaw로 활용하거나 베이스를 정렬한다.",
+          "어떤 각도에서도 자유자재로 제자리 회전이 가능하다.",
+          "관절이 5개이므로 6축 로봇보다 더 복잡한 곡면을 자유롭게 그릴 수 있다.",
+          "기구학적 특이점이 전혀 존재하지 않는다."
+        ],
+        ans: 0,
+        exp: "5축 팔은 기구학적으로 위치(XYZ)와 방향(RPY) 6자유도를 독립적으로 만족시킬 수 없어 자세에 종속이 발생합니다."
+      },
+      {
+        q: "5. Hand-Eye 캘리브레이션 잔차(Residual)가 15mm를 초과하면 어떤 문제가 발생하는가?",
+        opts: [
+          "로봇의 배터리가 방전된다.",
+          "비전이 계산한 좌표와 팔이 도달한 좌표의 오차가 집게 폭을 넘어서 토마토 줄기를 헛집는다.",
+          "화면의 색상이 흑백으로 바뀐다.",
+          "아무런 문제도 발생하지 않는다."
+        ],
+        ans: 1,
+        exp: "줄기나 꼭지의 직경은 2~5mm, 집게 유효 폭은 30~50mm이므로 15mm 이상의 위치 잔차는 100% 헛집기로 이어집니다."
+      }
+    ];
+
+    function renderQuiz() {
+      const container = document.getElementById('quiz-container');
+      container.innerHTML = '';
+      quizData.forEach((item, qIdx) => {
+        const qCard = document.createElement('div');
+        qCard.className = 'card';
+        qCard.style.marginBottom = '20px';
+        qCard.innerHTML = `
+          <h4 style="color:#fff; margin-bottom:12px;">${item.q}</h4>
+          <div style="display:flex; flex-direction:column; gap:8px;" id="q-opts-${qIdx}">
+            ${item.opts.map((opt, oIdx) => `
+              <button class="btn btn-outline" style="justify-content:flex-start; text-align:left;" onclick="checkAnswer(${qIdx}, ${oIdx})">
+                ${oIdx + 1}) ${opt}
+              </button>
+            `).join('')}
+          </div>
+          <div id="q-feedback-${qIdx}" style="display:none; margin-top:14px; padding:12px; border-radius:8px; font-size:0.9rem;"></div>
+        `;
+        container.appendChild(qCard);
+      });
+    }
+
+    function checkAnswer(qIdx, oIdx) {
+      const item = quizData[qIdx];
+      const feedback = document.getElementById(`q-feedback-${qIdx}`);
+      feedback.style.display = 'block';
+
+      if (oIdx === item.ans) {
+        feedback.style.background = 'var(--green-light)';
+        feedback.style.border = '1px solid #22c55e';
+        feedback.style.color = '#4ade80';
+        feedback.innerHTML = `<b>✅ 정답입니다!</b><br>${item.exp}`;
+      } else {
+        feedback.style.background = 'var(--accent-light)';
+        feedback.style.border = '1px solid #ef4444';
+        feedback.style.color = '#f87171';
+        feedback.innerHTML = `<b>❌ 오답입니다. 다시 생각해보세요!</b><br>${item.exp}`;
+      }
+    }
+
+    function copyCode(btn) {
+      const code = btn.parentElement.querySelector('code').innerText;
+      navigator.clipboard.writeText(code).then(() => {
+        btn.innerText = '복사됨!';
+        setTimeout(() => btn.innerText = '복사', 2000);
+      });
+    }
+
+    // Init on load
+    window.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      updateSim();
+      renderPapers();
+      renderOpenSources();
+      renderQuiz();
+    });
+  </script>
+</body>
+</html>

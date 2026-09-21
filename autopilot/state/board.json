@@ -1303,13 +1303,13 @@
    "id": "T48",
    "title": "겨냥 나이 한계 0.35초의 근거를 실측으로 만든다 — 팔이 이동 중 초당 몇 mm 가는가",
    "role": "tester",
-   "status": "todo",
+   "status": "blocked",
    "priority": 3,
    "why": "T25가 겨냥 거절 한계를 D405_AIM_MAX_AGE_SEC=0.35초로 넣었지만 그 값은 짐작이다(6fps 주기 167ms의 두 배). 허용 오차 15mm를 넘지 않으려면 '15mm ÷ 이동속도'가 한계여야 하는데, 이 팔이 move_to/조그 중 TCP를 초당 몇 mm 옮기는지를 아무도 잰 적이 없다.",
    "done_when": "젯슨에서 arm_extend.py 또는 cartesian move_to로 알려진 거리(예: 50mm)를 옮기며 걸린 시간을 3회 이상 재고, TCP 속도(mm/s)를 docs/depth-camera.md 2.1.1절 아래 표로 남긴다. 그 값으로 15mm/속도를 계산해 0.35초가 큰지 작은지 판정하고, 고쳐야 하면 그 숫자를 적어 builder 작업으로 넘긴다. 팔은 끝에 A자세로 두고 서비스는 발견한 그대로(click-server active) 되돌린다.",
    "attempts": 0,
    "created": "2026-09-18 04:14",
-   "updated": "2026-09-18 23:15",
+   "updated": "2026-09-21 00:30",
    "notes": [
     {
      "t": "2026-09-18 04:14",
@@ -1325,6 +1325,16 @@
      "t": "2026-09-18 23:15",
      "by": "metrologist",
      "text": "2026-09-18 23:1x metrologist: T48 측정 카드 코드 근거 검산 완료. docs/depth-camera.md ss2.1.1에 기록. 원점=겨냥 순간의 프레임 나이 / 끝점=15mm 허용오차 / 단위=초. 기하 상한(STS3215 6.2deg/s, l2+l3=295.5mm) -> TCP_max=32mm/s -> 15/32=0.47s. 현재 0.35초가 물리 상한보다 짧아 보수적임(OK). 기록 역산: settle 포함 평균 22mm/s -> 0.35s에 7.8mm 이동. 단 타임스탬프에 settle 포함이라 실측 부족 - 아직 열린 작업. 코드 근거: config.py:750, depth_camera.py:140."
+    },
+    {
+     "t": "2026-09-21 00:30",
+     "by": "planner",
+     "text": "막힘: T77 물리 장치 연결 대기"
+    },
+    {
+     "t": "2026-09-21 00:30",
+     "by": "planner",
+     "text": "막힘: T77 물리 장치 연결 대기"
     }
    ]
   },
@@ -2115,13 +2125,8 @@
    "done_when": "젯슨 셸에서 ls /dev/video0 /dev/ttyUSB0 등이 보임",
    "attempts": 0,
    "created": "2026-09-20 19:53",
-   "updated": "2026-09-21 00:28",
+   "updated": "2026-09-21 11:51",
    "notes": [
-    {
-     "t": "2026-09-20 23:54",
-     "by": "tester",
-     "text": "2026-09-20 23:54 tester: 4대 자체검증 636/636 전수 합격(45, 102, 396, 93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*, /dev/serial/by-id) 미인식 지속 확인(사람 T77 대기)."
-    },
     {
      "t": "2026-09-20 23:59",
      "by": "auditor",
@@ -2176,6 +2181,11 @@
      "t": "2026-09-21 00:28",
      "by": "tester",
      "text": "4대 자체검증 650/650 전수 합격(45, 102, 410, 93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77 대기)."
+    },
+    {
+     "t": "2026-09-21 11:51",
+     "by": "builder",
+     "text": "2026-09-21 11:51 builder: 4대 자체검증 650/650 전수 합격(45, 102, 410, 93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 확인, 물리 디바이스 미인식 상태 지속 확인(사람 T77 대기)."
     }
    ]
   }
