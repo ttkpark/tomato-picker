@@ -820,6 +820,41 @@ def test_board_contract() -> None:
           act_vx > 50 and sim.telemetry().act == (0, 0, 0) and sim.telemetry().st & 0x01 != 0,
           f"act_before_estop={act_vx} act_after={sim.telemetry().act} st=0x{sim.telemetry().st:02X}")
 
+    # ⑨ [보드계약 v2] SimBase 물리 한계(포화·정지마찰·1차지연) 계측 감사 (docs/보드-계약.md §6, §7, §11.2)
+    # SimBase가 caps.vmax_mms(800) 초과 지령 시 속도 상한으로 클램프하고 output_saturated(0x20) 반영
+    sim_sat = bc.SimBase(ks_mms=50, ks_w_mdegs=15000)
+    sim_sat.set_velocity(1500, 0, 0)
+    for _ in range(20):
+        sim_sat.step(0.05)
+    check("보드계약 §11.2 SimBase가 caps.vmax_mms(800) 초과 지령 시 속도 상한으로 클램프한다",
+          sim_sat.telemetry().act[0] == 800,
+          f"act={sim_sat.telemetry().act} vmax={sim_sat.caps().vmax_mms}")
+
+    check("보드계약 §11.2 SimBase가 상한 도달 시 telemetry st에 output_saturated(0x20) 플래그를 세운다",
+          sim_sat.telemetry().output_saturated and (sim_sat.telemetry().st & 0x20 != 0),
+          f"st=0x{sim_sat.telemetry().st:02X}")
+
+    sim_sat.set_velocity(200, 0, 0)
+    for _ in range(20):
+        sim_sat.step(0.05)
+    check("보드계약 §11.2 SimBase가 정상 속도로 복귀 시 output_saturated 플래그를 해제한다",
+          not sim_sat.telemetry().output_saturated and (sim_sat.telemetry().st & 0x20 == 0) and sim_sat.telemetry().act[0] == 200,
+          f"act={sim_sat.telemetry().act} st=0x{sim_sat.telemetry().st:02X}")
+
+    # 음수 지령(-vmax 초과)에 대해서도 대칭적으로 속도 상한 클램프 및 포화 플래그 감지
+    sim_sat.set_velocity(-1500, 0, 0)
+    for _ in range(20):
+        sim_sat.step(0.05)
+    check("보드계약 §11.2 SimBase step이 음수 지령(-vmax 초과)에 대해서도 대칭적으로 속도 상한 및 포화를 감지한다",
+          sim_sat.telemetry().act[0] == -800 and sim_sat.telemetry().output_saturated,
+          f"act={sim_sat.telemetry().act} st=0x{sim_sat.telemetry().st:02X}")
+
+    # 물리 기하학적 한계 대조 (DC 12V 330rpm 감속모터, r=40mm 무부하 상한 1382 mm/s)
+    calib = bc.DutyCalib()
+    check("보드계약 §11.2 SimBase와 DutyCalib의 물리 속도 상한 및 정지마찰 문턱이 물리 한계(vmax < 1382mm/s) 내에 안착한다",
+          sim_sat.caps().vmax_mms < 1382 and calib.vmax_mms < 1382 and sim_sat._ks_mms > 0,
+          f"sim_vmax={sim_sat.caps().vmax_mms} calib_vmax={calib.vmax_mms:.1f}")
+
 
 
 

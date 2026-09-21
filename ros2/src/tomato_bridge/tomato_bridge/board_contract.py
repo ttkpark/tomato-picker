@@ -461,6 +461,34 @@ class Telemetry:
     vin_mv: int | None = None
     amp_ma: int | None = None
 
+    @property
+    def estop_latched(self) -> bool:
+        return bool(self.st & (1 << 0))
+
+    @property
+    def soft_deadman(self) -> bool:
+        return bool(self.st & (1 << 1))
+
+    @property
+    def hard_deadman(self) -> bool:
+        return bool(self.st & (1 << 2))
+
+    @property
+    def calib_valid(self) -> bool:
+        return bool(self.st & (1 << 3))
+
+    @property
+    def driver_fault(self) -> bool:
+        return bool(self.st & (1 << 4))
+
+    @property
+    def output_saturated(self) -> bool:
+        return bool(self.st & (1 << 5))
+
+    @property
+    def low_voltage(self) -> bool:
+        return bool(self.st & (1 << 6))
+
     @classmethod
     def from_heartbeat(cls, hb: Heartbeat) -> "Telemetry":
         return cls(
@@ -560,6 +588,7 @@ class SimBase:
         self._tgt = (0, 0, 0)
         self._act = (0, 0, 0)
         self._estopped = False
+        self._saturated = False
         self._ms = 0
 
     def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
@@ -571,6 +600,7 @@ class SimBase:
     def stop(self) -> None:
         self._tgt = (0, 0, 0)
         self._act = (0, 0, 0)
+        self._saturated = False
 
     def estop(self, on: bool) -> None:
         self._estopped = on
@@ -578,30 +608,49 @@ class SimBase:
             self.stop()
 
     def step(self, dt_sec: float = 0.05) -> None:
-        """물리 시뮬레이션 한 스텝 진행 (1차 지연 + 정지마찰 문턱)."""
+        """물리 시뮬레이션 한 스텝 진행 (1차 지연 + 정지마찰 문턱 + 물리 상한 클램프)."""
         self._ms += int(dt_sec * 1000)
         if self._estopped:
             self._act = (0, 0, 0)
+            self._saturated = False
             return
 
-        def _sim_axis(tgt_val: int, act_val: int, ks_val: int) -> int:
-            if abs(tgt_val) < ks_val:
-                # 정지마찰 문턱 미만이면 물리적으로 0
-                return int(act_val * 0.5)
-            # 1차 지연 필터
-            alpha = min(1.0, dt_sec / 0.15)
-            return int(act_val + alpha * (tgt_val - act_val))
+        def _sim_axis(tgt_val: int, act_val: int, ks_val: int, limit_val: int) -> tuple[int, bool]:
+            saturated = False
+            effective_tgt = tgt_val
+            if limit_val > 0 and abs(tgt_val) > limit_val:
+                effective_tgt = int(math.copysign(limit_val, tgt_val))
+                saturated = True
 
-        act_x = _sim_axis(self._tgt[0], self._act[0], self._ks_mms)
-        act_y = _sim_axis(self._tgt[1], self._act[1], self._ks_mms)
-        act_w = _sim_axis(self._tgt[2], self._act[2], self._ks_w)
+            if abs(effective_tgt) < ks_val:
+                # 정지마찰 문턱 미만이면 물리적으로 0
+                return int(act_val * 0.5), saturated
+
+            # 1차 지연 필터
+            if abs(effective_tgt - act_val) <= 1:
+                next_act = effective_tgt
+            else:
+                alpha = min(1.0, dt_sec / 0.15)
+                next_act = int(round(act_val + alpha * (effective_tgt - act_val)))
+
+            if limit_val > 0 and abs(next_act) >= limit_val:
+                next_act = int(math.copysign(limit_val, next_act))
+                saturated = True
+            return next_act, saturated
+
+        act_x, sat_x = _sim_axis(self._tgt[0], self._act[0], self._ks_mms, self._caps.vmax_mms)
+        act_y, sat_y = _sim_axis(self._tgt[1], self._act[1], self._ks_mms, self._caps.vymax_mms)
+        act_w, sat_w = _sim_axis(self._tgt[2], self._act[2], self._ks_w, self._caps.wmax_mdegs)
         self._act = (act_x, act_y, act_w)
+        self._saturated = sat_x or sat_y or sat_w
 
     def caps(self) -> Caps:
         return self._caps
 
     def telemetry(self) -> Telemetry:
         st_val = 0x01 if self._estopped else 0x08
+        if getattr(self, "_saturated", False):
+            st_val |= 0x20
         return Telemetry(ms=self._ms, tgt=self._tgt, act=self._act, st=st_val, vin_mv=12600, amp_ma=450)
 
 

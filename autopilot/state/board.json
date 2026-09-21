@@ -110,13 +110,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-21 13:07",
+   "updated": "2026-09-21 13:13",
    "notes": [
-    {
-     "t": "2026-09-18 02:10",
-     "by": "planner",
-     "text": "[사람 아침 5분 ③/④] 줄자. mount.x와 함께 mount.y·mount.yaw_deg도(감사 T29 요청). 이 넷은 지금 실측도 강제도 없다 — 기준1이 링크길이만 합격인 이유다."
-    },
     {
      "t": "2026-09-18 07:17",
      "by": "builder",
@@ -171,6 +166,11 @@
      "t": "2026-09-21 13:07",
      "by": "builder",
      "text": "2026-09-21 builder: 보드 계약 v2 LegacyDutyControl 격리 및 베이스 다형성 구현체(MockBase, SimBase) 확립(docs/인수인계-2026-09-04.md §54). LegacyDutyControl(Protocol: set_duty) 격리 및 SimBase(1차지연, 정지마찰문턱, estop차단)·MockBase 5종 신설로 4대 자체검증 690종(45/102/450/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
+    },
+    {
+     "t": "2026-09-21 13:13",
+     "by": "metrologist",
+     "text": "2026-09-21 metrologist: SimBase 물리 한계(포화·정지마찰·1차지연) 계측 감사 및 DutyCalib ↔ 물리 속도 변환 검산(docs/인수인계-2026-09-04.md §55). SimBase 축별 속도 상한(vmax=800mm/s, vymax=600mm/s, wmax=180000mdeg/s) 클램프 및 Telemetry 7대 상태 비트(output_saturated 등) 연동 5종 신설로 4대 자체검증 695종(45/102/455/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
     }
    ]
   },
