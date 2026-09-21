@@ -1886,6 +1886,40 @@ def test_sample_within_limits() -> None:
           not any(limits.violations(kin.inverse(m5.standoff_pose(p), geom))
                   for p in pts))
 
+    # ③c [계측사] 스탠드오프(standoff)·접근축(approach) 기하 규약 및 3대 구현 일치 검증 (§47)
+    from tomato_picker.hardware import eye as eye_hw  # noqa: E402
+    from tomato_picker.config import ARM_EYE_STANDOFF_MM  # noqa: E402
+    test_p = {"x": 250.0, "y": 50.0, "z": 300.0, "pitch": -20.0}
+    sp_test = m5.standoff_pose(test_p, 30.0)
+    ap_test = eye_hw.Eye.approach_pose(None, 250.0, 50.0, 300.0, pitch=-20.0, standoff=30.0)
+    tpose_test = kin.ToolPose(x=250.0, y=50.0, z=300.0, pitch=-20.0)
+    dx_t, dy_t, dz_t = kin.offset_in_tool_frame(tpose_test, -30.0, 0.0, 0.0)
+    check("standoff 3개 구현(eye·move5_check·kin.offset_in_tool_frame)의 접근축 이동이 완전 일치한다",
+          abs(sp_test.x - ap_test["x"]) < 1e-9 and abs(sp_test.y - ap_test["y"]) < 1e-9
+          and abs(sp_test.z - ap_test["z"]) < 1e-9
+          and abs(sp_test.x - (tpose_test.x + dx_t)) < 1e-9
+          and abs(sp_test.y - (tpose_test.y + dy_t)) < 1e-9
+          and abs(sp_test.z - (tpose_test.z + dz_t)) < 1e-9,
+          f"sp=({sp_test.x:.2f},{sp_test.y:.2f},{sp_test.z:.2f}) vs ap=({ap_test['x']:.2f},{ap_test['y']:.2f},{ap_test['z']:.2f})")
+    p_back = m5.target_from_stand(sp_test, 30.0)
+    check("move5_check의 target_from_stand와 standoff_pose가 왕복 가역 항등 변환이다",
+          abs(test_p["x"] - p_back["x"]) <= 0.1 and abs(test_p["y"] - p_back["y"]) <= 0.1
+          and abs(test_p["z"] - p_back["z"]) <= 0.1,
+          f"orig={test_p} -> back={p_back}")
+    arm_node_code = open(os.path.join(REPO, "ros2", "src", "tomato_bridge", "tomato_bridge",
+                                      "arm_node.py"), encoding="utf-8").read()
+    check("arm_node.py가 standoff_m(m)을 mm로 환산(x1000)하고 reached를 m(/1000)로 반환한다",
+          "float(req.standoff_m) * 1000.0" in arm_node_code
+          and "Point(x=pose.x / 1000.0" in arm_node_code,
+          "MoveToPoint.srv 단위(m)와 kinematics(mm) 간 단위 일관성 보장")
+    check("STANDOFF_MM(30.0) 및 ARM_EYE_STANDOFF_MM(45.0)이 물리 안전 범위(20..60mm) 안이다",
+          20.0 <= m5.STANDOFF_MM <= 60.0 and 20.0 <= ARM_EYE_STANDOFF_MM <= 60.0,
+          f"m5={m5.STANDOFF_MM} eye={ARM_EYE_STANDOFF_MM}")
+    yaml_lim_arm = _geometry_yaml()["arm"]["limits_deg"]
+    check("집게(gripper) 규약 분리: yaml limits_deg [0, 45]와 kin.JOINTS 분리가 유지된다",
+          yaml_lim_arm.get("gripper") == [0.0, 45.0] and "gripper" not in kin.JOINTS,
+          f"gripper_lim={yaml_lim_arm.get('gripper')} in_joints={'gripper' in kin.JOINTS}")
+
     # ③b 작업영역 가드(바닥·몸통·사거리)도 **뽑는 쪽이 같은 숫자를 본다**.
     #    09-18 실기 5번째는 관절은 멀쩡했는데 표적 수평 76mm < 90mm로 거절됐다.
     from tomato_picker.config import (ARM_CART_R_MIN,  # noqa: E402
