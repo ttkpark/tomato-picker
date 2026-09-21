@@ -506,7 +506,107 @@ class MobileBase(Protocol):
         ...
 
 
-__all__ = ["AxisSigns", "Caps", "Command", "DutyCalib", "Heartbeat", "MobileBase", "Telemetry",
+@runtime_checkable
+class LegacyDutyControl(Protocol):
+    """선택적 레거시 duty 제어 인터페이스 (보드계약 §11.1).
+
+    caps().units == 0인 보드나 진단 화면에서만 쓰이며,
+    일반 주행 로직은 이 인터페이스를 알지 못한다.
+    """
+
+    def set_duty(self, dx: int, dy: int, dw: int) -> None:
+        """duty 제어 지령."""
+        ...
+
+
+class MockBase:
+    """계약 테스트용 무동작 베이스 구현체 (보드계약 §11.2)."""
+
+    def __init__(self, caps: Caps | None = None) -> None:
+        self._caps = caps or Caps.legacy()
+        self._telem = Telemetry()
+        self._stopped = False
+        self._estopped = False
+        self._last_cmd = (0, 0, 0)
+
+    def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
+        self._last_cmd = (vx_mms, vy_mms, w_mdegs)
+        self._stopped = False
+
+    def stop(self) -> None:
+        self._stopped = True
+        self._last_cmd = (0, 0, 0)
+
+    def estop(self, on: bool) -> None:
+        self._estopped = on
+        if on:
+            self.stop()
+
+    def caps(self) -> Caps:
+        return self._caps
+
+    def telemetry(self) -> Telemetry:
+        return self._telem
+
+
+class SimBase:
+    """1차 지연 + 정지마찰 물리 모델을 갖는 시뮬레이터 베이스 (보드계약 §11.2)."""
+
+    def __init__(self, caps: Caps | None = None, ks_mms: int = 50, ks_w_mdegs: int = 15000) -> None:
+        self._caps = caps or Caps.parse("cap proto=2 fw=3.0.0 board=sim id=SIM001 "
+                                        "units=1 closed_loop=1 calib=1 vmax=800 vymax=600 wmax=180000")
+        self._ks_mms = ks_mms
+        self._ks_w = ks_w_mdegs
+        self._tgt = (0, 0, 0)
+        self._act = (0, 0, 0)
+        self._estopped = False
+        self._ms = 0
+
+    def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
+        if self._estopped:
+            self._tgt = (0, 0, 0)
+            return
+        self._tgt = (vx_mms, vy_mms, w_mdegs)
+
+    def stop(self) -> None:
+        self._tgt = (0, 0, 0)
+        self._act = (0, 0, 0)
+
+    def estop(self, on: bool) -> None:
+        self._estopped = on
+        if on:
+            self.stop()
+
+    def step(self, dt_sec: float = 0.05) -> None:
+        """물리 시뮬레이션 한 스텝 진행 (1차 지연 + 정지마찰 문턱)."""
+        self._ms += int(dt_sec * 1000)
+        if self._estopped:
+            self._act = (0, 0, 0)
+            return
+
+        def _sim_axis(tgt_val: int, act_val: int, ks_val: int) -> int:
+            if abs(tgt_val) < ks_val:
+                # 정지마찰 문턱 미만이면 물리적으로 0
+                return int(act_val * 0.5)
+            # 1차 지연 필터
+            alpha = min(1.0, dt_sec / 0.15)
+            return int(act_val + alpha * (tgt_val - act_val))
+
+        act_x = _sim_axis(self._tgt[0], self._act[0], self._ks_mms)
+        act_y = _sim_axis(self._tgt[1], self._act[1], self._ks_mms)
+        act_w = _sim_axis(self._tgt[2], self._act[2], self._ks_w)
+        self._act = (act_x, act_y, act_w)
+
+    def caps(self) -> Caps:
+        return self._caps
+
+    def telemetry(self) -> Telemetry:
+        st_val = 0x01 if self._estopped else 0x08
+        return Telemetry(ms=self._ms, tgt=self._tgt, act=self._act, st=st_val, vin_mv=12600, amp_ma=450)
+
+
+__all__ = ["AxisSigns", "Caps", "Command", "DutyCalib", "Heartbeat", "LegacyDutyControl",
+           "MockBase", "MobileBase", "SimBase", "Telemetry",
            "checksum", "framed", "plan", "to_physical", "EPS_MMS", "EPS_MDEGS"]
 
 

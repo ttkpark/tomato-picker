@@ -783,6 +783,43 @@ def test_board_contract() -> None:
           LegacyBase is not bc.MobileBase and hasattr(LegacyBase, "drive_to") and not hasattr(bc.MobileBase, "drive_to"),
           "레거시 상위 스킬 ABC vs 보드계약 v2 물리 인터페이스 Protocol")
 
+    # ⑧ [보드계약 v2] LegacyDutyControl 격리 및 베이스 구현체(MockBase, SimBase) 검증 (docs/보드-계약.md §11.1, §11.2)
+    class _DutyImpl:
+        def set_duty(self, dx: int, dy: int, dw: int) -> None:
+            pass
+
+    check("보드계약 §11.1 LegacyDutyControl 프로토콜 격리 및 isinstance 검사 통과",
+          isinstance(_DutyImpl(), bc.LegacyDutyControl) and not isinstance(_ValidBase(), bc.LegacyDutyControl),
+          "선택적 레거시 duty 제어 인터페이스 분리")
+
+    mock = bc.MockBase()
+    check("보드계약 §11.2 MockBase가 MobileBase 프로토콜을 충족한다",
+          isinstance(mock, bc.MobileBase) and mock.caps().board == "uno-moebius",
+          f"board={mock.caps().board}")
+
+    sim = bc.SimBase(ks_mms=50, ks_w_mdegs=15000)
+    check("보드계약 §11.2 SimBase가 MobileBase 프로토콜을 충족한다",
+          isinstance(sim, bc.MobileBase) and sim.caps().board == "sim",
+          f"board={sim.caps().board}")
+
+    # SimBase 물리 모델: 정지마찰 문턱 미만이면 act 0 유지
+    sim.set_velocity(30, 0, 0)
+    sim.step(0.05)
+    check("보드계약 §11.2 SimBase가 정지마찰 문턱(ks=50) 미만 지령 시 0으로 수렴한다",
+          sim.telemetry().act[0] == 0,
+          f"act={sim.telemetry().act}")
+
+    # SimBase 정상 지령 시 1차 지연으로 추종 및 비상정지 래치 시 0 정지
+    sim.set_velocity(300, 0, 0)
+    sim.step(0.05)
+    sim.step(0.05)
+    act_vx = sim.telemetry().act[0]
+    sim.estop(True)
+    sim.step(0.05)
+    check("보드계약 §11.2 SimBase가 문턱 초과 시 추종하고 estop 래치 시 즉시 0으로 차단된다",
+          act_vx > 50 and sim.telemetry().act == (0, 0, 0) and sim.telemetry().st & 0x01 != 0,
+          f"act_before_estop={act_vx} act_after={sim.telemetry().act} st=0x{sim.telemetry().st:02X}")
+
 
 
 

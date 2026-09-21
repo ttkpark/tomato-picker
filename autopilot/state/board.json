@@ -110,13 +110,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-21 13:01",
+   "updated": "2026-09-21 13:07",
    "notes": [
-    {
-     "t": "2026-09-18 01:42",
-     "by": "auditor",
-     "text": "감사(T29, 2026-09-18): mount.x뿐 아니라 mount.y(현재 0.0, 대칭 가정·근거 없음)와 mount.yaw_deg(현재 0.0, 브래킷이 정말 요 0도인지 잰 적 없음)도 같이 재 두면 좋다 — 같은 줄자 작업이고, 지금 so101_geometry.yaml에 y/yaw 둘 다 '근거 없음'으로 채점됐다(docs/ros2-이행계획.md 기준1 채점표). done_when은 mount.x 그대로 두되, 여유 있으면 y/yaw도 같이 적어 달라."
-    },
     {
      "t": "2026-09-18 02:10",
      "by": "planner",
@@ -171,6 +166,11 @@
      "t": "2026-09-21 13:01",
      "by": "builder",
      "text": "2026-09-21 builder: 보드 계약 v2 MobileBase 프로토콜 및 Telemetry 스냅샷 계측 카드 확립(docs/인수인계-2026-09-04.md §53). MobileBase(Protocol: set_velocity, stop, estop, caps, telemetry) 및 Telemetry 데이터클래스 팩토리 파싱 5종 신설로 4대 자체검증 685종(45/102/445/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
+    },
+    {
+     "t": "2026-09-21 13:07",
+     "by": "builder",
+     "text": "2026-09-21 builder: 보드 계약 v2 LegacyDutyControl 격리 및 베이스 다형성 구현체(MockBase, SimBase) 확립(docs/인수인계-2026-09-04.md §54). LegacyDutyControl(Protocol: set_duty) 격리 및 SimBase(1차지연, 정지마찰문턱, estop차단)·MockBase 5종 신설로 4대 자체검증 690종(45/102/450/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
     }
    ]
   },
