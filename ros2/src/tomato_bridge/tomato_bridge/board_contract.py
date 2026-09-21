@@ -58,6 +58,133 @@ def framed(payload: str) -> bytes:
 
 
 # ----------------------------------------------------------------------
+# 응답 및 프로토콜 파싱 — 보드계약 §4, §5, §12
+# ----------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Response:
+    """보드 응답 한 줄을 파싱한 결과 (보드계약 §4, §5).
+
+    보드 응답 형식:
+      - `ok <cmd> [args...]`
+      - `nak <code_or_reason>`
+      - `cap ...`
+      - `hb ...`
+      - `boot ...`
+    """
+
+    raw: str
+    kind: str             # "ok", "nak", "cap", "hb", "boot", "unknown"
+    cmd: str = ""         # kind=="ok"일 때 대상 명령 (예: "S", "X")
+    code: str = ""        # kind=="nak"일 때 사유 코드 (예: "crc", "nocrc", "unsupported", "nocalib", "estop", "range")
+    args: tuple[str, ...] = ()
+    cap: Caps | None = None
+    hb: Heartbeat | None = None
+
+    @property
+    def is_ok(self) -> bool:
+        return self.kind == "ok"
+
+    @property
+    def is_nak(self) -> bool:
+        return self.kind == "nak"
+
+
+def parse_response(line: str) -> Response:
+    """보드에서 수신된 텍스트 한 줄 파싱."""
+    clean = line.strip()
+    if not clean:
+        return Response(raw=line, kind="unknown")
+
+    # 체크섬 분리: <payload>*<HEX>
+    payload = clean
+    if "*" in clean:
+        payload, _, _ = clean.partition("*")
+        payload = payload.strip()
+
+    tokens = payload.split()
+    if not tokens:
+        return Response(raw=line, kind="unknown")
+
+    header = tokens[0]
+    if header == "ok":
+        cmd = tokens[1] if len(tokens) > 1 else ""
+        args = tuple(tokens[2:]) if len(tokens) > 2 else ()
+        return Response(raw=line, kind="ok", cmd=cmd, args=args)
+    elif header == "nak":
+        code = tokens[1] if len(tokens) > 1 else ""
+        args = tuple(tokens[2:]) if len(tokens) > 2 else ()
+        return Response(raw=line, kind="nak", code=code, args=args)
+    elif header == "cap":
+        try:
+            c = Caps.parse(payload)
+            return Response(raw=line, kind="cap", cap=c, args=tuple(tokens[1:]))
+        except Exception:
+            return Response(raw=line, kind="cap", args=tuple(tokens[1:]))
+    elif header == "hb":
+        try:
+            h = Heartbeat.parse(payload)
+            return Response(raw=line, kind="hb", hb=h, args=tuple(tokens[1:]))
+        except Exception:
+            return Response(raw=line, kind="hb", args=tuple(tokens[1:]))
+    elif header == "boot":
+        return Response(raw=line, kind="boot", args=tuple(tokens[1:]))
+    else:
+        return Response(raw=line, kind="unknown", args=tuple(tokens))
+
+
+class ProtocolParser:
+    """보드계약 §4, §5.4, §12 프로토콜 수신 및 상태 머신.
+
+    체크섬 검증, strict CRC 모드 전환, nak 코드 추적 및 cap/hb 이벤트 처리를 관장한다.
+    """
+
+    def __init__(self, expected_proto: int = 2) -> None:
+        self.expected_proto = expected_proto
+        self.strict_crc = False
+        self.last_nak: str = ""
+        self.nak_counts: dict[str, int] = {}
+        self.caps: Caps | None = None
+        self.last_hb: Heartbeat | None = None
+        self.proto_mismatch = False
+
+    def feed_line(self, line: str) -> Response:
+        """한 줄 수신 처리 및 프로토콜 계약 규칙 갱신."""
+        clean = line.strip()
+        if not clean:
+            return Response(raw=line, kind="unknown")
+
+        # 체크섬 검증 (§4)
+        if "*" in clean:
+            payload, _, hex_crc = clean.rpartition("*")
+            expected_crc = checksum(payload)
+            if hex_crc.upper() != expected_crc.upper():
+                self.last_nak = "crc"
+                self.nak_counts["crc"] = self.nak_counts.get("crc", 0) + 1
+                return Response(raw=line, kind="nak", code="crc", args=("체크섬 불일치",))
+            # 정상 체크섬을 수신하면 strict CRC로 승격 (§4)
+            self.strict_crc = True
+            clean = payload
+
+        resp = parse_response(clean)
+        if resp.kind == "nak":
+            self.last_nak = resp.code
+            self.nak_counts[resp.code] = self.nak_counts.get(resp.code, 0) + 1
+        elif resp.kind == "cap" and resp.cap is not None:
+            self.caps = resp.cap
+            # proto 불일치 검증 (§6, §12)
+            if resp.cap.proto != self.expected_proto:
+                self.proto_mismatch = True
+            else:
+                self.proto_mismatch = False
+        elif resp.kind == "hb" and resp.hb is not None:
+            self.last_hb = resp.hb
+
+        return resp
+
+
+
+# ----------------------------------------------------------------------
 # cap — 보드가 자기 능력을 말한다 (보드계약 §6)
 # ----------------------------------------------------------------------
 
@@ -800,7 +927,9 @@ class UnoAdapterBase:
 
 
 __all__ = ["AxisSigns", "Caps", "Command", "DutyCalib", "Heartbeat", "LegacyDutyControl",
-           "MockBase", "MobileBase", "SimBase", "Telemetry", "UnoAdapterBase",
-           "checksum", "framed", "plan", "to_physical", "EPS_MMS", "EPS_MDEGS"]
+           "MockBase", "MobileBase", "ProtocolParser", "Response", "SimBase", "Telemetry",
+           "UnoAdapterBase", "checksum", "framed", "parse_response", "plan",
+           "to_physical", "EPS_MMS", "EPS_MDEGS"]
+
 
 

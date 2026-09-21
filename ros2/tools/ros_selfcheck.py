@@ -1098,6 +1098,51 @@ def test_board_contract() -> None:
           and "self._base.stop()" in cmd_node_text,
           "UnoAdapterBase 기본 주입 및 안전 종료 검증")
 
+    # ⑬ [보드계약 v2] §12 프로토콜 계약 테스트 및 Response/ProtocolParser 검증 (docs/보드-계약.md §4, §5.4, §12)
+    # 1. 체크섬 오류 시 nak crc 판정 및 카운트 누적
+    parser = bc.ProtocolParser(expected_proto=2)
+    r_bad_crc = parser.feed_line("C 350 0 0*99")
+    check("보드계약 §12 프로토콜: 체크섬 불일치 수신 시 실행되지 않고 nak crc로 판정한다",
+          r_bad_crc.is_nak and r_bad_crc.code == "crc" and parser.last_nak == "crc" and parser.nak_counts.get("crc") == 1,
+          f"code={r_bad_crc.code} counts={parser.nak_counts}")
+
+    # 2. 정상 체크섬 수신 후 strict 모드 전환 및 무체크섬 구동 명령 거부(nak nocrc)
+    r_valid_cmd = parser.feed_line("ok S*53")
+    check("보드계약 §12 프로토콜: 정상 체크섬 수신 시 strict_crc 상태로 승격된다",
+          parser.strict_crc and r_valid_cmd.is_ok and r_valid_cmd.cmd == "S",
+          f"strict={parser.strict_crc} cmd={r_valid_cmd.cmd}")
+
+    r_nocrc = parser.feed_line("nak nocrc")
+    check("보드계약 §12 프로토콜: strict 전환 후 무체크섬 구동 시 nak nocrc 응답을 파싱하고 추적한다",
+          r_nocrc.is_nak and r_nocrc.code == "nocrc" and parser.last_nak == "nocrc",
+          f"code={r_nocrc.code}")
+
+    # 3. 지원하지 않는 명령 수신 시 nak unsupported 및 nak estop/nocalib 등 5대 nak 코드 파싱
+    r_unsupported = parser.feed_line("nak unsupported")
+    r_estop = parser.feed_line("nak estop")
+    r_nocalib = parser.feed_line("nak nocalib")
+    r_range = parser.feed_line("nak range")
+    check("보드계약 §5.4 & §12 프로토콜: 모르는 명령 nak unsupported 및 5대 nak 규격이 정확히 식별된다",
+          r_unsupported.code == "unsupported" and r_estop.code == "estop" and r_nocalib.code == "nocalib" and r_range.code == "range",
+          f"unsupp={r_unsupported.code} estop={r_estop.code} nocalib={r_nocalib.code} range={r_range.code}")
+
+    # 4. cap 파싱 및 proto 불일치 시 연결 거부 플래그 세우기
+    r_cap_proto1 = parser.feed_line("cap proto=1 board=old-board")
+    proto1_mismatch = parser.proto_mismatch
+    r_cap_proto2 = parser.feed_line("cap proto=2 fw=3.0.0 board=stm32f411 id=A3F2C918 units=1 closed_loop=1 calib=1")
+    check("보드계약 §12 프로토콜: proto 불일치(proto=1 vs expected=2) 시 거부 플래그를 세우고 정상 proto=2 수신 시 해제한다",
+          proto1_mismatch and not parser.proto_mismatch and parser.caps is not None and parser.caps.board == "stm32f411",
+          f"mismatch1={proto1_mismatch} mismatch2={parser.proto_mismatch} board={parser.caps.board if parser.caps else None}")
+
+    # 5. ok X 1, ok X 0 비상정지 래치 응답 및 boot 리셋 원인 응답 파싱
+    r_ok_x1 = parser.feed_line("ok X 1")
+    r_boot = parser.feed_line("boot #3 cause=wdt last=S")
+    check("보드계약 §5.1 & §12 프로토콜: ok X 비상정지 인자 응답 및 boot 리셋 원인 응답을 누락 없이 파싱한다",
+          r_ok_x1.is_ok and r_ok_x1.cmd == "X" and r_ok_x1.args == ("1",)
+          and r_boot.kind == "boot" and "cause=wdt" in r_boot.args,
+          f"ok_x={r_ok_x1.cmd} args={r_ok_x1.args} boot={r_boot.kind} args={r_boot.args}")
+
+
 
 
 

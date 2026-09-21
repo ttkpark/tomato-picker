@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 80,
+ "next_id": 81,
  "tasks": [
   {
    "id": "T9",
@@ -2206,6 +2206,25 @@
      "t": "2026-09-21 13:43",
      "by": "builder",
      "text": "완료: SimBase 데드맨 계층(소프트 300ms 감속, 하드 1000ms 정지) 및 물리 지령 추종 보강, §12 계약 테스트 5종 신설로 4대 자체검증 715종(45/102/475/93 All RC=0) 전수 합격"
+    }
+   ]
+  },
+  {
+   "id": "T80",
+   "title": "보드 계약 v2 응답 파서(ResponseParser) 구현 및 §12 프로토콜 계약 테스트 확립",
+   "role": "builder",
+   "status": "doing",
+   "priority": 3,
+   "why": "docs/보드-계약.md §4, §5, §12 프로토콜 계약 명세(ok/nak 응답 파싱, 모르는 명령, CRC 불일치, strict no-crc, nocalib, estop, cap 재발행) 구현 및 ros_selfcheck 계약 검증 완비",
+   "done_when": "ResponseParser 및 §12 프로토콜 계약 테스트 추가 후 4대 자체검증 전수 합격(RC=0) 및 인수인계 문서 기록",
+   "attempts": 1,
+   "created": "2026-09-21 13:49",
+   "updated": "2026-09-21 13:49",
+   "notes": [
+    {
+     "t": "2026-09-21 13:49",
+     "by": "builder",
+     "text": "만듦"
     }
    ]
   }
