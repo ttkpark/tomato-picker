@@ -1106,7 +1106,7 @@ def test_board_contract() -> None:
     # 6. CmdVelNode base_type 파라미터(uno/sim/stm32/mock) 선언 및 4대 베이스 팩토리 분기 검증 (보드계약 §11, §13)
     check("보드계약 §11 & §13 cmd_vel_node가 base_type 파라미터를 선언하고 4대 베이스(uno, sim, stm32, mock) 팩토리를 지원한다",
           'self.declare_parameter("base_type", "uno")' in cmd_node_text
-          and 'base_type == "mock"' in cmd_node_text and "MockBase()" in cmd_node_text
+          and 'base_type == "mock"' in cmd_node_text and "MockBase(" in cmd_node_text
           and 'base_type == "sim"' in cmd_node_text and "SimBase(" in cmd_node_text
           and 'base_type == "stm32"' in cmd_node_text and "Stm32Base(" in cmd_node_text
           and 'base_type == "uno"' in cmd_node_text and "UnoAdapterBase(" in cmd_node_text,
@@ -1305,7 +1305,8 @@ def test_board_contract() -> None:
     check("보드계약 §14.1 계측: cmd_vel_node가 SimBase 및 Stm32Base 생성 시 signs=self._signs를 온전히 전달한다",
           "SimBase(deadman_enabled=True, signs=self._signs)" in cmd_node_text
           and "Stm32Base(motor_link=self._link, signs=self._signs)" in cmd_node_text
-          and "UnoAdapterBase(motor_link=self._link, calib=self._calib, signs=self._signs)" in cmd_node_text,
+          and "UnoAdapterBase(motor_link=self._link, calib=self._calib, signs=self._signs)" in cmd_node_text
+          and "MockBase(signs=self._signs)" in cmd_node_text,
           "cmd_vel_node signs 전달 검증")
 
     # 4. DutyCalib 물리 한계 검산: ks >= 0, kv > 0 및 이론적 최고속도(vmax, wmax)가 물리 허용 범위 내 안착
@@ -1350,6 +1351,20 @@ def test_board_contract() -> None:
     check("보드계약 §12·§14 감사: Stm32Base가 set_velocity 시점에 AxisSigns(vy=-1, w=-1)를 반영하여 SimBase 및 hb와 일관된 telemetry().tgt를 유지한다",
           stm_signs_base.telemetry().tgt == (350, -200, -30000) and stm_signs_base.telemetry().tgt == sim_signs_base.telemetry().tgt,
           f"stm_tgt={stm_signs_base.telemetry().tgt} sim_tgt={sim_signs_base.telemetry().tgt}")
+
+    # 6. UnoAdapterBase가 set_velocity 시점에 AxisSigns(vy=-1, w=-1)를 반영하여 cmd.physical과 일치하는 telemetry().tgt를 유지한다 (T86)
+    uno_signs_base = bc.UnoAdapterBase(signs=bc.AxisSigns(vx=1, vy=-1, w=-1))
+    uno_signs_base.set_velocity(350, 200, 30000)
+    check("보드계약 §11·§14 계측: UnoAdapterBase가 set_velocity 시점에 AxisSigns(vy=-1, w=-1)를 반영하여 cmd.physical과 일치하는 telemetry().tgt를 유지한다",
+          uno_signs_base.telemetry().tgt == (350, -200, -30000) and uno_signs_base.telemetry().tgt == stm_signs_base.telemetry().tgt,
+          f"uno_tgt={uno_signs_base.telemetry().tgt}")
+
+    # 7. MockBase가 set_velocity 시점에 AxisSigns(vy=-1, w=-1)를 반영하여 4대 베이스와 일치하는 telemetry().tgt를 유지한다 (T86)
+    mock_signs_base = bc.MockBase(signs=bc.AxisSigns(vx=1, vy=-1, w=-1))
+    mock_signs_base.set_velocity(350, 200, 30000)
+    check("보드계약 §11·§14 계측: MockBase가 set_velocity 시점에 AxisSigns(vy=-1, w=-1)를 반영하여 4대 베이스와 일치하는 telemetry().tgt를 유지한다",
+          mock_signs_base.telemetry().tgt == (350, -200, -30000) and mock_signs_base.telemetry().tgt == stm_signs_base.telemetry().tgt,
+          f"mock_tgt={mock_signs_base.telemetry().tgt}")
 
 
 

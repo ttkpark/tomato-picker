@@ -85,7 +85,7 @@ class CmdVelNode(Node):
             self._caps = base.caps()
         elif base_type == "mock":
             self._link = None
-            self._base = MockBase()
+            self._base = MockBase(signs=self._signs)
             self._caps = self._base.caps()
         elif base_type == "sim":
             self._link = None

@@ -702,8 +702,9 @@ class LegacyDutyControl(Protocol):
 class MockBase:
     """계약 테스트용 무동작 베이스 구현체 (보드계약 §11.2)."""
 
-    def __init__(self, caps: Caps | None = None) -> None:
+    def __init__(self, caps: Caps | None = None, signs: AxisSigns | None = None) -> None:
         self._caps = caps or Caps.legacy()
+        self._signs = signs or AxisSigns()
         self._stopped = False
         self._estopped = False
         self._last_cmd = (0, 0, 0)
@@ -712,7 +713,7 @@ class MockBase:
         if self._estopped or (vx_mms == 0 and vy_mms == 0 and w_mdegs == 0):
             self.stop()
             return
-        self._last_cmd = (vx_mms, vy_mms, w_mdegs)
+        self._last_cmd = (vx_mms * self._signs.vx, vy_mms * self._signs.vy, w_mdegs * self._signs.w)
         self._stopped = False
 
     def stop(self) -> None:
@@ -879,13 +880,13 @@ class UnoAdapterBase:
         self._stopped = False
 
     def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
-        self._tgt = (vx_mms, vy_mms, w_mdegs)
         if self._estopped:
             self.stop()
             return
         cmd = plan(vx_mms / 1000.0, vy_mms / 1000.0, math.radians(w_mdegs / 1000.0),
                    caps=self._caps, calib=self._calib, signs=self._signs, estop=self._estopped)
         self._last_cmd = cmd
+        self._tgt = cmd.physical
         if cmd.rejected or cmd.payload == "S" or cmd.duty is None:
             self.stop()
             return
