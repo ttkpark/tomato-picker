@@ -1107,7 +1107,7 @@ def test_board_contract() -> None:
           f"code={r_bad_crc.code} counts={parser.nak_counts}")
 
     # 2. 정상 체크섬 수신 후 strict 모드 전환 및 무체크섬 구동 명령 거부(nak nocrc)
-    r_valid_cmd = parser.feed_line("ok S*53")
+    r_valid_cmd = parser.feed_line(f"ok S*{bc.checksum('ok S')}")
     check("보드계약 §12 프로토콜: 정상 체크섬 수신 시 strict_crc 상태로 승격된다",
           parser.strict_crc and r_valid_cmd.is_ok and r_valid_cmd.cmd == "S",
           f"strict={parser.strict_crc} cmd={r_valid_cmd.cmd}")
@@ -1141,6 +1141,11 @@ def test_board_contract() -> None:
           r_ok_x1.is_ok and r_ok_x1.cmd == "X" and r_ok_x1.args == ("1",)
           and r_boot.kind == "boot" and "cause=wdt" in r_boot.args,
           f"ok_x={r_ok_x1.cmd} args={r_ok_x1.args} boot={r_boot.kind} args={r_boot.args}")
+
+    # 6. ResponseParser 클래스 별칭 및 parse_response 함수 인터페이스 일관성 검증
+    check("보드계약 §12 프로토콜: ResponseParser 클래스 별칭이 ProtocolParser와 동일하게 유지된다",
+          bc.ResponseParser is bc.ProtocolParser and hasattr(bc, "parse_response"),
+          f"ResponseParser={bc.ResponseParser}")
 
 
 

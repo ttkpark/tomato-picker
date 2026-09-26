@@ -183,6 +183,9 @@ class ProtocolParser:
         return resp
 
 
+ResponseParser = ProtocolParser
+
+
 
 # ----------------------------------------------------------------------
 # cap — 보드가 자기 능력을 말한다 (보드계약 §6)
@@ -927,7 +930,7 @@ class UnoAdapterBase:
 
 
 __all__ = ["AxisSigns", "Caps", "Command", "DutyCalib", "Heartbeat", "LegacyDutyControl",
-           "MockBase", "MobileBase", "ProtocolParser", "Response", "SimBase", "Telemetry",
+           "MockBase", "MobileBase", "ProtocolParser", "Response", "ResponseParser", "SimBase", "Telemetry",
            "UnoAdapterBase", "checksum", "framed", "parse_response", "plan",
            "to_physical", "EPS_MMS", "EPS_MDEGS"]
 
