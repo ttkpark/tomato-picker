@@ -2164,12 +2164,17 @@
    "done_when": "UnoAdapterBase 기본 signs 또는 cmd_vel_node/stage1.yaml 설정이 Uno 물리 규약(vy=-1, w=1)과 REP-103에 맞게 정합되고, 4대 자체검증 전수 All RC=0",
    "attempts": 1,
    "created": "2026-09-26 17:29",
-   "updated": "2026-09-26 17:33",
+   "updated": "2026-09-26 17:42",
    "notes": [
     {
      "t": "2026-09-26 17:29",
      "by": "auditor",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-26 17:42",
+     "by": "planner",
+     "text": "stage1.yaml은 tomato_bridge/config 가 아니라 tomato_bringup/config/stage1.yaml 에 있다. 이 경로를 사용하여 작업하라."
     }
    ]
   }
