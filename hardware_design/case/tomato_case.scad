@@ -1,152 +1,214 @@
-// tomato_case.scad — 토마토 로봇 3단 케이스 (메카넘 베이스 위 전장부 + 회전 플랫폼)
-// 2026-09-25 스케치(docs/design/case-sketch-2026-09-24.jpg) 기반.
-// 실측 전 단계: 아래 [PLACEHOLDER] 표시 값은 전부 추정치. 실측 나오면 이 블록만 고치면
-// 전체 모델이 다시 맞춰진다 — 파일 다른 곳은 손댈 필요 없음.
+// tomato_case.scad — 토마토 로봇 케이스: 전장 트레이 + 뚜껑 + 180° 회전판
+// 스케치 docs/design/case-sketch-2026-09-24.jpg · 실측 docs/design/3D-parts-mapping.md
+//
+// 좌표: X=좌우, Y=앞뒤(Y=0 면이 전면=팔이 보는 쪽), Z=위. 원점=트레이 바닥 앞-왼 모서리.
+// 부품별 STL 뽑기: openscad -D 'part="tray"' -o tray.stl tomato_case.scad
+//                  (part = "assembly" | "tray" | "lid" | "platform")
+//
+// 값의 출처 표시:
+//   [STL]  3D/ 폴더 원본을 잘라 잰 값 — 믿어도 됨
+//   [DS]   부품 데이터시트 값
+//   [실측] 아직 모름 — 자로 재서 고칠 것 (지금 값은 형상을 보기 위한 가짜)
 
-/* ===================== 파라미터 ===================== */
+part = "assembly";
 
-wall = 3;           // 벽 두께 (FDM 적층 안정성 기준, 0.4mm 노즐 x 7.5회)
-clearance = 1.0;     // 부품 삽입 여유
+/* ===================== 공통 ===================== */
+wall   = 3;      // [STL] 기존 파츠 벽·판 두께와 동일
+floor_t = 3;     // [STL]
+m3_clear = 3.4;  // [STL] 통과 구멍 (TOPRight·BOTTOM이 3.4 / TOPLeft 3.22)
+m3_tap   = 2.9;  // [STL] 셀프탭 (TOPLeft 아두이노 보스 2.93)
+$fn = 48;
 
-// --- 메카넘 베이스 상판 (섀시) --- [PLACEHOLDER: 실측 필요]
-base_w = 220;         // ponytail: 추정치, 실측 후 교체
-base_d = 180;         // ponytail: 추정치, 실측 후 교체
-base_h = 70;          // 전장부 내부 높이 (배터리+젯슨 세워 넣을 여유)
+/* ===================== 차체 / 트레이 ===================== */
+chassis_w = 160;   // [실측] 차체 상판 가로 (X)
+chassis_d = 240;   // [실측] 차체 상판 세로 (Y)
+tray_h    = 70;    // 젯슨+방열팬 높이 여유 (젯슨 보드 21 + 팬·방열판 ~30 + 배선)
 
-// --- 전장부 고정판에 들어가는 부품 (실측 데이터시트 값) ---
-// Jetson Orin Nano Dev Kit: 100 x 79 x 21 mm (공식 치수)
-jetson_w = 100; jetson_d = 79; jetson_h = 21;
-// Arduino Uno R3: 68.6 x 53.4 mm
-ardu_w = 68.6; ardu_d = 53.4;
-// 배터리 13.2V 팩 — [PLACEHOLDER] 실물 없어 표준 18650 4S 팩 크기로 추정
-batt_w = 70; batt_d = 60; batt_h = 30;  // ponytail: 추정치, 실측 후 교체
-// 전원 컨버터(Power Conv) — [PLACEHOLDER] 소형 DC-DC 벅 모듈 통상 크기
-pconv_w = 50; pconv_d = 25;
-// 원거리 고정 카메라(Astra/Orbbec류) 마운트 — [PLACEHOLDER] 바디 기준 추정
-cam_fixed_w = 60; cam_fixed_d = 30; cam_fixed_h = 30;
+// 차체 상판 체결 패턴 — [STL] TOPLeft·TOPRight 공용: M3, 50 × 30
+mount_dx = 50;  mount_dy = 30;
+mount_centers = [[chassis_w/2, 60], [chassis_w/2, 180]];  // [실측] 두 벌의 중심 위치
 
-// --- 외관 각인: 브랜드명 "ForNerds" ---
-brand_text = "ForNerds";
-brand_text_h = 8;    // 글자 높이(mm)
-brand_emboss = 0.6;  // 양각 돌출량(mm)
+// 프린터 베드 (넘으면 콘솔 경고) — [실측] 쓰는 프린터
+bed_x = 256; bed_y = 256;
 
-// --- 회전 플랫폼 ---
-// STS3215 서보(회전 액추에이터로 재사용, 기존 팔과 동일 부품): 40 x 20 x 40.5mm (공식 치수)
-servo_w = 40; servo_d = 20; servo_h = 40.5;
-platform_dia = 140;      // 회전판 지름 — 팔 SO-101 베이스 + 근접카메라 얹을 여유
-platform_h = 8;          // 회전판 두께
-turntable_bore = 8;      // 서보 혼 축 관통 구멍 지름 (혼 규격에 맞춰 조정)
-stopper_deg = 180;        // 기계적 스토퍼 허용 회전각 (왕복 180도, 초과 시 배선 파손 방지)
+/* ===================== 보드 ===================== */
+// Arduino Uno R3 — [DS] 공식 구멍 좌표, [STL] TOPLeft에서 ±0.2 일치 확인
+uno_holes = [[13.97, 2.54], [15.24, 50.8], [66.04, 7.62], [66.04, 35.56]];
+uno_pos = [10, 150];              // [실측] 보드 원점(좌하) 위치
+standoff_sq = 7; standoff_h = 4;  // [STL] TOPLeft 보스 7×7, 높이 4
 
-// 배선 관통 통로 (회전축 중심, 팔전원/시리얼/D405 USB/서보신호 4가닥)
-cable_bore = 18;          // 여유 루프 포함 관통 구멍 지름
+// Jetson Orin Nano 개발자 키트 — [DS] 보드 100 × 79
+jetson_holes = [[4, 4], [96, 4], [4, 75], [96, 75]];  // [실측] 캐리어 보드 구멍
+jetson_pos = [30, 6];             // [실측] 서보 걸이(회전 중심 아래)와 겹치지 않게
+jetson_standoff_h = 6;            // 밑면 부품 여유
 
-/* ===================== 모듈 ===================== */
+// 배터리 13.2V 팩 — 낮은 벽으로 둘러 밴드로 묶음
+batt_size = [70, 60, 30];         // [실측]
+batt_pos  = [84, 150];            // [실측]
+batt_fence_h = 12;
 
-// 1) 하부 고정판 — 메카넘 베이스 위에 얹는 트레이. 배터리/전원/아두이노/젯슨/Fornords 카메라 마운트.
-module base_tray() {
+// 전원 컨버터
+pconv_holes = [[3, 3], [47, 3], [3, 22], [47, 22]];  // [실측]
+pconv_pos = [10, 110];            // [실측]
+
+// 뒷벽 포트 구멍 (전원 스위치·USB·충전) — [실측] [x, z, w, h]
+rear_ports = [[20, 15, 30, 20], [100, 15, 40, 25]];
+
+/* ===================== 뚜껑 / 회전부 ===================== */
+lid_t = 4;
+lid_screw_inset = 7;
+
+rot_center = [chassis_w/2, 110];  // [실측] 회전 중심 — 무게중심상 차체 가운데 근처가 유리
+
+// 회전 베어링 (레이지수잔 구매품) — 팔 무게·모멘트를 여기서 받는다. 서보 축으로 받지 말 것.
+brg_od  = 120;   // [실측] 바깥 지름
+brg_h   = 8;     // [실측] 두께 = 뚜껑 윗면과 회전판 밑면 사이 간격
+brg_pcd_lower = 108; brg_pcd_upper = 92;  // [실측] 하/상 링 볼트원
+brg_hole = 3.4;
+
+// 회전 서보 — STS3215 (팔과 같은 부품, 드라이버 공유)
+servo_body = [45.2, 24.7, 35];    // [DS] STS3215 몸체 (확인 요)
+servo_shaft_off = 11;             // [실측] 몸체 끝→출력축 거리
+horn_dia = 22;                    // [실측] 원판 혼 지름
+horn_pcd = 14; horn_hole = 2.2;   // [실측] 혼 나사원·나사(M2)
+
+// 180° 제한 — 배선이 감겨 끊어지지 않게 기계적으로 막는다
+travel_deg = 180;
+stop_r = 40;  stop_pin_d = 5;  stop_groove_depth = 3;
+
+// 배선 통로 — 서보가 중심을 차지하므로 중심 대신 호형 슬롯. 판의 구멍이 이 슬롯을 따라 돈다.
+// 서보 몸체가 +X로 뻗으므로 슬롯은 반대편(−X, 180°) 가운데.
+cable_r = 28;  cable_w = 14;  cable_deg = 180;
+stop_deg = 0;  // 스토퍼 홈 가운데 방향
+
+/* ===================== 회전판 ===================== */
+plat_dia = 150;  plat_t = 6;
+so101_holes = [[-40, -30], [40, -30], [-40, 30], [40, 30]];  // [실측] SO-101 베이스 바닥 구멍(회전 중심 기준)
+so101_offset = [0, 5];            // [실측] 팔 베이스 위치
+orbbec_pos = [0, -62];            // Orbbec 1/4"-20 삼각대 나사 자리 (전면 가장자리)
+quarter_inch = 6.6;
+
+// 브랜드
+brand_text = "ForNerds";  brand_size = 12;  brand_emboss = 0.8;
+
+/* ===================== 검사 ===================== */
+if (chassis_w > bed_x || chassis_d > bed_y)
+    echo("⚠ 트레이/뚜껑이 베드를 넘는다 — 반으로 나눠 출력할 것", chassis_w, chassis_d);
+if (plat_dia > min(bed_x, bed_y)) echo("⚠ 회전판이 베드를 넘는다");
+if (cable_r + cable_w/2 > brg_pcd_upper/2 - 5) echo("⚠ 배선 슬롯이 베어링 볼트와 겹친다");
+if (stop_r > brg_pcd_upper/2 - 5 || stop_r < cable_r + cable_w/2 + 4) echo("⚠ 스토퍼 반경 재조정");
+
+/* ===================== 조각 ===================== */
+module holes_pattern(c, dx, dy, d, h) {
+    for (sx = [-1, 1], sy = [-1, 1])
+        translate([c[0] + sx*dx/2, c[1] + sy*dy/2, -1]) cylinder(h = h + 2, d = d);
+}
+module ring_holes(pcd, d, h, n = 4, a0 = 45) {
+    for (i = [0:n-1]) rotate(a0 + i*360/n) translate([pcd/2, 0, -1]) cylinder(h = h + 2, d = d);
+}
+module arc(r, w, h, a0, span) {  // 호형 띠 (a0에서 span만큼)
+    rotate(a0) rotate_extrude(angle = span) translate([r - w/2, 0]) square([w, h]);
+    for (a = [a0, a0 + span]) rotate(a) translate([r, 0, 0]) cylinder(h = h, d = w);
+}
+module boss(h, hole) {
     difference() {
-        // 바깥 셸
-        cube([base_w, base_d, base_h]);
-        // 내부 비움 (트레이형, 바닥+벽만 남김)
-        translate([wall, wall, wall])
-            cube([base_w - 2*wall, base_d - 2*wall, base_h]); // 위쪽 뚫림(뚜껑 없음, 방열)
+        translate([-standoff_sq/2, -standoff_sq/2, 0]) cube([standoff_sq, standoff_sq, h]);
+        translate([0, 0, 0.6]) cylinder(h = h, d = hole);  // 바닥 0.6 막음 — 아래로 안 샌다
     }
-
-    // 부품 고정 보스(나사 기둥) — 배치는 스케치 순서(좌→우): 원거리 카메라 / Servo / BAT / PowerConv / Ardu / Jetson
-    // 좌표는 상판 내부 기준 원점(wall, wall)에서의 상대 배치, placeholder 치수 바뀌면 자동 재배치됨
-    translate([wall + 10, wall + 10, 0])
-        mount_pad(cam_fixed_w, cam_fixed_d);
-
-    translate([wall + 10 + cam_fixed_w + 15, wall + 10, 0])
-        mount_pad(ardu_w, ardu_d);
-
-    translate([base_w/2 - batt_w/2, base_d - wall - batt_d - 10, 0])
-        mount_pad(batt_w, batt_d);
-
-    translate([base_w - wall - jetson_w - 10, wall + 10, 0])
-        mount_pad(jetson_w, jetson_d);
-
-    translate([base_w - wall - pconv_w - 10, base_d - wall - pconv_d - 10, 0])
-        mount_pad(pconv_w, pconv_d);
 }
+lid_corners = [for (x = [lid_screw_inset, chassis_w - lid_screw_inset],
+                    y = [lid_screw_inset, chassis_d - lid_screw_inset]) [x, y]];
 
-// 브랜드 각인 — 하부 트레이 정면 외벽에 양각 텍스트
-module brand_logo() {
-    translate([base_w/2, 0, base_h/2])
-        rotate([90, 0, 0])
-            linear_extrude(height = brand_emboss)
-                text(brand_text, size = brand_text_h, halign = "center", valign = "center", font = "Liberation Sans:style=Bold");
-}
-
-// 부품 하나당 4귀퉁이 M3 보스
-module mount_pad(w, d, boss_h = 6, boss_dia = 6, hole_dia = 2.6) {
-    inset = 4;
-    for (x = [inset, w - inset])
-        for (y = [inset, d - inset])
-            translate([x, y, 0])
-                difference() {
-                    cylinder(h = boss_h, d = boss_dia, $fn = 24);
-                    cylinder(h = boss_h, d = hole_dia, $fn = 24); // M3 self-tap
-                }
-}
-
-// 2) 회전축 허브 — base_tray 중앙에 서보를 세워 넣고, 배선이 지나갈 중공축.
-module rotation_hub() {
-    hub_dia = servo_h + 10; // 서보 감싸는 원통
+/* ----- 1) 트레이 ----- */
+module tray() {
     difference() {
-        union() {
-            cylinder(h = base_h, d = hub_dia, $fn = 60);
+        cube([chassis_w, chassis_d, tray_h]);
+        translate([wall, wall, floor_t]) cube([chassis_w - 2*wall, chassis_d - 2*wall, tray_h]);
+        // 차체 체결 (기존 나사 자리)
+        for (c = mount_centers) holes_pattern(c, mount_dx, mount_dy, m3_clear, floor_t);
+        // 좌우 환기 슬롯
+        for (x = [-1, chassis_w - wall - 1], y = [30 : 12 : chassis_d - 40])
+            translate([x, y, 20]) cube([wall + 2, 6, tray_h - 32]);
+        // 뒷벽 포트
+        for (p = rear_ports) translate([p[0], chassis_d - wall - 1, p[1]]) cube([p[2], wall + 2, p[3]]);
+    }
+    // 뚜껑 나사 기둥
+    for (c = lid_corners) translate([c[0], c[1], 0])
+        difference() {
+            cylinder(h = tray_h, d = 9);
+            translate([0, 0, tray_h - 12]) cylinder(h = 13, d = m3_tap);
         }
-        // 배선 관통 보어 (중심)
-        translate([0, 0, -1])
-            cylinder(h = base_h + 2, d = cable_bore, $fn = 40);
-        // 서보 포켓 (사각)
-        translate([-servo_w/2, -servo_d/2, base_h - servo_h])
-            cube([servo_w, servo_d, servo_h + 1]);
+    // 보드 기둥
+    translate([uno_pos[0], uno_pos[1], floor_t])
+        for (h = uno_holes) translate(h) boss(standoff_h, m3_tap);
+    translate([jetson_pos[0], jetson_pos[1], floor_t])
+        for (h = jetson_holes) translate(h) boss(jetson_standoff_h, m3_tap);
+    translate([pconv_pos[0], pconv_pos[1], floor_t])
+        for (h = pconv_holes) translate(h) boss(standoff_h, m3_tap);
+    // 배터리 울타리 (앞뒤로 밴드 슬롯)
+    translate([batt_pos[0], batt_pos[1], floor_t]) difference() {
+        translate([-wall, -wall, 0]) cube([batt_size[0] + 2*wall, batt_size[1] + 2*wall, batt_fence_h]);
+        cube([batt_size[0], batt_size[1], batt_fence_h + 1]);
+        translate([batt_size[0]/2 - 10, -wall - 1, 3]) cube([20, batt_size[1] + 2*wall + 2, 3]);
     }
+    // 브랜드 양각 (전면 외벽)
+    translate([chassis_w/2, 0, tray_h/2]) rotate([90, 0, 0])
+        linear_extrude(brand_emboss)
+            text(brand_text, size = brand_size, halign = "center", valign = "center",
+                 font = "Liberation Sans:style=Bold");
 }
 
-// 3) 회전 플랫폼 — 팔 SO-101 베이스 + 근접 카메라(D405) 마운트, 180도 스토퍼 포함.
-module rotation_platform() {
+/* ----- 2) 뚜껑 (회전 베어링·서보 받침) ----- */
+module lid() {
     difference() {
-        union() {
-            cylinder(h = platform_h, d = platform_dia, $fn = 90);
-            // 스토퍼 핀 (하부 턱에 걸림, stopper_deg 왕복 제한)
-            translate([platform_dia/2 - 6, 0, platform_h])
-                cylinder(h = 6, d = 5, $fn = 20);
+        cube([chassis_w, chassis_d, lid_t]);
+        for (c = lid_corners) translate([c[0], c[1], -1]) cylinder(h = lid_t + 2, d = m3_clear);
+        translate([rot_center[0], rot_center[1], 0]) {
+            translate([0, 0, -1]) cylinder(h = lid_t + 2, d = horn_dia + 3);      // 혼 통과
+            ring_holes(brg_pcd_lower, brg_hole, lid_t);                           // 베어링 하부 링
+            translate([0, 0, -1]) arc(cable_r, cable_w, lid_t + 2, cable_deg - travel_deg/2, travel_deg);
+            translate([0, 0, lid_t - stop_groove_depth])                          // 스토퍼 홈
+                arc(stop_r, stop_pin_d + 1, stop_groove_depth + 1, stop_deg - travel_deg/2, travel_deg);
         }
-        // 축 관통 + 배선 보어
-        translate([0, 0, -1])
-            cylinder(h = platform_h + 2, d = cable_bore, $fn = 40);
-        // 서보 혼 체결 구멍(원형 패턴, 혼 규격에 맞춰 개수/반경 조정 필요)
-        for (a = [0:60:300])
-            rotate([0, 0, a])
-                translate([turntable_bore/2 + 4, 0, -1])
-                    cylinder(h = platform_h + 2, d = 2.2, $fn = 12);
+        // 젯슨 위 환기
+        for (x = [0 : 8 : 90]) translate([jetson_pos[0] + 5 + x, jetson_pos[1] + 10, -1]) cube([4, 50, lid_t + 2]);
     }
+    // 서보 걸이 (뚜껑 밑, 출력축이 회전 중심에 오게)
+    translate([rot_center[0] - servo_shaft_off, rot_center[1] - servo_body[1]/2, -servo_body[2]])
+        difference() {
+            translate([-wall, -wall, 0]) cube([servo_body[0] + 2*wall, servo_body[1] + 2*wall, servo_body[2]]);
+            translate([-0.2, -0.2, -1]) cube([servo_body[0] + 0.4, servo_body[1] + 0.4, servo_body[2] + 2]);
+            // 선 빠질 틈 + 케이블타이 슬롯
+            translate([servo_body[0] - 1, 4, -1]) cube([wall + 2, servo_body[1] - 8, 10]);
+            for (z = [8, 24]) translate([-wall - 1, -wall - 1, z]) cube([servo_body[0] + 2*wall + 2, servo_body[1] + 2*wall + 2, 4]);
+        }
 }
 
-// 하부 트레이에 스토퍼 걸림턱 — rotation_platform의 핀이 이 턱 안쪽에서만 움직이게 제한
-module stopper_wall() {
-    // stopper_deg(기본 180) 만큼만 열어둔 링 벽. 나머지 구간은 벽으로 막아 핀이 못 지나감.
-    ring_r = platform_dia/2 - 6;
+/* ----- 3) 회전판 (팔 + Orbbec) ----- */
+module platform() {
     difference() {
-        cylinder(h = 10, r = ring_r + 3, $fn = 90);
-        cylinder(h = 10, r = ring_r - 3, $fn = 90);
-        // 열린 구간(stopper_deg)만 잘라냄 — 나머지가 막힌 벽(스토퍼)
-        rotate([0, 0, -stopper_deg/2])
-            rotate_extrude(angle = stopper_deg, $fn = 90)
-                translate([ring_r - 3, 0])
-                    square([6, 10]);
+        cylinder(h = plat_t, d = plat_dia, $fn = 120);
+        ring_holes(horn_pcd, horn_hole, plat_t);                                 // 서보 혼
+        translate([0, 0, -1]) cylinder(h = plat_t + 2, d = 3);                   // 혼 가운데 나사
+        ring_holes(brg_pcd_upper, brg_hole, plat_t);                             // 베어링 상부 링
+        rotate(cable_deg) translate([cable_r, 0, -1]) cylinder(h = plat_t + 2, d = cable_w - 1);  // 배선 구멍
+        for (h = so101_holes) translate([so101_offset[0] + h[0], so101_offset[1] + h[1], -1])
+            cylinder(h = plat_t + 2, d = m3_clear);
+        translate([orbbec_pos[0], orbbec_pos[1], -1]) cylinder(h = plat_t + 2, d = quarter_inch);
     }
+    // 스토퍼 핀 (밑면, 뚜껑 홈에 들어감)
+    rotate(stop_deg) translate([stop_r, 0, -(brg_h + stop_groove_depth - 0.5)])
+        cylinder(h = brg_h + stop_groove_depth - 0.5, d = stop_pin_d);
 }
 
-/* ===================== 조립 미리보기 ===================== */
-color("lightgray") base_tray();
-color("black") brand_logo();
-translate([base_w/2, base_d/2, 0]) {
-    color("gray") rotation_hub();
-    color("orange") translate([0, 0, base_h]) stopper_wall();
-    color("lightgreen") translate([0, 0, base_h + 10]) rotation_platform();
+/* ===================== 출력 ===================== */
+if (part == "tray") tray();
+else if (part == "lid") lid();
+else if (part == "platform") platform();
+else {
+    color("lightgray") tray();
+    color("silver", 0.8) translate([0, 0, tray_h]) lid();
+    color("orange") translate([rot_center[0], rot_center[1], tray_h + lid_t + brg_h]) platform();
+    %translate([rot_center[0], rot_center[1], tray_h + lid_t])                   // 베어링 (구매품, 유령)
+        difference() { cylinder(h = brg_h, d = brg_od); translate([0, 0, -1]) cylinder(h = brg_h + 2, d = brg_od - 30); }
 }
