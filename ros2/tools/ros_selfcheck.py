@@ -463,6 +463,36 @@ def test_geometry_matches() -> None:
     check("tomato_case.scad에 차체 길이 195.5를 박아 두지 않았다 (195.5는 나사 간 거리)",
           re.search(r"(chassis_d|case_d)\s*=\s*195\.5", scad_src) is None)
 
+    # T12 측정 카드 (§77): TOPRight/TOPLeft 3D 부품 단면 및 나사 스팬 기반 차체 전장 기하 하한(283.5mm) 검증
+    import struct
+    def _stl_z_bounds(stl_name: str) -> tuple[float, float]:
+        path = os.path.join(REPO, "3D", stl_name)
+        with open(path, "rb") as f:
+            f.read(80)
+            n = struct.unpack("<I", f.read(4))[0]
+            zs = []
+            for _ in range(n):
+                f.read(12)
+                p1 = struct.unpack("<3f", f.read(12))
+                p2 = struct.unpack("<3f", f.read(12))
+                p3 = struct.unpack("<3f", f.read(12))
+                f.read(2)
+                zs.extend([p1[2], p2[2], p3[2]])
+            return min(zs), max(zs)
+
+    tr_z_min, tr_z_max = _stl_z_bounds("TOPRight.stl")
+    tl_z_min, tl_z_max = _stl_z_bounds("TOPLeft.stl")
+    rear_overhang = 41.0 - tr_z_min   # 81.0mm (Z=41 후열 나사 ↔ 후단 Z=-40)
+    front_overhang = tl_z_max - 71.0  # 7.0mm (Z=71 전열 나사 ↔ 전단 Z=78)
+    outer_screws = 195.5              # 사용자 확인 실측 나사 스팬 (TOPLeft 최전열 ↔ TOPRight 최후열)
+    min_parts_span = rear_overhang + outer_screws + front_overhang
+    check("차체 탑재 3D 부품 전장 하한(TOPRight 오버행 81mm + 나사스팬 195.5mm + TOPLeft >= 283.5mm)이 성립한다 (T12 §77)",
+          min_parts_span >= 283.5 and abs(rear_overhang - 81.0) < 1e-6,
+          f"min_span={min_parts_span:.1f}mm, rear_overhang={rear_overhang:.1f}mm")
+    check("T12 mount.x 예상 범위(+30~+75mm)가 부품 전장 기하 하한(L>=283.5mm)과 정합한다",
+          30.0 <= mx <= 75.0,
+          f"mount.x={mx}mm (기하 예상 범위 30~75mm)")
+
     # 파지 화면좌표(grip_uv) 기본값 및 검출 영역 검증
     cs_src = open(os.path.join(ROS2, "tools", "click_server.py"), encoding="utf-8").read()
     vs_src = open(os.path.join(ROS2, "tools", "visual_servo.py"), encoding="utf-8").read()

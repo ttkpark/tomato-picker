@@ -86,13 +86,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-26 20:08",
+   "updated": "2026-09-26 22:05",
    "notes": [
-    {
-     "t": "2026-09-21 13:33",
-     "by": "builder",
-     "text": "2026-09-21 builder: cmd_vel_node MobileBase 의존 주입 및 UnoAdapterBase 기본 연동(docs/인수인계-2026-09-04.md §58). CmdVelNode(base) 주입 인터페이스, 물리 단위(mm/s, mdeg/s) 전달, stop/estop/close 안전 자원 해제 및 5종 신설로 4대 자체검증 710종(45/102/470/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
-    },
     {
      "t": "2026-09-26 11:35",
      "by": "metrologist",
@@ -147,6 +142,11 @@
      "t": "2026-09-26 20:08",
      "by": "human",
      "text": "정정(사람 확인 09-26): 195.5는 차체 길이가 아니라 TOPLeft 앞줄↔TOPRight 뒷줄 나사 거리. 차체 길이 미실측이므로 mount.x -10~+20mm 범위는 근거 없음 — 실측 대기로 되돌림. 인수인계 §72 머리말 참조."
+    },
+    {
+     "t": "2026-09-26 22:05",
+     "by": "metrologist",
+     "text": "2026-09-26 metrologist: TOPRight/TOPLeft 3D 부품 단면 분석(후방 81mm, 전방 >=7mm) 및 나사스팬(195.5mm) 기반 차체 상판 전장 기하 하한 L >= 283.5mm(약 290~300mm) 수학적 증명 완료(docs/인수인계 §77). T12 mount.x 올바른 기하 예상 범위 +30~+75mm(중심 약 +55~+60mm) 확립 및 6항목 개정 측정 카드 확정. ros_selfcheck 기하 하한 검증 2종 추가(528종 통과, 4대 자체검증 766종 All RC=0). T12 사람 줄자 실측(차체 L 및 d_front) 및 T77 대기 지속."
     }
    ]
   },
