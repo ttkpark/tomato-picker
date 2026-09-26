@@ -17,10 +17,12 @@ import numpy as np
 
 from .fruit3d import Blob
 
-# ripe/unripe 클래스 이름 매핑 — 파인튜닝된 tomato-seg.pt가 이 이름을 쓴다고 가정.
+# ripe/unripe/stem 클래스 이름 매핑 — 파인튜닝된 tomato-seg.pt가 이 이름을 쓴다고 가정.
 # 학습 라벨이 다르면 여기 하나만 바꾼다.
 RIPE_CLASS_NAMES = {"ripe", "red", "tomato_ripe"}
 UNRIPE_CLASS_NAMES = {"unripe", "green", "tomato_unripe"}
+STEM_CLASS_NAMES = {"stem", "peduncle", "tomato_stem", "calyx"}
+
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,25 @@ def detections_to_blobs(
         blobs.append(blob)
         masks.append(det.mask)
     return blobs, masks
+
+
+def extract_stem_masks(
+    detections: list[YoloDetection],
+    min_pixels: int = 50,
+) -> list[np.ndarray]:
+    """YOLO 검출 리스트에서 줄기(stem) 마스크만 추출한다.
+    
+    study 04 문서 및 stem_cut.py(Zhang-Suen 세선화 및 절단점 산출)에
+    입력으로 주어질 2D bool 마스크 목록을 반환한다.
+    줄기는 과실(min_pixels=400)보다 훨씬 가늘고 작으므로(1~3mm 폭)
+    기본 min_pixels 하한을 낮게(50px) 잡는다.
+    """
+    stem_masks: list[np.ndarray] = []
+    for det in detections:
+        if det.class_name in STEM_CLASS_NAMES:
+            if int(det.mask.sum()) >= min_pixels:
+                stem_masks.append(det.mask)
+    return stem_masks
 
 
 def run_yolo_seg(model: Any, bgr: np.ndarray, conf: float = 0.6) -> list[YoloDetection]:

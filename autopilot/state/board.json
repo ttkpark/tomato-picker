@@ -264,30 +264,6 @@
    ]
   },
   {
-   "id": "T25",
-   "title": "느린 발행(6fps)에서 겨냥을 '경고'가 아니라 '거절'로 올릴지 정한다",
-   "role": "builder",
-   "status": "done",
-   "priority": 3,
-   "why": "T24로 fps_warn은 생겼지만 아무도 거절하지 않는다. D405_MAX_AGE_SEC=2.0은 6fps에서 12프레임(=팔이 한참 움직인 뒤)이라 굳음 검사가 사실상 안 잡는다. 이 모듈의 핵심은 '거절'인데(depth_camera.py 첫머리), 주기에는 그 규칙이 아직 없다.",
-   "done_when": "팔이 움직이는 중(또는 직후)의 화소 겨냥에 대해 max_age를 fps로 환산한 값(예: 2프레임)으로 거절할지 결정하고, 결정한 쪽을 코드+eye_check 1종으로 굳힌다. 거절하지 않기로 정했다면 그 이유를 docs/depth-camera.md §2.1에 한 줄 남긴다. 4종 RC=0.",
-   "attempts": 1,
-   "created": "2026-09-18 00:44",
-   "updated": "2026-09-18 04:14",
-   "notes": [
-    {
-     "t": "2026-09-18 00:44",
-     "by": "builder",
-     "text": "만듦"
-    },
-    {
-     "t": "2026-09-18 04:14",
-     "by": "builder",
-     "text": "완료: 겨냥(화소→팔 좌표)에 굳음 한계(2초)와 별개의 좁은 나이 한계를 두고 거절한다 — D405_AIM_MAX_AGE_SEC=0.35초, point_at(..., aiming=True)로 부르는 쪽이 '이 값으로 팔을 보낸다'고 선언할 때만. eye.pixel_to_base(→aim)만 켜고 probe·열매목록은 그대로. 단위를 '프레임 수'로 잡지 않은 것이 핵심 결정이다(2프레임이면 6fps 0.33초·3fps 0.67초로 느릴수록 관문이 넓어져 막으려던 상황에서 문이 열린다) — fps는 대신 '주기>한계면 어떤 프레임도 못 지킨다'는 aim_warn/조작대 ⛔겨냥불가에 쓴다. 조작대: /state에 aim_max_age·aim_impossible, ~/click_target.json에 frame_ts·ts 기록. 검증: 4종 RC=0 45/102/201/91(439종, eye_check +12종 [겨냥]). 돌연변이 5건 전부 FAIL(프레임수로 되돌리기·게이트삭제·겨냥불가판정삭제·한계가 굳음한계 초과·모르는fps 단정), 복구 후 재통과. 젯슨 실기: /state aim_max_age=0.35 aim_impossible=false @6.0fps(주기167ms) — 지금 구성에서 겨냥 안 막힘, 실제 D405 프레임 608ms 낡힌 사본은 굳음검사 통과(427mm)하고 겨냥은 거절. /click이 frame_ts 기록(클릭 107ms 전 프레임), 옛 표적파일 원복. click-server 재시작 후 active·http=200, 나머지 서비스 발견 그대로."
-    }
-   ]
-  },
-  {
    "id": "T26",
    "title": "signed_radius>90mm인 '곧게 앞으로 뻗기' 프리셋을 하나 가르치거나 move_to_point가 스스로 pre-extend하게 한다",
    "role": "builder",
@@ -2133,18 +2109,23 @@
    "id": "T89",
    "title": "[인식] yolo_seg에 줄기(stem) 클래스 및 마스크 추출 함수 연동하여 stem_cut 연결",
    "role": "builder",
-   "status": "todo",
+   "status": "done",
    "priority": 2,
    "why": "study 04 기반 추가된 yolo_seg에 줄기 클래스 정의 및 마스크 추출 함수가 없어 stem_cut.find_cut_point()와 연동이 단절됨",
    "done_when": "yolo_seg.py에 STEM_CLASS_NAMES 정의 및 줄기 마스크 추출 함수(extract_stem_masks) 추가, yolo_seg_check.py 검증 추가 통과, stem_cut 연동 검증",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-26 22:17",
-   "updated": "2026-09-26 22:17",
+   "updated": "2026-09-26 22:24",
    "notes": [
     {
      "t": "2026-09-26 22:17",
      "by": "auditor",
      "text": "만듦"
+    },
+    {
+     "t": "2026-09-26 22:24",
+     "by": "builder",
+     "text": "완료: yolo_seg STEM_CLASS_NAMES 및 extract_stem_masks 추가, yolo_seg_check(17종) 및 ros_selfcheck(531종, 4대 도구 771종 All RC=0) 통과"
     }
    ]
   }

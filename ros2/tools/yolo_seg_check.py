@@ -27,8 +27,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(ROS2), "src"))
 sys.path.insert(0, os.path.join(SRC, "tomato_perception"))
 
 from tomato_perception.yolo_seg import (  # noqa: E402
-    YoloDetection, detections_to_blobs, mask_to_blob,
+    STEM_CLASS_NAMES, YoloDetection, detections_to_blobs, extract_stem_masks, mask_to_blob,
 )
+from tomato_perception.stem_cut import find_cut_point  # noqa: E402
+
 
 FAILED: list[str] = []
 PASSED = 0
@@ -99,12 +101,60 @@ def test_empty_input() -> None:
     print("\n[경계] 빈 입력")
     blobs, masks = detections_to_blobs([], min_pixels=10)
     check("검출 0개면 빈 리스트 반환(예외 아님)", blobs == [] and masks == [])
+    stems = extract_stem_masks([], min_pixels=10)
+    check("줄기 검출 0개면 빈 리스트 반환(예외 아님)", stems == [])
+
+
+def test_extract_stem_masks_and_stem_cut() -> None:
+    print("\n[줄기 세그멘테이션 및 stem_cut 연동] (T89)")
+    check("STEM_CLASS_NAMES에 stem/peduncle/calyx 포함",
+          {"stem", "peduncle"}.issubset(STEM_CLASS_NAMES), f"{STEM_CLASS_NAMES}")
+
+    # 가짜 줄기 마스크(60x100 영역, 중심 x=50, 폭 3, y=0..59)
+    stem_mask = np.zeros((60, 100), dtype=bool)
+    stem_mask[:, 49:52] = True  # 60 * 3 = 180 px
+
+    # 가짜 과실 마스크(y=0 기준 상단 원)
+    fruit_mask = np.zeros((60, 100), dtype=bool)
+    yy, xx = np.ogrid[:60, :100]
+    fruit_mask[((xx - 50) ** 2 + (yy - 0) ** 2) <= 15 ** 2] = True
+
+    stem_det = YoloDetection(mask=stem_mask, confidence=0.85, class_name="peduncle")
+    fruit_det = YoloDetection(mask=fruit_mask, confidence=0.92, class_name="ripe")
+    leaf_det = YoloDetection(mask=np.zeros((60, 100), dtype=bool), confidence=0.5, class_name="leaf")
+
+    detections = [stem_det, fruit_det, leaf_det]
+
+    stem_masks = extract_stem_masks(detections, min_pixels=50)
+    check("줄기 마스크가 정확히 1개 추출된다", len(stem_masks) == 1, f"{len(stem_masks)}개")
+    check("추출된 줄기 마스크 화소 수 일치", stem_masks[0].sum() == stem_mask.sum())
+
+    # min_pixels 필터 검증
+    tiny_stem = YoloDetection(mask=np.zeros((60, 100), dtype=bool), confidence=0.8, class_name="stem")
+    tiny_stem.mask[10:15, 50] = True  # 5 px
+    stems_filtered = extract_stem_masks([tiny_stem], min_pixels=50)
+    check("min_pixels 미만 줄기 마스크는 버려진다", len(stems_filtered) == 0)
+
+    # stem_cut.find_cut_point 연동 파이프라인 검증
+    blobs, fruit_masks = detections_to_blobs(detections, min_pixels=50)
+    check("과실 블롭 및 마스크가 1개 추출된다", len(fruit_masks) == 1 and len(blobs) == 1)
+
+    cut_point = find_cut_point(
+        stem_mask=stem_masks[0],
+        fruit_mask=fruit_masks[0],
+        px_per_mm=1.0,
+        cut_offset_mm=12.0,
+    )
+    check("추출된 마스크로부터 stem_cut 절단점이 정상 산출된다",
+          cut_point is not None and abs(cut_point.v - 12.0) <= 2.0,
+          f"cut_point={cut_point}")
 
 
 def main() -> int:
     test_mask_to_blob()
     test_detections_to_blobs()
     test_empty_input()
+    test_extract_stem_masks_and_stem_cut()
 
     print(f"\n{'='*60}")
     if FAILED:

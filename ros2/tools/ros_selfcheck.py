@@ -1635,6 +1635,37 @@ def test_fruit3d() -> None:
           and (eye_cfg.get("color_topic"), eye_cfg.get("depth_topic"), eye_cfg.get("info_topic")) == camera_topics,
           f"detect={det_cfg.get('color_topic')} eye={eye_cfg.get('color_topic')}")
 
+    # T89: yolo_seg STEM_CLASS_NAMES 및 extract_stem_masks ↔ stem_cut 연동 계약
+    from tomato_perception.yolo_seg import (
+        STEM_CLASS_NAMES, YoloDetection, extract_stem_masks,
+    )
+    from tomato_perception.stem_cut import find_cut_point
+
+    check("T89 계측: yolo_seg STEM_CLASS_NAMES에 stem/peduncle/calyx가 포함된다",
+          {"stem", "peduncle", "calyx"}.issubset(STEM_CLASS_NAMES),
+          f"{STEM_CLASS_NAMES}")
+
+    # 가짜 줄기 및 과실 마스크
+    s_mask = np.zeros((40, 40), dtype=bool)
+    s_mask[5:35, 20] = True
+    f_mask = np.zeros((40, 40), dtype=bool)
+    f_mask[:6, 15:26] = True
+
+    stem_dets = [
+        YoloDetection(mask=s_mask, confidence=0.88, class_name="stem"),
+        YoloDetection(mask=np.zeros((40, 40), dtype=bool), confidence=0.9, class_name="ripe"),
+    ]
+    extracted_stems = extract_stem_masks(stem_dets, min_pixels=20)
+    check("T89 계측: yolo_seg.extract_stem_masks가 줄기 검출을 필터링하여 정확히 추출한다",
+          len(extracted_stems) == 1 and extracted_stems[0].sum() == s_mask.sum(),
+          f"count={len(extracted_stems)}")
+
+    c_pt = find_cut_point(extracted_stems[0], f_mask, px_per_mm=1.0, cut_offset_mm=10.0)
+    check("T89 계측: yolo_seg 추출 줄기 마스크가 stem_cut.find_cut_point에 정상 연동된다",
+          c_pt is not None and abs(c_pt.v - 15.0) <= 2.0,
+          f"c_pt={c_pt}")
+
+
 
 # ----------------------------------------------------------------------
 # ⑥ TF 수학
