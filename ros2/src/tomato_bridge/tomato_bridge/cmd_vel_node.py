@@ -50,8 +50,9 @@ class CmdVelNode(Node):
         self.declare_parameter("cmd_timeout", 0.3)   # 보드계약 §9 4층
         self.declare_parameter("telemetry_hz", 10.0) # 보드계약 §11.1, §11.3 스냅샷 발행 주기
         self.declare_parameter("serial_port", "")    # 비우면 motor_link가 찾는다
-        # 축 부호 — 보드계약 §14.1이 아직 안 닫혔다. 실기에서 정하면 여기 기본값을
-        # 바꾸고 계약 문서의 결정 항목을 닫아라(런타임 토글로 남기지 말 것).
+        # 축 부호 — 보드계약 §14.1 결정 완료 (2026-09-26).
+        # ROS REP-103 규약(+x 앞, +y 왼쪽, +z 반시계)이 노드 및 모바일 베이스 표준.
+        # 현행 Uno 모터보드의 물리 vy 반전은 UnoAdapterBase가 내부에서 전담 처리함.
         self.declare_parameter("sign_vx", 1)
         self.declare_parameter("sign_vy", 1)
         self.declare_parameter("sign_w", 1)

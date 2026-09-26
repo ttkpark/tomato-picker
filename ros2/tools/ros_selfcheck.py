@@ -1400,8 +1400,16 @@ def test_board_contract() -> None:
     uno_audit_base = bc.UnoAdapterBase(motor_link=uno_audit_link, calib=calib, signs=bc.AxisSigns(vx=1, vy=-1, w=1))
     uno_audit_base.set_velocity(0, 200, 30000)
     check("보드계약 §14.1 감사: UnoAdapterBase가 vy=-1 부호 반전 시 물리 duty에 음수 dy를 전달하고 w=1(반시계)을 보존한다",
-          uno_audit_link.last_cmd == (0, -160, 123) and uno_audit_base.telemetry().tgt == (0, -200, 30000),
-          f"last_cmd={uno_audit_link.last_cmd} tgt={uno_audit_base.telemetry().tgt}")
+        uno_audit_link.last_cmd == (0, -160, 123) and uno_audit_base.telemetry().tgt == (0, -200, 30000),
+        f"last_cmd={uno_audit_link.last_cmd} tgt={uno_audit_base.telemetry().tgt}")
+
+    # 9. UnoAdapterBase 기본 생성자 호출 시 signs 생략해도 AxisSigns(vx=1, vy=-1, w=1)가 기본 적용된다 (T87)
+    uno_default_base = bc.UnoAdapterBase(motor_link=uno_audit_link, calib=calib)
+    uno_default_base.set_velocity(0, 200, 30000)
+    check("보드계약 §14.1 빌더: UnoAdapterBase 기본 생성 시 AxisSigns(vy=-1, w=1)가 기본 적용되어 vy=-1 반전과 w=1을 보장한다",
+        uno_audit_link.last_cmd == (0, -160, 123) and uno_default_base.telemetry().tgt == (0, -200, 30000)
+        and uno_default_base._signs == bc.AxisSigns(vx=1, vy=-1, w=1),
+        f"last_cmd={uno_audit_link.last_cmd} tgt={uno_default_base.telemetry().tgt} signs={uno_default_base._signs}")
 
 
 

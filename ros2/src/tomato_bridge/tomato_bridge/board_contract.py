@@ -434,17 +434,17 @@ def _feedforward(v: float, ks: int, kv: float, cap: int) -> int:
 
 
 # ----------------------------------------------------------------------
-# 축 부호 — 보드계약 §14.1이 아직 안 닫혔다
+# 축 부호 — 보드계약 §14.1 결정 완료 (2026-09-26)
 # ----------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class AxisSigns:
-    """ROS 규약(+x 앞, +y 왼쪽, +z 반시계)을 이 보드의 부호로 옮기는 마지막 한 겹.
+    """ROS REP-103 규약(+x 앞, +y 왼쪽, +z 반시계)을 보드의 물리 부호로 옮기는 변환 계층.
 
-    ⚠ **이 dataclass가 존재한다는 것 자체가 규약이 없다는 증거다**(보드계약 §14.1).
-      실기에서 한 번 확정하면 값을 파라미터 기본값에 박고, 이 주석을 지우고,
-      계약 문서의 결정 항목을 닫아라. 런타임 토글로 남겨 두면 다음 사람이 또
-      "부호를 뒤집어도 똑같다"로 하루를 태운다.
+    보드계약 §14.1 공식 확정:
+      · ROS 기본 및 폐루프(Stm32Base, SimBase): AxisSigns(1, 1, 1) - REP-103 네이티브.
+      · 현행 Uno 펌웨어 v1(UnoAdapterBase): AxisSigns(1, -1, 1) - vy=-1 (펌웨어 curVy>0 우평행 반전),
+        w=1 (실제 mixing 및 실측 w=+ 반시계 보존).
     """
 
     vx: int = 1
@@ -872,7 +872,8 @@ class UnoAdapterBase:
                  signs: AxisSigns | None = None) -> None:
         self._link = motor_link
         self._calib = calib or DutyCalib()
-        self._signs = signs or AxisSigns()
+        # 보드계약 v2 §14.1: Uno 펌웨어 v1 물리 mixing에 따라 vy=-1 (우평행+ -> 좌평행+ 반전), w=1 (반시계 보존)
+        self._signs = signs or AxisSigns(vx=1, vy=-1, w=1)
         self._caps = Caps.legacy()
         self._tgt = (0, 0, 0)
         self._last_duty = (0, 0, 0)
