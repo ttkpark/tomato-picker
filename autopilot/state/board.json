@@ -1874,13 +1874,8 @@
    "done_when": "젯슨 셸에서 ls /dev/video0 /dev/ttyUSB0 등이 보임",
    "attempts": 0,
    "created": "2026-09-20 19:53",
-   "updated": "2026-09-26 17:22",
+   "updated": "2026-09-26 17:39",
    "notes": [
-    {
-     "t": "2026-09-21 13:35",
-     "by": "tester",
-     "text": "4대 자체검증 710/710 전수 합격(45, 102, 470, 93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77 대기)."
-    },
     {
      "t": "2026-09-21 13:46",
      "by": "tester",
@@ -1935,6 +1930,11 @@
      "t": "2026-09-26 17:22",
      "by": "tester",
      "text": "4대 자체검증 752/752 전수 합격(45, 102, 512, 93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77 대기)."
+    },
+    {
+     "t": "2026-09-26 17:39",
+     "by": "tester",
+     "text": "4대 자체검증 753/753 전수 합격(45, 102, 513, 93 RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77 대기)."
     }
    ]
   },
@@ -2158,13 +2158,13 @@
    "id": "T87",
    "title": "[보드계약 v2] UnoAdapterBase 축부호(vy=-1, w=1) 실측 규약 일원화 및 stage1.yaml/cmd_vel_node 정리",
    "role": "builder",
-   "status": "todo",
+   "status": "doing",
    "priority": 2,
    "why": "보드계약 §14.1 문서 확정과 실제 코드 기본값(1,1,1) 불일치 해소 및 펌웨어 실제 mixing(w=+ 반시계)에 따른 vy 반전 확정",
    "done_when": "UnoAdapterBase 기본 signs 또는 cmd_vel_node/stage1.yaml 설정이 Uno 물리 규약(vy=-1, w=1)과 REP-103에 맞게 정합되고, 4대 자체검증 전수 All RC=0",
-   "attempts": 0,
+   "attempts": 1,
    "created": "2026-09-26 17:29",
-   "updated": "2026-09-26 17:29",
+   "updated": "2026-09-26 17:33",
    "notes": [
     {
      "t": "2026-09-26 17:29",
