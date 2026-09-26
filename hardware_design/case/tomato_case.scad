@@ -109,30 +109,40 @@ rear_ports = [
     [case_w - 24, 20, 18, 14],                                   // [실측] 로커 스위치 KCD1
 ];
 
-// 회전 베어링 (레이지수잔 구매품) — 팔 무게·모멘트를 받는다. 서보 축으로 받지 말 것.
-// 권장: 강철 볼 원형 "헤비 듀티" 5.5인치(≈140). 케이크용 얇은 알루미늄 링은 흔들림이 커서 제외.
-// 안쪽에 혼·배선 슬롯·스토퍼 홈이 들어가야 한다 → 안지름 ≥ 90, 바깥지름 ≤ 145(뚜껑 폭 151.9).
-brg_od  = 140;               // [실측] 구매 후
-brg_id  = 95;                // [실측] 구매 후 — 안쪽 뚫린 지름
-brg_h   = 8;                 // [실측] = 뚜껑 윗면 ↔ 회전판 밑면 간격
-brg_pcd_lower = 130; brg_pcd_upper = 105; // [실측] 바깥 링→뚜껑, 안쪽 링→회전판 (구매 후 볼트 원을 잰다)
-brg_hole = 3.4;
+// 회전 베어링 = 얇은 깊은홈 6816-2RS (80 × 100 × 10) — 팔 무게·기울임을 받는다. 서보 축으로 받지 말 것.
+// 레이지수잔은 기울기 유격이 커서 뺐다(2026-09-26). 두 링을 **위아래 모두** 붙잡는다 —
+// 끼움만으로는 팔을 뻗을 때 한쪽이 들린다(0.9kg×20cm ÷ Ø90 ≈ 양쪽 20N).
+//   바깥 링: 뚜껑 받침 턱(아래) + 누름 링(위, 나사 4개)
+//   안쪽 링: 회전판 턱(위) + 허브 끝 스냅 걸쇠(아래)
+brg = [80, 100, 10];         // [DS] 안지름, 바깥지름, 두께
+brg_fit_od = 0.2;            // [시험] 받침 구멍 = 바깥지름 + 이것 — part="fit_test"로 정한다
+brg_fit_id = -0.1;           // [시험] 허브 지름 = 안지름 + 이것
+seat_shoulder_h = 3;         // 바깥 링 밑 받침 높이 (안쪽 링과 걸쇠가 뚜껑에 안 닿게)
+seat_wall = 6;               // 받침 벽 → 받침 바깥지름 112
+seat_r = brg[1]/2 + seat_wall;
+clamp_t = 2;                 // 바깥 누름 링 두께
+clamp_screw_r = brg[1]/2 + seat_wall/2;
+hub_wall = 3;
+snap_lip = 0.5;  snap_h = 1.2;  snap_slots = 6;
+plat_z = seat_shoulder_h + brg[2] + clamp_t + 1;   // 뚜껑 윗면 → 회전판 밑면 = 16
 
-// 180° 기계 제한 — 배선이 감겨 끊기지 않게
+// 180° 기계 제한 — 배선이 감겨 끊기지 않게. 허브 안(반지름 < 37)에 들어간다.
 travel_deg = 180;
-stop_r = 40;  stop_pin_d = 5;  stop_groove_depth = 3;
+stop_r = 32;  stop_pin_d = 5;  stop_groove_depth = 3;
 stop_deg = 0;
 
 // 배선 — 서보가 중심을 차지하므로 호형 슬롯. 서보 몸체(+X) 반대편으로, 배터리와 젯슨 사이 왼쪽 빈칸에 떨어진다.
-cable_r = 28;  cable_w = 14;  cable_deg = 180;
+cable_r = 20;  cable_w = 12;  cable_deg = 180;
 
 /* ===================== 회전판 ===================== */
 plat_dia = 150;  plat_t = 6;
-coupler_h = brg_h + lid_t - horn_top;   // 서보 윗면이 뚜껑 밑면에 붙는다 → 7.7 (혼 나사 M3×16)
+coupler_h = plat_z - (horn_top - lid_t);   // 혼 윗면 → 회전판 밑면 (혼 나사 M3×25)
 // SO-101 받침 체결 — [STL] BOTTOM 가운데 두 나사 간격 67.5 (사용자 지정). 가로(X)로 나란하다
 // (PDF 9쪽: 받침 뒤쪽 황동 볼트 둘이 좌우로 서 있다). 나머지 2개는 [실측] 뒤 추가.
+// 회전판에 M3 열압입 인서트(Ø4.2)를 박고 위에서 조인다 — 판 밑은 베어링이라 너트를 못 댄다.
 so101_holes = [[-67.5/2, 0], [67.5/2, 0]];
 so101_offset = [0, 25];          // [실측] 볼트 줄 ↔ 팔 회전축(회전판 중심) 앞뒤 거리
+insert_d = 4.2;
 orbbec_pos = [0, -62];           // Orbbec 1/4"-20 자리 (−Y = 전면)
 quarter_inch = 6.6;
 
@@ -143,11 +153,13 @@ bed_x = 256; bed_y = 256;        // [실측] 프린터 베드
 /* ===================== 검사 ===================== */
 if (case_w > bed_x || case_d > bed_y) echo("⚠ 트레이/뚜껑이 베드를 넘는다", case_w, case_d);
 if (plat_dia > min(bed_x, bed_y)) echo("⚠ 회전판이 베드를 넘는다");
-if (brg_id < 2*(stop_r + stop_pin_d) ) echo("⚠ 베어링 안지름이 스토퍼 홈보다 작다 — 스토퍼·배선 슬롯을 바깥으로 옮길 것");
-if (brg_od > case_w - 6) echo("⚠ 베어링이 뚜껑 폭을 넘는다");
-if (floor_t + jetson_standoff_h + jetson_h > tray_h - 4) echo("⚠ 뚜껑 밑 베어링 너트(~4mm)가 젯슨 팬에 닿는다 — buck_parts_h 실측 또는 인서트 너트");
-if (cable_r + cable_w/2 > brg_pcd_upper/2 - 5) echo("⚠ 배선 슬롯이 베어링 볼트와 겹친다");
-if (stop_r > brg_pcd_upper/2 - 5 || stop_r < cable_r + cable_w/2 + 4) echo("⚠ 스토퍼 반경 재조정");
+if (seat_r > case_w/2 - 3) echo("⚠ 베어링 받침이 뚜껑 폭을 넘는다");
+if (stop_r + stop_pin_d/2 + 1 > brg[0]/2 - hub_wall) echo("⚠ 스토퍼 핀이 허브 벽에 닿는다");
+if (cable_r + cable_w/2 + 3 > stop_r - (stop_pin_d + 1)/2) echo("⚠ 배선 슬롯과 스토퍼 홈 사이 살이 3mm 미만");
+if (cable_r - cable_w/2 < (horn_dia + 3)/2 + 2) echo("⚠ 배선 슬롯이 혼 구멍과 붙는다");
+for (h = so101_holes) let (r = norm([h[0] + so101_offset[0], h[1] + so101_offset[1]]))
+    if (r > brg[0]/2 - hub_wall - 3 && r < seat_r + 3)
+        echo("⚠ SO-101 나사가 베어링 위에 있다 — 나사 길이를 판 두께+인서트 이하로", r);
 if (mount_rear_c + mount_dy/2 > case_d - wall) echo("⚠ 뒤 패턴이 케이스 밖");
 if (rot_center[1] + servo_body[1]/2 + wall > jetson_pos[1]) echo("⚠ 서보 걸이가 젯슨과 겹친다");
 if (batt[0] > case_w - 2*wall) echo("⚠ 배터리가 트레이 폭을 넘는다");
@@ -233,18 +245,26 @@ module tray() {
 /* ----- 2) 뚜껑 ----- */
 module lid() {
     difference() {
-        cube([case_w, case_d, lid_t]);
+        union() {
+            cube([case_w, case_d, lid_t]);
+            // 베어링 받침: 바깥 링만 받는 턱 + 둘레 벽
+            translate([rot_center[0], rot_center[1], lid_t - 0.01]) difference() {
+                cylinder(h = seat_shoulder_h + brg[2], r = seat_r, $fn = 120);
+                translate([0, 0, seat_shoulder_h]) cylinder(h = brg[2] + 1, d = brg[1] + brg_fit_od, $fn = 180);
+                translate([0, 0, -1]) cylinder(h = seat_shoulder_h + 2, r = brg[1]/2 - 3.5, $fn = 120);
+                translate([0, 0, 3]) ring_holes(2*clamp_screw_r, m3_tap, seat_shoulder_h + brg[2]);   // 누름 링 나사
+            }
+        }
         for (c = lid_corners) translate([c[0], c[1], -1]) cylinder(h = lid_t + 2, d = m3_clear);
         translate([rot_center[0], rot_center[1], 0]) {
             translate([0, 0, -1]) cylinder(h = lid_t + 2, d = horn_dia + 3);
-            ring_holes(brg_pcd_lower, brg_hole, lid_t);
             translate([0, 0, -1]) arc(cable_r, cable_w, lid_t + 2, cable_deg - travel_deg/2, travel_deg);
             translate([0, 0, lid_t - stop_groove_depth])
                 arc(stop_r, stop_pin_d + 1, stop_groove_depth + 1, stop_deg - travel_deg/2, travel_deg);
         }
-        // 젯슨 위 환기 — 베어링 링·스토퍼 홈 바깥부터 (홈을 가르면 핀이 슬롯에 걸린다)
-        for (x = [0 : 8 : jetson_size[0] - 12]) translate([jetson_pos[0] + 6 + x, rot_center[1] + brg_od/2 + 2, -1])
-            cube([4, case_d - (rot_center[1] + brg_od/2 + 2) - 10, lid_t + 2]);
+        // 젯슨 위 환기 — 베어링 받침 바깥부터
+        for (x = [0 : 8 : jetson_size[0] - 12]) translate([jetson_pos[0] + 6 + x, rot_center[1] + seat_r + 2, -1])
+            cube([4, case_d - (rot_center[1] + seat_r + 2) - 10, lid_t + 2]);
     }
     translate([rot_center[0] - servo_shaft_off, rot_center[1] - servo_body[1]/2, -servo_body[2]])
         difference() {
@@ -256,36 +276,86 @@ module lid() {
         }
 }
 
+/* ----- 2b) 바깥 링 누름 링 ----- */
+module clamp() {
+    difference() {
+        cylinder(h = clamp_t, r = seat_r, $fn = 120);
+        translate([0, 0, -1]) cylinder(h = clamp_t + 2, d = brg[1] - 6, $fn = 120);   // 바깥 링 위 3mm를 덮는다
+        ring_holes(2*clamp_screw_r, m3_clear, clamp_t);
+    }
+}
+
 /* ----- 3) 회전판 ----- */
 module platform() {
+    hub_len = plat_z - seat_shoulder_h;          // 회전판 밑면 → 안쪽 링 밑면
+    lip_h = plat_z - seat_shoulder_h - brg[2];   // 안쪽 링 위 턱 높이
     difference() {
         cylinder(h = plat_t, d = plat_dia, $fn = 120);
         ring_holes(horn_pcd, horn_hole, plat_t);
         translate([0, 0, -1]) cylinder(h = plat_t + 2, d = 3);
-        ring_holes(brg_pcd_upper, brg_hole, plat_t);
         rotate(cable_deg) translate([cable_r, 0, -1]) cylinder(h = plat_t + 2, d = cable_w - 1);
         for (h = so101_holes) translate([so101_offset[0] + h[0], so101_offset[1] + h[1], -1])
-            cylinder(h = plat_t + 2, d = m3_clear);
+            cylinder(h = plat_t + 2, d = insert_d);
         translate([orbbec_pos[0], orbbec_pos[1], -1]) cylinder(h = plat_t + 2, d = quarter_inch);
     }
-    // 혼 ↔ 회전판 연결 기둥: 혼 윗면이 뚜껑 윗면 근처라 베어링 간격만큼 비어 있다
+    // 안쪽 링 위 턱 (바깥 링·누름 링에는 안 닿게 반지름 +4까지만)
+    translate([0, 0, -lip_h]) difference() {
+        cylinder(h = lip_h + 0.5, r = brg[0]/2 + 4, $fn = 120);
+        translate([0, 0, -1]) cylinder(h = lip_h + 2, r = brg[0]/2 - hub_wall, $fn = 120);
+    }
+    // 허브: 안쪽 링에 끼우고, 끝의 걸쇠가 링 밑을 잡는다. 세로 홈으로 손가락처럼 휜다.
+    translate([0, 0, -hub_len - snap_h]) difference() {
+        union() {
+            cylinder(h = hub_len + snap_h + 0.5, d = brg[0] + brg_fit_id, $fn = 180);
+            // 걸쇠 턱: 밑은 비스듬히(밀어 넣기), 위는 평평(빠지지 않게)
+            cylinder(h = snap_h, d1 = brg[0] + brg_fit_id, d2 = brg[0] + brg_fit_id + 2*snap_lip, $fn = 180);
+        }
+        translate([0, 0, -1]) cylinder(h = hub_len + snap_h + 3, d = brg[0] - 2*hub_wall, $fn = 120);
+        for (i = [0 : snap_slots - 1]) rotate(i*360/snap_slots + 30)
+            translate([0, -1, -1]) cube([brg[0], 2, 9 + 1]);
+    }
+    // 혼 ↔ 회전판 연결 기둥
     translate([0, 0, -coupler_h]) difference() {
         cylinder(h = coupler_h + 0.5, d = horn_dia);   // 판 속으로 0.5 겹쳐 한 덩어리로
         ring_holes(horn_pcd, horn_hole, coupler_h + 0.5);
         translate([0, 0, -1]) cylinder(h = coupler_h + 2.5, d = 3.4);
     }
-    rotate(stop_deg) translate([stop_r, 0, -(brg_h + stop_groove_depth - 0.5)])
-        cylinder(h = brg_h + stop_groove_depth - 0.5, d = stop_pin_d);
+    rotate(stop_deg) translate([stop_r, 0, -(plat_z + stop_groove_depth - 0.5)])
+        cylinder(h = plat_z + stop_groove_depth, d = stop_pin_d);
+}
+
+/* ----- 4) 끼움 시험 링: 받침 구멍 3종 + 허브 3종 (돌기 개수 = 순번) ----- */
+module fit_test() {
+    for (i = [0 : 2]) {
+        translate([i*120, 0, 0]) difference() {       // 받침: 바깥지름 +0.0 / +0.2 / +0.4
+            union() {
+                cylinder(h = 5, r = brg[1]/2 + 3, $fn = 120);
+                for (k = [0 : i]) rotate(k*12) translate([brg[1]/2 + 3, 0, 0]) cylinder(h = 5, d = 3);
+            }
+            translate([0, 0, -1]) cylinder(h = 7, d = brg[1] + 0.2*i, $fn = 180);
+        }
+        translate([i*120, 110, 0]) difference() {     // 허브: 안지름 −0.2 / −0.1 / 0.0
+            union() {
+                cylinder(h = 5, d = brg[0] - 0.2 + 0.1*i, $fn = 180);
+                for (k = [0 : i]) rotate(k*12) translate([brg[0]/2 - hub_wall, 0, 0]) cylinder(h = 5, d = 3);
+            }
+            translate([0, 0, -1]) cylinder(h = 7, d = brg[0] - 2*hub_wall - 2, $fn = 120);
+        }
+    }
 }
 
 /* ===================== 출력 ===================== */
 if (part == "tray") tray();
 else if (part == "lid") lid();
+else if (part == "clamp") clamp();
 else if (part == "platform") platform();
+else if (part == "fit_test") fit_test();
 else {
+    lz = tray_h + lid_t;
     color("lightgray") tray();
     color("silver", 0.8) translate([0, 0, tray_h]) lid();
-    color("orange") translate([rot_center[0], rot_center[1], tray_h + lid_t + brg_h]) platform();
-    %translate([rot_center[0], rot_center[1], tray_h + lid_t])
-        difference() { cylinder(h = brg_h, d = brg_od); translate([0, 0, -1]) cylinder(h = brg_h + 2, d = brg_id); }
+    %translate([rot_center[0], rot_center[1], lz + seat_shoulder_h])     // 6816 (구매품, 유령)
+        difference() { cylinder(h = brg[2], d = brg[1]); translate([0, 0, -1]) cylinder(h = brg[2] + 2, d = brg[0]); }
+    color("gray") translate([rot_center[0], rot_center[1], lz + seat_shoulder_h + brg[2]]) clamp();
+    color("orange") translate([rot_center[0], rot_center[1], lz + plat_z]) platform();
 }
