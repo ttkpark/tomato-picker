@@ -1665,6 +1665,34 @@ def test_fruit3d() -> None:
           c_pt is not None and abs(c_pt.v - 15.0) <= 2.0,
           f"c_pt={c_pt}")
 
+    # 6-DoF 절단 포즈 및 국소 깊이 평활화 계측 검증 (study 04 §2.2, docs/인수인계 §80)
+    from tomato_perception.stem_cut import (
+        CutPoint, CutPose3D, compute_cutting_pose, sample_stem_depth,
+    )
+    from tomato_picker.hardware.handeye import Intrinsics as HandeyeIntr
+    dummy_intr = HandeyeIntr(width=848, height=480, fx=438.0, fy=438.0, ppx=424.0, ppy=240.0)
+    c_pose = compute_cutting_pose(c_pt, depth_mm=250.0, intr=dummy_intr)
+    check("6-DoF 절단 포즈: compute_cutting_pose가 우수계 SO(3) 회전행렬(det=1.0) 및 3D 절단 위치를 산출한다 (study 04 §2.2)",
+          c_pose is not None and abs(np.linalg.det(c_pose.rotation_matrix) - 1.0) < 1e-6 and
+          np.allclose(c_pose.rotation_matrix.T @ c_pose.rotation_matrix, np.eye(3), atol=1e-6) and
+          abs(c_pose.position_mm[2] - 250.0) < 1e-6,
+          f"pose={c_pose}")
+
+    # 광축 평행 특이점 및 무효 깊이 거절
+    c_pt_zero = CutPoint(u=c_pt.u, v=c_pt.v, tangent=(0.0, 0.0))
+    check("6-DoF 절단 포즈: compute_cutting_pose가 무효 깊이(<=0) 및 접선 부재(0벡터)를 거절한다",
+          compute_cutting_pose(c_pt, depth_mm=0.0, intr=dummy_intr) is None and
+          compute_cutting_pose(c_pt_zero, depth_mm=250.0, intr=dummy_intr) is None)
+
+    # 국소 깊이 평활화
+    fake_dmap = np.zeros((40, 40), dtype=np.float32)
+    fake_dmap[int(round(c_pt.v))-1:int(round(c_pt.v))+2, int(round(c_pt.u))-1:int(round(c_pt.u))+2] = 245.0
+    fake_dmap[int(round(c_pt.v)), int(round(c_pt.u))] = 0.0  # 중앙 결손 모사
+    s_depth = sample_stem_depth(fake_dmap, c_pt.u, c_pt.v, window_radius=2)
+    check("줄기 깊이 평활화: sample_stem_depth가 결손(0)을 배제하고 국소 윈도우 중앙값을 정상 산출한다",
+          s_depth is not None and abs(s_depth - 245.0) < 1e-4,
+          f"sampled={s_depth}")
+
 
 
 # ----------------------------------------------------------------------

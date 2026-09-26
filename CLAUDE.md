@@ -69,10 +69,10 @@ behavior the task requires stay in.
   — 카메라가 본 3D 점을 팔 좌표로 옮기는 강체 변환 하나를 **실측에서 푼다**(자로 재지 않는다).
   numpy만 쓰며 `fixed`(카메라 고정)와 `on_arm`(손목 장착) 두 식이 있다.
   ⚠ **잔차를 보라** — 최소자승은 입력이 쓰레기여도 답을 낸다. 15mm를 넘으면 집게가 헛집는다.
-- **ROS 없이 PC에서 도는 4대 자체검증 (총 771종)** (이 저장소의 규칙: 숫자는 젯슨에 올리기 전에 확인한다)
+- **ROS 없이 PC에서 도는 4대 자체검증 (총 774종)** (이 저장소의 규칙: 숫자는 젯슨에 올리기 전에 확인한다)
   `python tools/handeye_check.py` (보정 수학 45종) ·
   `python tools/eye_check.py` (보정→통합 배선 102종 — 카메라 둘 포함) ·
-  `python ros2/tools/ros_selfcheck.py` (레거시 경계·URDF↔기구학 일치·보드계약 5층 데드맨·계약테스트/0속도정지·서보캘리 틱스팬↔NormLimits 물리범위·limits_deg 과대개방 감사·부품 전장하한/mount.x기하·yolo_seg 줄기클래스/마스크추출 stem_cut 연동·깊이 거절·스탠드오프·프리셋/캘리·SimBase 물리한계·응답파서/프로토콜계약 등 531종) ·
+  `python ros2/tools/ros_selfcheck.py` (레거시 경계·URDF↔기구학 일치·보드계약 5층 데드맨·계약테스트/0속도정지·서보캘리 틱스팬↔NormLimits 물리범위·limits_deg 과대개방 감사·부품 전장하한/mount.x기하·yolo_seg 줄기클래스/마스크추출 stem_cut 연동·6-DoF 절단 포즈 및 깊이 평활화·깊이 거절·스탠드오프·프리셋/캘리·SimBase 물리한계·응답파서/프로토콜계약 등 534종) ·
   `python tools/arm_cartesian_check.py` (직교 좌표 제어·관절 보간 대체·처짐 되먹임 93종).
 
 

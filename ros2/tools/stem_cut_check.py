@@ -26,7 +26,8 @@ SRC = os.path.join(ROS2, "src")
 sys.path.insert(0, os.path.join(SRC, "tomato_perception"))
 
 from tomato_perception.stem_cut import (  # noqa: E402
-    find_cut_point, skeleton_points, zhang_suen_thin,
+    CutPoint, CutPose3D, compute_cutting_pose,
+    find_cut_point, sample_stem_depth, skeleton_points, zhang_suen_thin,
 )
 
 FAILED: list[str] = []
@@ -144,12 +145,112 @@ def test_offset_scales_with_px_per_mm() -> None:
           f"close.v={cut_close.v if cut_close else None} far.v={cut_far.v if cut_far else None}")
 
 
+def test_sample_stem_depth() -> None:
+    print("\n[깊이 평활화] sample_stem_depth")
+    dmap = np.zeros((100, 100), dtype=np.float32)
+    # 절단 화소 (50, 50) 주변에 유효 깊이와 노이즈(0 및 이상치) 배치
+    dmap[48:53, 48:53] = 0.0  # 기본 0 (결손)
+    dmap[49, 50] = 210.0
+    dmap[50, 50] = 200.0
+    dmap[51, 50] = 190.0
+    dmap[50, 51] = 950.0      # 상한(900mm) 초과 이상치
+    dmap[50, 49] = 30.0       # 하한(60mm) 미만 이상치
+
+    depth = sample_stem_depth(dmap, 50.0, 50.0, window_radius=2)
+    check("결손(0) 및 유효범위 밖 이상치를 배제하고 정상 중앙값(200.0mm)을 얻는다",
+          depth is not None and abs(depth - 200.0) < 1e-4, f"depth={depth}")
+
+    # 모든 화소가 0인 영역
+    zero_map = np.zeros((50, 50), dtype=np.float32)
+    check("유효 깊이가 전무한 영역은 None을 반환한다",
+          sample_stem_depth(zero_map, 25.0, 25.0) is None)
+
+    # 영상 경계 밖
+    check("영상 경계 밖 화소는 None을 반환한다",
+          sample_stem_depth(dmap, -10.0, 50.0) is None and
+          sample_stem_depth(dmap, 50.0, 150.0) is None)
+
+
+class _DummyIntrinsics:
+    def __init__(self, fx=400.0, fy=400.0, ppx=50.0, ppy=50.0):
+        self.fx = fx
+        self.fy = fy
+        self.ppx = ppx
+        self.ppy = ppy
+
+    def deproject(self, u: float, v: float, z_mm: float) -> tuple[float, float, float]:
+        x = (u - self.ppx) * z_mm / self.fx
+        y = (v - self.ppy) * z_mm / self.fy
+        return (float(x), float(y), float(z_mm))
+
+
+def test_compute_cutting_pose() -> None:
+    print("\n[6-DoF 절단 포즈] compute_cutting_pose")
+    intr = _DummyIntrinsics(fx=400.0, fy=400.0, ppx=50.0, ppy=50.0)
+
+    # 1. 수직 하향 줄기 (tangent = [0, 1])
+    cut_straight = CutPoint(u=50.0, v=60.0, tangent=(0.0, 1.0))
+    pose = compute_cutting_pose(cut_straight, depth_mm=200.0, intr=intr)
+    check("수직 줄기에 대해 6-DoF CutPose3D를 산출한다", pose is not None)
+    if pose is not None:
+        check("3D 절단 위치가 광학계 deproject 결과(0, 5, 200)와 일치한다",
+              abs(pose.position_mm[0] - 0.0) < 1e-4 and
+              abs(pose.position_mm[1] - 5.0) < 1e-4 and
+              abs(pose.position_mm[2] - 200.0) < 1e-4,
+              f"pos={pose.position_mm}")
+        check("줄기 축 z_cut이 [0, 1, 0]이다",
+              abs(pose.z_cut[0] - 0.0) < 1e-4 and
+              abs(pose.z_cut[1] - 1.0) < 1e-4 and
+              abs(pose.z_cut[2] - 0.0) < 1e-4,
+              f"z_cut={pose.z_cut}")
+        check("접근 벡터 x_cut이 [-1, 0, 0]이다 (시선 v_cam과 z_cut의 외적)",
+              abs(pose.x_cut[0] - (-1.0)) < 1e-4 and
+              abs(pose.x_cut[1] - 0.0) < 1e-4 and
+              abs(pose.x_cut[2] - 0.0) < 1e-4,
+              f"x_cut={pose.x_cut}")
+        check("날 정렬 y_cut이 [0, 0, 1]이다 (z_cut x x_cut)",
+              abs(pose.y_cut[0] - 0.0) < 1e-4 and
+              abs(pose.y_cut[1] - 0.0) < 1e-4 and
+              abs(pose.y_cut[2] - 1.0) < 1e-4,
+              f"y_cut={pose.y_cut}")
+        r = pose.rotation_matrix
+        det_r = float(np.linalg.det(r))
+        check("회전 행렬이 우수계 SO(3) 직교 기저(det=1.0)를 만족한다",
+              abs(det_r - 1.0) < 1e-6, f"det={det_r:.6f}")
+        check("회전 행렬의 직교성(R.T @ R = I)이 성립한다",
+              np.allclose(r.T @ r, np.eye(3), atol=1e-6))
+
+    # 2. 사선 줄기 (tangent = [0.6, 0.8])
+    cut_slanted = CutPoint(u=50.0, v=50.0, tangent=(0.6, 0.8))
+    pose_slant = compute_cutting_pose(cut_slanted, depth_mm=300.0, intr=intr)
+    check("사선 줄기에 대해 6-DoF 절단 포즈를 산출한다", pose_slant is not None)
+    if pose_slant is not None:
+        r_s = pose_slant.rotation_matrix
+        check("사선 줄기 회전 행렬 det=1.0 및 직교성을 만족한다",
+              abs(np.linalg.det(r_s) - 1.0) < 1e-6 and np.allclose(r_s.T @ r_s, np.eye(3), atol=1e-6),
+              f"det={np.linalg.det(r_s):.6f}")
+        check("접근 벡터 x_cut이 카메라 시선 v_cam=[0,0,1]과 완벽히 직교한다 (x_z=0)",
+              abs(pose_slant.x_cut[2]) < 1e-6, f"x_z={pose_slant.x_cut[2]}")
+        check("날 정렬 y_cut이 카메라 전방 방향(y_z > 0)을 향한다",
+              pose_slant.y_cut[2] > 0.0, f"y_z={pose_slant.y_cut[2]:.4f}")
+
+    # 3. 거절 조건 (무효 깊이 및 특이점)
+    check("depth_mm <= 0.0은 None(무효 깊이 거절)",
+          compute_cutting_pose(cut_straight, depth_mm=0.0, intr=intr) is None and
+          compute_cutting_pose(cut_straight, depth_mm=-50.0, intr=intr) is None)
+    zero_tangent = CutPoint(u=50.0, v=50.0, tangent=(0.0, 0.0))
+    check("접선 크기가 0이면 None(방향 부재 거절)",
+          compute_cutting_pose(zero_tangent, depth_mm=200.0, intr=intr) is None)
+
+
 def main() -> int:
     test_thinning()
     test_skeleton_points()
     test_find_cut_point_straight()
     test_find_cut_point_rejections()
     test_offset_scales_with_px_per_mm()
+    test_sample_stem_depth()
+    test_compute_cutting_pose()
 
     print(f"\n{'='*60}")
     if FAILED:

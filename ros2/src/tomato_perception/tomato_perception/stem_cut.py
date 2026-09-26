@@ -16,6 +16,8 @@ study 문서(`docs/study/04_END_EFFECTOR_MANIPULATION.md` §2)가 제안하는 �
 
 from __future__ import annotations
 
+from typing import Any
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -28,6 +30,27 @@ class CutPoint:
     u: float
     v: float
     tangent: tuple[float, float]  # 단위 벡터, 화면 좌표계
+
+
+@dataclass(frozen=True)
+class CutPose3D:
+    """줄기 위 3D 절단점 및 6-DoF 절단 자세 (카메라 광학 좌표계 기준).
+
+    docs/study/04_END_EFFECTOR_MANIPULATION.md §2.2 명세 준수:
+    - position_mm: (x, y, z) 3D 절단 위치 (mm)
+    - rotation_matrix: 3x3 직교 회전 행렬 [x_cut, y_cut, z_cut]
+    - x_cut: 진입/접근(approach) 단위 벡터 (v_cam과 z_cut에 수직인 횡방향)
+    - y_cut: 전단 날 정렬(blade alignment) 단위 벡터 (z_cut x x_cut)
+    - z_cut: 줄기 진행 축(stem axis) 단위 벡터 (t_stem)
+    - depth_mm: 절단점 깊이 (mm)
+    """
+
+    position_mm: tuple[float, float, float]
+    rotation_matrix: np.ndarray  # shape (3, 3)
+    x_cut: tuple[float, float, float]
+    y_cut: tuple[float, float, float]
+    z_cut: tuple[float, float, float]
+    depth_mm: float
 
 
 def zhang_suen_thin(mask: np.ndarray) -> np.ndarray:
@@ -159,3 +182,107 @@ def find_cut_point(
 
     return CutPoint(u=float(cut_pt[0]), v=float(cut_pt[1]),
                      tangent=(float(tangent[0]), float(tangent[1])))
+
+
+def sample_stem_depth(
+    depth_map: np.ndarray,
+    u: float,
+    v: float,
+    window_radius: int = 3,
+    min_depth_mm: float = 60.0,
+    max_depth_mm: float = 900.0,
+) -> float | None:
+    """줄기 절단점 주변 국소 깊이 평활화 (Median Depth).
+
+    1~3mm 직경의 가는 줄기는 깊이 맵 결손(0값)이나 배경 난반사가 잦으므로,
+    절단 화소 (u, v) 주변 (2*radius+1)^2 영역에서 유효 대역([min, max] mm)
+    화소들의 중앙값을 취한다. 유효 화소가 하나도 없으면 None 반환.
+    """
+    h, w = depth_map.shape[:2]
+    iu = int(round(u))
+    iv = int(round(v))
+    u_min = max(0, iu - window_radius)
+    u_max = min(w, iu + window_radius + 1)
+    v_min = max(0, iv - window_radius)
+    v_max = min(h, iv + window_radius + 1)
+
+    if u_min >= u_max or v_min >= v_max:
+        return None
+
+    patch = depth_map[v_min:v_max, u_min:u_max].astype(np.float64)
+    valid = patch[(patch >= min_depth_mm) & (patch <= max_depth_mm)]
+    if len(valid) == 0:
+        return None
+    return float(np.median(valid))
+
+
+def compute_cutting_pose(
+    cut_point: CutPoint,
+    depth_mm: float,
+    intr: Any,
+) -> CutPose3D | None:
+    """2D 절단점(CutPoint) + 깊이(mm) + 카메라 내부파라미터 → 6-DoF 절단 자세.
+
+    docs/study/04_END_EFFECTOR_MANIPULATION.md §2.2 수학 공식 구현:
+    1. 3D 역투영: P_cut = deproject(u, v, depth_mm) (카메라 광학 좌표계)
+    2. 줄기 축 단위 벡터 z_cut: 2D 접선 (tu, tv)를 3D로 정규화 (t_stem)
+    3. 접근 벡터 x_cut: 카메라 시선 v_cam=(0,0,1)과 z_cut의 외적 정규화
+       x_cut = (v_cam x z_cut) / ||v_cam x z_cut||
+    4. 전단 날 정렬 벡터 y_cut: y_cut = z_cut x x_cut
+    5. 회전 행렬 R_cut = [x_cut, y_cut, z_cut] (우수계 SO(3), det(R) = +1.0)
+
+    거절 사유:
+    - depth_mm <= 0.0 (무효 깊이)
+    - ||v_cam x z_cut|| < 1e-4 (줄기가 카메라 광축과 평행한 특이점)
+    """
+    if depth_mm <= 0.0:
+        return None
+
+    # 1. 3D 역투영
+    if hasattr(intr, "deproject"):
+        p_cut = intr.deproject(cut_point.u, cut_point.v, depth_mm)
+    else:
+        fx = getattr(intr, "fx", 438.0)
+        fy = getattr(intr, "fy", 438.0)
+        ppx = getattr(intr, "ppx", 424.0)
+        ppy = getattr(intr, "ppy", 240.0)
+        x = (cut_point.u - ppx) * depth_mm / fx
+        y = (cut_point.v - ppy) * depth_mm / fy
+        p_cut = (float(x), float(y), float(depth_mm))
+
+    # 2. 줄기 축 벡터 z_cut
+    tu, tv = cut_point.tangent
+    norm_2d = float(np.hypot(tu, tv))
+    if norm_2d < 1e-9:
+        return None
+    zx = tu / norm_2d
+    zy = tv / norm_2d
+    zz = 0.0
+    z_cut = np.array([zx, zy, zz], dtype=np.float64)
+
+    # 3. 접근 벡터 x_cut (v_cam = [0, 0, 1])
+    # v_cam x z_cut = [-zy, zx, 0]
+    cross_cam = np.array([-zy, zx, 0.0], dtype=np.float64)
+    sin_theta = float(np.linalg.norm(cross_cam))
+    if sin_theta < 1e-4:
+        return None  # 광축 평행 특이점 (v_cam과 z_cut이 평행하여 접근 방향 불능)
+    x_cut = cross_cam / sin_theta
+
+    # 4. 가위 날 정렬 벡터 y_cut = z_cut x x_cut
+    y_cut = np.cross(z_cut, x_cut)
+    y_norm = float(np.linalg.norm(y_cut))
+    if y_norm < 1e-9:
+        return None
+    y_cut = y_cut / y_norm
+
+    # 5. 회전 행렬 R = [x_cut, y_cut, z_cut]
+    rot_matrix = np.column_stack([x_cut, y_cut, z_cut])
+
+    return CutPose3D(
+        position_mm=(float(p_cut[0]), float(p_cut[1]), float(p_cut[2])),
+        rotation_matrix=rot_matrix,
+        x_cut=(float(x_cut[0]), float(x_cut[1]), float(x_cut[2])),
+        y_cut=(float(y_cut[0]), float(y_cut[1]), float(y_cut[2])),
+        z_cut=(float(z_cut[0]), float(z_cut[1]), float(z_cut[2])),
+        depth_mm=float(depth_mm),
+    )
