@@ -2775,6 +2775,30 @@ def test_sample_within_limits() -> None:
     check("remap_presets의 _norm_to_raw 및 _raw_to_norm이 유효 범위 내에서 왕복 가역 항등 변환이다",
           norm_invertible, "정규화(-100..100, 0..100) <-> raw tick 왕복 오차 < 1e-6")
 
+    # ③e [계측사] 서보 하드웨어 캘리브레이션 ↔ NormLimits 기하 한계 일치성 및 물리 가동구간 검증 (§74)
+    cal_dpn_matches = all(
+        abs((follower_cal[j]["range_max"] - follower_cal[j]["range_min"]) * 360.0 / 4096.0 / 200.0 - f["dpn"][j]) < 0.001
+        for j in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex")
+    )
+    check("캘리브레이션 4대 관절 틱 스팬(range_max-min)이 ESCAPE_FRAME의 dpn(도/단위)과 1e-3 이내로 일치한다",
+          cal_dpn_matches,
+          ", ".join(f"{j}={f['dpn'][j]}" for j in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex")))
+
+    elbow_range = limits.degree_range("elbow_flex")
+    check("팔 하드웨어 캘리브레이션 기하: elbow_flex 물리 하한이 -38.90도(>-40도)로 제한된다 (T31 원인 규명)",
+          abs(elbow_range[0] - (-38.90)) <= 0.05,
+          f"elbow_range=[{elbow_range[0]:.2f}°, {elbow_range[1]:.2f}°]")
+
+    lift_range = limits.degree_range("shoulder_lift")
+    check("팔 하드웨어 캘리브레이션 기하: shoulder_lift 물리 하한이 +7.94도(>0도)로 음수 각도가 물리 불가하다",
+          lift_range[0] > 0.0 and abs(lift_range[0] - 7.94) <= 0.05,
+          f"lift_range=[{lift_range[0]:.2f}°, {lift_range[1]:.2f}°]")
+
+    roll_range = limits.degree_range("wrist_roll")
+    check("팔 하드웨어 캘리브레이션 기하: wrist_roll 물리 가동 스팬이 200도 미만(+-97.9도)으로 케이블 감김을 차단한다",
+          abs(roll_range[0] - (-97.90)) <= 0.05 and abs(roll_range[1] - 97.90) <= 0.05 and (roll_range[1] - roll_range[0]) < 200.0,
+          f"roll_range=[{roll_range[0]:.2f}°, {roll_range[1]:.2f}°]")
+
     sample_pose = {"shoulder_pan.pos": 10.0, "shoulder_lift.pos": 20.0, "elbow_flex.pos": -30.0,
                    "wrist_flex.pos": 15.0, "wrist_roll.pos": 0.0, "gripper.pos": 50.0}
     converted_pose, conv_warnings = rp.convert(sample_pose, follower_cal, follower_cal)

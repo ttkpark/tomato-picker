@@ -86,13 +86,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-26 18:22",
+   "updated": "2026-09-26 19:02",
    "notes": [
-    {
-     "t": "2026-09-21 13:13",
-     "by": "metrologist",
-     "text": "2026-09-21 metrologist: SimBase 물리 한계(포화·정지마찰·1차지연) 계측 감사 및 DutyCalib ↔ 물리 속도 변환 검산(docs/인수인계-2026-09-04.md §55). SimBase 축별 속도 상한(vmax=800mm/s, vymax=600mm/s, wmax=180000mdeg/s) 클램프 및 Telemetry 7대 상태 비트(output_saturated 등) 연동 5종 신설로 4대 자체검증 695종(45/102/455/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
-    },
     {
      "t": "2026-09-21 13:17",
      "by": "builder",
@@ -147,6 +142,11 @@
      "t": "2026-09-26 18:22",
      "by": "metrologist",
      "text": "2026-09-26: 전체 외관.pdf 실측으로 차체 L=195.5mm(L/2=97.75) 확정. mount.x 예상 범위 -10~+20mm(0+-15mm)로 정정 확립(§72)."
+    },
+    {
+     "t": "2026-09-26 19:02",
+     "by": "metrologist",
+     "text": "2026-09-26 metrologist: 서보 캘리 틱스팬(deploy/calibration/tomato_follower.json) ↔ ESCAPE_FRAME dpn 항등성 증명 및 NormLimits 물리 가동구간(elbow 하한 -38.90도, lift 하한 +7.94도, roll +-97.9도) 계측 확립(docs/인수인계 §74). 4대 자체검증 762종(45/102/522/93 All RC=0) 전수 합격. T12 줄자 실측 및 T77 물리 복구 대기 지속."
     }
    ]
   },
