@@ -456,9 +456,10 @@ def test_geometry_matches() -> None:
           and re.search(r"mount_pitch\s*=\s*mount_dy\s*\+\s*mount_gap\s*;", scad_src) is not None
           and abs((pitch + mdy) - 195.5) <= 0.5,
           f"mount_dy={mdy}, mount_gap={mgap}, pitch={pitch}, outer={pitch + mdy}")
-    check("tomato_case.scad 회전 중심이 두 체결패턴의 가운데(지금 팔 받침 자리)다",
-          re.search(r"rot_center\s*=\s*\[\s*case_w\s*/\s*2\s*,\s*\(\s*mount_front_c\s*\+\s*mount_rear_c\s*\)\s*/\s*2\s*\]",
-                    scad_src) is not None)
+    check("tomato_case.scad 배터리 자리가 BOTTOM 관통 터널(43×57×134, 사용자 확인)과 같다",
+          re.search(r"^\s*batt\s*=\s*\[\s*134\s*,\s*43\s*,\s*57\s*\]\s*;", scad_src, re.M) is not None)
+    check("tomato_case.scad SO-101 받침 구멍 간격이 BOTTOM 가운데 두 나사 67.5mm다",
+          re.search(r"so101_holes\s*=\s*\[\[\s*-67\.5\s*/\s*2\s*,", scad_src) is not None)
     check("tomato_case.scad에 차체 길이 195.5를 박아 두지 않았다 (195.5는 나사 간 거리)",
           re.search(r"(chassis_d|case_d)\s*=\s*195\.5", scad_src) is None)
 

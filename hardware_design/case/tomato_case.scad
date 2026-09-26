@@ -42,25 +42,47 @@ tray_h = 70;                 // 젯슨(보드+방열판+팬 ~40) + 받침 + 배�
 /* ===================== 보드 ===================== */
 // 아두이노 Uno + Moebius 쉴드 — 전면. [DS] 구멍 좌표, [STL] TOPLeft와 ±0.2 일치
 uno_holes = [[13.97, 2.54], [15.24, 50.8], [66.04, 7.62], [66.04, 35.56]];
-uno_pos = [44, 6];           // 차체 나사머리(앞 패턴) 위를 지나도록 받침을 높인다
+uno_size = [68.6, 53.4];     // [DS]
+uno_pos = [44, 4];           // 앞 패턴 나사머리 위를 지나도록 받침을 높인다
 uno_standoff_h = 8;          // 나사머리 2.4 + 보드 밑 납땜 핀 여유
 standoff_sq = 7;             // [STL] TOPLeft 보스 7×7
 
-// 젯슨 Orin Nano 개발자 키트 — 후면. 입출력 단자가 뒤쪽 긴 변에 오게 둔다.
+// 벅부스트 2개 (12V→팔, 7.5V→바퀴) — 아두이노 양옆, 세로로 세워 둔다
+buck_size  = [21, 43];                               // [실측] 모듈 외곽
+buck_holes = [[3, 3], [18, 3], [3, 40], [18, 40]];   // [실측] 모듈 구멍
+buck_pos = [[12, 12], [case_w - 12 - 21, 12]];       // 뚜껑 나사 기둥(모서리 7) 비켜서
+
+// 배터리 4S3P — [STL] BOTTOM 가로 관통 터널 43 × 57 × 134에 끝까지 들어간다(사용자).
+// 18650 2단×3열×2줄 = 37 × 55.5 × 130 이라 그 터널과 맞는다. 트레이에선 **세워서** 가로로 눕힌다:
+// 눕히면(높이 43) 뚜껑 밑 서보 걸이(바닥에서 35부터)와 부딪힌다.
+batt = [134, 43, 57];        // [가로(X), 두께(Y), 높이(Z)]
+batt_lip = 2;  batt_lip_h = 10;
+batt_pos = [(case_w - batt[0])/2, uno_pos[1] + uno_size[1] + 1 + batt_lip];
+
+/* ===================== 뚜껑 / 회전부 ===================== */
+lid_t = 4;
+lid_screw_inset = 7;
+
+// 회전 서보 STS3215 C018 (12V · 1/345 · 30kg·cm) — 팔과 같은 부품·같은 버스(ID 7)
+servo_body = [45.2, 24.7, 35];   // [DS] 45 × 24.7, 높이 35 (출력축은 45×24.7 면)
+servo_shaft_off = 11;            // [실측] 몸체 끝 → 출력축 — 팔에 달린 같은 서보로 잰다
+horn_dia = 22;                   // [실측]
+horn_pcd = 14; horn_hole = 2.2;  // [실측]
+
+// 회전 중심 = 배터리 바로 뒤에 서보 걸이가 오는 자리. (지금 팔 받침 자리보다 약 5mm 뒤)
+rot_center = [case_w/2, batt_pos[1] + batt[1] + batt_lip + 2 + wall + servo_body[1]/2];
+
+// 젯슨 Orin Nano 개발자 키트 — 후면, 서보 걸이 바로 뒤. 입출력 단자가 뒷벽으로.
 jetson_size  = [100, 79];    // [DS]
 jetson_holes = [[4, 4], [96, 4], [4, 75], [96, 75]];  // [실측] 캐리어 보드 구멍
-jetson_pos = [(case_w - 100)/2, 140];  // 서보 걸이(회전 중심 아래) 뒤로 비켜 둔다
+jetson_pos = [(case_w - 100)/2, rot_center[1] + servo_body[1]/2 + wall + 2];
 jetson_standoff_h = 6;
 
-case_d = jetson_pos[1] + jetson_size[1] + 3 + wall;   // 젯슨 뒤 3mm 여유 = 225
+case_d = jetson_pos[1] + jetson_size[1] + 3 + wall;   // 젯슨 뒤 3mm 여유
 
-// 벅부스트 2개 (12V→팔, 7.5V→바퀴) — 배선 슬롯이 떨어지는 왼쪽 가운데
-buck_holes = [[3, 3], [40, 3], [3, 18], [40, 18]];   // [실측] 모듈 구멍
-buck_pos = [[8, 66], [8, 100]];                      // [실측]
-
-// 전압·전류계 — 오른쪽 벽 창으로 표시부를 밖에 보이게
+// 전압·전류계 — 오른쪽 벽, 젯슨 옆 틈(23mm)에 몸통이 들어가고 표시부는 밖으로
 meter_cut = [45.5, 26.5];    // [실측] 흔한 패널 규격(DSN-VC288류)
-meter_y = 72; meter_z = 22;
+meter_y = jetson_pos[1] + 10; meter_z = 22;
 
 // 바닥 카메라 (RPi Cam v2.1 / IMX219) — 전면 아래 선반, 바닥을 내려다봄
 cam_board = [25, 24];        // [DS]
@@ -75,37 +97,26 @@ rear_ports = [
     [case_w - 26, 20, 20, 14],                                   // [실측] 로커 스위치 KCD1
 ];
 
-/* ===================== 뚜껑 / 회전부 ===================== */
-lid_t = 4;
-lid_screw_inset = 7;
-
-// 팔 받침이 지금 두 판 사이에 있다 → 회전 중심 = 두 패턴의 가운데
-rot_center = [case_w/2, (mount_front_c + mount_rear_c)/2];
-
 // 회전 베어링 (레이지수잔 구매품) — 팔 무게·모멘트를 받는다. 서보 축으로 받지 말 것.
 brg_od  = 120;               // [실측]
 brg_h   = 8;                 // [실측] = 뚜껑 윗면 ↔ 회전판 밑면 간격
 brg_pcd_lower = 108; brg_pcd_upper = 92;  // [실측]
 brg_hole = 3.4;
 
-// 회전 서보 STS3215 (팔과 같은 부품·같은 버스)
-servo_body = [45.2, 24.7, 35];   // [DS] 확인 요
-servo_shaft_off = 11;            // [실측] 몸체 끝 → 출력축
-horn_dia = 22;                   // [실측]
-horn_pcd = 14; horn_hole = 2.2;  // [실측]
-
 // 180° 기계 제한 — 배선이 감겨 끊기지 않게
 travel_deg = 180;
 stop_r = 40;  stop_pin_d = 5;  stop_groove_depth = 3;
 stop_deg = 0;
 
-// 배선 — 서보가 중심을 차지하므로 호형 슬롯. 서보 몸체(+X) 반대편, 벅부스트 위로 떨어진다.
+// 배선 — 서보가 중심을 차지하므로 호형 슬롯. 서보 몸체(+X) 반대편으로, 배터리와 젯슨 사이 왼쪽 빈칸에 떨어진다.
 cable_r = 28;  cable_w = 14;  cable_deg = 180;
 
 /* ===================== 회전판 ===================== */
 plat_dia = 150;  plat_t = 6;
-so101_holes = [[-40, -30], [40, -30], [-40, 30], [40, 30]];  // [실측] SO-101 받침 바닥 구멍
-so101_offset = [0, 5];           // [실측]
+// SO-101 받침 체결 — [STL] BOTTOM 가운데 두 나사 간격 67.5 (사용자 지정). 가로(X)로 나란하다
+// (PDF 9쪽: 받침 뒤쪽 황동 볼트 둘이 좌우로 서 있다). 나머지 2개는 [실측] 뒤 추가.
+so101_holes = [[-67.5/2, 0], [67.5/2, 0]];
+so101_offset = [0, 25];          // [실측] 볼트 줄 ↔ 팔 회전축(회전판 중심) 앞뒤 거리
 orbbec_pos = [0, -62];           // Orbbec 1/4"-20 자리 (−Y = 전면)
 quarter_inch = 6.6;
 
@@ -120,6 +131,9 @@ if (cable_r + cable_w/2 > brg_pcd_upper/2 - 5) echo("⚠ 배선 슬롯이 베어
 if (stop_r > brg_pcd_upper/2 - 5 || stop_r < cable_r + cable_w/2 + 4) echo("⚠ 스토퍼 반경 재조정");
 if (mount_rear_c + mount_dy/2 > case_d - wall) echo("⚠ 뒤 패턴이 케이스 밖");
 if (rot_center[1] + servo_body[1]/2 + wall > jetson_pos[1]) echo("⚠ 서보 걸이가 젯슨과 겹친다");
+if (batt[0] > case_w - 2*wall) echo("⚠ 배터리가 트레이 폭을 넘는다");
+if (floor_t + batt[2] > tray_h - 4) echo("⚠ 배터리가 뚜껑 밑 볼트와 닿는다");
+if (jetson_pos[0] + jetson_size[0] > case_w - wall - 20) echo("⚠ 전압계 몸통 자리가 없다");
 echo("케이스", case_w, "x", case_d, "x", tray_h + lid_t, " 회전중심", rot_center,
      " 패턴중심", mount_centers);
 
@@ -165,9 +179,15 @@ module tray() {
         }
         // 카메라 리본 통과 (선반 → 트레이 안)
         translate([case_w/2 - 9, -1, floor_t]) cube([18, wall + 2, 3]);
-        // 환기: 젯슨 옆 양쪽 벽
+        // 환기: 젯슨 옆 — 왼쪽 벽 전부, 오른쪽 벽은 전압계 창을 비켜서
         for (x = [-1, case_w - wall - 1], y = [jetson_pos[1] + 6 : 10 : jetson_pos[1] + jetson_size[1] - 8])
-            translate([x, y, 18]) cube([wall + 2, 5, tray_h - 30]);
+            if (x < 0 || y + 5 < meter_y - 3 || y > meter_y + meter_cut[0] + 3)
+                translate([x, y, 18]) cube([wall + 2, 5, tray_h - 30]);
+        // 배터리 고정 밴드(벨크로) 슬롯 2개
+        for (sx = [0.25, 0.75]) translate([batt_pos[0] + batt[0]*sx - 10, batt_pos[1] + 4, -1])
+            cube([20, 3, floor_t + 2]);
+        for (sx = [0.25, 0.75]) translate([batt_pos[0] + batt[0]*sx - 10, batt_pos[1] + batt[1] - 7, -1])
+            cube([20, 3, floor_t + 2]);
         // 전압·전류계 창 (오른쪽 벽)
         translate([case_w - wall - 1, meter_y, meter_z]) cube([wall + 2, meter_cut[0], meter_cut[1]]);
         for (p = rear_ports) translate([p[0], case_d - wall - 1, p[1]]) cube([p[2], wall + 2, p[3]]);
@@ -180,6 +200,9 @@ module tray() {
     bosses(uno_pos, uno_holes, uno_standoff_h);
     bosses(jetson_pos, jetson_holes, jetson_standoff_h);
     for (b = buck_pos) bosses(b, buck_holes, 5);
+    // 배터리 앞뒤 턱 (세워 둔 팩이 넘어지지 않게)
+    for (y = [batt_pos[1] - batt_lip, batt_pos[1] + batt[1]])
+        translate([batt_pos[0], y, floor_t]) cube([batt[0], batt_lip, batt_lip_h]);
     translate([case_w/2, 0, tray_h/2 + 8]) rotate([90, 0, 0])
         linear_extrude(brand_emboss)
             text(brand_text, size = brand_size, halign = "center", valign = "center",
@@ -198,9 +221,9 @@ module lid() {
             translate([0, 0, lid_t - stop_groove_depth])
                 arc(stop_r, stop_pin_d + 1, stop_groove_depth + 1, stop_deg - travel_deg/2, travel_deg);
         }
-        // 젯슨 위 환기 (회전판 뒤쪽 바깥)
-        for (x = [0 : 8 : 88]) translate([jetson_pos[0] + 6 + x, rot_center[1] + plat_dia/2 + 4, -1])
-            cube([4, case_d - (rot_center[1] + plat_dia/2 + 4) - 10, lid_t + 2]);
+        // 젯슨 위 환기 — 베어링 링·스토퍼 홈 바깥부터 (홈을 가르면 핀이 슬롯에 걸린다)
+        for (x = [0 : 8 : 88]) translate([jetson_pos[0] + 6 + x, rot_center[1] + brg_od/2 + 2, -1])
+            cube([4, case_d - (rot_center[1] + brg_od/2 + 2) - 10, lid_t + 2]);
     }
     translate([rot_center[0] - servo_shaft_off, rot_center[1] - servo_body[1]/2, -servo_body[2]])
         difference() {
