@@ -2799,6 +2799,18 @@ def test_sample_within_limits() -> None:
           abs(roll_range[0] - (-97.90)) <= 0.05 and abs(roll_range[1] - 97.90) <= 0.05 and (roll_range[1] - roll_range[0]) < 200.0,
           f"roll_range=[{roll_range[0]:.2f}°, {roll_range[1]:.2f}°]")
 
+    # ③f [감사자] so101_geometry.yaml:limits_deg vs NormLimits 물리 기하 한계 대조 감사 (§75)
+    yaml_lims = _geometry_yaml()["arm"]["limits_deg"]
+    elbow_gap = abs(yaml_lims["elbow_flex"][0] - elbow_range[0])
+    check("감사: so101_geometry.yaml의 elbow_flex 하한(-160°)이 실제 하드웨어(-38.90°) 대비 120° 이상 과대 개방되어 있다",
+          elbow_gap > 120.0 and yaml_lims["elbow_flex"][0] < elbow_range[0],
+          f"yaml={yaml_lims['elbow_flex'][0]}° vs 실제={elbow_range[0]:.2f}° (괴리 {elbow_gap:.2f}°)")
+
+    lift_gap = abs(yaml_lims["shoulder_lift"][0] - lift_range[0])
+    check("감사: so101_geometry.yaml의 shoulder_lift 하한(-100°)이 실제 하드웨어(+7.94°) 대비 100° 이상 과대 개방되어 있다",
+          lift_gap > 100.0 and yaml_lims["shoulder_lift"][0] < 0.0 < lift_range[0],
+          f"yaml={yaml_lims['shoulder_lift'][0]}° vs 실제={lift_range[0]:.2f}° (음수 허위영역 {abs(yaml_lims['shoulder_lift'][0]):.1f}° 개방)")
+
     sample_pose = {"shoulder_pan.pos": 10.0, "shoulder_lift.pos": 20.0, "elbow_flex.pos": -30.0,
                    "wrist_flex.pos": 15.0, "wrist_roll.pos": 0.0, "gripper.pos": 50.0}
     converted_pose, conv_warnings = rp.convert(sample_pose, follower_cal, follower_cal)

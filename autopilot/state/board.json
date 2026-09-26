@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 88,
+ "next_id": 89,
  "tasks": [
   {
    "id": "T9",
@@ -86,13 +86,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-26 19:02",
+   "updated": "2026-09-26 19:19",
    "notes": [
-    {
-     "t": "2026-09-21 13:17",
-     "by": "builder",
-     "text": "2026-09-21 builder: 보드 계약 v2 UnoAdapterBase 어댑터 및 다중 프로토콜 구현(docs/인수인계-2026-09-04.md §56). UnoAdapterBase(MobileBase + LegacyDutyControl 병행 구현, 물리 단위 plan->DutyCalib feedforward duty 변환, stop/estop 차단, Telemetry 합성) 5종 신설로 4대 자체검증 700종(45/102/460/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
-    },
     {
      "t": "2026-09-21 13:26",
      "by": "auditor",
@@ -147,6 +142,11 @@
      "t": "2026-09-26 19:02",
      "by": "metrologist",
      "text": "2026-09-26 metrologist: 서보 캘리 틱스팬(deploy/calibration/tomato_follower.json) ↔ ESCAPE_FRAME dpn 항등성 증명 및 NormLimits 물리 가동구간(elbow 하한 -38.90도, lift 하한 +7.94도, roll +-97.9도) 계측 확립(docs/인수인계 §74). 4대 자체검증 762종(45/102/522/93 All RC=0) 전수 합격. T12 줄자 실측 및 T77 물리 복구 대기 지속."
+    },
+    {
+     "t": "2026-09-26 19:19",
+     "by": "auditor",
+     "text": "2026-09-26 auditor: so101_geometry.yaml limits_deg 과대 개방 결함(elbow 121도, lift 108도) 규명 및 URDF 정합화 작업 T88 발급(docs/인수인계 §75). 4대 자체검증 764종(45/102/524/93 All RC=0) 전수 합격. T12 사람 줄자 실측 및 T77 물리 복구 대기 지속."
     }
    ]
   },
@@ -2126,6 +2126,25 @@
      "t": "2026-09-26 17:49",
      "by": "builder",
      "text": "완료: UnoAdapterBase 기본 축부호(vy=-1, w=1) 일원화 및 stage1.yaml/cmd_vel_node/board_contract.py 주석·설정 정합 완료. ros_selfcheck 1종 추가(총 514종), 4대 자체검증 754종(45/102/514/93 All RC=0) 전수 합격"
+    }
+   ]
+  },
+  {
+   "id": "T88",
+   "title": "so101_geometry.yaml limits_deg 및 tomato_robot.urdf.xacro 관절한계를 NormLimits 실측치로 정합화",
+   "role": "builder",
+   "status": "todo",
+   "priority": 2,
+   "why": "so101_geometry.yaml의 limits_deg가 '넓게 잡느니 좁게 잡아라'는 원칙과 정반대로 elbow_flex -160도(실제 -38.90도), shoulder_lift -100도(실제 +7.94도), wrist_roll +-180도(실제 +-97.9도)로 과대 개방되어 URDF(/robot_description) 모델과 실제 하드웨어 가동 한계가 괴리되어 있음",
+   "done_when": "so101_geometry.yaml의 limits_deg와 tomato_robot.urdf.xacro default 인자가 NormLimits 실측 가동구간(elbow 하한 -38.90도, lift 하한 0~+7.94도, roll +-97.9도)에 부합하도록 갱신되고, ros_selfcheck.py 포함 4대 자체검증 764종 All RC=0 통과",
+   "attempts": 0,
+   "created": "2026-09-26 19:17",
+   "updated": "2026-09-26 19:17",
+   "notes": [
+    {
+     "t": "2026-09-26 19:17",
+     "by": "auditor",
+     "text": "만듦"
     }
    ]
   }
