@@ -86,13 +86,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-26 11:56",
+   "updated": "2026-09-26 12:22",
    "notes": [
-    {
-     "t": "2026-09-21 12:38",
-     "by": "builder",
-     "text": "2026-09-21 builder: 보드 계약 v2(MobileBase) 및 5층 데드맨 안전 시한 계측 카드 확립(docs/인수인계-2026-09-04.md §50). board_contract 프레이밍·to_physical 정수 변환·nocalib 및 estop 가드·C 지령 생성 등 5종 신설로 4대 자체검증 670종(45/102/430/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
-    },
     {
      "t": "2026-09-21 12:47",
      "by": "auditor",
@@ -147,6 +142,11 @@
      "t": "2026-09-26 11:56",
      "by": "builder",
      "text": "2026-09-26 builder: CmdVelNode base_type 파라미터(uno/sim/stm32/mock) 팩토리 및 stage1.yaml/launch.py 연동 완료(docs/인수인계-2026-09-04.md §63). 4대 자체검증 733종(45/102/493/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
+    },
+    {
+     "t": "2026-09-26 12:22",
+     "by": "metrologist",
+     "text": "2026-09-26 metrologist: MobileBase 속도·축 부호 계측 계약 감사 및 Stm32Base/SimBase AxisSigns 계약 통합, DutyCalib 6항목 측정 카드 확립(docs/인수인계-2026-09-04.md §65). 4대 자체검증 742종(45/102/502/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
     }
    ]
   },

@@ -89,11 +89,11 @@ class CmdVelNode(Node):
             self._caps = self._base.caps()
         elif base_type == "sim":
             self._link = None
-            self._base = SimBase(deadman_enabled=True)
+            self._base = SimBase(deadman_enabled=True, signs=self._signs)
             self._caps = self._base.caps()
         elif base_type == "stm32":
             self._link = MotorLink(**({"port": port} if port else {}))
-            self._base = Stm32Base(motor_link=self._link)
+            self._base = Stm32Base(motor_link=self._link, signs=self._signs)
             self._caps = self._base.caps()
         elif base_type == "uno":
             self._link = MotorLink(**({"port": port} if port else {}))

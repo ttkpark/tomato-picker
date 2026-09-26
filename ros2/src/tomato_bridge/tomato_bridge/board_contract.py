@@ -738,11 +738,12 @@ class SimBase:
     """1차 지연 + 정지마찰 물리 모델을 갖는 시뮬레이터 베이스 (보드계약 §11.2)."""
 
     def __init__(self, caps: Caps | None = None, ks_mms: int = 50, ks_w_mdegs: int = 15000,
-                 deadman_enabled: bool = False) -> None:
+                 deadman_enabled: bool = False, signs: AxisSigns | None = None) -> None:
         self._caps = caps or Caps.parse("cap proto=2 fw=3.0.0 board=sim id=SIM001 "
                                         "units=1 closed_loop=1 calib=1 vmax=800 vymax=600 wmax=180000")
         self._ks_mms = ks_mms
         self._ks_w = ks_w_mdegs
+        self._signs = signs or AxisSigns()
         self._tgt = (0, 0, 0)
         self._act = (0, 0, 0)
         self._estopped = False
@@ -757,7 +758,7 @@ class SimBase:
         if self._estopped:
             self._tgt = (0, 0, 0)
             return
-        self._tgt = (vx_mms, vy_mms, w_mdegs)
+        self._tgt = (vx_mms * self._signs.vx, vy_mms * self._signs.vy, w_mdegs * self._signs.w)
         self._last_cmd_ms = self._ms
         self._soft_deadman = False
         self._hard_deadman = False
@@ -962,7 +963,7 @@ class Stm32Base:
     """
 
     def __init__(self, motor_link: Any = None, caps: Caps | None = None,
-                 expected_proto: int = 2) -> None:
+                 expected_proto: int = 2, signs: AxisSigns | None = None) -> None:
         self._link = motor_link
         self._caps = caps or Caps(
             proto=2,
@@ -982,6 +983,7 @@ class Stm32Base:
             wmax_mdegs=180000,
         )
         self._parser = ProtocolParser(expected_proto=expected_proto)
+        self._signs = signs or AxisSigns()
         self._tgt = (0, 0, 0)
         self._act: tuple[int, int, int] | None = (0, 0, 0)
         self._estopped = False
@@ -1013,7 +1015,7 @@ class Stm32Base:
     def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
         """물리 단위 속도 지령 (mm/s, mdeg/s) 전송 (보드계약 §2, §5.1, §12)."""
         cmd = plan(vx_mms / 1000.0, vy_mms / 1000.0, math.radians(w_mdegs / 1000.0),
-                   caps=self._caps, estop=self._estopped)
+                   caps=self._caps, signs=self._signs, estop=self._estopped)
         self._last_cmd = cmd
         self._tgt = (vx_mms, vy_mms, w_mdegs)
 

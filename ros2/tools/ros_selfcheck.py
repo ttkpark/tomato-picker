@@ -1285,6 +1285,37 @@ def test_board_contract() -> None:
           f"last_cmd={last_cmd}")
     stm_base.estop(False)
 
+    # ⑮ [계측 감사] MobileBase 축 부호(AxisSigns) 계약 통합 및 DutyCalib 물리 한계 검산 (docs/보드-계약.md §2, §8, §14)
+    # 1. Stm32Base가 AxisSigns를 수용하고 C 물리 지령 발행 시 부호 변환을 정확히 반영한다
+    mock_link_signs = _DummyStmLink()
+    stm_signs_base = bc.Stm32Base(motor_link=mock_link_signs, caps=stm_caps, signs=bc.AxisSigns(vx=1, vy=-1, w=-1))
+    stm_signs_base.set_velocity(350, 200, 30000)
+    check("보드계약 §14.1 계측: Stm32Base가 AxisSigns(vy=-1, w=-1) 부호 변환을 C 물리 지령에 정확히 반영한다",
+          mock_link_signs.last_raw == "C 350 -200 -30000",
+          f"last_raw={mock_link_signs.last_raw}")
+
+    # 2. SimBase가 AxisSigns를 수용하고 목표 속도(_tgt)에 부호 변환을 정확히 반영한다
+    sim_signs_base = bc.SimBase(signs=bc.AxisSigns(vx=1, vy=-1, w=-1))
+    sim_signs_base.set_velocity(350, 200, 30000)
+    check("보드계약 §14.1 계측: SimBase가 AxisSigns(vy=-1, w=-1) 부호 변환을 목표 속도(_tgt)에 정확히 반영한다",
+          sim_signs_base.telemetry().tgt == (350, -200, -30000),
+          f"sim_tgt={sim_signs_base.telemetry().tgt}")
+
+    # 3. CmdVelNode 팩토리가 4대 베이스(uno, sim, stm32, mock) 생성 시 signs를 온전히 전달한다
+    check("보드계약 §14.1 계측: cmd_vel_node가 SimBase 및 Stm32Base 생성 시 signs=self._signs를 온전히 전달한다",
+          "SimBase(deadman_enabled=True, signs=self._signs)" in cmd_node_text
+          and "Stm32Base(motor_link=self._link, signs=self._signs)" in cmd_node_text
+          and "UnoAdapterBase(motor_link=self._link, calib=self._calib, signs=self._signs)" in cmd_node_text,
+          "cmd_vel_node signs 전달 검증")
+
+    # 4. DutyCalib 물리 한계 검산: ks >= 0, kv > 0 및 이론적 최고속도(vmax, wmax)가 물리 허용 범위 내 안착
+    d_calib = bc.DutyCalib()
+    vmax_ok = 350.0 <= d_calib.vmax_mms <= 600.0
+    wmax_ok = 120.0 <= d_calib.wmax_degs <= 200.0
+    check("보드계약 §8 계측: DutyCalib 환산 계수(ks=90, kv=0.35) 기반 최고 속도(vmax, wmax)가 물리 상한 범위에 안착한다",
+          d_calib.ks == 90 and d_calib.ks_w == 90 and vmax_ok and wmax_ok and d_calib.measured is False,
+          f"vmax={d_calib.vmax_mms:.1f} wmax={d_calib.wmax_degs:.1f} measured={d_calib.measured}")
+
 
 
 

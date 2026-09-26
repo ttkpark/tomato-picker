@@ -22,8 +22,13 @@ ardu_w = 68.6; ardu_d = 53.4;
 batt_w = 70; batt_d = 60; batt_h = 30;  // ponytail: 추정치, 실측 후 교체
 // 전원 컨버터(Power Conv) — [PLACEHOLDER] 소형 DC-DC 벅 모듈 통상 크기
 pconv_w = 50; pconv_d = 25;
-// Fornords 카메라(원거리 고정) 마운트 — [PLACEHOLDER] Orbbec Astra류 바디 기준 추정
+// 원거리 고정 카메라(Astra/Orbbec류) 마운트 — [PLACEHOLDER] 바디 기준 추정
 cam_fixed_w = 60; cam_fixed_d = 30; cam_fixed_h = 30;
+
+// --- 외관 각인: 브랜드명 "ForNerds" ---
+brand_text = "ForNerds";
+brand_text_h = 8;    // 글자 높이(mm)
+brand_emboss = 0.6;  // 양각 돌출량(mm)
 
 // --- 회전 플랫폼 ---
 // STS3215 서보(회전 액추에이터로 재사용, 기존 팔과 동일 부품): 40 x 20 x 40.5mm (공식 치수)
@@ -48,7 +53,7 @@ module base_tray() {
             cube([base_w - 2*wall, base_d - 2*wall, base_h]); // 위쪽 뚫림(뚜껑 없음, 방열)
     }
 
-    // 부품 고정 보스(나사 기둥) — 배치는 스케치 순서(좌→우): Fornords cam / Servo / BAT / PowerConv / Ardu / Jetson
+    // 부품 고정 보스(나사 기둥) — 배치는 스케치 순서(좌→우): 원거리 카메라 / Servo / BAT / PowerConv / Ardu / Jetson
     // 좌표는 상판 내부 기준 원점(wall, wall)에서의 상대 배치, placeholder 치수 바뀌면 자동 재배치됨
     translate([wall + 10, wall + 10, 0])
         mount_pad(cam_fixed_w, cam_fixed_d);
@@ -64,6 +69,14 @@ module base_tray() {
 
     translate([base_w - wall - pconv_w - 10, base_d - wall - pconv_d - 10, 0])
         mount_pad(pconv_w, pconv_d);
+}
+
+// 브랜드 각인 — 하부 트레이 정면 외벽에 양각 텍스트
+module brand_logo() {
+    translate([base_w/2, 0, base_h/2])
+        rotate([90, 0, 0])
+            linear_extrude(height = brand_emboss)
+                text(brand_text, size = brand_text_h, halign = "center", valign = "center", font = "Liberation Sans:style=Bold");
 }
 
 // 부품 하나당 4귀퉁이 M3 보스
@@ -131,6 +144,7 @@ module stopper_wall() {
 
 /* ===================== 조립 미리보기 ===================== */
 color("lightgray") base_tray();
+color("black") brand_logo();
 translate([base_w/2, base_d/2, 0]) {
     color("gray") rotation_hub();
     color("orange") translate([0, 0, base_h]) stopper_wall();
