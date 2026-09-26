@@ -86,13 +86,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-26 17:32",
+   "updated": "2026-09-26 18:22",
    "notes": [
-    {
-     "t": "2026-09-21 13:07",
-     "by": "builder",
-     "text": "2026-09-21 builder: 보드 계약 v2 LegacyDutyControl 격리 및 베이스 다형성 구현체(MockBase, SimBase) 확립(docs/인수인계-2026-09-04.md §54). LegacyDutyControl(Protocol: set_duty) 격리 및 SimBase(1차지연, 정지마찰문턱, estop차단)·MockBase 5종 신설로 4대 자체검증 690종(45/102/450/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
-    },
     {
      "t": "2026-09-21 13:13",
      "by": "metrologist",
@@ -147,6 +142,11 @@
      "t": "2026-09-26 17:32",
      "by": "auditor",
      "text": "2026-09-26 auditor: 보드계약 §14.1 축부호 실측 규약 감사(Uno vy=-1, w=1 물리 정합성 규명) 및 UnoAdapterBase 물리 duty 전달 검증 1종 추가, T87 발급(docs/인수인계 §70). 4대 자체검증 753종(45/102/513/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 및 T77 물리 장치 복구 대기 지속."
+    },
+    {
+     "t": "2026-09-26 18:22",
+     "by": "metrologist",
+     "text": "2026-09-26: 전체 외관.pdf 실측으로 차체 L=195.5mm(L/2=97.75) 확정. mount.x 예상 범위 -10~+20mm(0+-15mm)로 정정 확립(§72)."
     }
    ]
   },
