@@ -929,8 +929,133 @@ class UnoAdapterBase:
         return Telemetry(tgt=self._tgt, act=None, st=st_val)
 
 
+class Stm32Base:
+    """STM32 기반 폐루프 모터보드 구현체 (보드계약 §11.2, §12, §13 단계 4).
+
+    보드 계약 v2 프로토콜을 온전히 준수하는 하드웨어 모터 링크 연동 구현체:
+      - 물리 속도 지령 `C <vx> <vy> <w>` (mm/s, mdeg/s) 전송.
+      - 즉시 정지 `S` (슬루 무시) 및 비상정지 래치 `X 1` / `X 0` 지원.
+      - `ProtocolParser`와 연동하여 보드의 `cap`, `hb`, `ok`, `nak`, `boot` 프레임 처리.
+      - 텔레메트리 `Telemetry`를 통해 실측 속도(`act`), 목표치(`tgt`), 전압/전류 및 상태 비트(`st`) 제공.
+    """
+
+    def __init__(self, motor_link: Any = None, caps: Caps | None = None,
+                 expected_proto: int = 2) -> None:
+        self._link = motor_link
+        self._caps = caps or Caps(
+            proto=2,
+            board="stm32-closed-loop",
+            fw="4.0.0",
+            board_id="STM32-001",
+            units=True,
+            closed_loop=True,
+            calib=True,
+            estop_hw=True,
+            enc=4,
+            vin=True,
+            amp=True,
+            pwm_hz=20000,
+            vmax_mms=800,
+            vymax_mms=600,
+            wmax_mdegs=180000,
+        )
+        self._parser = ProtocolParser(expected_proto=expected_proto)
+        self._tgt = (0, 0, 0)
+        self._act: tuple[int, int, int] | None = (0, 0, 0)
+        self._estopped = False
+        self._stopped = True
+        self._last_cmd: Command | None = None
+
+    def feed_line(self, line: str) -> Response:
+        """하위 링크나 시리얼 수신 한 줄을 프로토콜 파서에 공급하고 내부 상태 갱신."""
+        resp = self._parser.feed_line(line)
+        if resp.kind == "cap" and resp.cap is not None:
+            self._caps = resp.cap
+        elif resp.kind == "hb" and resp.hb is not None:
+            self._tgt = resp.hb.tgt
+            if resp.hb.act is not None:
+                self._act = resp.hb.act
+            if resp.hb.estop_latched != self._estopped:
+                self._estopped = resp.hb.estop_latched
+        elif resp.kind == "ok" and resp.cmd == "X":
+            if resp.args and resp.args[0] == "1":
+                self._estopped = True
+            elif resp.args and resp.args[0] == "0":
+                self._estopped = False
+        return resp
+
+    def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
+        """물리 단위 속도 지령 (mm/s, mdeg/s) 전송 (보드계약 §2, §5.1, §12)."""
+        self._tgt = (vx_mms, vy_mms, w_mdegs)
+        if self._estopped:
+            self.stop()
+            return
+
+        cmd = plan(vx_mms / 1000.0, vy_mms / 1000.0, math.radians(w_mdegs / 1000.0),
+                   caps=self._caps, estop=self._estopped)
+        self._last_cmd = cmd
+
+        if cmd.rejected or cmd.payload == "S" or (vx_mms == 0 and vy_mms == 0 and w_mdegs == 0):
+            self.stop()
+            return
+
+        self._stopped = False
+        if self._link is not None:
+            if hasattr(self._link, "send_raw"):
+                self._link.send_raw(cmd.payload)
+            elif hasattr(self._link, "write"):
+                self._link.write(framed(cmd.payload))
+
+    def stop(self) -> None:
+        """즉시 정지 (슬루 무시 S 지령 전송, 보드계약 §10.2, §12)."""
+        self._tgt = (0, 0, 0)
+        self._stopped = True
+        if self._link is not None:
+            if hasattr(self._link, "stop"):
+                self._link.stop()
+            elif hasattr(self._link, "send_raw"):
+                self._link.send_raw("S")
+            elif hasattr(self._link, "write"):
+                self._link.write(framed("S"))
+
+    def estop(self, on: bool) -> None:
+        """비상정지 래치 (X 1 / X 0, 보드계약 §5.1, §9, §12)."""
+        self._estopped = on
+        payload = "X 1" if on else "X 0"
+        if on:
+            self._tgt = (0, 0, 0)
+            self._stopped = True
+        if self._link is not None:
+            if hasattr(self._link, "send_raw"):
+                self._link.send_raw(payload)
+            elif hasattr(self._link, "write"):
+                self._link.write(framed(payload))
+
+    def close(self) -> None:
+        """안전 정지 및 링크 리소스 정리."""
+        self.stop()
+        if self._link is not None and hasattr(self._link, "close"):
+            try:
+                self._link.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def caps(self) -> Caps:
+        return self._caps
+
+    def telemetry(self) -> Telemetry:
+        if self._parser.last_hb is not None:
+            hb = self._parser.last_hb
+            return Telemetry.from_heartbeat(hb)
+
+        st_val = 0x01 if self._estopped else 0x00
+        if self._caps.calib:
+            st_val |= 0x08
+        return Telemetry(tgt=self._tgt, act=self._act, st=st_val, vin_mv=12600, amp_ma=400)
+
+
 __all__ = ["AxisSigns", "Caps", "Command", "DutyCalib", "Heartbeat", "LegacyDutyControl",
-           "MockBase", "MobileBase", "ProtocolParser", "Response", "ResponseParser", "SimBase", "Telemetry",
+           "MockBase", "MobileBase", "ProtocolParser", "Response", "ResponseParser", "SimBase", "Stm32Base", "Telemetry",
            "UnoAdapterBase", "checksum", "framed", "parse_response", "plan",
            "to_physical", "EPS_MMS", "EPS_MDEGS"]
 

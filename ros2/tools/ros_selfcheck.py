@@ -1147,6 +1147,62 @@ def test_board_contract() -> None:
           bc.ResponseParser is bc.ProtocolParser and hasattr(bc, "parse_response"),
           f"ResponseParser={bc.ResponseParser}")
 
+    # ⑭ [보드계약 v2] Stm32Base 폐루프 구현체 및 §12 폐루프 계약 테스트 (docs/보드-계약.md §11.2, §12, §13 단계 4)
+    class _DummyStmLink:
+        def __init__(self) -> None:
+            self.last_raw = ""
+            self.stopped = False
+        def send_raw(self, payload: str) -> bool:
+            self.last_raw = payload
+            self.stopped = (payload == "S")
+            return True
+        def stop(self) -> None:
+            self.last_raw = "S"
+            self.stopped = True
+
+    # 1. Stm32Base가 MobileBase 프로토콜을 온전히 만족하며 기본 Caps가 폐루프(units=1, closed_loop=1, calib=1)이다
+    stm_caps = bc.Caps(proto=2, board="stm32-closed-loop", fw="4.0.0", units=True, closed_loop=True, calib=True,
+                       vmax_mms=800, vymax_mms=600, wmax_mdegs=180000)
+    mock_link = _DummyStmLink()
+    stm_base = bc.Stm32Base(motor_link=mock_link, caps=stm_caps)
+    check("보드계약 §11.2 Stm32Base가 MobileBase 프로토콜을 충족하고 폐루프 능력을 선언한다",
+          isinstance(stm_base, bc.MobileBase) and stm_base.caps().units and stm_base.caps().closed_loop and stm_base.caps().calib,
+          f"caps={stm_base.caps()}")
+
+    # 2. 물리 단위 지령(vx=350, vy=0, w=0) 전송 시 'C 350 0 0' 프레이밍 명령이 하위 링크에 전달된다
+    stm_base.set_velocity(350, 0, 0)
+    check("보드계약 §12 단위: Stm32Base가 물리 단위 지령 C vx vy w (350mm/s)를 링크에 전달한다",
+          mock_link.last_raw == "C 350 0 0" and stm_base.telemetry().tgt == (350, 0, 0),
+          f"last_raw={mock_link.last_raw} tgt={stm_base.telemetry().tgt}")
+
+    # 3. 비상정지 래치(estop=True) 시 X 1 전송 및 후속 C 지령 차단(S 전송)
+    stm_base.estop(True)
+    check("보드계약 §12 안전: Stm32Base estop(True) 호출 시 X 1이 전송되고 텔레메트리 estop_latched(st bit0)가 설정된다",
+          mock_link.last_raw == "X 1" and stm_base.telemetry().estop_latched and stm_base.telemetry().tgt == (0, 0, 0),
+          f"last_raw={mock_link.last_raw} st=0x{stm_base.telemetry().st:02X}")
+    stm_base.set_velocity(350, 0, 0)
+    check("보드계약 §12 안전: Stm32Base estop 래치 중 속도 지령 수신 시 C를 차단하고 stop을 유지한다",
+          mock_link.last_raw == "S" and stm_base.telemetry().tgt == (0, 0, 0),
+          f"last_raw={mock_link.last_raw} tgt={stm_base.telemetry().tgt}")
+
+    # 4. stop() 호출 시 슬루를 무시하고 즉시 S 전송 및 목표 0 리셋
+    stm_base.estop(False)
+    stm_base.set_velocity(200, -100, 45000)
+    stm_base.stop()
+    check("보드계약 §12 안전: Stm32Base stop() 호출 시 슬루를 무시하고 S를 전송하며 목표가 0으로 정지된다",
+          mock_link.last_raw == "S" and stm_base.telemetry().tgt == (0, 0, 0),
+          f"last_raw={mock_link.last_raw} tgt={stm_base.telemetry().tgt}")
+
+    # 5. feed_line을 통한 폐루프 하트비트(hb ... act=... st=...) 수신 및 Telemetry 실측 속도 반영
+    hb_frame = f"hb 125000 rx=100 bad=0 i2c=0 wdt=0 st=0x08 tgt=350,0,0 act=348,0,0 vin=12550 amp=850*{bc.checksum('hb 125000 rx=100 bad=0 i2c=0 wdt=0 st=0x08 tgt=350,0,0 act=348,0,0 vin=12550 amp=850')}"
+    resp_hb = stm_base.feed_line(hb_frame)
+    telem = stm_base.telemetry()
+    check("보드계약 §12 계측: Stm32Base가 hb 실측 속도(act=348,0,0)와 텔레메트리(vin=12550mV, amp=850mA)를 온전히 반영한다",
+          resp_hb.is_ok is False and resp_hb.kind == "hb" and telem.act == (348, 0, 0)
+          and telem.tgt == (350, 0, 0) and telem.vin_mv == 12550 and telem.amp_ma == 850
+          and telem.calib_valid,
+          f"act={telem.act} vin={telem.vin_mv} amp={telem.amp_ma} st=0x{telem.st:02X}")
+
 
 
 
