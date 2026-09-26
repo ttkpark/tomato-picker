@@ -39,3 +39,6 @@ autopilot/state/*.lock
 autopilot/PAUSE
 autopilot/STOP
 autopilot/secrets/
+
+# 워드 원본은 수백 MB라 GitHub 한도(100MB)를 넘는다 — 공유는 PDF로 (2026-09-26)
+*.docx
