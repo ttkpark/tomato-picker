@@ -1316,6 +1316,24 @@ def test_board_contract() -> None:
           d_calib.ks == 90 and d_calib.ks_w == 90 and vmax_ok and wmax_ok and d_calib.measured is False,
           f"vmax={d_calib.vmax_mms:.1f} wmax={d_calib.wmax_degs:.1f} measured={d_calib.measured}")
 
+    # ⑯ [조작대·주행] click_server 차체 넛지(nudge) 조작 및 base_nudge 연동 검증
+    # 터미널에서만 되는 조작(base_nudge.py)을 남기지 않고 조작대 UI/API에서도 넛지가 가능하도록 연동
+    sys.path.insert(0, os.path.join(ROS2, "tools"))
+    import click_server as cs  # noqa: E402
+    nudge_cmd = cs.build("nudge", {"vx": 130, "secs": 0.6})
+    check("조작대: click_server가 nudge(전진 130 duty, 0.6s) 요청을 base_nudge 명령줄로 올바르게 변환한다",
+          len(nudge_cmd) >= 5 and "base_nudge.py" in nudge_cmd[1] and "--vx" in nudge_cmd and "130" in nudge_cmd and "--secs" in nudge_cmd,
+          f"cmd={' '.join(nudge_cmd[1:])}")
+
+    nudge_zero_rejected = False
+    try:
+        cs.build("nudge", {"vx": 0, "vy": 0, "w": 0})
+    except ValueError:
+        nudge_zero_rejected = True
+    check("조작대: click_server가 0 지령 넛지 요청을 조용히 무시하지 않고 명확히 거절(ValueError)한다",
+          nudge_zero_rejected,
+          f"zero_rejected={nudge_zero_rejected}")
+
 
 
 

@@ -30,7 +30,7 @@ API 요약 (전부 JSON)
     GET  /frame.jpg                  손목 화면
     POST /click   {u,v,mode}         mode=target(줄기) | grip(십자)
     POST /clear                      표적 지움
-    POST /run     {job,args}         job=stage|jog|grasp|grip|pose|park|loop|extend|roll0|swab
+    POST /run     {job,args}         job=stage|jog|grasp|grip|pose|park|loop|extend|roll0|swab|nudge
     POST /stop                       도는 일을 끊는다
 """
 
@@ -336,6 +336,29 @@ def build(job, args):
         if args.get("no_find"):
             a += ["--no-find"]     # 자세 찾기를 끄고 스크립트의 START 고정값을 쓴다
         return a
+    if job == "nudge":
+        # **차체 넛지(한 번 짧게 이동)** — base_nudge.py 호출.
+        # ⚠ 터미널에서만 되는 조작을 남기지 않는다(저장소 규칙).
+        # 화면의 차체 조그 버튼과 API(job=nudge)가 base_nudge.py를 공유한다.
+        a = [PY, T("base_nudge.py")]
+        vx = int(num(args, "vx", 0, -255, 255))
+        vy = int(num(args, "vy", 0, -255, 255))
+        w = int(num(args, "w", 0, -255, 255))
+        if vx == 0 and vy == 0 and w == 0:
+            raise ValueError("넛지 지령이 전부 0이다")
+        if vx:
+            a += ["--vx", str(vx)]
+        if vy:
+            a += ["--vy", str(vy)]
+        if w:
+            a += ["--w", str(w)]
+        secs = num(args, "secs", 0.5, 0.1, 3.0)
+        a += ["--secs", "%.2f" % secs]
+        if args.get("dither"):
+            a += ["--dither", "%d" % int(num(args, "dither", 0, 0, 100))]
+        if args.get("max_pwm"):
+            a += ["--max-pwm", "%d" % int(num(args, "max_pwm", 0, 0, 4095))]
+        return a
     raise ValueError("모르는 일: %s" % job)
 
 
@@ -524,6 +547,25 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     </div>
   </div>
 
+  <div class="card"><h2>차체 넛지 (base_nudge, duty)</h2>
+    <div class="row">
+      <label>크기<input id="n_duty" value="130"></label>
+      <label>시간(초)<input id="n_secs" value="0.6" style="width:50px"></label>
+      <label><input type="checkbox" id="n_dither"> 디더</label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="nudge(1,0,0)">▲ 전진</button>
+      <button onclick="nudge(-1,0,0)">▼ 후진</button>
+      <button onclick="nudge(0,-1,0)">◀ 좌평행</button>
+      <button onclick="nudge(0,1,0)">▶ 우평행</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button onclick="nudge(0,0,1)">↺ 좌회전</button>
+      <button onclick="nudge(0,0,-1)">↻ 우회전</button>
+    </div>
+    <div class="k" style="margin-top:4px">한 번 짧게 톡 움직인다(정지마찰 문턱≈90 duty). ⚠ tomato-voice·controller-drive가 꺼져 있어야 함.</div>
+  </div>
+
   <div class="card"><h2>집게 · 자세</h2>
     <div class="row">
       <button onclick="run('grip',{value:78})">집게 연다</button>
@@ -651,6 +693,12 @@ function jog(k,s){
   JNAMES.forEach(function(n){var el=document.getElementById('tj_'+n); if(el) el.value=tgtJ[n].toFixed(1);});
   k3dRenderOnce();
   var a={};a[k]=amt; if(free)a.free_pitch=1; run('jog',a);
+}
+function nudge(sx,sy,sw){
+  var d=val('n_duty',130), secs=val('n_secs',0.6), dither=document.getElementById('n_dither').checked;
+  var a={vx:Math.round(sx*d), vy:Math.round(sy*d), w:Math.round(sw*d), secs:secs};
+  if(dither) a.dither=25;
+  run('nudge',a);
 }
 function run(job,args){post('/run',{job:job,args:args}).then(function(j){
   if(!j.ok) alert(j.why||'거절됨');});}
