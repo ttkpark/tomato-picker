@@ -1391,6 +1391,18 @@ def test_board_contract() -> None:
           mock_signs_base.telemetry().tgt == (350, -200, -30000) and mock_signs_base.telemetry().tgt == stm_signs_base.telemetry().tgt,
           f"mock_tgt={mock_signs_base.telemetry().tgt}")
 
+    # 8. UnoAdapterBase가 vy=-1 부호 반전 시 물리 duty에 음수 dy를 전달하고 w=1(반시계) 보존을 확인한다 (사이클 588 감사)
+    uno_audit_link = type("AuditLink", (), {
+        "last_cmd": None,
+        "set_velocity": lambda self, *a: setattr(self, "last_cmd", a),
+        "stop": lambda self: setattr(self, "last_cmd", (0, 0, 0)),
+    })()
+    uno_audit_base = bc.UnoAdapterBase(motor_link=uno_audit_link, calib=calib, signs=bc.AxisSigns(vx=1, vy=-1, w=1))
+    uno_audit_base.set_velocity(0, 200, 30000)
+    check("보드계약 §14.1 감사: UnoAdapterBase가 vy=-1 부호 반전 시 물리 duty에 음수 dy를 전달하고 w=1(반시계)을 보존한다",
+          uno_audit_link.last_cmd == (0, -160, 123) and uno_audit_base.telemetry().tgt == (0, -200, 30000),
+          f"last_cmd={uno_audit_link.last_cmd} tgt={uno_audit_base.telemetry().tgt}")
+
 
 
 

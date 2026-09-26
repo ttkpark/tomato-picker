@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 87,
+ "next_id": 88,
  "tasks": [
   {
    "id": "T9",
@@ -86,13 +86,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-26 17:18",
+   "updated": "2026-09-26 17:32",
    "notes": [
-    {
-     "t": "2026-09-21 13:01",
-     "by": "builder",
-     "text": "2026-09-21 builder: 보드 계약 v2 MobileBase 프로토콜 및 Telemetry 스냅샷 계측 카드 확립(docs/인수인계-2026-09-04.md §53). MobileBase(Protocol: set_velocity, stop, estop, caps, telemetry) 및 Telemetry 데이터클래스 팩토리 파싱 5종 신설로 4대 자체검증 685종(45/102/445/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
-    },
     {
      "t": "2026-09-21 13:07",
      "by": "builder",
@@ -147,6 +142,11 @@
      "t": "2026-09-26 17:18",
      "by": "metrologist",
      "text": "2026-09-26 metrologist: MobileBase 4대 베이스(Uno, Sim, Stm32, Mock) 0속도 정지 안전 계약 검증 및 보드계약 v2 §12/§14(부호 규약·wmax 기준점·최소유효크기) 공식 확정(docs/인수인계-2026-09-04.md §69). 4대 자체검증 752종(45/102/512/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 및 T77 물리 장치 복구 대기 지속."
+    },
+    {
+     "t": "2026-09-26 17:32",
+     "by": "auditor",
+     "text": "2026-09-26 auditor: 보드계약 §14.1 축부호 실측 규약 감사(Uno vy=-1, w=1 물리 정합성 규명) 및 UnoAdapterBase 물리 duty 전달 검증 1종 추가, T87 발급(docs/인수인계 §70). 4대 자체검증 753종(45/102/513/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 및 T77 물리 장치 복구 대기 지속."
     }
    ]
   },
@@ -2151,6 +2151,25 @@
      "t": "2026-09-26 16:57",
      "by": "builder",
      "text": "완료: UnoAdapterBase 및 MockBase AxisSigns(vy=-1, w=-1) 텔레메트리 부호 일치성 정정 및 cmd_vel_node 팩토리 4대 베이스 signs 주입 통일 완료. 자체검증 509종(+2) 포함 4대 749종(45/102/509/93 All RC=0) 통과"
+    }
+   ]
+  },
+  {
+   "id": "T87",
+   "title": "[보드계약 v2] UnoAdapterBase 축부호(vy=-1, w=1) 실측 규약 일원화 및 stage1.yaml/cmd_vel_node 정리",
+   "role": "builder",
+   "status": "todo",
+   "priority": 2,
+   "why": "보드계약 §14.1 문서 확정과 실제 코드 기본값(1,1,1) 불일치 해소 및 펌웨어 실제 mixing(w=+ 반시계)에 따른 vy 반전 확정",
+   "done_when": "UnoAdapterBase 기본 signs 또는 cmd_vel_node/stage1.yaml 설정이 Uno 물리 규약(vy=-1, w=1)과 REP-103에 맞게 정합되고, 4대 자체검증 전수 All RC=0",
+   "attempts": 0,
+   "created": "2026-09-26 17:29",
+   "updated": "2026-09-26 17:29",
+   "notes": [
+    {
+     "t": "2026-09-26 17:29",
+     "by": "auditor",
+     "text": "만듦"
     }
    ]
   }
