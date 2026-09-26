@@ -409,7 +409,7 @@ def test_geometry_matches() -> None:
     my = float(mount_cfg.get("y", 0.0))
     mz = float(mount_cfg.get("z", 0.0))
     myaw = float(mount_cfg.get("yaw_deg", 0.0))
-    check("mount.x가 물리 허용 범위(-10~80mm) 안이다 (T12 대기 60mm 또는 실측 L=195.5mm 기준 -10~+20mm)",
+    check("mount.x가 물리 허용 범위(-10~80mm) 안이다 (T12 실측 대기 — 차체 길이는 아직 미실측)",
           -10.0 <= mx <= 80.0, f"x={mx}")
     check("mount.y가 예상 범위(-10~+10mm) 안이다", -10.0 <= my <= 10.0, f"y={my}")
     check("mount.z가 예상 범위(70~85mm) 안이다", 70.0 <= mz <= 85.0, f"z={mz}")
@@ -437,32 +437,30 @@ def test_geometry_matches() -> None:
     check("so101_geometry.yaml의 최대 수평 사거리(d0+l1+l2+l3)가 391.0mm와 일치한다",
           abs(yaml_reach - 391.0) < 1e-9, f"reach={yaml_reach}mm")
 
-    # 2026-09-26 실측(전체 외관.pdf): tomato_case.scad 차체 및 체결 기하 정합성 검증
-    scad_path = os.path.join(REPO, "hardware_design", "case", "tomato_case.scad")
-    scad_src = open(scad_path, encoding="utf-8").read()
-    w_match = re.search(r"chassis_w\s*=\s*([0-9.]+);", scad_src)
-    d_match = re.search(r"chassis_d\s*=\s*([0-9.]+);", scad_src)
-    cw = float(w_match.group(1)) if w_match else 0.0
-    cd = float(d_match.group(1)) if d_match else 0.0
-    check("tomato_case.scad 차체 실측 폭(151.9mm)과 전장(195.5mm)이 반영되어 있다",
-          abs(cw - 151.9) < 1e-6 and abs(cd - 195.5) < 1e-6,
-          f"w={cw}, d={cd}")
+    # 2026-09-26 실측(전체 외관.pdf, 기준점은 사용자 확인): 케이스는 차체 외곽이 아니라
+    # 50×30 체결 패턴 두 벌을 기준으로 한다. 136 = TOPLeft 뒷줄↔TOPRight 앞줄 나사,
+    # 195.5 = TOPLeft 앞줄↔TOPRight 뒷줄 나사 — **195.5는 차체 길이가 아니다**
+    # (사이클 595가 차체 길이로 박았다가 사용자 확인으로 정정. 차체 길이는 아직 미실측).
+    scad_src = open(os.path.join(REPO, "hardware_design", "case", "tomato_case.scad"),
+                    encoding="utf-8").read()
 
-    mc_match = re.search(r"mount_centers\s*=\s*\[\[[^,]+,\s*([0-9.]+)\]\s*,\s*\[[^,]+,\s*([0-9.]+)\]\]", scad_src)
-    y_front = float(mc_match.group(1)) if mc_match else 0.0
-    y_rear = float(mc_match.group(2)) if mc_match else 0.0
-    center_gap = y_rear - y_front
-    facing_gap = center_gap - 30.0
-    outer_span = center_gap + 30.0
-    check("tomato_case.scad 체결패턴이 실측 대향나사 간격(136.0mm) 및 중심간격(166.0mm)과 일치한다",
-          abs(center_gap - 166.0) < 1e-6 and abs(facing_gap - 136.0) < 1e-6 and abs(outer_span - cd) <= 0.5,
-          f"center_gap={center_gap}, facing_gap={facing_gap}, outer_span={outer_span}")
+    def scad_num(name):
+        m = re.search(r"^\s*" + name + r"\s*=\s*([0-9.]+)\s*;", scad_src, re.M)
+        return float(m.group(1)) if m else float("nan")
 
-    rc_match = re.search(r"rot_center\s*=\s*\[[^,]+,\s*([0-9.]+)\];", scad_src)
-    rot_y = float(rc_match.group(1)) if rc_match else 0.0
-    check("tomato_case.scad rot_center Y(98mm)가 실측 차체 중심(195.5/2 = 97.75mm)과 1mm 내로 일치한다",
-          abs(rot_y - cd / 2.0) <= 1.0,
-          f"rot_y={rot_y}, cd/2={cd/2.0}")
+    cw, mdy, mgap = scad_num("case_w"), scad_num("mount_dy"), scad_num("mount_gap")
+    check("tomato_case.scad 폭이 상판 실측 151.9mm이다", abs(cw - 151.9) < 1e-6, f"case_w={cw}")
+    pitch = mgap + mdy
+    check("tomato_case.scad 체결패턴: 30변=길이, 대향나사 136 → 중심간격 166, 바깥나사 195.5와 0.5mm 이내",
+          abs(mdy - 30.0) < 1e-6 and abs(mgap - 136.0) < 1e-6
+          and re.search(r"mount_pitch\s*=\s*mount_dy\s*\+\s*mount_gap\s*;", scad_src) is not None
+          and abs((pitch + mdy) - 195.5) <= 0.5,
+          f"mount_dy={mdy}, mount_gap={mgap}, pitch={pitch}, outer={pitch + mdy}")
+    check("tomato_case.scad 회전 중심이 두 체결패턴의 가운데(지금 팔 받침 자리)다",
+          re.search(r"rot_center\s*=\s*\[\s*case_w\s*/\s*2\s*,\s*\(\s*mount_front_c\s*\+\s*mount_rear_c\s*\)\s*/\s*2\s*\]",
+                    scad_src) is not None)
+    check("tomato_case.scad에 차체 길이 195.5를 박아 두지 않았다 (195.5는 나사 간 거리)",
+          re.search(r"(chassis_d|case_d)\s*=\s*195\.5", scad_src) is None)
 
     # 파지 화면좌표(grip_uv) 기본값 및 검출 영역 검증
     cs_src = open(os.path.join(ROS2, "tools", "click_server.py"), encoding="utf-8").read()

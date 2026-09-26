@@ -86,13 +86,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-26 19:19",
+   "updated": "2026-09-26 20:08",
    "notes": [
-    {
-     "t": "2026-09-21 13:26",
-     "by": "auditor",
-     "text": "2026-09-21 auditor: 보드 계약 v2 구현체 감사 및 UnoAdapterBase 0속도 정지 결함 정정·계약 테스트 확립(docs/인수인계-2026-09-04.md §57). UnoAdapterBase set_velocity(0,0,0) 수신 시 plan()의 Command(payload='S', duty=None) 무시 결함(주행 지속 결함)을 self.stop() 즉시 호출로 정정. MockBase estop 및 Telemetry st 일관성 정정. §12 계약 테스트 스위트 5종 신설로 4대 자체검증 705종(45/102/465/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
-    },
     {
      "t": "2026-09-21 13:33",
      "by": "builder",
@@ -147,6 +142,11 @@
      "t": "2026-09-26 19:19",
      "by": "auditor",
      "text": "2026-09-26 auditor: so101_geometry.yaml limits_deg 과대 개방 결함(elbow 121도, lift 108도) 규명 및 URDF 정합화 작업 T88 발급(docs/인수인계 §75). 4대 자체검증 764종(45/102/524/93 All RC=0) 전수 합격. T12 사람 줄자 실측 및 T77 물리 복구 대기 지속."
+    },
+    {
+     "t": "2026-09-26 20:08",
+     "by": "human",
+     "text": "정정(사람 확인 09-26): 195.5는 차체 길이가 아니라 TOPLeft 앞줄↔TOPRight 뒷줄 나사 거리. 차체 길이 미실측이므로 mount.x -10~+20mm 범위는 근거 없음 — 실측 대기로 되돌림. 인수인계 §72 머리말 참조."
     }
    ]
   },
