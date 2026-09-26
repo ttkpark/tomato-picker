@@ -1144,6 +1144,18 @@ def test_board_contract() -> None:
           and "estop_latched" in telem_dict and len(telem_json_str) > 50,
           f"keys={list(telem_dict.keys())}")
 
+    # 10. CmdVelNode estop(std_msgs/Bool) 구독 및 긴급정지 안전 연동 검증 (보드계약 §5.1, §9, §11.1, §12)
+    check("보드계약 §11.1 & §12 cmd_vel_node가 estop(std_msgs/Bool) 구독과 _on_estop 핸들러를 선언한다",
+          'self.create_subscription(Bool, "estop", self._on_estop, 10)' in cmd_node_text
+          and "def _on_estop(" in cmd_node_text
+          and "self._base.estop(self._estopped)" in cmd_node_text,
+          "cmd_vel_node estop 구독 및 핸들러 선언")
+
+    check("보드계약 §12 안전: cmd_vel_node가 estop 래치 중 수신된 /cmd_vel 지령을 즉시 차단하고 _halt를 수행한다",
+          "if self._estopped:" in cmd_node_text
+          and 'self._halt("비상정지 래치 중 — 지령 차단")' in cmd_node_text,
+          "cmd_vel_node estop 래치 중 속도 지령 차단 안전 로직")
+
     # ⑬ [보드계약 v2] §12 프로토콜 계약 테스트 및 Response/ProtocolParser 검증 (docs/보드-계약.md §4, §5.4, §12)
     # 1. 체크섬 오류 시 nak crc 판정 및 카운트 누적
     parser = bc.ProtocolParser(expected_proto=2)

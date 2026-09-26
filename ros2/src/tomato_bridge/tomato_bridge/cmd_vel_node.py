@@ -27,7 +27,7 @@ import math
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 from .board_contract import (AxisSigns, Caps, DutyCalib, MockBase, MobileBase,
                              SimBase, Stm32Base, UnoAdapterBase, plan)
@@ -108,10 +108,12 @@ class CmdVelNode(Node):
                 "docs/ros2-이행계획.md의 'duty 곡선 재기'를 하고 duty_measured:=true로.")
 
         self._sub = self.create_subscription(Twist, "cmd_vel", self._on_cmd, 10)
+        self._estop_sub = self.create_subscription(Bool, "estop", self._on_estop, 10)
         self._status = self.create_publisher(String, "~/status", 10)
         self._telem_pub = self.create_publisher(String, "~/telemetry", 10)
         self._last_cmd_ns = 0
         self._stopped = True
+        self._estopped = False
         self._last_notes: tuple[str, ...] = ()
         # 데드맨은 지령 주기와 무관하게 돌아야 한다 — 지령이 **안 오는 것**을
         # 감시하는 타이머라서, 지령 콜백 안에 두면 영영 안 돈다.
@@ -124,8 +126,22 @@ class CmdVelNode(Node):
         else:
             self._telem_timer = None
 
+    def _on_estop(self, msg: Bool) -> None:
+        """비상정지 래치 제어 (보드계약 §5.1, §9, §11.1, §12)."""
+        self._estopped = bool(msg.data)
+        self._base.estop(self._estopped)
+        if self._estopped:
+            self._halt("비상정지(estop) 래치 작동 — 차체 정지")
+        else:
+            self.get_logger().info("비상정지(estop) 래치 해제")
+            self._status.publish(String(data="비상정지 래치 해제"))
+
     def _on_cmd(self, msg: Twist) -> None:
         self._last_cmd_ns = self.get_clock().now().nanoseconds
+
+        if self._estopped:
+            self._halt("비상정지 래치 중 — 지령 차단")
+            return
 
         # 물리 단위(m/s -> mm/s, rad/s -> mdeg/s)로 변환하여 MobileBase 인터페이스 호출
         vx_mms = int(round(msg.linear.x * 1000.0))
