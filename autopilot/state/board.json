@@ -86,13 +86,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-26 11:35",
+   "updated": "2026-09-26 11:49",
    "notes": [
-    {
-     "t": "2026-09-21 12:02",
-     "by": "metrologist",
-     "text": "2026-09-21 metrologist: 스탠드오프(standoff_m, standoff_mm)·접근축 기하 변환 및 집게(gripper) 단위 분리 계측 카드 확립(docs/인수인계-2026-09-04.md §47). 3대 구현(eye·move5_check·kinematics) 변위 완전 일치(오차<1e-15mm) 및 왕복 가역성 등 5종 신설로 4대 자체검증 655종(45/102/415/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 실측 L 병행, §35) 대기 지속."
-    },
     {
      "t": "2026-09-21 12:33",
      "by": "metrologist",
@@ -147,6 +142,11 @@
      "t": "2026-09-26 11:35",
      "by": "metrologist",
      "text": "2026-09-26 metrologist: Response/ProtocolParser 프로토콜 계약 감사 및 체크섬 결함(ok S*53 -> ok S*77) 정정, ResponseParser 클래스 별칭 확립(docs/인수인계-2026-09-04.md §60). 4대 자체검증 722종(45/102/482/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
+    },
+    {
+     "t": "2026-09-26 11:49",
+     "by": "auditor",
+     "text": "2026-09-26 auditor: Stm32Base 폐루프 모터보드 구현체 감사 및 hb 시차 telemetry tgt/estop 상태 불일치 결함 정정, 4대 베이스 교체 계약 통합(docs/인수인계-2026-09-04.md §62). 4대 자체검증 731종(45/102/491/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
     }
    ]
   },

@@ -977,25 +977,25 @@ class Stm32Base:
                 self._act = resp.hb.act
             if resp.hb.estop_latched != self._estopped:
                 self._estopped = resp.hb.estop_latched
+            self._stopped = (self._tgt == (0, 0, 0))
         elif resp.kind == "ok" and resp.cmd == "X":
             if resp.args and resp.args[0] == "1":
                 self._estopped = True
             elif resp.args and resp.args[0] == "0":
                 self._estopped = False
+        elif resp.kind == "nak" and resp.code == "estop":
+            self._estopped = True
+            self.stop()
         return resp
 
     def set_velocity(self, vx_mms: int, vy_mms: int, w_mdegs: int) -> None:
         """물리 단위 속도 지령 (mm/s, mdeg/s) 전송 (보드계약 §2, §5.1, §12)."""
-        self._tgt = (vx_mms, vy_mms, w_mdegs)
-        if self._estopped:
-            self.stop()
-            return
-
         cmd = plan(vx_mms / 1000.0, vy_mms / 1000.0, math.radians(w_mdegs / 1000.0),
                    caps=self._caps, estop=self._estopped)
         self._last_cmd = cmd
+        self._tgt = (vx_mms, vy_mms, w_mdegs)
 
-        if cmd.rejected or cmd.payload == "S" or (vx_mms == 0 and vy_mms == 0 and w_mdegs == 0):
+        if self._estopped or cmd.rejected or cmd.payload == "S" or (vx_mms == 0 and vy_mms == 0 and w_mdegs == 0):
             self.stop()
             return
 
@@ -1046,7 +1046,23 @@ class Stm32Base:
     def telemetry(self) -> Telemetry:
         if self._parser.last_hb is not None:
             hb = self._parser.last_hb
-            return Telemetry.from_heartbeat(hb)
+            st_val = hb.st
+            if self._estopped:
+                st_val |= 0x01
+            else:
+                st_val &= ~0x01
+            return Telemetry(
+                ms=hb.ms,
+                rx=hb.rx,
+                bad=hb.bad,
+                i2c=hb.i2c,
+                wdt=hb.wdt,
+                st=st_val,
+                tgt=self._tgt,
+                act=hb.act if hb.act is not None else self._act,
+                vin_mv=hb.vin_mv,
+                amp_ma=hb.amp_ma,
+            )
 
         st_val = 0x01 if self._estopped else 0x00
         if self._caps.calib:

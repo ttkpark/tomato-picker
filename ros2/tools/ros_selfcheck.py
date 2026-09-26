@@ -1020,14 +1020,19 @@ def test_board_contract() -> None:
           t_fric.act == (0, 0, 0),
           f"fric_act={t_fric.act}")
 
-    # 10. 보드계약 §12 교체 가능성 계약: MockBase, SimBase, UnoAdapterBase가 동일 stop/estop 호출 인터페이스 및 0 수렴 일관성을 보장한다
-    bases: list[bc.MobileBase] = [bc.MockBase(), bc.SimBase(), bc.UnoAdapterBase(motor_link=dummy_link, calib=calib)]
+    # 10. 보드계약 §12 교체 가능성 계약: MockBase, SimBase, UnoAdapterBase, Stm32Base가 동일 stop/estop 호출 인터페이스 및 0 수렴 일관성을 보장한다
+    bases: list[bc.MobileBase] = [
+        bc.MockBase(),
+        bc.SimBase(),
+        bc.UnoAdapterBase(motor_link=dummy_link, calib=calib),
+        bc.Stm32Base(motor_link=dummy_link),
+    ]
     stop_results = []
     for b in bases:
         b.set_velocity(200, 0, 0)
         b.stop()
         stop_results.append(b.telemetry().tgt == (0, 0, 0))
-    check("보드계약 §12 다중 MobileBase 구현체(MockBase, SimBase, UnoAdapterBase)가 일관된 stop/0수렴 계약을 보장한다",
+    check("보드계약 §12 다중 MobileBase 구현체(MockBase, SimBase, UnoAdapterBase, Stm32Base)가 일관된 stop/0수렴 계약을 보장한다",
           all(stop_results),
           f"stop_results={stop_results}")
 
@@ -1202,6 +1207,30 @@ def test_board_contract() -> None:
           and telem.tgt == (350, 0, 0) and telem.vin_mv == 12550 and telem.amp_ma == 850
           and telem.calib_valid,
           f"act={telem.act} vin={telem.vin_mv} amp={telem.amp_ma} st=0x{telem.st:02X}")
+
+    # 6. 하트비트 수신 이후 stop() 호출 시 telemetry().tgt 즉시 0 반영 (하트비트 시차 지연/거짓 상태 노출 차단)
+    stm_base.stop()
+    check("보드계약 §12 안전: Stm32Base가 하트비트 수신 이후에도 stop() 즉시 telemetry().tgt를 (0, 0, 0)으로 소멸시킨다",
+          stm_base.telemetry().tgt == (0, 0, 0) and mock_link.last_raw == "S",
+          f"tgt={stm_base.telemetry().tgt} last_raw={mock_link.last_raw}")
+
+    # 7. 하트비트 수신 이후 estop(True) 호출 시 telemetry().estop_latched 즉시 True 반영 및 해제(estop(False)) 시 복구
+    stm_base.estop(True)
+    latched_after_hb = stm_base.telemetry().estop_latched
+    stm_base.estop(False)
+    unlatched_after_hb = not stm_base.telemetry().estop_latched
+    check("보드계약 §12 안전: Stm32Base가 하트비트 수신 이후에도 estop(True/False) 호출 즉시 텔레메트리 래치 상태를 동기화한다",
+          latched_after_hb and unlatched_after_hb,
+          f"latched={latched_after_hb} unlatched={unlatched_after_hb}")
+
+    # 8. estop 래치 상태에서 set_velocity 호출 시 거절 플래그(rejected=True) 및 사유 보존
+    stm_base.estop(True)
+    stm_base.set_velocity(350, 0, 0)
+    last_cmd = getattr(stm_base, "_last_cmd", None)
+    check("보드계약 §12 안전: Stm32Base estop 래치 중 속도 지령 시 rejected=True 및 비상정지 사유를 보존한다",
+          last_cmd is not None and last_cmd.rejected and "비상정지" in last_cmd.reason,
+          f"last_cmd={last_cmd}")
+    stm_base.estop(False)
 
 
 
