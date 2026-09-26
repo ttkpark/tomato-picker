@@ -180,7 +180,8 @@ module lid() {
             translate([-0.2, -0.2, -1]) cube([servo_body[0] + 0.4, servo_body[1] + 0.4, servo_body[2] + 2]);
             // 선 빠질 틈 + 케이블타이 슬롯
             translate([servo_body[0] - 1, 4, -1]) cube([wall + 2, servo_body[1] - 8, 10]);
-            for (z = [8, 24]) translate([-wall - 1, -wall - 1, z]) cube([servo_body[0] + 2*wall + 2, servo_body[1] + 2*wall + 2, 4]);
+            // 긴 두 면만 관통, 모서리 기둥은 남긴다 (한 바퀴 자르면 띠가 뚜껑에서 떨어진다)
+            for (z = [8, 24]) translate([6, -wall - 1, z]) cube([servo_body[0] - 12, servo_body[1] + 2*wall + 2, 4]);
         }
 }
 
