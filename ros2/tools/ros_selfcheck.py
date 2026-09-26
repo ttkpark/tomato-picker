@@ -1334,6 +1334,23 @@ def test_board_contract() -> None:
           nudge_zero_rejected,
           f"zero_rejected={nudge_zero_rejected}")
 
+    # 3. click_server nudge dither 불리언(True) 인자 기본 진폭 25 duty 자동 변환 검증 (감사)
+    nudge_dither_cmd = cs.build("nudge", {"vx": 130, "dither": True})
+    check("조작대: click_server가 nudge dither=True 불리언 입력을 기본 진폭 25 duty로 올바르게 변환한다",
+          "--dither" in nudge_dither_cmd and "25" in nudge_dither_cmd,
+          f"dither_cmd={' '.join(nudge_dither_cmd[1:])}")
+
+    # 4. base_nudge.py의 중단/예외 발생 시 link.stop() 및 close() 보장 검증 (감사)
+    base_nudge_text = open(os.path.join(ROS2, "tools", "base_nudge.py"), encoding="utf-8").read()
+    check("조작대·주행: base_nudge.py가 중단/예외 시에도 안전 정지(link.stop 및 close)를 보장하는 try-finally 구문을 구비한다",
+          "try:" in base_nudge_text and "finally:" in base_nudge_text and "link.stop()" in base_nudge_text and "link.close()" in base_nudge_text,
+          "base_nudge 안전 정지 구문 검증")
+
+    # 5. Stm32Base가 set_velocity 시점에 AxisSigns를 반영하여 SimBase 및 hb 수신 후와 일관된 telemetry().tgt를 유지한다 (감사)
+    check("보드계약 §12·§14 감사: Stm32Base가 set_velocity 시점에 AxisSigns(vy=-1, w=-1)를 반영하여 SimBase 및 hb와 일관된 telemetry().tgt를 유지한다",
+          stm_signs_base.telemetry().tgt == (350, -200, -30000) and stm_signs_base.telemetry().tgt == sim_signs_base.telemetry().tgt,
+          f"stm_tgt={stm_signs_base.telemetry().tgt} sim_tgt={sim_signs_base.telemetry().tgt}")
+
 
 
 

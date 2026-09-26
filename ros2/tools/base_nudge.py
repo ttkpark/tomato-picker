@@ -69,18 +69,20 @@ def main() -> int:
         print(f"듀티 상한 P {n} → {'보냄' if ok else '실패'}")
         time.sleep(0.15)
     print(f"보드 준비 {time.monotonic() - t0:.1f}s · 지령 vx={args.vx} vy={args.vy} w={args.w} · {args.secs:.2f}s")
-    t1 = time.monotonic()
-    while time.monotonic() - t1 < args.secs:
-        vy = args.vy
-        if args.dither:
-            # 4Hz 사각파 — 직각축을 흔들어 정지마찰을 깬다(크기를 키우면 오버슈트로 실패)
-            vy += args.dither if int((time.monotonic() - t1) * 8) % 2 == 0 else -args.dither
-        link.set_velocity(args.vx, max(-255, min(255, vy)), args.w)   # STALE_SEC(0.5s) 안에 계속 갱신해야 간다
-        time.sleep(0.05)
-    link.stop()
-    time.sleep(0.4)
-    st = link.stats()
-    link.close()
+    try:
+        t1 = time.monotonic()
+        while time.monotonic() - t1 < args.secs:
+            vy = args.vy
+            if args.dither:
+                # 4Hz 사각파 — 직각축을 흔들어 정지마찰을 깬다(크기를 키우면 오버슈트로 실패)
+                vy += args.dither if int((time.monotonic() - t1) * 8) % 2 == 0 else -args.dither
+            link.set_velocity(args.vx, max(-255, min(255, vy)), args.w)   # STALE_SEC(0.5s) 안에 계속 갱신해야 간다
+            time.sleep(0.05)
+    finally:
+        link.stop()
+        time.sleep(0.4)
+        st = link.stats()
+        link.close()
     print("정지. 보드:", {k: st.get(k) for k in ("connected", "board_resets", "boot_report") if k in st})
     return 0
 

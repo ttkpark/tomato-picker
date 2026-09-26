@@ -1017,7 +1017,7 @@ class Stm32Base:
         cmd = plan(vx_mms / 1000.0, vy_mms / 1000.0, math.radians(w_mdegs / 1000.0),
                    caps=self._caps, signs=self._signs, estop=self._estopped)
         self._last_cmd = cmd
-        self._tgt = (vx_mms, vy_mms, w_mdegs)
+        self._tgt = cmd.physical
 
         if self._estopped or cmd.rejected or cmd.payload == "S" or (vx_mms == 0 and vy_mms == 0 and w_mdegs == 0):
             self.stop()

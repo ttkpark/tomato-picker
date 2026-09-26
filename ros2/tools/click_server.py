@@ -355,7 +355,9 @@ def build(job, args):
         secs = num(args, "secs", 0.5, 0.1, 3.0)
         a += ["--secs", "%.2f" % secs]
         if args.get("dither"):
-            a += ["--dither", "%d" % int(num(args, "dither", 0, 0, 100))]
+            d_val = args.get("dither")
+            d_amp = 25 if d_val is True else int(num(args, "dither", 25, 0, 100))
+            a += ["--dither", "%d" % d_amp]
         if args.get("max_pwm"):
             a += ["--max-pwm", "%d" % int(num(args, "max_pwm", 0, 0, 4095))]
         return a
