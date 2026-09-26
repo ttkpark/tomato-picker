@@ -20,6 +20,7 @@ tomato_base:
   ros__parameters:
     base_type: "uno"        # uno(개루프 기본) | sim(물리 시뮬레이터) | stm32(v2 폐루프) | mock
     cmd_timeout: 0.3        # 보드계약 §9 4층: 이 시간 지령이 없으면 스스로 정지
+    telemetry_hz: 10.0      # 보드계약 §11.1, §11.3: ~/telemetry 스냅샷 주기 발행 (Hz)
     serial_port: ""         # 비우면 motor_link가 CH340을 찾는다
 
     # 축 부호 — 보드계약 §14.1이 아직 안 닫혔다. 실기에서 확정하면 여기 값을

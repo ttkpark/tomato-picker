@@ -21,6 +21,7 @@ DTR을 내린 채 열기(Uno 리셋 방지), 전용 스레드의 20ms 재전송(
 from __future__ import annotations
 
 
+import json
 import math
 
 import rclpy
@@ -47,6 +48,7 @@ class CmdVelNode(Node):
 
         self.declare_parameter("base_type", "uno")  # uno | sim | stm32 | mock (보드계약 §11, §13)
         self.declare_parameter("cmd_timeout", 0.3)   # 보드계약 §9 4층
+        self.declare_parameter("telemetry_hz", 10.0) # 보드계약 §11.1, §11.3 스냅샷 발행 주기
         self.declare_parameter("serial_port", "")    # 비우면 motor_link가 찾는다
         # 축 부호 — 보드계약 §14.1이 아직 안 닫혔다. 실기에서 정하면 여기 기본값을
         # 바꾸고 계약 문서의 결정 항목을 닫아라(런타임 토글로 남기지 말 것).
@@ -107,12 +109,20 @@ class CmdVelNode(Node):
 
         self._sub = self.create_subscription(Twist, "cmd_vel", self._on_cmd, 10)
         self._status = self.create_publisher(String, "~/status", 10)
+        self._telem_pub = self.create_publisher(String, "~/telemetry", 10)
         self._last_cmd_ns = 0
         self._stopped = True
         self._last_notes: tuple[str, ...] = ()
         # 데드맨은 지령 주기와 무관하게 돌아야 한다 — 지령이 **안 오는 것**을
         # 감시하는 타이머라서, 지령 콜백 안에 두면 영영 안 돈다.
         self._timer = self.create_timer(0.05, self._watch)
+
+        # 텔레메트리 주기 발행 (보드계약 §11.1, §11.3)
+        telem_hz = float(self.get_parameter("telemetry_hz").value)
+        if telem_hz > 0:
+            self._telem_timer = self.create_timer(1.0 / telem_hz, self._publish_telemetry)
+        else:
+            self._telem_timer = None
 
     def _on_cmd(self, msg: Twist) -> None:
         self._last_cmd_ns = self.get_clock().now().nanoseconds
@@ -159,6 +169,15 @@ class CmdVelNode(Node):
             self.get_logger().info(f"정지: {why}")
             self._status.publish(String(data=why))
         self._stopped = True
+
+    def _publish_telemetry(self) -> None:
+        """하위 MobileBase 텔레메트리 스냅샷을 ~/telemetry JSON 토픽으로 발행 (보드계약 §11.1, §11.3)."""
+        try:
+            telem = self._base.telemetry()
+            data = telem.to_dict() if hasattr(telem, "to_dict") else {}
+            self._telem_pub.publish(String(data=json.dumps(data, ensure_ascii=False)))
+        except Exception as exc:  # noqa: BLE001 - 진단 토픽 발행 실패로 본체를 죽이지 않는다
+            self.get_logger().debug(f"텔레메트리 발행 실패: {exc}")
 
     def destroy_node(self) -> bool:
         # 노드가 죽을 때 바퀴가 돌고 있으면 안 된다. 보드 데드맨이 1초 뒤 세우긴

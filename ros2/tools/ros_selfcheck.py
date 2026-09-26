@@ -1124,6 +1124,26 @@ def test_board_contract() -> None:
           and '"base_type": LaunchConfiguration("base_type")' in s1_launch_text,
           f"yaml_base_type={base_yaml_cfg.get('base_type')}")
 
+    # 8. CmdVelNode 텔레메트리(~/telemetry) 퍼블리셔 및 주기 발행 타이머 검증 (보드계약 §11.1, §11.3)
+    check("보드계약 §11.1 & §11.3 cmd_vel_node가 telemetry_hz(10.0Hz) 파라미터와 ~/telemetry 퍼블리셔를 선언한다",
+          'self.declare_parameter("telemetry_hz", 10.0)' in cmd_node_text
+          and 'self.create_publisher(String, "~/telemetry", 10)' in cmd_node_text
+          and "_publish_telemetry" in cmd_node_text,
+          "cmd_vel_node 텔레메트리 퍼블리셔 및 타이머 선언")
+
+    check("stage1.yaml의 tomato_base telemetry_hz(10.0Hz) 설정이 일치한다",
+          base_yaml_cfg.get("telemetry_hz") == 10.0,
+          f"telemetry_hz={base_yaml_cfg.get('telemetry_hz')}")
+
+    # 9. Telemetry.to_dict() 직렬화 무손실 검증 및 JSON 변환 호환성
+    telem_dict = telem.to_dict()
+    import json
+    telem_json_str = json.dumps(telem_dict)
+    check("보드계약 §11.1 Telemetry.to_dict()가 모든 필수 필드(ms, tgt, act, vin, amp, st 플래그)를 JSON 직렬화 가능하게 반환한다",
+          isinstance(telem_dict, dict) and "ms" in telem_dict and "tgt" in telem_dict
+          and "estop_latched" in telem_dict and len(telem_json_str) > 50,
+          f"keys={list(telem_dict.keys())}")
+
     # ⑬ [보드계약 v2] §12 프로토콜 계약 테스트 및 Response/ProtocolParser 검증 (docs/보드-계약.md §4, §5.4, §12)
     # 1. 체크섬 오류 시 nak crc 판정 및 카운트 누적
     parser = bc.ProtocolParser(expected_proto=2)

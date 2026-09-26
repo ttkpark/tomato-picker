@@ -634,6 +634,28 @@ class Telemetry:
             amp_ma=hb.amp_ma,
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        """ROS2 토픽 발행 및 대시보드 연동을 위한 딕셔너리 직렬화."""
+        return {
+            "ms": self.ms,
+            "rx": self.rx,
+            "bad": self.bad,
+            "i2c": self.i2c,
+            "wdt": self.wdt,
+            "st": self.st,
+            "tgt": list(self.tgt),
+            "act": list(self.act) if self.act is not None else None,
+            "vin_mv": self.vin_mv,
+            "amp_ma": self.amp_ma,
+            "estop_latched": self.estop_latched,
+            "soft_deadman": self.soft_deadman,
+            "hard_deadman": self.hard_deadman,
+            "calib_valid": self.calib_valid,
+            "driver_fault": self.driver_fault,
+            "output_saturated": self.output_saturated,
+            "low_voltage": self.low_voltage,
+        }
+
 
 @runtime_checkable
 class MobileBase(Protocol):
