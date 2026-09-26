@@ -95,6 +95,8 @@ def find_cut_point(
       - 과실과 줄기가 맞닿는 화소가 없다 (분할이 어긋났다)
       - 스켈레톤이 꽃받침 접점에서 cut_offset_mm만큼 뻗어나갈 만큼 길지 않다
     """
+    if px_per_mm <= 0.0 or cut_offset_mm <= 0.0:
+        return None
     if stem_mask.shape != fruit_mask.shape:
         return None  # 다른 프레임/해상도의 마스크를 섞은 것 — 조용히 계산하지 않는다
     if stem_mask.sum() == 0 or fruit_mask.sum() == 0:

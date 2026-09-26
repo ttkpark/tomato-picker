@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 89,
+ "next_id": 90,
  "tasks": [
   {
    "id": "T9",
@@ -2126,6 +2126,25 @@
      "t": "2026-09-26 19:26",
      "by": "builder",
      "text": "완료: so101_geometry.yaml limits_deg 및 tomato_robot.urdf.xacro 관절한계를 NormLimits 실측치(elbow -38.90~163.61, lift 7.94~209.59, roll +-97.90)로 정합화 완료, ros_selfcheck 정합성 강제 갱신, 4대 자체검증 764종(45/102/524/93 All RC=0) 및 move5_check --dry-run 5/5 전수 합격"
+    }
+   ]
+  },
+  {
+   "id": "T89",
+   "title": "[인식] yolo_seg에 줄기(stem) 클래스 및 마스크 추출 함수 연동하여 stem_cut 연결",
+   "role": "builder",
+   "status": "todo",
+   "priority": 2,
+   "why": "study 04 기반 추가된 yolo_seg에 줄기 클래스 정의 및 마스크 추출 함수가 없어 stem_cut.find_cut_point()와 연동이 단절됨",
+   "done_when": "yolo_seg.py에 STEM_CLASS_NAMES 정의 및 줄기 마스크 추출 함수(extract_stem_masks) 추가, yolo_seg_check.py 검증 추가 통과, stem_cut 연동 검증",
+   "attempts": 0,
+   "created": "2026-09-26 22:17",
+   "updated": "2026-09-26 22:17",
+   "notes": [
+    {
+     "t": "2026-09-26 22:17",
+     "by": "auditor",
+     "text": "만듦"
     }
    ]
   }

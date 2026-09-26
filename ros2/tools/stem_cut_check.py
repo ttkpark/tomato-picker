@@ -125,6 +125,13 @@ def test_find_cut_point_rejections() -> None:
     check("줄기가 offset보다 짧으면 None(억지로 만들지 않는다)",
           find_cut_point(short_stem, short_fruit, 1.0, cut_offset_mm=12.0) is None)
 
+    check("px_per_mm <= 0이면 None(무효 축척 거절)",
+          find_cut_point(stem, fruit, px_per_mm=0.0) is None and
+          find_cut_point(stem, fruit, px_per_mm=-1.0) is None)
+    check("cut_offset_mm <= 0이면 None(비물리적 오프셋 거절)",
+          find_cut_point(stem, fruit, px_per_mm=1.0, cut_offset_mm=0.0) is None and
+          find_cut_point(stem, fruit, px_per_mm=1.0, cut_offset_mm=-5.0) is None)
+
 
 def test_offset_scales_with_px_per_mm() -> None:
     print("\n[단위] px_per_mm 환산이 실제로 거리에 반영된다")
