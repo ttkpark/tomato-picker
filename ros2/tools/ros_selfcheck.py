@@ -959,6 +959,18 @@ def test_board_contract() -> None:
           and t_s4.tgt == (0, 0, 0),
           f"s1={t_s1.tgt} s2={t_s2.tgt} s3={t_s3.tgt} s4={t_s4.tgt}")
 
+    # 4b. SimBase 주행 중 set_velocity(0,0,0) 수신 시 tgt=(0,0,0) 즉시 반영 및 act 속도 0으로 감속 수렴
+    sim_base.set_velocity(200, 0, 0)
+    for _ in range(10):
+        sim_base.step(0.05)
+    act_running = sim_base.telemetry().act[0]
+    sim_base.set_velocity(0, 0, 0)
+    for _ in range(25):
+        sim_base.step(0.05)
+    check("보드계약 §12 안전: SimBase가 0 속도 지령(0,0,0) 수신 시 tgt=(0,0,0) 반영 및 act 속도가 0으로 감속 수렴한다",
+          act_running > 50 and sim_base.telemetry().tgt == (0, 0, 0) and sim_base.telemetry().act == (0, 0, 0),
+          f"before={act_running} tgt={sim_base.telemetry().tgt} act={sim_base.telemetry().act}")
+
     # 5. UnoAdapterBase 계약 테스트: estop 해제 후 주행 복구
     uno_base.estop(True)
     uno_base.set_velocity(200, 0, 0)
@@ -1251,6 +1263,13 @@ def test_board_contract() -> None:
           mock_link.last_raw == "S" and stm_base.telemetry().tgt == (0, 0, 0),
           f"last_raw={mock_link.last_raw} tgt={stm_base.telemetry().tgt}")
 
+    # 4b. 0 속도 지령 set_velocity(0,0,0) 인가 시 슬루를 무시하고 즉시 S 전송 및 목표 (0,0,0) 소멸
+    stm_base.set_velocity(350, 0, 0)
+    stm_base.set_velocity(0, 0, 0)
+    check("보드계약 §12 안전: Stm32Base가 set_velocity(0,0,0) 수신 시 즉시 S 전송 및 telemetry().tgt를 (0,0,0)으로 리셋한다",
+          mock_link.last_raw == "S" and stm_base.telemetry().tgt == (0, 0, 0),
+          f"last_raw={mock_link.last_raw} tgt={stm_base.telemetry().tgt}")
+
     # 5. feed_line을 통한 폐루프 하트비트(hb ... act=... st=...) 수신 및 Telemetry 실측 속도 반영
     hb_frame = f"hb 125000 rx=100 bad=0 i2c=0 wdt=0 st=0x08 tgt=350,0,0 act=348,0,0 vin=12550 amp=850*{bc.checksum('hb 125000 rx=100 bad=0 i2c=0 wdt=0 st=0x08 tgt=350,0,0 act=348,0,0 vin=12550 amp=850')}"
     resp_hb = stm_base.feed_line(hb_frame)
@@ -1300,6 +1319,12 @@ def test_board_contract() -> None:
     check("보드계약 §14.1 계측: SimBase가 AxisSigns(vy=-1, w=-1) 부호 변환을 목표 속도(_tgt)에 정확히 반영한다",
           sim_signs_base.telemetry().tgt == (350, -200, -30000),
           f"sim_tgt={sim_signs_base.telemetry().tgt}")
+
+    for _ in range(25):
+        sim_signs_base.step(0.05)
+    check("보드계약 §14.1 계측: SimBase가 AxisSigns(vy=-1, w=-1) 적용 시 act 실측 속도를 tgt와 일치하게 정상 상태 추종한다",
+          sim_signs_base.telemetry().act == (350, -200, -30000),
+          f"sim_act={sim_signs_base.telemetry().act}")
 
     # 3. CmdVelNode 팩토리가 4대 베이스(uno, sim, stm32, mock) 생성 시 signs를 온전히 전달한다
     check("보드계약 §14.1 계측: cmd_vel_node가 SimBase 및 Stm32Base 생성 시 signs=self._signs를 온전히 전달한다",
