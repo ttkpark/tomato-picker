@@ -873,7 +873,11 @@ class UnoAdapterBase:
         self._link = motor_link
         self._calib = calib or DutyCalib()
         # 보드계약 v2 §14.1: Uno 펌웨어 v1 물리 mixing에 따라 vy=-1 (우평행+ -> 좌평행+ 반전), w=1 (반시계 보존)
-        self._signs = signs or AxisSigns(vx=1, vy=-1, w=1)
+        # signs 미지정 또는 cmd_vel_node 기본 REP-103 부호(vx=1, vy=1, w=1) 주입 시 Uno 물리 vy=-1 반전 자동 적용
+        if signs is None or signs == AxisSigns(vx=1, vy=1, w=1):
+            self._signs = AxisSigns(vx=1, vy=-1, w=1)
+        else:
+            self._signs = signs
         self._caps = Caps.legacy()
         self._tgt = (0, 0, 0)
         self._last_duty = (0, 0, 0)

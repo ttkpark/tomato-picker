@@ -82,11 +82,11 @@ tools/tag.sh v2.0.0-ros.2 "손-눈 보정 실측 통과"
 |---|---|---|
 | `arm.z0/d0/l1/l2/l3` | ✅ `ros_selfcheck.test_geometry_matches`(yaml↔`ArmGeometry` 기본값 1e-9 일치) + `test_urdf_matches_kinematics`(so101_arm.xacro FK 7자세 대조) + `tomato_robot.urdf.xacro` 기본인자 5종 대조 | 실측. yaml 주석 "2026-08-31 실측"(`so101_geometry.yaml:16`) |
 | `arm.limits_deg`(6관절) | ✅ `ros_selfcheck.test_geometry_matches`가 6개 전 관절(`kin.JOINTS + ('gripper', )`)의 정의 및 `min < max` 유효 범위를 코드로 강제 + `tomato_robot.urdf.xacro`의 12개 인자(`*_min_deg`, `*_max_deg`) 기본값과 1e-6 완전 일치 강제 | 설계상 분리. yaml 자신이 "⚠ 추정치다"라고 명시(`:24`) — 실제 안전 한계는 대시보드 캘리브레이션(`arm_cartesian.json`)이 별도 소유하며, URDF 모델의 물리적 유효성 및 launch/xacro 기본값 일치는 코드로 완전 보장됨 |
-| `mount.x` | ✅ `ros_selfcheck.test_mount_compare`(TF↔yaml 1.0mm 허용오차 대조 19종) + `test_geometry_matches`(예상 물리범위 40~80mm 검사 + "아직 안 쟀다(T12 대기)" 주석 강제) + `tomato_robot.urdf.xacro` 기본인자 대조 | 미실측(T12 대기). **`ros.2`에서는 IK 사슬(`tool→arm_base`)에 들어오지 않으므로 `ros.3` 선행 요건으로 격하되어 `ros.2` 기준1 합격을 가로막지 않음.** |
+| `mount.x` | ✅ `ros_selfcheck.test_mount_compare`(TF↔yaml 1.0mm 허용오차 대조 19종) + `test_geometry_matches`(물리 허용범위 -10~80mm 검사 + "아직 안 쟀다(T12 대기)" 주석 강제) + `tomato_robot.urdf.xacro` 기본인자 대조 | 미실측(T12 대기, L=195.5mm 기반 실제 물리범위 -10~+20mm 확립). **`ros.2`에서는 IK 사슬(`tool→arm_base`)에 들어오지 않으므로 `ros.3` 선행 요건으로 격하되어 `ros.2` 기준1 합격을 가로막지 않음.** |
 | `mount.y` | ✅ `mount_compare.py` 대조 + `test_geometry_matches`(예상 물리범위 -10~+10mm 검사 + "좌우 대칭 가정치" 주석 강제) + `tomato_robot.urdf.xacro` 기본인자 대조 | 좌우 대칭 가정치(0.0mm). 미실측, T12 실측 시 검증. |
 | `mount.z` | ✅ `mount_compare.py` 대조(1.0mm 허용) + `test_geometry_matches`(예상 물리범위 70~85mm 및 mm 단위 검사 + "2026-08-31 실측" 주석 강제) + `tomato_robot.urdf.xacro` 기본인자 대조 | 실측. 2026-08-31 실측 76.5mm(지면 → 마운트 평면). |
 | `mount.yaw_deg` | ✅ `mount_compare.py` 대조(0.5° 허용) + `test_geometry_matches`(예상 물리범위 -5~+5° 검사 + "브래킷 정면 정렬 가정치" 주석 강제) + `tomato_robot.urdf.xacro` 기본인자 대조 | 브래킷 정면 정렬 가정치(0.0°). 미실측, T12 실측 시 검증. |
-| `base.length/width/height/wheel_radius` | ✅ `test_geometry_matches`(차체 치수 4종에 "시각화용 가정치" 및 T12 환산식 $mount.x = L/2 - d_{\text{front}}$ 사용 주의 주석 명시 강제) + `tomato_robot.urdf.xacro` 기본인자 4종 대조 | 시각화용 가정치. 주행 계산이나 팔 기구학에 미사용. T12 실측 시 실제 차체 길이 $L$ 병행 실측 필요. |
+| `base.length/width/height/wheel_radius` | ✅ `test_geometry_matches`(차체 치수 4종에 "시각화용 가정치" 및 T12 환산식 $mount.x = L/2 - d_{\text{front}}$ 사용 주의 주석 명시 강제 + `tomato_case.scad` 실측 치수 151.9×195.5mm 3종 검증) + `tomato_robot.urdf.xacro` 기본인자 4종 대조 | 시각화용 가정치. 차체 상판 전장 $L=195.5\text{ mm}$ 및 폭 $W=151.9\text{ mm}$는 2026-09-26 실측 확정됨(`tomato_case.scad` 반영). 주행 계산이나 팔 기구학에는 미사용. T12 실측 시 실제 차체 길이 $L$ 병행 실측 필요. |
 
 **결론**: 링크 길이 5종은 **실측 + 3중 강제**(ArmGeometry, xacro FK 7자세, URDF 기본인자)로 합격. 마운트 4종은 **TF↔yaml 강제 및 물리 경계 검증이 완비**되었으며, 미실측 항목(`mount.x`)은 `ros.3` 선행으로 분리되어 `ros.2` 기준1 요건을 충족함.
 
@@ -447,19 +447,19 @@ inactive).
 것도 한 걸음 상한이 아니라 **자기 안전검사가 경로 전체를 시작 전에 거절**한 것이다
 → 따로 작업으로 올렸다(T60).
 
-### 기준4 채점표 — 753종 전수 무결성 및 보드계약 v2 AxisSigns 부호 일치성·0속도 정지 안전·Uno 물리 반전 감사 (2026-09-26, 사이클 588)
+### 기준4 채점표 — 758종 전수 무결성 및 보드계약 v2 AxisSigns 부호 일치성·0속도 정지 안전·Uno 물리 반전 감사 (2026-09-26, 사이클 598)
 
 기준4 = "PC 자체검증 도구 전부 통과 (All RC=0)."
-09-18 감사 T39(427종) 이후 326종이 신설되어 2026-09-26 현재 총 753종에 달한다.
-AST 및 코드 정적 분석을 통해 전수 753개 검사의 무결성을 감사했다:
+09-18 감사 T39(427종) 이후 331종이 신설되어 2026-09-26 현재 총 758종에 달한다.
+AST 및 코드 정적 분석을 통해 전수 758개 검사의 무결성을 감사했다:
 
 | 검사 도구 | 검사 수 | 주요 검증 영역 | 무결성 감사 결과 |
 |---|---|---|---|
 | `tools/handeye_check.py` | 45종 | 손-눈 보정 수학(fixed/on_arm), 잡음 내성, 축 단위, Intrinsics 핀홀/왜곡, Rigid 변환, tool_frame 규약 | ✅ 항등식·자기비교 0건, 예외 삼킴 없음. 모든 assertion이 실제 수렴 및 잔차 임계값 검증 |
 | `tools/eye_check.py` | 102종 | 다중 카메라(d405/astra), 노출/게인 제어, 발행 주기(fps), 겨냥 시효(0.35s) 가드 | ✅ 노출/게인/시효 경계 조건과 실패 반환 메시지 완벽 검증 |
-| `ros2/tools/ros_selfcheck.py` | 513종 | 레거시 경계, 기하·URDF xacro 기본인자(25종), TF 마운트(19종), 모터/보드 계약(66종), 깊이/검출 처리(15종), 스탠드오프 3대 구현 일치/가역 항등성/단위 환산/물리 안전범위/집게 규약 분리(5종), 프리셋·캘리브레이션 raw/norm 가역 항등성/convert 항등 변환/cartesian 각도 가역성/blend 외삽 방지 클램프/서보 틱스팬 물리범위(5종), 보드 계약 v2(MobileBase) 및 5층 데드맨 안전 시한 펌웨어/MotorLink/cmd_vel_node/estop 크로스레이어 실물 검증(10종), cap 확장/hb 상태 비트/속도 벡터 파싱(5종), MobileBase 프로토콜 및 Telemetry 스냅샷(5종), LegacyDutyControl 격리 및 MockBase/SimBase(5종), SimBase 물리 한계(속도상한/포화플래그/정지마찰) 및 DutyCalib 물리검산(5종), UnoAdapterBase 어댑터 및 다중프로토콜(5종), §12 계약테스트 스위트 및 0속도 정지 안전/MockBase estop(5종), cmd_vel_node MobileBase 인터페이스 및 UnoAdapterBase 주입 연동(5종), SimBase 데드맨(300ms 감속/1000ms 정지)/정지마찰 문턱 미만 0/stop 0수렴 계약(5종), Response/ProtocolParser 체크섬(0x77) 검증/strict CRC 승격/nak nocrc/5대 nak/proto 불일치 거부/boot 리셋 원인/ResponseParser 별칭(7종), Stm32Base 폐루프 모터보드 계약 및 4대 베이스(Mock/Sim/Uno/Stm32) 전수 교체 계약/하트비트 시차 텔레메트리 0수렴 및 estop 동기화/거절사유 보존(9종), base_type 팩토리 분기 및 launch 연동(2종), telemetry 퍼블리셔 및 to_dict(3종), estop 토픽 및 지령 차단(2종), Stm32Base/SimBase AxisSigns 및 DutyCalib 계측 검산(4종), click_server 넛지(2종) 및 디더 불리언(25 duty)/base_nudge try-finally/Stm32Base AxisSigns 텔레메트리 일치성 3종 추가 (502→507), UnoAdapterBase/MockBase AxisSigns 텔레메트리 일치성(2종, 507→509), Stm32Base S 즉시 전송/SimBase 감속 0수렴/SimBase AxisSigns act 정상상태 추종(3종, 509→512), UnoAdapterBase vy=-1 물리 duty 음수 dy 전달 및 w=1 보존 감사(1종, 512→513), 역기구학, 손-눈 15mm 게이트(20종)+식별성(15종), 표적/경로/되먹임 5/5, 시험기록 격리, 줄끝(LF), 서비스 충돌, 패키지 의존성, LoadLimits 마운트평면/타입가드(7종), docker-compose 장치요건(2종), 교시자세 FK/deg_per_norm 한계/set_zero 무결성(6종), config ARM_GEOM 5종 일치/reach_max 항등성/grip_uv 기본값 검출범위, ARM_CART_SIGNS 5관절부호/CAM_ROLL_SIGN/arm_calib MOUNT_Z_MM 및 FLOOR_MARGIN/6대 하드웨어 도구 상수/floor_z 기하분리 | ✅ AST 검사 결과: `check(..., True)` 2건은 허용 모듈 순회 표시용이며 금지/미지 의존 시 `check(..., False)`로 즉각 실패 강제됨. 파일 부재 조건은 상위 `check(os.path.exists)`로 방어됨. 0속도 정지 및 AxisSigns 텔레메트리/물리 전달 6종 추가 (507→513) |
+| `ros2/tools/ros_selfcheck.py` | 518종 | 레거시 경계, 기하·URDF xacro 기본인자(25종), TF 마운트(19종), 모터/보드 계약(66종), 깊이/검출 처리(15종), 스탠드오프 3대 구현 일치/가역 항등성/단위 환산/물리 안전범위/집게 규약 분리(5종), 프리셋·캘리브레이션 raw/norm 가역 항등성/convert 항등 변환/cartesian 각도 가역성/blend 외삽 방지 클램프/서보 틱스팬 물리범위(5종), 보드 계약 v2(MobileBase) 및 5층 데드맨 안전 시한 펌웨어/MotorLink/cmd_vel_node/estop 크로스레이어 실물 검증(10종), cap 확장/hb 상태 비트/속도 벡터 파싱(5종), MobileBase 프로토콜 및 Telemetry 스냅샷(5종), LegacyDutyControl 격리 및 MockBase/SimBase(5종), SimBase 물리 한계(속도상한/포화플래그/정지마찰) 및 DutyCalib 물리검산(5종), UnoAdapterBase 어댑터 및 다중프로토콜(5종), §12 계약테스트 스위트 및 0속도 정지 안전/MockBase estop(5종), cmd_vel_node MobileBase 인터페이스 및 UnoAdapterBase 주입 연동(5종), SimBase 데드맨(300ms 감속/1000ms 정지)/정지마찰 문턱 미만 0/stop 0수렴 계약(5종), Response/ProtocolParser 체크섬(0x77) 검증/strict CRC 승격/nak nocrc/5대 nak/proto 불일치 거부/boot 리셋 원인/ResponseParser 별칭(7종), Stm32Base 폐루프 모터보드 계약 및 4대 베이스(Mock/Sim/Uno/Stm32) 전수 교체 계약/하트비트 시차 텔레메트리 0수렴 및 estop 동기화/거절사유 보존(9종), base_type 팩토리 분기 및 launch 연동(2종), telemetry 퍼블리셔 및 to_dict(3종), estop 토픽 및 지령 차단(2종), Stm32Base/SimBase AxisSigns 및 DutyCalib 계측 검산(4종), click_server 넛지(2종) 및 디더 불리언(25 duty)/base_nudge try-finally/Stm32Base AxisSigns 텔레메트리 일치성 3종 추가 (502→507), UnoAdapterBase/MockBase AxisSigns 텔레메트리 일치성(2종, 507→509), Stm32Base S 즉시 전송/SimBase 감속 0수렴/SimBase AxisSigns act 정상상태 추종(3종, 509→512), UnoAdapterBase vy=-1 물리 duty 음수 dy 전달 및 w=1 보존 감사(1종, 512→513), UnoAdapterBase 기본 생성 시 AxisSigns(vy=-1, w=1) 적용(1종, 513→514), tomato_case.scad 차체 실측 치수(151.9×195.5mm)/체결패턴(166mm)/rot_center 기하 검증(3종, 514→517), UnoAdapterBase cmd_vel_node REP-103(1,1,1) 주입 시 vy=-1 물리 반전 감사(1종, 517→518), 역기구학, 손-눈 15mm 게이트(20종)+식별성(15종), 표적/경로/되먹임 5/5, 시험기록 격리, 줄끝(LF), 서비스 충돌, 패키지 의존성, LoadLimits 마운트평면/타입가드(7종), docker-compose 장치요건(2종), 교시자세 FK/deg_per_norm 한계/set_zero 무결성(6종), config ARM_GEOM 5종 일치/reach_max 항등성/grip_uv 기본값 검출범위, ARM_CART_SIGNS 5관절부호/CAM_ROLL_SIGN/arm_calib MOUNT_Z_MM 및 FLOOR_MARGIN/6대 하드웨어 도구 상수/floor_z 기하분리 | ✅ AST 검사 결과: `check(..., True)` 2건은 허용 모듈 순회 표시용이며 금지/미지 의존 시 `check(..., False)`로 즉각 실패 강제됨. 파일 부재 조건은 상위 `check(os.path.exists)`로 방어됨. 차체 실측 및 Uno 물리 반전 주입 5종 추가 (513→518) |
 | `tools/arm_cartesian_check.py` | 93종 | 직교 좌표 제어, 관절 보간 대체 경로, 처짐 되먹임(settle) 수렴/포화 | ✅ 복합 경로 및 되먹임 루프 전 단계 실측치 오차 검증 |
-| **합계** | **753종** | **All RC=0 (All Green)** | **절대 실패할 수 없는 검사(무효 검사) 0건 확인** |
+| **합계** | **758종** | **All RC=0 (All Green)** | **절대 실패할 수 없는 검사(무효 검사) 0건 확인** |
 
 
 #### 돌연변이 및 오류 방어 시험 결과 (사이클 448 및 498 실측)
@@ -484,7 +484,7 @@ AST 및 코드 정적 분석을 통해 전수 753개 검사의 무결성을 감�
 | D405 → `/fruits` (3D, 못 믿을 깊이는 **거절**) | ✅ (detect_node-stage1.yaml-config.py 색상/토픽 일치 강제) |
 | 손-눈 보정 (수집·풀이·static TF·잔차) | ✅ |
 | `/arm/move_to_point` (TF → IK → 이동) | ✅ |
-| ROS 없이 도는 자체검증 | ✅ `ros2/tools/ros_selfcheck.py` (513종, PC에서 — 2026-09-26 사이클 588 감사 재확인. 4대 도구 총 753종 전수 합격) |
+| ROS 없이 도는 자체검증 | ✅ `ros2/tools/ros_selfcheck.py` (518종, PC에서 — 2026-09-26 사이클 598 감사 재확인. 4대 도구 총 758종 전수 합격) |
 | 손눈보정 수학 자체검증 | ✅ `tools/handeye_check.py` (45종, PC에서) |
 | **젯슨에서 실제 빌드** | ✅ 2026-08-28 — 도커 이미지 3.02GB, `colcon build` 6패키지 1분 12초 |
 | **로봇 위에서 TF 확인** | ✅ `bringup_check.sh` 0~2단 — RSP가 만든 TF가 `kinematics.forward()`와 **0.000mm** 일치 (7자세) |

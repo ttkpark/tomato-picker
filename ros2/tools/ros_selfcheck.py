@@ -1439,6 +1439,14 @@ def test_board_contract() -> None:
         and uno_default_base._signs == bc.AxisSigns(vx=1, vy=-1, w=1),
         f"last_cmd={uno_audit_link.last_cmd} tgt={uno_default_base.telemetry().tgt} signs={uno_default_base._signs}")
 
+    # 10. UnoAdapterBase가 cmd_vel_node 기본 REP-103 AxisSigns(1, 1, 1) 주입 시에도 vy=-1 물리 반전을 적용한다 (사이클 598 감사)
+    uno_node_base = bc.UnoAdapterBase(motor_link=uno_audit_link, calib=calib, signs=bc.AxisSigns(vx=1, vy=1, w=1))
+    uno_node_base.set_velocity(0, 200, 30000)
+    check("보드계약 §14.1 감사: UnoAdapterBase가 cmd_vel_node 기본 REP-103 AxisSigns(1, 1, 1) 주입 시에도 vy=-1 물리 반전을 보장한다",
+        uno_audit_link.last_cmd == (0, -160, 123) and uno_node_base.telemetry().tgt == (0, -200, 30000)
+        and uno_node_base._signs == bc.AxisSigns(vx=1, vy=-1, w=1),
+        f"last_cmd={uno_audit_link.last_cmd} tgt={uno_node_base.telemetry().tgt} signs={uno_node_base._signs}")
+
 
 
 
