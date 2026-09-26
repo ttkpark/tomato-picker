@@ -52,6 +52,8 @@ def generate_launch_description() -> LaunchDescription:
             description="direct=ROS가 포트를 직접(기본) / proxy=레거시 대시보드 경유(브링업 전용)"),
         DeclareLaunchArgument("base", default_value="false",
                               description="⚠ controller-drive를 먼저 끌 것"),
+        DeclareLaunchArgument("base_type", default_value="uno",
+                              description="uno=개루프(기본) / sim=시뮬레이터 / stm32=폐루프 / mock=무동작"),
         DeclareLaunchArgument("camera", default_value="false",
                               description="realsense2_camera를 여기서 띄운다"),
         DeclareLaunchArgument("perception", default_value="false"),
@@ -69,7 +71,8 @@ def generate_launch_description() -> LaunchDescription:
              condition=IfCondition(LaunchConfiguration("arm"))),
 
         Node(package="tomato_bridge", executable="cmd_vel_node", name="tomato_base",
-             output="screen", parameters=[PARAMS],
+             output="screen", parameters=[PARAMS, {
+                 "base_type": LaunchConfiguration("base_type")}],
              condition=IfCondition(LaunchConfiguration("base"))),
 
         # D405. align_depth가 **필수**다 — 깊이와 컬러가 어긋나면 열매 중심의

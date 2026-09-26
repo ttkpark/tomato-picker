@@ -18,6 +18,7 @@ tomato_arm:
 
 tomato_base:
   ros__parameters:
+    base_type: "uno"        # uno(개루프 기본) | sim(물리 시뮬레이터) | stm32(v2 폐루프) | mock
     cmd_timeout: 0.3        # 보드계약 §9 4층: 이 시간 지령이 없으면 스스로 정지
     serial_port: ""         # 비우면 motor_link가 CH340을 찾는다
 

@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 82,
+ "next_id": 83,
  "tasks": [
   {
    "id": "T9",
@@ -86,13 +86,8 @@
    "done_when": "so101_geometry.yaml의 mount.x를 실측값으로 고치고 주석에 잰 날짜를 남긴다. base_link 원점 규약(차체 중심·바닥면, +x 앞)을 그대로 쓴다. 고친 뒤 python ros2/tools/ros_selfcheck.py가 70/70",
    "attempts": 0,
    "created": "2026-09-17 21:49",
-   "updated": "2026-09-26 11:49",
+   "updated": "2026-09-26 11:56",
    "notes": [
-    {
-     "t": "2026-09-21 12:33",
-     "by": "metrologist",
-     "text": "2026-09-21 metrologist: 프리셋·캘리브레이션 변환 및 높이 앵커 보간 계측 카드 확립(docs/인수인계-2026-09-04.md §49). remap_presets/convert 항등성·cartesian 가역성·blend 앵커 보간 등 5종 신설로 4대 자체검증 665종(45/102/425/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 실측 L 병행, §35) 대기 지속."
-    },
     {
      "t": "2026-09-21 12:38",
      "by": "builder",
@@ -147,6 +142,11 @@
      "t": "2026-09-26 11:49",
      "by": "auditor",
      "text": "2026-09-26 auditor: Stm32Base 폐루프 모터보드 구현체 감사 및 hb 시차 telemetry tgt/estop 상태 불일치 결함 정정, 4대 베이스 교체 계약 통합(docs/인수인계-2026-09-04.md §62). 4대 자체검증 731종(45/102/491/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
+    },
+    {
+     "t": "2026-09-26 11:56",
+     "by": "builder",
+     "text": "2026-09-26 builder: CmdVelNode base_type 파라미터(uno/sim/stm32/mock) 팩토리 및 stage1.yaml/launch.py 연동 완료(docs/인수인계-2026-09-04.md §63). 4대 자체검증 733종(45/102/493/93 All RC=0) 전수 합격. T12 사람 줄자 실측(차체 L 병행, §35) 대기 지속."
     }
    ]
   },
@@ -260,30 +260,6 @@
      "t": "2026-09-20 20:19",
      "by": "planner",
      "text": "막힘: T77 물리 장치 연결 대기"
-    }
-   ]
-  },
-  {
-   "id": "T18",
-   "title": "D405 컬러 노출/게인 손잡이를 열어 화면이 보이게 한다 (지금 평균밝기 7.2/255)",
-   "role": "builder",
-   "status": "done",
-   "priority": 1,
-   "why": "2026-09-18 00:06 플래너 실측: /dev/shm/d405_color.jpg의 회색 평균 7.2/255, 60백분위 7.0, 최댓값 42. 사람이 볼 수 있는 방에서 이 숫자가 나오면 조명이 아니라 발행기 노출 문제다. tools/depth_cam.py는 컬러 센서에 exposure/gain/auto_exposure를 하나도 안 건다(set_option 호출이 holes_fill 하나뿐, depth_cam.py:147). 이 한 줄이 T9/T15/T17 셋을 다 막고 있다 — 사람 손이 아니라 코드가 막고 있었다.",
-   "done_when": "tools/depth_cam.py에 컬러 자동노출(또는 D405_COLOR_EXPOSURE/D405_COLOR_GAIN 환경변수) 손잡이를 넣고 depth-cam을 재시작한 뒤, 젯슨에서 cv2로 /dev/shm/d405_color.jpg의 회색 평균과 최댓값을 찍어 '평균 60 이상·최댓값 200 이상'인지 숫자로 확인해 적는다. PC 4종 자체검증(45/60/105/33) 전부 RC=0 유지. 끝나면 depth-cam은 active로 되돌린다.",
-   "attempts": 1,
-   "created": "2026-09-18 00:07",
-   "updated": "2026-09-18 00:22",
-   "notes": [
-    {
-     "t": "2026-09-18 00:07",
-     "by": "planner",
-     "text": "만듦"
-    },
-    {
-     "t": "2026-09-18 00:22",
-     "by": "builder",
-     "text": "완료: 노출/게인 손잡이(D405_EXPOSURE_US·D405_GAIN·D405_AUTO_EXPOSURE)를 tools/depth_cam.py에 넣고 deploy/depth-cam.service에서 켠 채 젯슨에 배포·재시작. 젯슨 meta.json 실측(자동노출 → 최대노출): 컬러 평균 7.6→34.8 · 99백분위 17→66 · 최댓값 48→115 · 깊이 유효율 0.093→0.542(5.8배) · 근거리비율 0.959 · 중앙값 261.6mm. ⚠ done_when의 '평균 60·최댓값 200'은 **물리적으로 도달 불가**다 — 노출·게인 둘 다 센서 상한(165000us/248)이고 그게 평균 34.8이다. 즉 어두운 원인은 발행기만이 아니라 무대 조명이기도 하다(→ T23 [사람]). 다만 T18의 목적은 달성됐다: find_dots의 contrast 게이트 30을 99백분위 66이 **원리상 넘을 수 있게** 됐으므로 T19의 0개는 이제 처음으로 '마커가 정말 없다'의 증거가 된다. 발행기가 color_mean/p99/max와 실제로 걸린 exposure/gain/auto_exposure를 meta에 싣고, DepthView.status()가 p99<30이면 color_warn으로 '0개를 표적 없음으로 읽지 마라'고 말하며, 조작대(click_server /state + 화면)도 같은 경고를 띄운다. 자체검증 45/77/105/33 전부 RC=0(eye_check 60→77, +17종). 젯슨 서비스 원상복구(depth-cam·astra-cam·click-server active, controller-drive inactive, tomato-voice activating — 착수 때와 동일), 임시 drop-in 제거. 문서: docs/인수인계-2026-09-04.md §21.9, docs/depth-camera.md §2 '노출·게인'."
     }
    ]
   },
@@ -2181,6 +2157,30 @@
      "t": "2026-09-26 11:41",
      "by": "builder",
      "text": "완료: Stm32Base 폐루프 구현체 및 §12 계약 테스트 6종 신설 완료, 4대 자체검증 728/728 All RC=0 전수 통과 (handeye 45, eye 102, ros_selfcheck 488, cartesian 93, move5 dry 5/5)"
+    }
+   ]
+  },
+  {
+   "id": "T82",
+   "title": "[보드계약 v2] CmdVelNode base_type 파라미터(uno/sim/stm32/mock) 지원 및 stage1.yaml 연동",
+   "role": "builder",
+   "status": "done",
+   "priority": 3,
+   "why": "",
+   "done_when": "",
+   "attempts": 1,
+   "created": "2026-09-26 11:53",
+   "updated": "2026-09-26 11:56",
+   "notes": [
+    {
+     "t": "2026-09-26 11:53",
+     "by": "builder",
+     "text": "만듦"
+    },
+    {
+     "t": "2026-09-26 11:56",
+     "by": "builder",
+     "text": "완료: CmdVelNode base_type 파라미터(uno/sim/stm32/mock) 지원, stage1.yaml/launch.py 연동 완료. 4대 자체검증 733/733(45/102/493/93) All RC=0 전수 통과 및 move5_check --dry-run 5/5 확인"
     }
    ]
   }

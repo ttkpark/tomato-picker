@@ -28,7 +28,8 @@ from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from std_msgs.msg import String
 
-from .board_contract import AxisSigns, Caps, DutyCalib, MobileBase, UnoAdapterBase, plan
+from .board_contract import (AxisSigns, Caps, DutyCalib, MockBase, MobileBase,
+                             SimBase, Stm32Base, UnoAdapterBase, plan)
 
 try:
     from tomato_picker.hardware.motor_link import MotorLink
@@ -44,6 +45,7 @@ class CmdVelNode(Node):
     def __init__(self, base: MobileBase | None = None) -> None:
         super().__init__("tomato_base")
 
+        self.declare_parameter("base_type", "uno")  # uno | sim | stm32 | mock (보드계약 §11, §13)
         self.declare_parameter("cmd_timeout", 0.3)   # 보드계약 §9 4층
         self.declare_parameter("serial_port", "")    # 비우면 motor_link가 찾는다
         # 축 부호 — 보드계약 §14.1이 아직 안 닫혔다. 실기에서 정하면 여기 기본값을
@@ -60,6 +62,7 @@ class CmdVelNode(Node):
         self.declare_parameter("duty_measured", False)
 
         port = self.get_parameter("serial_port").value
+        base_type = str(self.get_parameter("base_type").value).lower()
         self._calib = DutyCalib(
             ks=int(self.get_parameter("duty_ks").value),
             kv=float(self.get_parameter("duty_kv").value),
@@ -78,12 +81,26 @@ class CmdVelNode(Node):
             self._base: MobileBase = base
             self._link = getattr(base, "_link", None)
             self._caps = base.caps()
-        else:
+        elif base_type == "mock":
+            self._link = None
+            self._base = MockBase()
+            self._caps = self._base.caps()
+        elif base_type == "sim":
+            self._link = None
+            self._base = SimBase(deadman_enabled=True)
+            self._caps = self._base.caps()
+        elif base_type == "stm32":
+            self._link = MotorLink(**({"port": port} if port else {}))
+            self._base = Stm32Base(motor_link=self._link)
+            self._caps = self._base.caps()
+        elif base_type == "uno":
             self._link = MotorLink(**({"port": port} if port else {}))
             self._base = UnoAdapterBase(motor_link=self._link, calib=self._calib, signs=self._signs)
             self._caps = self._base.caps()
+        else:
+            raise ValueError(f"지원하지 않는 base_type이다: {base_type!r} (지원: 'uno', 'sim', 'stm32', 'mock')")
 
-        if not self._calib.measured:
+        if base_type == "uno" and not self._calib.measured:
             self.get_logger().warning(
                 "duty 환산이 실측이 아니다 — /cmd_vel의 m/s는 방향과 비율만 맞다. "
                 "docs/ros2-이행계획.md의 'duty 곡선 재기'를 하고 duty_measured:=true로.")

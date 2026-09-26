@@ -1103,6 +1103,27 @@ def test_board_contract() -> None:
           and "self._base.stop()" in cmd_node_text,
           "UnoAdapterBase 기본 주입 및 안전 종료 검증")
 
+    # 6. CmdVelNode base_type 파라미터(uno/sim/stm32/mock) 선언 및 4대 베이스 팩토리 분기 검증 (보드계약 §11, §13)
+    check("보드계약 §11 & §13 cmd_vel_node가 base_type 파라미터를 선언하고 4대 베이스(uno, sim, stm32, mock) 팩토리를 지원한다",
+          'self.declare_parameter("base_type", "uno")' in cmd_node_text
+          and 'base_type == "mock"' in cmd_node_text and "MockBase()" in cmd_node_text
+          and 'base_type == "sim"' in cmd_node_text and "SimBase(" in cmd_node_text
+          and 'base_type == "stm32"' in cmd_node_text and "Stm32Base(" in cmd_node_text
+          and 'base_type == "uno"' in cmd_node_text and "UnoAdapterBase(" in cmd_node_text,
+          "cmd_vel_node 4대 베이스 팩토리 분기 검증")
+
+    # 7. stage1.yaml 및 stage1.launch.py에 base_type 파라미터/인자 선언 및 기본값 uno 일치 검증
+    with open(os.path.join(SRC, "tomato_bringup", "config", "stage1.yaml"), encoding="utf-8") as f_yaml:
+        s1_yaml = yaml.safe_load(f_yaml)
+    base_yaml_cfg = s1_yaml.get("tomato_base", {}).get("ros__parameters", {})
+    with open(os.path.join(SRC, "tomato_bringup", "launch", "stage1.launch.py"), encoding="utf-8") as f_launch:
+        s1_launch_text = f_launch.read()
+    check("보드계약 §11 & §13 stage1.yaml과 stage1.launch.py가 base_type 기본값('uno')을 선언하고 cmd_vel_node에 전달한다",
+          base_yaml_cfg.get("base_type") == "uno"
+          and 'DeclareLaunchArgument("base_type", default_value="uno"' in s1_launch_text
+          and '"base_type": LaunchConfiguration("base_type")' in s1_launch_text,
+          f"yaml_base_type={base_yaml_cfg.get('base_type')}")
+
     # ⑬ [보드계약 v2] §12 프로토콜 계약 테스트 및 Response/ProtocolParser 검증 (docs/보드-계약.md §4, §5.4, §12)
     # 1. 체크섬 오류 시 nak crc 판정 및 카운트 누적
     parser = bc.ProtocolParser(expected_proto=2)
