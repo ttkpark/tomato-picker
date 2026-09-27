@@ -78,13 +78,14 @@ buck_inset = 1.1 + buck_hole_d/2;   // [자] 구멍 가장자리↔판 가장자
 buck_holes = [for (u = [buck_inset, buck_size[0] - buck_inset],
                    v = [buck_inset, buck_size[1] - buck_inset]) [u, v]];  // 중심 간격 70.9 × 39.3
 buck_standoff_h = 4;
-buck_parts_h = 20;           // [실측] 판 윗면 → 가장 높은 부품(콘덴서·코일) — 재서 넣을 것
+buck_parts_h = 14.2;         // [자] 2026-09-27 사용자 실측 (판+부품 전체 두께)
 
-// 젯슨 Orin Nano 개발자 키트 — 후면, 서보 걸이 바로 뒤. 입출력 단자가 뒷벽으로.
+// 젯슨 Orin Nano 개발자 키트 (WiFi 안테나 포함 버전) — 후면, 서보 걸이 바로 뒤. 입출력 단자가 뒷벽으로.
+// [자] 2026-09-27: 이 버전은 캐리어 보드에 고정 나사 구멍이 없다(안테나가 그 자리를 씀) —
+// 나사로 박지 않고 **얹는다**: 좌우·앞뒤로 못 미끄러지게 턱으로만 두른다.
 jetson_size  = [103, 90.5];  // [DS] 103 × 90.5 × 35 (방열판·팬 포함)
 jetson_h     = 35;           // [DS]
-jetson_holes = [for (u = [(103 - 86)/2, (103 + 86)/2], v = [(90.5 - 58)/2, (90.5 + 58)/2]) [u, v]];
-                             // [추정] Nano 호환 캐리어 86 × 58 — 실물로 확인
+jetson_fence_h = 6;          // 옆 턱 높이 — 보드 밑판(방열판 포함) 두께만큼
 jetson_pos = [wall + 2, rot_center[1] + servo_body[1]/2 + wall + 2];   // 왼쪽으로 붙여 오른쪽에 전압계 자리
 jetson_standoff_h = buck_standoff_h + 1.6 + buck_parts_h + 2;          // 벅부스트 위 2mm
 buck_pos = [for (i = [0, 1]) [jetson_pos[0] + (jetson_size[0] - buck_size[0])/2,
@@ -137,11 +138,12 @@ cable_r = 20;  cable_w = 12;  cable_deg = 180;
 /* ===================== 회전판 ===================== */
 plat_dia = 150;  plat_t = 6;
 coupler_h = plat_z - (horn_top - lid_t);   // 혼 윗면 → 회전판 밑면 (혼 나사 M3×25)
-// SO-101 받침 체결 — [STL] BOTTOM 가운데 두 나사 간격 67.5 (사용자 지정). 가로(X)로 나란하다
-// (PDF 9쪽: 받침 뒤쪽 황동 볼트 둘이 좌우로 서 있다). 나머지 2개는 [실측] 뒤 추가.
+// SO-101 받침 체결 4구멍 — [자] 2026-09-27 전수 실측. 전부 받침 중심선(X=0) 기준 좌우대칭.
+//   기존 2개: 간격 67.5, 회전축보다 15.0 뒤 (PDF 9쪽 뒤쪽 황동 볼트)
+//   나머지 2개: 간격 64.4, 회전축보다 55.0 앞
 // 회전판에 M3 열압입 인서트(Ø4.2)를 박고 위에서 조인다 — 판 밑은 베어링이라 너트를 못 댄다.
-so101_holes = [[-67.5/2, 0], [67.5/2, 0]];
-so101_offset = [0, 25];          // [실측] 볼트 줄 ↔ 팔 회전축(회전판 중심) 앞뒤 거리
+so101_holes = [[-67.5/2, -15.0], [67.5/2, -15.0], [-64.4/2, 55.0], [64.4/2, 55.0]];
+so101_offset = [0, 0];           // 위 좌표가 이미 회전축(회전판 중심) 기준
 insert_d = 4.2;
 orbbec_pos = [0, -62];           // Orbbec 1/4"-20 자리 (−Y = 전면)
 quarter_inch = 6.6;
@@ -231,8 +233,18 @@ module tray() {
             translate([0, 0, tray_h - 12]) cylinder(h = 13, d = m3_tap);
         }
     bosses(uno_pos, uno_holes, uno_standoff_h);
-    bosses(jetson_pos, jetson_holes, jetson_standoff_h);
     for (b = buck_pos) bosses(b, buck_holes, 5);
+    // 젯슨: 나사 없이 얹는다 — 밑판 받침 + 둘레 턱(모서리는 비워 방열판 옆 리브를 피한다)
+    translate([jetson_pos[0], jetson_pos[1], floor_t])
+        difference() {
+            union() {
+                cube([jetson_size[0], jetson_size[1], jetson_standoff_h]);
+                translate([-wall, -wall, 0]) cube([jetson_size[0] + 2*wall, jetson_size[1] + 2*wall, jetson_standoff_h + jetson_fence_h]);
+            }
+            translate([0, 0, -1]) cube([jetson_size[0], jetson_size[1], jetson_standoff_h + jetson_fence_h + 2]);
+            // 앞쪽(회전판 쪽)은 턱을 낮춰 손으로 들어내기 쉽게
+            translate([jetson_size[0]*0.2, -wall - 1, jetson_standoff_h]) cube([jetson_size[0]*0.6, wall + 2, jetson_fence_h + 1]);
+        }
     // 배터리 앞뒤 턱 (세워 둔 팩이 넘어지지 않게)
     for (y = [batt_pos[1] - batt_lip, batt_pos[1] + batt[1]])
         translate([batt_pos[0], y, floor_t]) cube([batt[0], batt_lip, batt_lip_h]);

@@ -1804,6 +1804,10 @@ def test_fruit3d() -> None:
           plan_dual_action_trajectory(f_pos_test, None) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, pre_standoff_mm=-5.0) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, retract_standoff_mm=-5.0) is None)
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 roll_limit_deg 전달 및 비수치 가드(-roll/NaN)를 거절한다",
+          plan_dual_action_trajectory(f_pos_test, c_pose, roll_limit_deg=60.0) is not None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, roll_limit_deg=-10.0) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, roll_limit_deg=float('nan')) is None)
 
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)

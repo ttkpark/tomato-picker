@@ -684,6 +684,7 @@ def plan_dual_action_trajectory(
     pre_standoff_mm: float = 50.0,
     retract_standoff_mm: float = 60.0,
     tolerance_mm: float = 10.0,
+    roll_limit_deg: float = 97.90,
 ) -> dict[str, Any] | None:
     """복합 엔드이펙터(파지/흡착 + 전단 커터) 4단계 시퀀셜 궤적 계획.
 
@@ -722,6 +723,9 @@ def plan_dual_action_trajectory(
         return None
     if not (isinstance(retract_standoff_mm, (int, float)) and
             math.isfinite(retract_standoff_mm) and retract_standoff_mm >= 0.0):
+        return None
+    if not (isinstance(roll_limit_deg, (int, float)) and
+            math.isfinite(roll_limit_deg) and roll_limit_deg > 0.0):
         return None
 
     px, py, pz = cut_pose_base.position_mm
@@ -774,7 +778,7 @@ def plan_dual_action_trajectory(
     )
 
     # 5-DoF 기구학 정합성 및 접근 여유각 진단 (study 04 §3)
-    kin_5dof = evaluate_5dof_cut_alignment(cut_pose_base)
+    kin_5dof = evaluate_5dof_cut_alignment(cut_pose_base, roll_limit_deg=roll_limit_deg)
 
     return {
         "compatible": compat["compatible"],

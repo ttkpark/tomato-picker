@@ -650,6 +650,15 @@ def test_dual_action_geometry() -> None:
           plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=-10.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, retract_standoff_mm=float('nan')) is None)
 
+    # 13. roll_limit_deg 파라미터 전달 및 비수치 거절 검증
+    traj_custom_roll = plan_dual_action_trajectory(fruit_pos, cut_pose, roll_limit_deg=45.0)
+    check("plan_dual_action_trajectory: roll_limit_deg 파라미터가 kinematics_5dof로 정상 전달된다",
+          traj_custom_roll is not None and
+          traj_custom_roll["kinematics_5dof"] is not None and
+          traj_custom_roll["kinematics_5dof"]["within_roll_limits"] is True and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, roll_limit_deg=-10.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, roll_limit_deg=float('nan')) is None)
+
 
 
 def main() -> int:
