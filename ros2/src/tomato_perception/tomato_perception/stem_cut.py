@@ -807,6 +807,11 @@ def plan_dual_action_trajectory(
     if not (isinstance(roll_limit_deg, (int, float)) and
             math.isfinite(roll_limit_deg) and roll_limit_deg > 0.0):
         return None
+    for param in (z_min_mm, z_max_mm, r_min_mm, r_max_mm):
+        if not (isinstance(param, (int, float)) and math.isfinite(param)):
+            return None
+    if z_min_mm >= z_max_mm or r_min_mm >= r_max_mm or r_min_mm < 0.0 or z_min_mm < 0.0:
+        return None
 
     px, py, pz = cut_pose_base.position_mm
     ax, ay, az = cut_pose_base.x_cut

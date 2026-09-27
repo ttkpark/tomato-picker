@@ -1836,6 +1836,10 @@ def test_fruit3d() -> None:
           compute_dual_action_target(c_pose, cutter_offset_up_mm=0.0) is None and
           compute_dual_action_target(c_pose, cutter_offset_up_mm=-10.0) is None and
           compute_dual_action_target(c_pose, cutter_offset_up_mm=float('nan')) is None)
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 작업공간 모순(z_min>=z_max) 및 비수치 파라미터를 엄밀 거절한다",
+          plan_dual_action_trajectory(f_pos_test, c_pose, z_min_mm=500.0, z_max_mm=400.0) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, r_min_mm=-10.0) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, z_min_mm=float('nan')) is None)
 
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)

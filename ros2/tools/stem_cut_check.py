@@ -676,6 +676,12 @@ def test_dual_action_geometry() -> None:
           plan_dual_action_trajectory(fruit_pos, cut_pose, tolerance_mm=-1.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, tolerance_mm=float('nan')) is None)
 
+    # 16. 작업공간 파라미터 모순 및 비수치 거절 검증
+    check("plan_dual_action_trajectory: 작업공간 모순(z_min>=z_max, r_min<0) 및 비수치 거절",
+          plan_dual_action_trajectory(fruit_pos, cut_pose, z_min_mm=500.0, z_max_mm=400.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, r_min_mm=-10.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, z_min_mm=float('nan')) is None)
+
     # evaluate_trajectory_workspace 단독 검증
     valid_wps = {
         "wp1": (200.0, 0.0, 100.0),
