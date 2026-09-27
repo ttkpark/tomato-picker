@@ -1743,13 +1743,8 @@
    "done_when": "젯슨 셸에서 ls /dev/video0 /dev/ttyUSB0 등이 보임",
    "attempts": 0,
    "created": "2026-09-20 19:53",
-   "updated": "2026-09-28 00:42",
+   "updated": "2026-09-28 00:50",
    "notes": [
-    {
-     "t": "2026-09-27 19:25",
-     "by": "metrologist",
-     "text": "2026-09-27 metrologist: 복합 엔드이펙터(파지/흡착 TCP ↔ 전단 커터 TCP) 30mm 기하 오프셋 계측 카드 확립(docs/인수인계 §84). stem_cut.py에 compute_dual_action_target, verify_dual_action_compatibility 구현 및 자체검증 추가(ros_selfcheck 546종, 4대 자체검증 786종 All RC=0, stem_cut_check 81종 통과). 젯슨 SSH 정상 및 5대 서비스 inactive 안전 대기 확인, 물리 장치 미인식 지속(사람 T77/T12 대기)."
-    },
     {
      "t": "2026-09-27 19:33",
      "by": "builder",
@@ -1804,6 +1799,11 @@
      "t": "2026-09-28 00:42",
      "by": "metrologist",
      "text": "2026-09-28 metrologist: 복합 엔드이펙터 기구 오프셋(cutter_offset_up_mm=30mm) 및 스탠드오프(pre=50mm, retract=60mm) 6항목 계측 카드 확립(docs/인수인계 §94). plan_dual_action_trajectory 단일 직교 스텝 상한(max_step_mm=80.0, ARM_CART_MAX_STEP_MM 연동) 엄밀 거절 가드 구현. 4대 자체검증 801종(45/102/561/93 All RC=0), stem_cut_check 105종 전수 통과. 젯슨 SSH 정상 및 물리 장치 미인식 지속(사람 T77 대기)."
+    },
+    {
+     "t": "2026-09-28 00:50",
+     "by": "tester",
+     "text": "4대 자체검증 802/802 전수 합격(45, 102, 562, 93 All RC=0), stem_cut_check 106/106, move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77 대기)."
     }
    ]
   },
