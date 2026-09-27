@@ -645,3 +645,101 @@ def verify_dual_action_compatibility(
         "compatible": is_compatible,
         "stem_direction": (float(stem_dir[0]), float(stem_dir[1]), float(stem_dir[2])),
     }
+
+
+def plan_dual_action_trajectory(
+    fruit_pos_base: tuple[float, float, float] | list[float] | np.ndarray | None,
+    cut_pose_base: CutPose3D | None,
+    cutter_offset_up_mm: float = 30.0,
+    pre_standoff_mm: float = 50.0,
+    retract_standoff_mm: float = 60.0,
+    tolerance_mm: float = 10.0,
+) -> dict[str, Any] | None:
+    """복합 엔드이펙터(파지/흡착 + 전단 커터) 4단계 시퀀셜 궤적 계획.
+
+    docs/study/04_END_EFFECTOR_MANIPULATION.md §4 및 §5 명세 준수:
+    1단계: Pre-grasp (과실 파지 TCP 대기 자세 - 접근 반대방향 standoff 후퇴)
+    2단계: Grasp (과실 파지/흡착 접촉 자세)
+    3단계: Cut (전단 가위 절단 자세 - 과실 파지 유지 상태에서 날 진입)
+    4단계: Retract (수확물 분리 및 차체 후퇴 자세)
+
+    반환 딕셔너리:
+    - 'compatible': verify_dual_action_compatibility 결과 (동시 파지/절단 가능 여부)
+    - 'distance_mm': 과실 중심 ↔ 절단점 3D 거리
+    - 'residual_mm': 30mm 오프셋과의 잔차
+    - 'pre_grasp_tcp': (x, y, z) 1차 파지 대기 TCP (mm)
+    - 'grasp_tcp': (x, y, z) 1차 파지 접촉 TCP (mm)
+    - 'cut_tcp': (x, y, z) 2차 절단 날 TCP (mm)
+    - 'retract_tcp': (x, y, z) 수확물 후퇴 TCP (mm)
+    - 'approach_vector': (ax, ay, az) 진입 단위 벡터 (x_cut)
+    - 'stem_axis': (zx, zy, zz) 줄기 정렬 축 단위 벡터 (z_cut)
+
+    거절 사유:
+    - fruit_pos_base 또는 cut_pose_base is None
+    - 비수치(NaN/Inf), 음수 스탠드오프, 또는 과실-절단점 정합성 검증 실패(불일치 또는 기하 결함)
+    """
+    if fruit_pos_base is None or cut_pose_base is None:
+        return None
+    if not (isinstance(cutter_offset_up_mm, (int, float)) and
+            math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm > 0.0):
+        return None
+    if not (isinstance(pre_standoff_mm, (int, float)) and
+            math.isfinite(pre_standoff_mm) and pre_standoff_mm >= 0.0):
+        return None
+    if not (isinstance(retract_standoff_mm, (int, float)) and
+            math.isfinite(retract_standoff_mm) and retract_standoff_mm >= 0.0):
+        return None
+
+    px, py, pz = cut_pose_base.position_mm
+    ax, ay, az = cut_pose_base.x_cut
+    zx, zy, zz = cut_pose_base.z_cut
+
+    if not (all(math.isfinite(v) for v in (px, py, pz)) and
+            all(math.isfinite(v) for v in (ax, ay, az)) and
+            all(math.isfinite(v) for v in (zx, zy, zz))):
+        return None
+
+    # 과실 ↔ 절단점 정합성 진단
+    compat = verify_dual_action_compatibility(
+        fruit_pos_base=fruit_pos_base,
+        cut_pos_base=(px, py, pz),
+        cutter_offset_up_mm=cutter_offset_up_mm,
+        tolerance_mm=tolerance_mm,
+    )
+    if compat is None:
+        return None
+
+    # 파지 TCP 계산
+    grasp_tcp = compute_dual_action_target(
+        cut_pose_base,
+        cutter_offset_up_mm=cutter_offset_up_mm,
+        standoff_mm=0.0,
+    )
+    pre_grasp_tcp = compute_dual_action_target(
+        cut_pose_base,
+        cutter_offset_up_mm=cutter_offset_up_mm,
+        standoff_mm=pre_standoff_mm,
+    )
+    if grasp_tcp is None or pre_grasp_tcp is None:
+        return None
+
+    cut_tcp = (float(px), float(py), float(pz))
+    # 후퇴: 절단 완료 후 접근 반대 방향(-x_cut)으로 후퇴
+    retract_tcp = (
+        float(px - retract_standoff_mm * ax),
+        float(py - retract_standoff_mm * ay),
+        float(pz - retract_standoff_mm * az),
+    )
+
+    return {
+        "compatible": compat["compatible"],
+        "distance_mm": compat["distance_mm"],
+        "residual_mm": compat["residual_mm"],
+        "pre_grasp_tcp": pre_grasp_tcp,
+        "grasp_tcp": grasp_tcp,
+        "cut_tcp": cut_tcp,
+        "retract_tcp": retract_tcp,
+        "approach_vector": (float(ax), float(ay), float(az)),
+        "stem_axis": (float(zx), float(zy), float(zz)),
+    }
+

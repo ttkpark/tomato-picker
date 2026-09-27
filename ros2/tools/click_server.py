@@ -293,7 +293,10 @@ def build(job, args):
         a += ["--stop-z", "%.0f" % num(args, "stop_z", 88, 0, 400)]
         return a
     if job == "grasp":
-        a = [PY, T("stem_grasp.py"), "--aim", str(args.get("aim", "click"))]
+        aim_val = str(args.get("aim", "click"))
+        if aim_val not in ("click", "mark", "top", "stem", "fruit", "auto", "white", "near"):
+            aim_val = "click"
+        a = [PY, T("stem_grasp.py"), "--aim", aim_val]
         a += ["--steps", "%d" % int(num(args, "steps", 16, 1, 60)),
               "--adv", "%.1f" % num(args, "adv", 8, 1, 30),
               "--max-turn", "%.1f" % num(args, "max_turn", 2, 0.3, 8),
@@ -480,6 +483,15 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     </div>
     <div class="row" style="margin-top:6px">
       <label>믿는거리(mm)<input id="g_maxadv" value="200"></label>
+      <label>표적모드
+        <select id="g_aim" style="font:inherit;padding:5px 6px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--ink)">
+          <option value="click" selected>클릭(화면)</option>
+          <option value="top">과실상단(top)</option>
+          <option value="stem">줄기(stem)</option>
+          <option value="near">근접(near)</option>
+          <option value="white">흰색(white)</option>
+        </select>
+      </label>
     </div>
     <div class="k" style="margin-top:2px">깊이는 못 믿을 수 있다 — 다 합쳐 이 거리 이상은
       절대 안 나아간다(닿을 때까지가 아니라).</div>
@@ -686,9 +698,12 @@ function toggleCard(h){
   tgl.textContent=willShow?'▾':'▸';
 }
 function val(id,d){var x=parseFloat(document.getElementById(id).value);return isNaN(x)?d:x;}
-function grasp(nc){return {steps:val('g_steps',16),adv:val('g_adv',8),max_turn:val('g_turn',2),
-  gain:val('g_gain',0.35),tol:val('g_tol',28),stop_z:val('g_stop',88),max_adv:val('g_maxadv',200),
-  no_close:nc?1:0};}
+function grasp(nc){
+  var aimEl=document.getElementById('g_aim');
+  var aimVal=aimEl?aimEl.value:'click';
+  return {steps:val('g_steps',16),adv:val('g_adv',8),max_turn:val('g_turn',2),
+    gain:val('g_gain',0.35),tol:val('g_tol',28),stop_z:val('g_stop',88),max_adv:val('g_maxadv',200),
+    aim:aimVal,no_close:nc?1:0};}
 function jog(k,s){
   var amt=s*val('j_mm',20), free=document.getElementById('j_free').checked;
   tgtJ=jogPreviewTarget(curJ,k,amt,free);

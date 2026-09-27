@@ -31,6 +31,7 @@ from tomato_perception.stem_cut import (  # noqa: E402
     compute_dual_action_target,
     compute_pre_grasp_pose, compute_retract_pose,
     evaluate_5dof_cut_alignment, find_cut_point,
+    plan_dual_action_trajectory,
     sample_stem_depth, skeleton_points, transform_cut_pose,
     verify_dual_action_compatibility, zhang_suen_thin,
 )
@@ -588,6 +589,44 @@ def test_dual_action_geometry() -> None:
           verify_dual_action_compatibility(fruit_pos, fruit_pos) is None and
           verify_dual_action_compatibility(fruit_pos, cut_pos, tolerance_mm=-1.0) is None and
           verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=0.0) is None)
+
+    # 11. plan_dual_action_trajectory 4단계 시퀀셜 궤적 계획 검증
+    # 정상 시나리오: fruit (200, 0, 100), cut (200, 0, 130), offset=30, pre=50, ret=60, x_cut=[1,0,0]
+    traj = plan_dual_action_trajectory(
+        fruit_pos_base=fruit_pos,
+        cut_pose_base=cut_pose,
+        cutter_offset_up_mm=30.0,
+        pre_standoff_mm=50.0,
+        retract_standoff_mm=60.0,
+        tolerance_mm=10.0,
+    )
+    check("plan_dual_action_trajectory가 4단계 시퀀셜 궤적을 정상 산출한다",
+          traj is not None and traj["compatible"] is True,
+          f"traj={traj}")
+    if traj is not None:
+        check("1단계 Pre-grasp: 접근 반대방향 50mm 후퇴 (150, 0, 100)",
+              np.allclose(traj["pre_grasp_tcp"], (150.0, 0.0, 100.0), atol=1e-4),
+              f"pre={traj['pre_grasp_tcp']}")
+        check("2단계 Grasp: 과실 중심 파지/흡착 접촉 (200, 0, 100)",
+              np.allclose(traj["grasp_tcp"], (200.0, 0.0, 100.0), atol=1e-4),
+              f"grasp={traj['grasp_tcp']}")
+        check("3단계 Cut: 절단 날 TCP 절단점 진입 (200, 0, 130)",
+              np.allclose(traj["cut_tcp"], (200.0, 0.0, 130.0), atol=1e-4),
+              f"cut={traj['cut_tcp']}")
+        check("4단계 Retract: 수확물 분리 후 반대방향 60mm 후퇴 (140, 0, 130)",
+              np.allclose(traj["retract_tcp"], (140.0, 0.0, 130.0), atol=1e-4),
+              f"retract={traj['retract_tcp']}")
+        check("궤적 벡터: approach_vector와 stem_axis 단위 벡터 정합성",
+              np.allclose(traj["approach_vector"], (1.0, 0.0, 0.0), atol=1e-4) and
+              np.allclose(traj["stem_axis"], (0.0, 0.0, 1.0), atol=1e-4))
+
+    # 12. plan_dual_action_trajectory 결측 및 비수치 거절
+    check("plan_dual_action_trajectory 결측(None) 및 음수 스탠드오프 거절",
+          plan_dual_action_trajectory(None, cut_pose) is None and
+          plan_dual_action_trajectory(fruit_pos, None) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=-10.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, retract_standoff_mm=float('nan')) is None)
+
 
 
 def main() -> int:

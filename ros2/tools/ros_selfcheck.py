@@ -1434,6 +1434,17 @@ def test_board_contract() -> None:
           stm_signs_base.telemetry().tgt == (350, -200, -30000) and stm_signs_base.telemetry().tgt == sim_signs_base.telemetry().tgt,
           f"stm_tgt={stm_signs_base.telemetry().tgt} sim_tgt={sim_signs_base.telemetry().tgt}")
 
+    # 6. click_server grasp 표적 모드(aim) 파라미터 전달 및 기본 검증
+    grasp_top_cmd = cs.build("grasp", {"aim": "top", "steps": 20})
+    check("조작대: click_server가 grasp aim='top' 요청을 stem_grasp 명령줄로 올바르게 변환한다",
+          "--aim" in grasp_top_cmd and "top" in grasp_top_cmd and "--steps" in grasp_top_cmd and "20" in grasp_top_cmd,
+          f"grasp_cmd={' '.join(grasp_top_cmd[1:])}")
+    grasp_invalid_cmd = cs.build("grasp", {"aim": "invalid_aim_mode"})
+    check("조작대: click_server가 모르는 aim 모드 요청 시 안전하게 기본값('click')으로 폴백한다",
+          "--aim" in grasp_invalid_cmd and "click" in grasp_invalid_cmd,
+          f"fallback_cmd={' '.join(grasp_invalid_cmd[1:])}")
+
+
     # 6. UnoAdapterBase가 set_velocity 시점에 AxisSigns(vy=-1, w=-1)를 반영하여 cmd.physical과 일치하는 telemetry().tgt를 유지한다 (T86)
     uno_signs_base = bc.UnoAdapterBase(signs=bc.AxisSigns(vx=1, vy=-1, w=-1))
     uno_signs_base.set_velocity(350, 200, 30000)
@@ -1670,8 +1681,8 @@ def test_fruit3d() -> None:
         CutPoint, CutPose3D, compute_cutting_pose,
         compute_dual_action_target,
         compute_pre_grasp_pose, compute_retract_pose,
-        evaluate_5dof_cut_alignment, sample_stem_depth,
-        transform_cut_pose,
+        evaluate_5dof_cut_alignment, plan_dual_action_trajectory,
+        sample_stem_depth, transform_cut_pose,
         verify_dual_action_compatibility,
     )
     from tomato_picker.hardware.handeye import Intrinsics as HandeyeIntr
@@ -1749,6 +1760,27 @@ def test_fruit3d() -> None:
           compute_dual_action_target(c_pose, cutter_offset_up_mm=float('nan')) is None and
           verify_dual_action_compatibility((float('nan'), 0.0, 0.0), c_pose.position_mm) is None and
           verify_dual_action_compatibility(f_pos_test, c_pose.position_mm, tolerance_mm=-5.0) is None)
+
+    # 복합 엔드이펙터 4단계 시퀀셜 궤적 계획 검증 (study 04 §4-§5)
+    traj_res = plan_dual_action_trajectory(
+        fruit_pos_base=f_pos_test,
+        cut_pose_base=c_pose,
+        cutter_offset_up_mm=30.0,
+        pre_standoff_mm=50.0,
+        retract_standoff_mm=60.0,
+        tolerance_mm=10.0,
+    )
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 4단계(Pre-grasp/Grasp/Cut/Retract) 궤적을 정상 산출한다",
+          traj_res is not None and traj_res["compatible"] is True and
+          "pre_grasp_tcp" in traj_res and "grasp_tcp" in traj_res and
+          "cut_tcp" in traj_res and "retract_tcp" in traj_res,
+          f"traj={traj_res}")
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 결측(None) 및 음수 스탠드오프를 거절한다",
+          plan_dual_action_trajectory(None, c_pose) is None and
+          plan_dual_action_trajectory(f_pos_test, None) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, pre_standoff_mm=-5.0) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, retract_standoff_mm=-5.0) is None)
+
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)
     check("detect_node: stage1.yaml에 detector_type 기본값이 'hsv'로 선언되어 있다",
