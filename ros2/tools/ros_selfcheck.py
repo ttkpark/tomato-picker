@@ -1668,9 +1668,11 @@ def test_fruit3d() -> None:
     # 6-DoF 절단 포즈 및 국소 깊이 평활화 계측 검증 (study 04 §2.2, docs/인수인계 §80)
     from tomato_perception.stem_cut import (
         CutPoint, CutPose3D, compute_cutting_pose,
+        compute_dual_action_target,
         compute_pre_grasp_pose, compute_retract_pose,
         evaluate_5dof_cut_alignment, sample_stem_depth,
         transform_cut_pose,
+        verify_dual_action_compatibility,
     )
     from tomato_picker.hardware.handeye import Intrinsics as HandeyeIntr
     from tomato_picker.hardware.handeye import Rigid
@@ -1724,6 +1726,29 @@ def test_fruit3d() -> None:
     check("5-DoF 기구학: evaluate_5dof_cut_alignment가 비수치(NaN) 입력 및 무효 롤 한계를 엄밀히 거절한다",
           evaluate_5dof_cut_alignment(CutPose3D((float('nan'), 0.0, 100.0), np.eye(3), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 100.0)) is None and
           evaluate_5dof_cut_alignment(t_cpose, roll_limit_deg=-10.0) is None)
+
+    # 복합 엔드이펙터(파지/흡착 + 전단 커터) 기하 계측 검증 (study 04 §4, docs/인수인계 §84)
+    dual_grip = compute_dual_action_target(c_pose, cutter_offset_up_mm=30.0, standoff_mm=50.0)
+    check("복합 엔드이펙터: compute_dual_action_target이 줄기축 30mm 오프셋 및 50mm standoff를 정확히 감산 반영한다 (study 04 §4)",
+          dual_grip is not None and c_pose is not None and
+          abs(dual_grip[0] - (c_pose.position_mm[0] - 30.0 * c_pose.z_cut[0] - 50.0 * c_pose.x_cut[0])) < 1e-4 and
+          abs(dual_grip[1] - (c_pose.position_mm[1] - 30.0 * c_pose.z_cut[1] - 50.0 * c_pose.x_cut[1])) < 1e-4 and
+          abs(dual_grip[2] - (c_pose.position_mm[2] - 30.0 * c_pose.z_cut[2] - 50.0 * c_pose.x_cut[2])) < 1e-4,
+          f"dual_grip={dual_grip}")
+
+    f_pos_test = (c_pose.position_mm[0], c_pose.position_mm[1], c_pose.position_mm[2] - 30.0)
+    compat_res = verify_dual_action_compatibility(f_pos_test, c_pose.position_mm, cutter_offset_up_mm=30.0, tolerance_mm=10.0)
+    check("복합 엔드이펙터: verify_dual_action_compatibility가 과실-절단점 30mm 정합성 및 공차를 엄밀히 진단한다",
+          compat_res is not None and compat_res["compatible"] is True and
+          abs(compat_res["residual_mm"]) < 1e-4 and
+          abs(compat_res["distance_mm"] - 30.0) < 1e-4,
+          f"compat={compat_res}")
+
+    check("복합 엔드이펙터: 비수치(NaN) 입력 및 음수 오프셋/공차 입력을 엄밀히 거절한다",
+          compute_dual_action_target(c_pose, cutter_offset_up_mm=-10.0) is None and
+          compute_dual_action_target(c_pose, cutter_offset_up_mm=float('nan')) is None and
+          verify_dual_action_compatibility((float('nan'), 0.0, 0.0), c_pose.position_mm) is None and
+          verify_dual_action_compatibility(f_pos_test, c_pose.position_mm, tolerance_mm=-5.0) is None)
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)
     check("detect_node: stage1.yaml에 detector_type 기본값이 'hsv'로 선언되어 있다",

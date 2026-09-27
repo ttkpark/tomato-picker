@@ -543,3 +543,105 @@ def evaluate_5dof_cut_alignment(
         "achievable_roll_deg": float(achievable_roll),
         "within_roll_limits": within_limits,
     }
+
+
+def compute_dual_action_target(
+    cut_pose_base: CutPose3D | None,
+    cutter_offset_up_mm: float = 30.0,
+    standoff_mm: float = 0.0,
+) -> tuple[float, float, float] | None:
+    """복합 엔드이펙터(파지/흡착 + 전단 커터)의 1차 파지 TCP 목표 위치 산출.
+
+    docs/study/04_END_EFFECTOR_MANIPULATION.md §4 & §5 명세 준수:
+    - 흡착 컵(1차 파지 TCP, l3=168.0mm) 상단 cutter_offset_up_mm(기본 30.0mm) 위치에
+      소형 스테인리스 전단 가위 날이 배치됨.
+    - 커터 날이 줄기 절단점(cut_pose_base.position_mm)에 도달하기 위해, 로봇 팔의
+      1차 파지 TCP가 가야 할 목표 위치:
+      P_grip = P_cut - cutter_offset_up_mm * z_cut - standoff_mm * x_cut
+    - 여기서 z_cut은 줄기 진행 축(도구 상향 축 정렬 방향), x_cut은 접근 진입 단위 벡터.
+
+    거절 사유:
+    - cut_pose_base is None
+    - cutter_offset_up_mm < 0.0 또는 비수치(NaN/Inf)
+    - standoff_mm < 0.0 또는 비수치(NaN/Inf)
+    - cut_pose_base의 좌표/벡터에 NaN 또는 Inf 유입
+    """
+    if cut_pose_base is None:
+        return None
+    if not (isinstance(cutter_offset_up_mm, (int, float)) and
+            math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm >= 0.0):
+        return None
+    if not (isinstance(standoff_mm, (int, float)) and
+            math.isfinite(standoff_mm) and standoff_mm >= 0.0):
+        return None
+
+    px, py, pz = cut_pose_base.position_mm
+    ax, ay, az = cut_pose_base.x_cut
+    zx, zy, zz = cut_pose_base.z_cut
+
+    if not (all(math.isfinite(v) for v in (px, py, pz)) and
+            all(math.isfinite(v) for v in (ax, ay, az)) and
+            all(math.isfinite(v) for v in (zx, zy, zz))):
+        return None
+
+    grip_x = px - cutter_offset_up_mm * zx - standoff_mm * ax
+    grip_y = py - cutter_offset_up_mm * zy - standoff_mm * ay
+    grip_z = pz - cutter_offset_up_mm * zz - standoff_mm * az
+
+    return (float(grip_x), float(grip_y), float(grip_z))
+
+
+def verify_dual_action_compatibility(
+    fruit_pos_base: tuple[float, float, float] | list[float] | np.ndarray | None,
+    cut_pos_base: tuple[float, float, float] | list[float] | np.ndarray | None,
+    cutter_offset_up_mm: float = 30.0,
+    tolerance_mm: float = 10.0,
+) -> dict[str, Any] | None:
+    """과실 3D 위치와 줄기 절단점 3D 위치 간의 복합 엔드이펙터 기하 정합성 평가.
+
+    docs/study/04_END_EFFECTOR_MANIPULATION.md §4 & §5 명세 준수:
+    1. 과실-절단점 3D 거리 d = ||P_cut - P_fruit||
+    2. 공구 고정 오프셋과의 잔차 residual_mm = |d - cutter_offset_up_mm|
+    3. 흡착 벨로우즈 압축(+-5mm) 및 가위 개방폭 허용 공차(기본 10.0mm) 내 정합 여부:
+       compatible = (residual_mm <= tolerance_mm)
+    4. 줄기 진행 방향 단위 벡터 stem_direction = (P_cut - P_fruit) / d
+
+    거절 사유:
+    - fruit_pos_base 또는 cut_pos_base is None
+    - 좌표 원소 수가 3이 아니거나 비수치(NaN/Inf) 존재
+    - cutter_offset_up_mm <= 0.0 또는 tolerance_mm < 0.0
+    - d < 1e-4 mm (과실 중심과 절단점이 사실상 일치하는 특이점)
+    """
+    if fruit_pos_base is None or cut_pos_base is None:
+        return None
+    if not (isinstance(cutter_offset_up_mm, (int, float)) and
+            math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm > 0.0):
+        return None
+    if not (isinstance(tolerance_mm, (int, float)) and
+            math.isfinite(tolerance_mm) and tolerance_mm >= 0.0):
+        return None
+
+    try:
+        f_arr = np.asarray(fruit_pos_base, dtype=np.float64).reshape(3)
+        c_arr = np.asarray(cut_pos_base, dtype=np.float64).reshape(3)
+    except (ValueError, TypeError, IndexError):
+        return None
+
+    if not (np.all(np.isfinite(f_arr)) and np.all(np.isfinite(c_arr))):
+        return None
+
+    diff = c_arr - f_arr
+    dist = float(np.linalg.norm(diff))
+    if dist < 1e-4:
+        return None  # 특이점 거절
+
+    stem_dir = diff / dist
+    residual = float(abs(dist - cutter_offset_up_mm))
+    is_compatible = bool(residual <= tolerance_mm)
+
+    return {
+        "distance_mm": float(dist),
+        "residual_mm": float(residual),
+        "compatible": is_compatible,
+        "stem_direction": (float(stem_dir[0]), float(stem_dir[1]), float(stem_dir[2])),
+    }

@@ -28,10 +28,11 @@ sys.path.insert(0, os.path.join(SRC, "tomato_perception"))
 
 from tomato_perception.stem_cut import (  # noqa: E402
     CutPoint, CutPose3D, compute_cutting_pose,
+    compute_dual_action_target,
     compute_pre_grasp_pose, compute_retract_pose,
     evaluate_5dof_cut_alignment, find_cut_point,
     sample_stem_depth, skeleton_points, transform_cut_pose,
-    zhang_suen_thin,
+    verify_dual_action_compatibility, zhang_suen_thin,
 )
 
 FAILED: list[str] = []
@@ -486,6 +487,109 @@ def test_evaluate_5dof_cut_alignment() -> None:
           evaluate_5dof_cut_alignment(pose_aligned, roll_limit_deg=float('nan')) is None)
 
 
+def test_dual_action_geometry() -> None:
+    print("\n[복합 엔드이펙터 기하] compute_dual_action_target & verify_dual_action_compatibility")
+
+    # 1. 수직 줄기(z_cut=[0,0,1], x_cut=[1,0,0])에 대한 파지 TCP 역산 (standoff=0)
+    # 절단점이 (200, 0, 130)일 때, cutter_offset=30mm이면 파지 TCP는 (200, 0, 100)이어야 함
+    x_cut = (1.0, 0.0, 0.0)
+    y_cut = (0.0, 1.0, 0.0)
+    z_cut = (0.0, 0.0, 1.0)
+    rot = np.column_stack([x_cut, y_cut, z_cut])
+    cut_pose = CutPose3D(
+        position_mm=(200.0, 0.0, 130.0),
+        rotation_matrix=rot,
+        x_cut=x_cut,
+        y_cut=y_cut,
+        z_cut=z_cut,
+        depth_mm=250.0,
+    )
+    grip_target = compute_dual_action_target(cut_pose, cutter_offset_up_mm=30.0, standoff_mm=0.0)
+    check("수직 줄기 절단 시 파지 TCP가 상향 30mm 감산되어 정확히 과실 중심(200, 0, 100)으로 도출된다",
+          grip_target is not None and
+          np.allclose(grip_target, (200.0, 0.0, 100.0), atol=1e-4),
+          f"grip={grip_target}")
+
+    # 2. 스탠드오프(50mm) 적용 시 접근 반대 방향 후퇴 (150, 0, 100)
+    pre_grip = compute_dual_action_target(cut_pose, cutter_offset_up_mm=30.0, standoff_mm=50.0)
+    check("스탠드오프 50mm 적용 시 파지 대기 위치가 접근 반대방향 50mm 후퇴한다 (150, 0, 100)",
+          pre_grip is not None and
+          np.allclose(pre_grip, (150.0, 0.0, 100.0), atol=1e-4),
+          f"pre_grip={pre_grip}")
+
+    # 3. 사선 줄기 기하(45도 경사) 역산 정밀도 검증
+    # z_cut = [0, 1/sqrt(2), 1/sqrt(2)], x_cut = [1, 0, 0]
+    s2 = 1.0 / math.sqrt(2.0)
+    z_slanted = (0.0, s2, s2)
+    y_slanted = (0.0, -s2, s2)
+    rot_slant = np.column_stack([x_cut, y_slanted, z_slanted])
+    cut_slant = CutPose3D(
+        position_mm=(200.0, 50.0, 150.0),
+        rotation_matrix=rot_slant,
+        x_cut=x_cut,
+        y_cut=y_slanted,
+        z_cut=z_slanted,
+        depth_mm=250.0,
+    )
+    grip_slant = compute_dual_action_target(cut_slant, cutter_offset_up_mm=30.0, standoff_mm=0.0)
+    expected_slant = (200.0, 50.0 - 30.0 * s2, 150.0 - 30.0 * s2)
+    check("사선 줄기 절단 시 파지 TCP가 줄기 경사 축을 따라 정확히 30mm 감산된다",
+          grip_slant is not None and
+          np.allclose(grip_slant, expected_slant, atol=1e-4),
+          f"grip_slant={grip_slant}")
+
+    # 4. verify_dual_action_compatibility 완전 정합 (거리 30mm)
+    fruit_pos = (200.0, 0.0, 100.0)
+    cut_pos = (200.0, 0.0, 130.0)
+    compat_exact = verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=30.0, tolerance_mm=10.0)
+    check("과실-절단점 거리 30.0mm에서 잔차 0.0mm 및 compatible=True를 판정한다",
+          compat_exact is not None and compat_exact["compatible"] is True and
+          abs(compat_exact["distance_mm"] - 30.0) < 1e-4 and
+          abs(compat_exact["residual_mm"]) < 1e-4,
+          f"res={compat_exact}")
+
+    # 5. verify_dual_action_compatibility 공차 내 수용 (거리 35mm, 잔차 5mm <= 10mm)
+    cut_pos_35 = (200.0, 0.0, 135.0)
+    compat_tol = verify_dual_action_compatibility(fruit_pos, cut_pos_35, cutter_offset_up_mm=30.0, tolerance_mm=10.0)
+    check("과실-절단점 거리 35.0mm에서 공차(10mm) 내 잔차(5mm)로 compatible=True를 판정한다",
+          compat_tol is not None and compat_tol["compatible"] is True and
+          abs(compat_tol["residual_mm"] - 5.0) < 1e-4)
+
+    # 6. verify_dual_action_compatibility 공차 초과 불일치 (거리 50mm, 잔차 20mm > 10mm)
+    cut_pos_50 = (200.0, 0.0, 150.0)
+    compat_fail = verify_dual_action_compatibility(fruit_pos, cut_pos_50, cutter_offset_up_mm=30.0, tolerance_mm=10.0)
+    check("과실-절단점 거리 50.0mm에서 공차(10mm) 초과로 compatible=False를 판정한다",
+          compat_fail is not None and compat_fail["compatible"] is False and
+          abs(compat_fail["residual_mm"] - 20.0) < 1e-4)
+
+    # 7. stem_direction 단위 벡터 정합성 검증
+    check("stem_direction이 과실에서 절단점으로 향하는 정규화 단위 벡터이다",
+          compat_exact is not None and
+          np.allclose(compat_exact["stem_direction"], (0.0, 0.0, 1.0), atol=1e-4) and
+          abs(np.linalg.norm(compat_exact["stem_direction"]) - 1.0) < 1e-6)
+
+    # 8. 결측 및 비수치 거절: compute_dual_action_target
+    check("compute_dual_action_target: cut_pose_base=None 시 None 반환",
+          compute_dual_action_target(None) is None)
+    check("compute_dual_action_target: 음수 오프셋/스탠드오프 또는 NaN 시 None 반환",
+          compute_dual_action_target(cut_pose, cutter_offset_up_mm=-5.0) is None and
+          compute_dual_action_target(cut_pose, standoff_mm=-10.0) is None and
+          compute_dual_action_target(cut_pose, cutter_offset_up_mm=float('nan')) is None)
+
+    # 9. 결측 및 비수치 거절: verify_dual_action_compatibility
+    check("verify_dual_action_compatibility: None 입력 또는 비수치(NaN) 입력 시 None 반환",
+          verify_dual_action_compatibility(None, cut_pos) is None and
+          verify_dual_action_compatibility(fruit_pos, None) is None and
+          verify_dual_action_compatibility((float('nan'), 0.0, 100.0), cut_pos) is None and
+          verify_dual_action_compatibility(fruit_pos, (200.0, float('inf'), 130.0)) is None)
+
+    # 10. 특이점(거리 0) 및 음수 공차 거절
+    check("verify_dual_action_compatibility: 과실-절단점 일치(거리<1e-4) 및 음수 공차 거절",
+          verify_dual_action_compatibility(fruit_pos, fruit_pos) is None and
+          verify_dual_action_compatibility(fruit_pos, cut_pos, tolerance_mm=-1.0) is None and
+          verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=0.0) is None)
+
+
 def main() -> int:
     test_thinning()
     test_skeleton_points()
@@ -497,6 +601,7 @@ def main() -> int:
     test_pre_grasp_and_retract()
     test_transform_cut_pose()
     test_evaluate_5dof_cut_alignment()
+    test_dual_action_geometry()
 
     print(f"\n{'='*60}")
     if FAILED:
