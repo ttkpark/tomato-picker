@@ -1681,7 +1681,8 @@ def test_fruit3d() -> None:
         CutPoint, CutPose3D, compute_cutting_pose,
         compute_dual_action_target,
         compute_pre_grasp_pose, compute_retract_pose,
-        evaluate_5dof_cut_alignment, plan_dual_action_trajectory,
+        evaluate_5dof_cut_alignment, evaluate_trajectory_workspace,
+        plan_dual_action_trajectory,
         sample_stem_depth, transform_cut_pose,
         verify_dual_action_compatibility,
     )
@@ -1811,6 +1812,17 @@ def test_fruit3d() -> None:
     check("복합 엔드이펙터: plan_dual_action_trajectory가 axis_alignment 내적 지표(1.0)를 반환한다",
           traj_res is not None and "axis_alignment" in traj_res and
           abs(traj_res["axis_alignment"] - 1.0) < 1e-4)
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 작업공간 도달성(workspace) 진단 필드를 포함한다",
+          traj_res is not None and "workspace" in traj_res and
+          traj_res["workspace"] is not None and traj_res["workspace"]["feasible"] is True and
+          len(traj_res["workspace"]["violations"]) == 0,
+          f"workspace={traj_res.get('workspace') if traj_res else None}")
+    check("복합 엔드이펙터: evaluate_trajectory_workspace가 바닥(z<15) 및 사거리(r>310) 위반을 정확히 검출한다",
+          evaluate_trajectory_workspace({"bad_floor": (200.0, 0.0, 5.0)}) is not None and
+          evaluate_trajectory_workspace({"bad_floor": (200.0, 0.0, 5.0)})["feasible"] is False and
+          evaluate_trajectory_workspace({"bad_reach": (350.0, 0.0, 100.0)}) is not None and
+          evaluate_trajectory_workspace({"bad_reach": (350.0, 0.0, 100.0)})["feasible"] is False and
+          evaluate_trajectory_workspace(None) is None)
 
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)

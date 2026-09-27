@@ -677,6 +677,76 @@ def verify_dual_action_compatibility(
     }
 
 
+def evaluate_trajectory_workspace(
+    waypoints: dict[str, tuple[float, float, float] | list[float] | np.ndarray] | None,
+    z_min_mm: float = 15.0,
+    z_max_mm: float = 445.0,
+    r_min_mm: float = 90.0,
+    r_max_mm: float = 310.0,
+) -> dict[str, Any] | None:
+    """복합 엔드이펙터 궤적의 로봇 팔 작업공간(Workspace) 물리 한계 도달 가능성 계측 평가.
+
+    SO-101 팔 물리 계측 경계 (config.py 및 2026-09-18 T40/T68/T69 실측치):
+    1. 바닥 간섭 하한: z >= z_min_mm (기본 15.0mm, ARM_CART_Z_MIN) - 미만 시 작업대/무대 스크래치
+    2. 중력 실속 상한: z <= z_max_mm (기본 445.0mm, ARM_LOAD_Z_MAX) - 초과 시 서보 중력 처짐(73~103mm) 실패
+    3. 차체 간섭 반경: r_xy >= r_min_mm (기본 90.0mm, ARM_CART_R_MIN) - 미만 시 로봇 몸통/베이스 브래킷 자기충돌
+    4. 모터 부하 사거리: r_xy <= r_max_mm (기본 310.0mm, ARM_LOAD_R_MAX) - 초과 시 shoulder_lift 토크 포화
+
+    반환 딕셔너리:
+    - 'feasible': 모든 경유점이 물리 작업영역 내에 완전히 포함되는지 여부 (bool)
+    - 'violations': 위반 항목 설명 리스트 (list[str])
+    - 'metrics': 각 경유점별 (r_mm, z_mm, valid: bool) 상세 지표 (dict)
+
+    거절 사유:
+    - waypoints is None 또는 딕셔너리가 아님/빈 딕셔너리
+    - 한계 매개변수 비수치(NaN/Inf) 또는 모순 (z_min >= z_max, r_min >= r_max, r_min < 0, z_min < 0)
+    - 경유점 좌표에 NaN/Inf 유입 또는 3차원 벡터 형식 불일치
+    """
+    if waypoints is None or not isinstance(waypoints, dict) or len(waypoints) == 0:
+        return None
+    for param in (z_min_mm, z_max_mm, r_min_mm, r_max_mm):
+        if not (isinstance(param, (int, float)) and math.isfinite(param)):
+            return None
+    if z_min_mm >= z_max_mm or r_min_mm >= r_max_mm or r_min_mm < 0.0 or z_min_mm < 0.0:
+        return None
+
+    violations: list[str] = []
+    metrics: dict[str, dict[str, Any]] = {}
+
+    for name, pt in waypoints.items():
+        try:
+            arr = np.asarray(pt, dtype=np.float64).reshape(3)
+        except (ValueError, TypeError, IndexError):
+            return None
+        if not np.all(np.isfinite(arr)):
+            return None
+        x, y, z = float(arr[0]), float(arr[1]), float(arr[2])
+        r = float(math.hypot(x, y))
+
+        pt_violations: list[str] = []
+        if z < z_min_mm:
+            pt_violations.append(f"{name}: z={z:.1f}mm < z_min({z_min_mm:.1f}mm) [floor collision]")
+        if z > z_max_mm:
+            pt_violations.append(f"{name}: z={z:.1f}mm > z_max({z_max_mm:.1f}mm) [gravity stall]")
+        if r < r_min_mm:
+            pt_violations.append(f"{name}: r={r:.1f}mm < r_min({r_min_mm:.1f}mm) [body collision]")
+        if r > r_max_mm:
+            pt_violations.append(f"{name}: r={r:.1f}mm > r_max({r_max_mm:.1f}mm) [reach overload]")
+
+        metrics[name] = {
+            "r_mm": r,
+            "z_mm": z,
+            "valid": len(pt_violations) == 0,
+        }
+        violations.extend(pt_violations)
+
+    return {
+        "feasible": len(violations) == 0,
+        "violations": violations,
+        "metrics": metrics,
+    }
+
+
 def plan_dual_action_trajectory(
     fruit_pos_base: tuple[float, float, float] | list[float] | np.ndarray | None,
     cut_pose_base: CutPose3D | None,
@@ -685,6 +755,10 @@ def plan_dual_action_trajectory(
     retract_standoff_mm: float = 60.0,
     tolerance_mm: float = 10.0,
     roll_limit_deg: float = 97.90,
+    z_min_mm: float = 15.0,
+    z_max_mm: float = 445.0,
+    r_min_mm: float = 90.0,
+    r_max_mm: float = 310.0,
 ) -> dict[str, Any] | None:
     """복합 엔드이펙터(파지/흡착 + 전단 커터) 4단계 시퀀셜 궤적 계획.
 
@@ -709,10 +783,11 @@ def plan_dual_action_trajectory(
     - 'approach_vector': (ax, ay, az) 진입 단위 벡터 (x_cut)
     - 'stem_axis': (zx, zy, zz) 줄기 정렬 축 단위 벡터 (z_cut)
     - 'kinematics_5dof': evaluate_5dof_cut_alignment 결과 (SO-101 5축 정합 진단)
+    - 'workspace': evaluate_trajectory_workspace 결과 (작업공간 물리 한계 도달성 진단)
 
     거절 사유:
     - fruit_pos_base 또는 cut_pose_base is None
-    - 비수치(NaN/Inf), 음수 스탠드오프, 또는 과실-절단점 정합성 검증 실패(불일치 또는 기하 결함)
+    - 비수치(NaN/Inf), 음수 스탠드오프, 작업공간 매개변수 비수치/모순, 또는 과실-절단점 정합성 검증 실패
     """
     if fruit_pos_base is None or cut_pose_base is None:
         return None
@@ -781,6 +856,23 @@ def plan_dual_action_trajectory(
     # 5-DoF 기구학 정합성 및 접근 여유각 진단 (study 04 §3)
     kin_5dof = evaluate_5dof_cut_alignment(cut_pose_base, roll_limit_deg=roll_limit_deg)
 
+    # 작업공간 물리 한계 도달 가능성 계측 평가 (config.py Z_MIN/Z_MAX/R_MIN/R_MAX)
+    workspace = evaluate_trajectory_workspace(
+        waypoints={
+            "pre_grasp_tcp": pre_grasp_tcp,
+            "grasp_tcp": grasp_tcp,
+            "cut_tcp": cut_tcp,
+            "retract_cut_tcp": retract_cut_tcp,
+            "retract_grasp_tcp": retract_grasp_tcp,
+        },
+        z_min_mm=z_min_mm,
+        z_max_mm=z_max_mm,
+        r_min_mm=r_min_mm,
+        r_max_mm=r_max_mm,
+    )
+    if workspace is None:
+        return None
+
     return {
         "compatible": compat["compatible"],
         "distance_mm": compat["distance_mm"],
@@ -796,5 +888,6 @@ def plan_dual_action_trajectory(
         "approach_vector": (float(ax), float(ay), float(az)),
         "stem_axis": (float(zx), float(zy), float(zz)),
         "kinematics_5dof": kin_5dof,
+        "workspace": workspace,
     }
 

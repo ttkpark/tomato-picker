@@ -30,7 +30,7 @@ from tomato_perception.stem_cut import (  # noqa: E402
     CutPoint, CutPose3D, compute_cutting_pose,
     compute_dual_action_target,
     compute_pre_grasp_pose, compute_retract_pose,
-    evaluate_5dof_cut_alignment, find_cut_point,
+    evaluate_5dof_cut_alignment, evaluate_trajectory_workspace, find_cut_point,
     plan_dual_action_trajectory,
     sample_stem_depth, skeleton_points, transform_cut_pose,
     verify_dual_action_compatibility, zhang_suen_thin,
@@ -662,6 +662,57 @@ def test_dual_action_geometry() -> None:
           traj_custom_roll["kinematics_5dof"]["within_roll_limits"] is True and
           plan_dual_action_trajectory(fruit_pos, cut_pose, roll_limit_deg=-10.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, roll_limit_deg=float('nan')) is None)
+
+    # 14. 궤적 작업공간(Workspace) 물리 한계 도달 가능성 계측 검증 (T40/T68/T69 실측치)
+    check("plan_dual_action_trajectory: workspace 진단 필드 및 feasible=True 정상 반환",
+          traj is not None and "workspace" in traj and
+          traj["workspace"]["feasible"] is True and
+          len(traj["workspace"]["violations"]) == 0)
+
+    # evaluate_trajectory_workspace 단독 검증
+    valid_wps = {
+        "wp1": (200.0, 0.0, 100.0),
+        "wp2": (150.0, 50.0, 200.0),
+    }
+    ws_ok = evaluate_trajectory_workspace(valid_wps)
+    check("evaluate_trajectory_workspace: 정상 작업공간 경유점 feasible=True 산출",
+          ws_ok is not None and ws_ok["feasible"] is True and len(ws_ok["violations"]) == 0)
+
+    # 바닥 충돌 위반 (z < 15.0mm)
+    floor_wps = {"ground": (200.0, 0.0, 10.0)}
+    ws_floor = evaluate_trajectory_workspace(floor_wps)
+    check("evaluate_trajectory_workspace: 바닥 간섭 위반(z < 15mm) 거절 및 violations 기록",
+          ws_floor is not None and ws_floor["feasible"] is False and
+          any("floor collision" in v for v in ws_floor["violations"]))
+
+    # 중력 실속 천장 위반 (z > 445.0mm)
+    ceil_wps = {"high": (200.0, 0.0, 460.0)}
+    ws_ceil = evaluate_trajectory_workspace(ceil_wps)
+    check("evaluate_trajectory_workspace: 중력 실속 천장 위반(z > 445mm) 거절 및 violations 기록",
+          ws_ceil is not None and ws_ceil["feasible"] is False and
+          any("gravity stall" in v for v in ws_ceil["violations"]))
+
+    # 차체 간섭 반경 위반 (r < 90.0mm)
+    body_wps = {"near": (50.0, 50.0, 150.0)}  # r = 70.7mm < 90mm
+    ws_body = evaluate_trajectory_workspace(body_wps)
+    check("evaluate_trajectory_workspace: 차체 간섭 반경 위반(r < 90mm) 거절 및 violations 기록",
+          ws_body is not None and ws_body["feasible"] is False and
+          any("body collision" in v for v in ws_body["violations"]))
+
+    # 모터 부하 사거리 위반 (r > 310.0mm)
+    far_wps = {"far": (300.0, 150.0, 150.0)}  # r = 335.4mm > 310mm
+    ws_far = evaluate_trajectory_workspace(far_wps)
+    check("evaluate_trajectory_workspace: 모터 부하 사거리 위반(r > 310mm) 거절 및 violations 기록",
+          ws_far is not None and ws_far["feasible"] is False and
+          any("reach overload" in v for v in ws_far["violations"]))
+
+    # 매개변수 모순 및 비수치 거절
+    check("evaluate_trajectory_workspace: 결측/모순(z_min>=z_max)/비수치 거절",
+          evaluate_trajectory_workspace(None) is None and
+          evaluate_trajectory_workspace({}) is None and
+          evaluate_trajectory_workspace(valid_wps, z_min_mm=500.0, z_max_mm=400.0) is None and
+          evaluate_trajectory_workspace(valid_wps, r_min_mm=-10.0) is None and
+          evaluate_trajectory_workspace(valid_wps, z_min_mm=float('nan')) is None)
 
 
 
