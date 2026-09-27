@@ -699,6 +699,7 @@ def plan_dual_action_trajectory(
     - 'distance_mm': 과실 중심 ↔ 절단점 3D 거리
     - 'residual_mm': 30mm 오프셋과의 스칼라 거리 잔차
     - 'axis_residual_mm': 줄기 축 정합성을 고려한 3D 공간 잔차
+    - 'axis_alignment': 과실-절단점 벡터와 줄기 축(stem_axis) 간의 방향 내적 (cos)
     - 'pre_grasp_tcp': (x, y, z) 1차 파지 대기 TCP (mm)
     - 'grasp_tcp': (x, y, z) 1차 파지 접촉 TCP (mm)
     - 'cut_tcp': (x, y, z) 2차 절단 날 TCP (mm)
@@ -785,6 +786,7 @@ def plan_dual_action_trajectory(
         "distance_mm": compat["distance_mm"],
         "residual_mm": compat["residual_mm"],
         "axis_residual_mm": compat.get("axis_residual_mm", compat["residual_mm"]),
+        "axis_alignment": compat.get("axis_alignment", 1.0),
         "pre_grasp_tcp": pre_grasp_tcp,
         "grasp_tcp": grasp_tcp,
         "cut_tcp": cut_tcp,

@@ -1808,6 +1808,9 @@ def test_fruit3d() -> None:
           plan_dual_action_trajectory(f_pos_test, c_pose, roll_limit_deg=60.0) is not None and
           plan_dual_action_trajectory(f_pos_test, c_pose, roll_limit_deg=-10.0) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, roll_limit_deg=float('nan')) is None)
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 axis_alignment 내적 지표(1.0)를 반환한다",
+          traj_res is not None and "axis_alignment" in traj_res and
+          abs(traj_res["axis_alignment"] - 1.0) < 1e-4)
 
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)
