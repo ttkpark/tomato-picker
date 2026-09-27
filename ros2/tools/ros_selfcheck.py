@@ -1783,6 +1783,17 @@ def test_fruit3d() -> None:
           compat_skew is not None and compat_skew["compatible"] is False and compat_skew["axis_residual_mm"] > 10.0,
           f"compat_skew={compat_skew}")
 
+    # 줄기축 180도 역방향(과실이 절단점 위에 위치: axis_align=-1.0) 과실 거절 검사
+    f_pos_rev = (
+        c_pose.position_mm[0] + 30.0 * c_pose.z_cut[0],
+        c_pose.position_mm[1] + 30.0 * c_pose.z_cut[1],
+        c_pose.position_mm[2] + 30.0 * c_pose.z_cut[2],
+    )
+    compat_rev = verify_dual_action_compatibility(f_pos_rev, c_pose.position_mm, cutter_offset_up_mm=30.0, tolerance_mm=10.0, stem_axis=c_pose.z_cut)
+    check("복합 엔드이펙터: verify_dual_action_compatibility가 stem_axis 180도 역방향(음수 내적 axis_align=-1.0) 과실을 엄밀히 거절(compatible=False)한다",
+          compat_rev is not None and compat_rev["compatible"] is False and compat_rev["axis_alignment"] < 0.0,
+          f"compat_rev={compat_rev}")
+
     # 복합 엔드이펙터 4단계 시퀀셜 궤적 계획 검증 (study 04 §4-§5)
     traj_res = plan_dual_action_trajectory(
         fruit_pos_base=f_pos_test,

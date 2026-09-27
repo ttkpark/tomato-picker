@@ -608,8 +608,8 @@ def verify_dual_action_compatibility(
        - 실제 과실 위치와의 3D 공간 잔차 axis_residual_mm = ||P_grip_exp - P_fruit||
        - 단순 스칼라 거리만 30mm이고 횡방향으로 왜곡된 비정렬 과실 방어
     4. 흡착 벨로우즈 압축(+-5mm) 및 가위 개방폭 허용 공차(기본 10.0mm) 내 정합 여부:
-       compatible = (residual_mm <= tolerance_mm and axis_residual_mm <= tolerance_mm)
-    5. 줄기 진행 방향 단위 벡터 stem_direction = (P_cut - P_fruit) / d
+       compatible = (residual_mm <= tolerance_mm and axis_residual_mm <= tolerance_mm and axis_align > 0.0)
+    5. 줄기 진행 방향 단위 벡터 stem_direction = (P_cut - P_fruit) / d (stem_axis와 순방향이어야 함)
 
     거절 사유:
     - fruit_pos_base 또는 cut_pos_base is None
@@ -661,7 +661,13 @@ def verify_dual_action_compatibility(
         expected_grip = c_arr - cutter_offset_up_mm * s_unit
         axis_residual = float(np.linalg.norm(expected_grip - f_arr))
         axis_align = float(np.dot(stem_dir, s_unit))
-        is_compatible = bool(residual <= tolerance_mm and axis_residual <= tolerance_mm)
+        # 절단날은 과실 상향(+z_cut) 줄기를 절단하므로 stem_axis와 stem_direction 내적이 양수(axis_align > 0)여야 함
+        # (과실이 절단점 위에 위치하는 180도 역방향 진입 불가 과실 엄밀 거절)
+        is_compatible = bool(
+            residual <= tolerance_mm and
+            axis_residual <= tolerance_mm and
+            axis_align > 0.0
+        )
     else:
         axis_residual = float(residual)
         axis_align = 1.0

@@ -644,9 +644,18 @@ def test_dual_action_geometry() -> None:
           compat_axis_skew is not None and compat_axis_skew["compatible"] is False and
           compat_axis_skew["axis_residual_mm"] > 40.0)
 
+    # stem_axis 180도 역방향(과실이 절단점 위에 위치: z=160mm, diff=[0, 0, -30], axis_align=-1.0) 과실 거절 검증
+    fruit_reversed = (200.0, 0.0, 160.0)
+    compat_axis_rev = verify_dual_action_compatibility(fruit_reversed, cut_pos, cutter_offset_up_mm=30.0, tolerance_mm=10.0, stem_axis=(0.0, 0.0, 1.0))
+    check("verify_dual_action_compatibility: stem_axis 역방향(음수 내적, axis_align=-1.0) 과실 거절 (compatible=False)",
+          compat_axis_rev is not None and compat_axis_rev["compatible"] is False and
+          compat_axis_rev["axis_alignment"] < 0.0)
+
     check("plan_dual_action_trajectory: 줄기축 비정렬 과실 유입 시 compatible=False 판정",
           plan_dual_action_trajectory(fruit_skew, cut_pose) is not None and
-          plan_dual_action_trajectory(fruit_skew, cut_pose)["compatible"] is False)
+          plan_dual_action_trajectory(fruit_skew, cut_pose)["compatible"] is False and
+          plan_dual_action_trajectory(fruit_reversed, cut_pose) is not None and
+          plan_dual_action_trajectory(fruit_reversed, cut_pose)["compatible"] is False)
 
     # 12. plan_dual_action_trajectory 결측 및 비수치 거절
     check("plan_dual_action_trajectory 결측(None) 및 음수 스탠드오프 거절",
