@@ -622,6 +622,10 @@ def test_dual_action_geometry() -> None:
         check("궤적 벡터: approach_vector와 stem_axis 단위 벡터 정합성",
               np.allclose(traj["approach_vector"], (1.0, 0.0, 0.0), atol=1e-4) and
               np.allclose(traj["stem_axis"], (0.0, 0.0, 1.0), atol=1e-4))
+        check("5-DoF 기구학: plan_dual_action_trajectory가 kinematics_5dof 진단을 포함한다",
+              traj.get("kinematics_5dof") is not None and
+              traj["kinematics_5dof"]["within_roll_limits"] is True,
+              f"kin_5dof={traj.get('kinematics_5dof')}")
 
     # stem_axis 3D 정렬 잔차 및 횡방향 직교 왜곡 거절 검증
     compat_axis_ok = verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=30.0, tolerance_mm=10.0, stem_axis=(0.0, 0.0, 1.0))

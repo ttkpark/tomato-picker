@@ -1792,6 +1792,10 @@ def test_fruit3d() -> None:
           "cut_tcp" in traj_res and "retract_tcp" in traj_res and "retract_grasp_tcp" in traj_res and
           abs(traj_res["retract_grasp_tcp"][0] - (traj_res["grasp_tcp"][0] - 60.0 * c_pose.x_cut[0])) < 1e-4,
           f"traj={traj_res}")
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 5-DoF 기구학 정합 진단(kinematics_5dof)을 포함한다",
+          traj_res is not None and "kinematics_5dof" in traj_res and
+          traj_res["kinematics_5dof"] is not None and traj_res["kinematics_5dof"]["within_roll_limits"] is True,
+          f"kin_5dof={traj_res.get('kinematics_5dof') if traj_res else None}")
     check("복합 엔드이펙터: plan_dual_action_trajectory가 줄기축 비정렬 과실 유입 시 비수용(compatible=False)한다",
           plan_dual_action_trajectory(f_pos_skew, c_pose) is not None and
           plan_dual_action_trajectory(f_pos_skew, c_pose)["compatible"] is False)

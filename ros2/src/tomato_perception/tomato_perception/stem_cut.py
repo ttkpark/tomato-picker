@@ -706,6 +706,7 @@ def plan_dual_action_trajectory(
     - 'retract_grasp_tcp': (x, y, z) 1차 파지부 수확물 후퇴 TCP (mm)
     - 'approach_vector': (ax, ay, az) 진입 단위 벡터 (x_cut)
     - 'stem_axis': (zx, zy, zz) 줄기 정렬 축 단위 벡터 (z_cut)
+    - 'kinematics_5dof': evaluate_5dof_cut_alignment 결과 (SO-101 5축 정합 진단)
 
     거절 사유:
     - fruit_pos_base 또는 cut_pose_base is None
@@ -772,6 +773,9 @@ def plan_dual_action_trajectory(
         float(gz - retract_standoff_mm * az),
     )
 
+    # 5-DoF 기구학 정합성 및 접근 여유각 진단 (study 04 §3)
+    kin_5dof = evaluate_5dof_cut_alignment(cut_pose_base)
+
     return {
         "compatible": compat["compatible"],
         "distance_mm": compat["distance_mm"],
@@ -785,5 +789,6 @@ def plan_dual_action_trajectory(
         "retract_grasp_tcp": retract_grasp_tcp,
         "approach_vector": (float(ax), float(ay), float(az)),
         "stem_axis": (float(zx), float(zy), float(zz)),
+        "kinematics_5dof": kin_5dof,
     }
 

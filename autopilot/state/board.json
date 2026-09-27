@@ -1772,13 +1772,8 @@
    "done_when": "젯슨 셸에서 ls /dev/video0 /dev/ttyUSB0 등이 보임",
    "attempts": 0,
    "created": "2026-09-20 19:53",
-   "updated": "2026-09-27 19:43",
+   "updated": "2026-09-27 19:49",
    "notes": [
-    {
-     "t": "2026-09-27 18:50",
-     "by": "builder",
-     "text": "2026-09-27 18:50 builder: 4대 자체검증 777/777 전수 합격(45, 102, 537, 93 All RC=0), stem_cut_check 63/63, move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속(사람 T77 대기)."
-    },
     {
      "t": "2026-09-27 18:52",
      "by": "tester",
@@ -1833,6 +1828,11 @@
      "t": "2026-09-27 19:43",
      "by": "auditor",
      "text": "2026-09-27 auditor: 복합 엔드이펙터 줄기 축 3D 정렬 잔차 검증(거리 스칼라 함정 극복) 및 1차 파지부 수확물 후퇴(retract_grasp_tcp) 정합화 완료(docs/인수인계 §86). 4대 자체검증 792종(45/102/552/93 All RC=0), stem_cut_check 92종, move5 dry 5/5 전수 합격. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치 미인식 지속(사람 T77/T12 대기)."
+    },
+    {
+     "t": "2026-09-27 19:49",
+     "by": "builder",
+     "text": "2026-09-27 builder: 복합 툴 4단계 궤적 계획 내 5-DoF 기구학 정합성(kinematics_5dof) 연동 완비. 자체검증 증설(stem_cut_check 93종, ros_selfcheck 553종, 4대 자체검증 793종 All RC=0, move5 dry 5/5 통과). 젯슨 SSH 정상 및 5대 서비스 inactive 안전 대기 확인, 물리 장치 미인식 지속(사람 T77/T12 대기)."
     }
    ]
   },
