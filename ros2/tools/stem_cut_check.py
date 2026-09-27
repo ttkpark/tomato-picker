@@ -700,6 +700,18 @@ def test_dual_action_geometry() -> None:
           plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=90.0, max_step_mm=100.0) is not None and
           plan_dual_action_trajectory(fruit_pos, cut_pose).get("max_step_mm") == 80.0)
 
+    # 18. pan 특이점(r_xy < 1e-4) 등 5-DoF 기구학 진단 실패 시 plan_dual_action_trajectory 거절 검증
+    cut_pose_singular = CutPose3D(
+        position_mm=(0.0, 0.0, 200.0),
+        rotation_matrix=np.eye(3),
+        x_cut=(1.0, 0.0, 0.0),
+        y_cut=(0.0, 1.0, 0.0),
+        z_cut=(0.0, 0.0, 1.0),
+        depth_mm=200.0,
+    )
+    check("plan_dual_action_trajectory: pan 특이점(r_xy < 1e-4) 등 5-DoF 기구학 진단 실패 시 엄밀 거절(None)한다",
+          plan_dual_action_trajectory((0.0, 0.0, 170.0), cut_pose_singular) is None)
+
     # evaluate_trajectory_workspace 단독 검증
     valid_wps = {
         "wp1": (200.0, 0.0, 100.0),

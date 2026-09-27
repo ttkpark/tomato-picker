@@ -1858,6 +1858,9 @@ def test_fruit3d() -> None:
           plan_dual_action_trajectory(f_pos_test, c_pose, max_step_mm=float('nan')) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, pre_standoff_mm=90.0, max_step_mm=100.0) is not None and
           plan_dual_action_trajectory(f_pos_test, c_pose).get("max_step_mm") == 80.0)
+    c_pose_sing = CutPose3D((0.0, 0.0, 200.0), np.eye(3), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 200.0)
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 pan 특이점(r_xy < 1e-4) 등 5-DoF 기구학 진단 실패 시 엄밀 거절(None)한다",
+          plan_dual_action_trajectory((0.0, 0.0, 170.0), c_pose_sing) is None)
 
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)
