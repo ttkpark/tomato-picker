@@ -1725,9 +1725,24 @@ def test_fruit3d() -> None:
           evaluate_5dof_cut_alignment(CutPose3D((float('nan'), 0.0, 100.0), np.eye(3), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 100.0)) is None and
           evaluate_5dof_cut_alignment(t_cpose, roll_limit_deg=-10.0) is None)
 
+    # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)
+    check("detect_node: stage1.yaml에 detector_type 기본값이 'hsv'로 선언되어 있다",
+          det_cfg.get("detector_type") == "hsv",
+          f"detector_type={det_cfg.get('detector_type')}")
+    check("detect_node: stage1.yaml에 model_path와 conf_threshold가 선언되어 있다",
+          det_cfg.get("model_path") == "yolov8n-seg.pt" and det_cfg.get("conf_threshold") == 0.6,
+          f"model_path={det_cfg.get('model_path')} conf={det_cfg.get('conf_threshold')}")
 
+    with open(os.path.join(SRC, "tomato_perception", "tomato_perception", "detect_node.py"),
+              encoding="utf-8") as f:
+        dn_body = f.read()
+    check("detect_node: detect_node.py가 detector_type 분기(_blobs_yolo / _blobs_hsv)를 구현한다",
+          "def _blobs_yolo" in dn_body and "def _blobs_hsv" in dn_body and 'det_type == "yolo"' in dn_body,
+          "detector_type=hsv/yolo 분기")
+    check("detect_node: _blobs_yolo가 ultralytics 부재 시 안전하게 _blobs_hsv로 폴백한다",
+          "self._blobs_hsv(bgr)" in dn_body and "HSV로 폴백" in dn_body,
+          "모델 미설치 환경 크래시 방지 폴백")
 
-# ----------------------------------------------------------------------
 # ⑥ TF 수학
 # ----------------------------------------------------------------------
 

@@ -1772,13 +1772,8 @@
    "done_when": "젯슨 셸에서 ls /dev/video0 /dev/ttyUSB0 등이 보임",
    "attempts": 0,
    "created": "2026-09-20 19:53",
-   "updated": "2026-09-27 18:58",
+   "updated": "2026-09-27 19:05",
    "notes": [
-    {
-     "t": "2026-09-26 22:11",
-     "by": "tester",
-     "text": "4대 자체검증 766/766 전수 합격(45, 102, 528, 93 All RC=0), move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77 대기)."
-    },
     {
      "t": "2026-09-26 22:26",
      "by": "tester",
@@ -1833,6 +1828,11 @@
      "t": "2026-09-27 18:58",
      "by": "auditor",
      "text": "2026-09-27 auditor: stem_cut 전단(shear) 비직교 왜곡 변환 거절 및 비수치(NaN/Inf) 결함 방어 감사(docs/인수인계 §82). 4대 자체검증 779종(45/102/539/93 All RC=0), stem_cut_check 70/70 전수 합격. T77 젯슨 물리 복구 및 T12 사람 실측 대기 지속."
+    },
+    {
+     "t": "2026-09-27 19:05",
+     "by": "builder",
+     "text": "2026-09-27 19:06 builder: 4대 자체검증 783/783 전수 합격(45, 102, 543, 93 All RC=0), stem_cut_check 70/70, move5_check --dry-run 5/5 확인. detect_node detector_type(hsv/yolo) 플러그 아키텍처 및 ultralytics 미설치 시 무중단 HSV 안전 폴백 구현 완료(docs/인수인계 §83). 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속(사람 T77 대기)."
     }
    ]
   },

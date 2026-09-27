@@ -112,7 +112,7 @@ behavior the task requires stay in.
   `math`뿐이라 PC에서 검증됨) + [`hardware/cartesian.py`](src/tomato_picker/hardware/cartesian.py)
   (영점·안전·조그). 화면 = `/control` "3D 좌표 이동", 영점 = `/settings` "3D 좌표 영점".
   설정은 `~/arm_cartesian.json`(있으면 config.py보다 이긴다). 자체검증
-  `python tools/arm_cartesian_check.py`(팔 없이 33종). 자세한 건
+  `python tools/arm_cartesian_check.py`(팔 없이 93종). 자세한 건
   [`docs/arm-cartesian.md`](docs/arm-cartesian.md).
   ⚠ **5축이라 제자리 yaw는 일반적으로 불가능**하다 — 집게 방향이 위치에 묶여 있다.
   단 **집게가 바닥을 볼 때(pitch≈-90°)만 wrist_roll이 곧 yaw**다. 그 밖에는 roll을 쓴다.

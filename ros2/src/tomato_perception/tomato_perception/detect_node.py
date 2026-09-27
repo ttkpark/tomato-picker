@@ -46,6 +46,9 @@ class DetectNode(Node):
     def __init__(self) -> None:
         super().__init__("tomato_detect")
 
+        self.declare_parameter("detector_type", "hsv")  # hsv(기본) | yolo
+        self.declare_parameter("model_path", "yolov8n-seg.pt")
+        self.declare_parameter("conf_threshold", 0.6)
         self.declare_parameter("color_topic", "/camera/camera/color/image_raw")
         self.declare_parameter("depth_topic",
                                "/camera/camera/aligned_depth_to_color/image_raw")
@@ -58,6 +61,7 @@ class DetectNode(Node):
 
         self._bridge = CvBridge()
         self._intr: Intrinsics | None = None
+        self._yolo_model = None
         self._pub = self.create_publisher(FruitArray, "fruits", 10)
         self._debug = self.create_publisher(Image, "~/annotated", 1)
 
@@ -150,7 +154,34 @@ class DetectNode(Node):
     # ------------------------------------------------------------------
 
     def _blobs(self, bgr: np.ndarray) -> tuple[list[Blob], list[np.ndarray]]:
-        """HSV 마스킹 → 덩이. **여기만 갈아끼우면 YOLO가 된다.**"""
+        """검출기 분기 (HSV 마스킹 또는 YOLO 세그멘테이션) → (Blob 리스트, 마스크 리스트)."""
+        det_type = str(self.get_parameter("detector_type").value).lower()
+        if det_type == "yolo":
+            return self._blobs_yolo(bgr)
+        return self._blobs_hsv(bgr)
+
+    def _blobs_yolo(self, bgr: np.ndarray) -> tuple[list[Blob], list[np.ndarray]]:
+        """YOLO 세그멘테이션 모델 기반 검출."""
+        if self._yolo_model is None:
+            model_path = str(self.get_parameter("model_path").value)
+            try:
+                from ultralytics import YOLO
+                self._yolo_model = YOLO(model_path)
+                self.get_logger().info(f"YOLO 세그멘테이션 모델 로드 완료: {model_path}")
+            except Exception as exc:  # noqa: BLE001
+                self.get_logger().error(f"YOLO 모델({model_path}) 로드 실패: {exc} — HSV로 폴백합니다.")
+                return self._blobs_hsv(bgr)
+
+        from .yolo_seg import detections_to_blobs, run_yolo_seg
+        min_px = int(self.get_parameter("min_pixels").value)
+        detect_unripe = bool(self.get_parameter("detect_unripe").value)
+        conf = float(self.get_parameter("conf_threshold").value)
+
+        dets = run_yolo_seg(self._yolo_model, bgr, conf=conf)
+        return detections_to_blobs(dets, min_pixels=min_px, detect_unripe=detect_unripe)
+
+    def _blobs_hsv(self, bgr: np.ndarray) -> tuple[list[Blob], list[np.ndarray]]:
+        """HSV 색상 마스킹 기반 검출."""
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
         min_px = int(self.get_parameter("min_pixels").value)
 
