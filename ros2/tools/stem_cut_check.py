@@ -712,6 +712,13 @@ def test_dual_action_geometry() -> None:
     check("plan_dual_action_trajectory: pan 특이점(r_xy < 1e-4) 등 5-DoF 기구학 진단 실패 시 엄밀 거절(None)한다",
           plan_dual_action_trajectory((0.0, 0.0, 170.0), cut_pose_singular) is None)
 
+    # 19. 스탠드오프 0 이하(<=0) 시 pre/retract 여유공간 부재 엄밀 거절(None) 검증 (T91)
+    check("plan_dual_action_trajectory: 스탠드오프 0 이하(<=0) 대기/후퇴 불능 시 엄밀 거절(None)한다",
+          plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=0.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, retract_standoff_mm=0.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=-5.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, retract_standoff_mm=-5.0) is None)
+
     # evaluate_trajectory_workspace 단독 검증
     valid_wps = {
         "wp1": (200.0, 0.0, 100.0),

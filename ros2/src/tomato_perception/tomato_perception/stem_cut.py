@@ -796,20 +796,22 @@ def plan_dual_action_trajectory(
 
     거절 사유:
     - fruit_pos_base 또는 cut_pose_base is None
-    - 비수치(NaN/Inf), 음수 스탠드오프, 음수 공차, 작업공간 매개변수 비수치/모순,
-      단일 직교 스텝 상한 초과(pre_standoff_mm > max_step_mm 또는 retract_standoff_mm > max_step_mm),
-      과실-절단점 정합성 검증 실패, 또는 5-DoF 기구학 진단 실패(pan 특이점 r_xy < 1e-4 등)
+    - 비수치(NaN/Inf), 0 이하(<=0) 스탠드오프, 음수 공차, 작업공간 매개변수 비수치/모순,
+    - 단일 직교 스텝 상한 초과(pre_standoff_mm > max_step_mm 또는 retract_standoff_mm > max_step_mm),
+    - 과실-절단점 정합성 검증 실패, 또는 5-DoF 기구학 진단 실패(pan 특이점 r_xy < 1e-4 등)
     """
     if fruit_pos_base is None or cut_pose_base is None:
         return None
     if not (isinstance(cutter_offset_up_mm, (int, float)) and
             math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm > 0.0):
         return None
+    # 궤적 4단계 시퀀스 물리 정합성: 대기(pre) 및 후퇴(retract) 스탠드오프는
+    # 반드시 0 초과(>0)의 전진/후퇴 여유 공간이 확보되어야 함 (0 이하 시 충돌회피 대기/후퇴 불능)
     if not (isinstance(pre_standoff_mm, (int, float)) and
-            math.isfinite(pre_standoff_mm) and pre_standoff_mm >= 0.0):
+            math.isfinite(pre_standoff_mm) and pre_standoff_mm > 0.0):
         return None
     if not (isinstance(retract_standoff_mm, (int, float)) and
-            math.isfinite(retract_standoff_mm) and retract_standoff_mm >= 0.0):
+            math.isfinite(retract_standoff_mm) and retract_standoff_mm > 0.0):
         return None
     if not (isinstance(tolerance_mm, (int, float)) and
             math.isfinite(tolerance_mm) and tolerance_mm >= 0.0):

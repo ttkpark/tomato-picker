@@ -1,6 +1,6 @@
 {
  "version": 1,
- "next_id": 91,
+ "next_id": 92,
  "tasks": [
   {
    "id": "T9",
@@ -260,35 +260,6 @@
      "t": "2026-09-20 20:19",
      "by": "planner",
      "text": "막힘: T77 물리 장치 연결 대기"
-    }
-   ]
-  },
-  {
-   "id": "T27",
-   "title": "tomato-voice.service와 click-server.service가 systemd에 둘 다 enabled라 8090 포트 충돌로 tomato-voice가 부팅마다 크래시루프한다",
-   "role": "builder",
-   "status": "done",
-   "priority": 2,
-   "why": "T21 중 발견: systemctl start tomato-voice 직후 journalctl에 'OSError: [Errno 98] Address already in use'(포트 8090, voice/server.py:937)로 반복 재시작. CLAUDE.md 설계는 '한 프로세스만' 배타적으로 켜는 것을 전제하는데, 두 유닛이 둘 다 enabled(부팅자동시작)로 있어 재부팅 시마다 이 크래시루프가 재현될 것이다. 지금 당장 하드웨어를 못 쓰게 막지는 않지만(click-server가 이겨서 실제로 살아남는다) CPU/로그를 계속 태운다.",
-   "done_when": "deploy/ 아래 두 서비스 파일(또는 활성화 정책)을 살펴 부팅 시 하나만 enabled 되게 정리하거나, tomato-voice가 포트 충돌 시 깔끔히 대기하고 재시도 간격을 늘리게 고친다. 젯슨에서 systemctl is-enabled tomato-voice click-server가 둘 다 enabled면 안 되는 이유(운영 정책)를 docs에 한 줄 남기고, 고친 뒤 journalctl -u tomato-voice에서 반복 크래시가 멈췄는지 확인.",
-   "attempts": 1,
-   "created": "2026-09-18 00:55",
-   "updated": "2026-09-18 03:35",
-   "notes": [
-    {
-     "t": "2026-09-18 00:55",
-     "by": "tester",
-     "text": "만듦"
-    },
-    {
-     "t": "2026-09-18 03:26",
-     "by": "planner",
-     "text": "2026-09-18 03:2x planner: p3→p2로 올린다. 이건 위생 문제가 아니라 **다른 작업의 완료조건을 거짓말로 만든다** — T36·T40·T44가 모두 '끝나면 tomato-voice를 되살린다'로 끝나는데, 8090을 click-server가 쥐고 있는 한 살아나지 않는다(restart 221회). 03:22 실측도 여전히 inactive. 빌더의 지금 next다."
-    },
-    {
-     "t": "2026-09-18 03:35",
-     "by": "builder",
-     "text": "완료: systemd Conflicts=로 두 유닛이 서로를 밀어내게 하고, 부팅 자동실행을 click-server 하나로 줄였다. 젯슨 실측: start tomato-voice → click-server가 먼저 내려가고 voice가 뜬다(is-active active/inactive, 'Address already in use' 0건, 'Scheduled restart' 0건, NRestarts=0, curl :8090 http=200). 되돌림: start click-server → voice inactive/click-server active, :8090 http=200. is-enabled = tomato-voice disabled / click-server enabled. 고치기 전 기준선: 부팅 1회에 bind 실패 2425건·Scheduled restart 2422건. 안전망으로 tomato-voice에 StartLimitIntervalSec=60/StartLimitBurst=5(systemctl show로 1min/5 파싱 확인). PC 4종 45/90/200/73 전부 RC=0(ros_selfcheck +8 = [서비스] 신설). 돌연변이 4건 전부 FAIL 확인(Conflicts 삭제/[Service]로 이동/StartLimitBurst 삭제/문서 정책줄 삭제). 정책 문서 = docs/인수인계-2026-09-03.md §1 + CLAUDE.md."
     }
    ]
   },
@@ -2121,6 +2092,30 @@
      "t": "2026-09-28 00:48",
      "by": "builder",
      "text": "완료: verify_dual_action_compatibility stem_axis 역방향(음수 내적 axis_align <= 0) 과실 엄밀 거절 가드 구현 완료. stem_cut_check 106종(+1), ros_selfcheck 562종(+1), 4대 자체검증 802종(45/102/562/93 All RC=0), move5_check 5/5 통과."
+    }
+   ]
+  },
+  {
+   "id": "T91",
+   "title": "[builder] plan_dual_action_trajectory 스탠드오프 양수(>0) 물리 진입 가드 구현",
+   "role": "builder",
+   "status": "done",
+   "priority": 2,
+   "why": "docs/study/04_END_EFFECTOR_MANIPULATION.md §4-5 및 config.py: plan_dual_action_trajectory의 pre/retract standoff가 0 이하일 때 실시간 충돌회피/후퇴 불능이므로 양수(>0) 엄밀 가드 구현",
+   "done_when": "pre_standoff_mm <= 0 및 retract_standoff_mm <= 0 시 None 엄밀 거절 구현 및 stem_cut_check, ros_selfcheck 검증 추가",
+   "attempts": 1,
+   "created": "2026-09-28 01:00",
+   "updated": "2026-09-28 01:02",
+   "notes": [
+    {
+     "t": "2026-09-28 01:00",
+     "by": "builder",
+     "text": "만듦"
+    },
+    {
+     "t": "2026-09-28 01:02",
+     "by": "builder",
+     "text": "완료: plan_dual_action_trajectory 스탠드오프 0 이하(<=0) 시 대기/후퇴 불능 엄밀 거절 가드 구현 완료. 4대 자체검증 804종 All RC=0 (45/102/564/93), stem_cut_check 108/108 통과"
     }
    ]
   }
