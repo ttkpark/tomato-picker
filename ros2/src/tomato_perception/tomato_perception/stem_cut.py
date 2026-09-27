@@ -759,6 +759,7 @@ def plan_dual_action_trajectory(
     z_max_mm: float = 445.0,
     r_min_mm: float = 90.0,
     r_max_mm: float = 310.0,
+    max_step_mm: float = 80.0,
 ) -> dict[str, Any] | None:
     """복합 엔드이펙터(파지/흡착 + 전단 커터) 4단계 시퀀셜 궤적 계획.
 
@@ -785,10 +786,13 @@ def plan_dual_action_trajectory(
     - 'stem_axis': (zx, zy, zz) 줄기 정렬 축 단위 벡터 (z_cut)
     - 'kinematics_5dof': evaluate_5dof_cut_alignment 결과 (SO-101 5축 정합 진단)
     - 'workspace': evaluate_trajectory_workspace 결과 (작업공간 물리 한계 도달성 진단)
+    - 'max_step_mm': 단일 직교 이동 한계 (mm, ARM_CART_MAX_STEP_MM)
 
     거절 사유:
     - fruit_pos_base 또는 cut_pose_base is None
-    - 비수치(NaN/Inf), 음수 스탠드오프, 음수 공차, 작업공간 매개변수 비수치/모순, 또는 과실-절단점 정합성 검증 실패
+    - 비수치(NaN/Inf), 음수 스탠드오프, 음수 공차, 작업공간 매개변수 비수치/모순,
+      단일 직교 스텝 상한 초과(pre_standoff_mm > max_step_mm 또는 retract_standoff_mm > max_step_mm),
+      또는 과실-절단점 정합성 검증 실패
     """
     if fruit_pos_base is None or cut_pose_base is None:
         return None
@@ -806,6 +810,11 @@ def plan_dual_action_trajectory(
         return None
     if not (isinstance(roll_limit_deg, (int, float)) and
             math.isfinite(roll_limit_deg) and roll_limit_deg > 0.0):
+        return None
+    if not (isinstance(max_step_mm, (int, float)) and
+            math.isfinite(max_step_mm) and max_step_mm > 0.0):
+        return None
+    if pre_standoff_mm > max_step_mm or retract_standoff_mm > max_step_mm:
         return None
     for param in (z_min_mm, z_max_mm, r_min_mm, r_max_mm):
         if not (isinstance(param, (int, float)) and math.isfinite(param)):
@@ -902,5 +911,6 @@ def plan_dual_action_trajectory(
         "stem_axis": (float(zx), float(zy), float(zz)),
         "kinematics_5dof": kin_5dof,
         "workspace": workspace,
+        "max_step_mm": float(max_step_mm),
     }
 

@@ -1840,6 +1840,13 @@ def test_fruit3d() -> None:
           plan_dual_action_trajectory(f_pos_test, c_pose, z_min_mm=500.0, z_max_mm=400.0) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, r_min_mm=-10.0) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, z_min_mm=float('nan')) is None)
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 단일 직교 스텝 상한(80mm) 초과 및 비수치를 엄밀 거절한다",
+          plan_dual_action_trajectory(f_pos_test, c_pose, pre_standoff_mm=90.0) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, retract_standoff_mm=90.0) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, max_step_mm=-10.0) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, max_step_mm=float('nan')) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, pre_standoff_mm=90.0, max_step_mm=100.0) is not None and
+          plan_dual_action_trajectory(f_pos_test, c_pose).get("max_step_mm") == 80.0)
 
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)

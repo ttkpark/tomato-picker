@@ -682,6 +682,15 @@ def test_dual_action_geometry() -> None:
           plan_dual_action_trajectory(fruit_pos, cut_pose, r_min_mm=-10.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, z_min_mm=float('nan')) is None)
 
+    # 17. 단일 직교 스텝 상한(max_step_mm, 기본 80.0mm = ARM_CART_MAX_STEP_MM) 초과 및 비수치 거절 검증
+    check("plan_dual_action_trajectory: 단일 직교 스텝 상한(80mm) 초과 및 비수치 거절",
+          plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=90.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, retract_standoff_mm=90.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, max_step_mm=-5.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, max_step_mm=float('nan')) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=90.0, max_step_mm=100.0) is not None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose).get("max_step_mm") == 80.0)
+
     # evaluate_trajectory_workspace 단독 검증
     valid_wps = {
         "wp1": (200.0, 0.0, 100.0),
