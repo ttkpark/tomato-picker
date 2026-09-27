@@ -616,9 +616,28 @@ def test_dual_action_geometry() -> None:
         check("4단계 Retract: 수확물 분리 후 반대방향 60mm 후퇴 (140, 0, 130)",
               np.allclose(traj["retract_tcp"], (140.0, 0.0, 130.0), atol=1e-4),
               f"retract={traj['retract_tcp']}")
+        check("1차 파지부 수확물 후퇴(retract_grasp_tcp) 위치 정합성 (140, 0, 100)",
+              np.allclose(traj["retract_grasp_tcp"], (140.0, 0.0, 100.0), atol=1e-4),
+              f"ret_grasp={traj.get('retract_grasp_tcp')}")
         check("궤적 벡터: approach_vector와 stem_axis 단위 벡터 정합성",
               np.allclose(traj["approach_vector"], (1.0, 0.0, 0.0), atol=1e-4) and
               np.allclose(traj["stem_axis"], (0.0, 0.0, 1.0), atol=1e-4))
+
+    # stem_axis 3D 정렬 잔차 및 횡방향 직교 왜곡 거절 검증
+    compat_axis_ok = verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=30.0, tolerance_mm=10.0, stem_axis=(0.0, 0.0, 1.0))
+    check("verify_dual_action_compatibility: stem_axis 지정 시 3D 정합성 및 axis_residual 0.0mm 산출",
+          compat_axis_ok is not None and compat_axis_ok["compatible"] is True and
+          abs(compat_axis_ok["axis_residual_mm"]) < 1e-4)
+
+    fruit_skew = (230.0, 0.0, 130.0)  # 거리 30mm이지만 줄기축(z)과 직교(x방향 30mm)
+    compat_axis_skew = verify_dual_action_compatibility(fruit_skew, cut_pos, cutter_offset_up_mm=30.0, tolerance_mm=10.0, stem_axis=(0.0, 0.0, 1.0))
+    check("verify_dual_action_compatibility: 단순 거리 30mm이나 줄기축 횡방향 직교 비정렬 과실 거절 (compatible=False)",
+          compat_axis_skew is not None and compat_axis_skew["compatible"] is False and
+          compat_axis_skew["axis_residual_mm"] > 40.0)
+
+    check("plan_dual_action_trajectory: 줄기축 비정렬 과실 유입 시 compatible=False 판정",
+          plan_dual_action_trajectory(fruit_skew, cut_pose) is not None and
+          plan_dual_action_trajectory(fruit_skew, cut_pose)["compatible"] is False)
 
     # 12. plan_dual_action_trajectory 결측 및 비수치 거절
     check("plan_dual_action_trajectory 결측(None) 및 음수 스탠드오프 거절",

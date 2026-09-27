@@ -596,21 +596,27 @@ def verify_dual_action_compatibility(
     cut_pos_base: tuple[float, float, float] | list[float] | np.ndarray | None,
     cutter_offset_up_mm: float = 30.0,
     tolerance_mm: float = 10.0,
+    stem_axis: tuple[float, float, float] | list[float] | np.ndarray | None = None,
 ) -> dict[str, Any] | None:
     """과실 3D 위치와 줄기 절단점 3D 위치 간의 복합 엔드이펙터 기하 정합성 평가.
 
     docs/study/04_END_EFFECTOR_MANIPULATION.md §4 & §5 명세 준수:
     1. 과실-절단점 3D 거리 d = ||P_cut - P_fruit||
-    2. 공구 고정 오프셋과의 잔차 residual_mm = |d - cutter_offset_up_mm|
-    3. 흡착 벨로우즈 압축(+-5mm) 및 가위 개방폭 허용 공차(기본 10.0mm) 내 정합 여부:
-       compatible = (residual_mm <= tolerance_mm)
-    4. 줄기 진행 방향 단위 벡터 stem_direction = (P_cut - P_fruit) / d
+    2. 공구 고정 오프셋과의 거리 잔차 residual_mm = |d - cutter_offset_up_mm|
+    3. 줄기 축 stem_axis(z_cut) 정합성:
+       - 1차 파지부(흡착컵) 예상 위치 P_grip_exp = P_cut - cutter_offset_up_mm * stem_axis
+       - 실제 과실 위치와의 3D 공간 잔차 axis_residual_mm = ||P_grip_exp - P_fruit||
+       - 단순 스칼라 거리만 30mm이고 횡방향으로 왜곡된 비정렬 과실 방어
+    4. 흡착 벨로우즈 압축(+-5mm) 및 가위 개방폭 허용 공차(기본 10.0mm) 내 정합 여부:
+       compatible = (residual_mm <= tolerance_mm and axis_residual_mm <= tolerance_mm)
+    5. 줄기 진행 방향 단위 벡터 stem_direction = (P_cut - P_fruit) / d
 
     거절 사유:
     - fruit_pos_base 또는 cut_pos_base is None
     - 좌표 원소 수가 3이 아니거나 비수치(NaN/Inf) 존재
     - cutter_offset_up_mm <= 0.0 또는 tolerance_mm < 0.0
     - d < 1e-4 mm (과실 중심과 절단점이 사실상 일치하는 특이점)
+    - stem_axis 지정 시 비수치(NaN/Inf) 또는 크기 < 1e-4
     """
     if fruit_pos_base is None or cut_pos_base is None:
         return None
@@ -630,6 +636,19 @@ def verify_dual_action_compatibility(
     if not (np.all(np.isfinite(f_arr)) and np.all(np.isfinite(c_arr))):
         return None
 
+    s_unit = None
+    if stem_axis is not None:
+        try:
+            s_arr = np.asarray(stem_axis, dtype=np.float64).reshape(3)
+        except (ValueError, TypeError, IndexError):
+            return None
+        if not np.all(np.isfinite(s_arr)):
+            return None
+        s_norm = float(np.linalg.norm(s_arr))
+        if s_norm < 1e-4:
+            return None
+        s_unit = s_arr / s_norm
+
     diff = c_arr - f_arr
     dist = float(np.linalg.norm(diff))
     if dist < 1e-4:
@@ -637,11 +656,22 @@ def verify_dual_action_compatibility(
 
     stem_dir = diff / dist
     residual = float(abs(dist - cutter_offset_up_mm))
-    is_compatible = bool(residual <= tolerance_mm)
+
+    if s_unit is not None:
+        expected_grip = c_arr - cutter_offset_up_mm * s_unit
+        axis_residual = float(np.linalg.norm(expected_grip - f_arr))
+        axis_align = float(np.dot(stem_dir, s_unit))
+        is_compatible = bool(residual <= tolerance_mm and axis_residual <= tolerance_mm)
+    else:
+        axis_residual = float(residual)
+        axis_align = 1.0
+        is_compatible = bool(residual <= tolerance_mm)
 
     return {
         "distance_mm": float(dist),
         "residual_mm": float(residual),
+        "axis_residual_mm": float(axis_residual),
+        "axis_alignment": float(axis_align),
         "compatible": is_compatible,
         "stem_direction": (float(stem_dir[0]), float(stem_dir[1]), float(stem_dir[2])),
     }
@@ -666,11 +696,14 @@ def plan_dual_action_trajectory(
     반환 딕셔너리:
     - 'compatible': verify_dual_action_compatibility 결과 (동시 파지/절단 가능 여부)
     - 'distance_mm': 과실 중심 ↔ 절단점 3D 거리
-    - 'residual_mm': 30mm 오프셋과의 잔차
+    - 'residual_mm': 30mm 오프셋과의 스칼라 거리 잔차
+    - 'axis_residual_mm': 줄기 축 정합성을 고려한 3D 공간 잔차
     - 'pre_grasp_tcp': (x, y, z) 1차 파지 대기 TCP (mm)
     - 'grasp_tcp': (x, y, z) 1차 파지 접촉 TCP (mm)
     - 'cut_tcp': (x, y, z) 2차 절단 날 TCP (mm)
-    - 'retract_tcp': (x, y, z) 수확물 후퇴 TCP (mm)
+    - 'retract_tcp': (x, y, z) 2차 절단 날 후퇴 TCP (mm, 호환용)
+    - 'retract_cut_tcp': (x, y, z) 2차 절단 날 후퇴 TCP (mm)
+    - 'retract_grasp_tcp': (x, y, z) 1차 파지부 수확물 후퇴 TCP (mm)
     - 'approach_vector': (ax, ay, az) 진입 단위 벡터 (x_cut)
     - 'stem_axis': (zx, zy, zz) 줄기 정렬 축 단위 벡터 (z_cut)
 
@@ -699,12 +732,13 @@ def plan_dual_action_trajectory(
             all(math.isfinite(v) for v in (zx, zy, zz))):
         return None
 
-    # 과실 ↔ 절단점 정합성 진단
+    # 과실 ↔ 절단점 정합성 진단 (줄기 축 stem_axis = z_cut 전달하여 비정렬 거절)
     compat = verify_dual_action_compatibility(
         fruit_pos_base=fruit_pos_base,
         cut_pos_base=(px, py, pz),
         cutter_offset_up_mm=cutter_offset_up_mm,
         tolerance_mm=tolerance_mm,
+        stem_axis=(zx, zy, zz),
     )
     if compat is None:
         return None
@@ -724,21 +758,31 @@ def plan_dual_action_trajectory(
         return None
 
     cut_tcp = (float(px), float(py), float(pz))
-    # 후퇴: 절단 완료 후 접근 반대 방향(-x_cut)으로 후퇴
-    retract_tcp = (
+    # 후퇴: 2차 절단 날 후퇴 TCP
+    retract_cut_tcp = (
         float(px - retract_standoff_mm * ax),
         float(py - retract_standoff_mm * ay),
         float(pz - retract_standoff_mm * az),
+    )
+    # 1차 파지부 수확물 후퇴 TCP (과실을 물고 있는 흡착컵/집게의 실제 안전 후퇴 좌표)
+    gx, gy, gz = grasp_tcp
+    retract_grasp_tcp = (
+        float(gx - retract_standoff_mm * ax),
+        float(gy - retract_standoff_mm * ay),
+        float(gz - retract_standoff_mm * az),
     )
 
     return {
         "compatible": compat["compatible"],
         "distance_mm": compat["distance_mm"],
         "residual_mm": compat["residual_mm"],
+        "axis_residual_mm": compat.get("axis_residual_mm", compat["residual_mm"]),
         "pre_grasp_tcp": pre_grasp_tcp,
         "grasp_tcp": grasp_tcp,
         "cut_tcp": cut_tcp,
-        "retract_tcp": retract_tcp,
+        "retract_tcp": retract_cut_tcp,
+        "retract_cut_tcp": retract_cut_tcp,
+        "retract_grasp_tcp": retract_grasp_tcp,
         "approach_vector": (float(ax), float(ay), float(az)),
         "stem_axis": (float(zx), float(zy), float(zz)),
     }

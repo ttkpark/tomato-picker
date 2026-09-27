@@ -1747,12 +1747,17 @@ def test_fruit3d() -> None:
           abs(dual_grip[2] - (c_pose.position_mm[2] - 30.0 * c_pose.z_cut[2] - 50.0 * c_pose.x_cut[2])) < 1e-4,
           f"dual_grip={dual_grip}")
 
-    f_pos_test = (c_pose.position_mm[0], c_pose.position_mm[1], c_pose.position_mm[2] - 30.0)
-    compat_res = verify_dual_action_compatibility(f_pos_test, c_pose.position_mm, cutter_offset_up_mm=30.0, tolerance_mm=10.0)
+    f_pos_test = (
+        c_pose.position_mm[0] - 30.0 * c_pose.z_cut[0],
+        c_pose.position_mm[1] - 30.0 * c_pose.z_cut[1],
+        c_pose.position_mm[2] - 30.0 * c_pose.z_cut[2],
+    )
+    compat_res = verify_dual_action_compatibility(f_pos_test, c_pose.position_mm, cutter_offset_up_mm=30.0, tolerance_mm=10.0, stem_axis=c_pose.z_cut)
     check("복합 엔드이펙터: verify_dual_action_compatibility가 과실-절단점 30mm 정합성 및 공차를 엄밀히 진단한다",
           compat_res is not None and compat_res["compatible"] is True and
           abs(compat_res["residual_mm"]) < 1e-4 and
-          abs(compat_res["distance_mm"] - 30.0) < 1e-4,
+          abs(compat_res["distance_mm"] - 30.0) < 1e-4 and
+          abs(compat_res["axis_residual_mm"]) < 1e-4,
           f"compat={compat_res}")
 
     check("복합 엔드이펙터: 비수치(NaN) 입력 및 음수 오프셋/공차 입력을 엄밀히 거절한다",
@@ -1760,6 +1765,17 @@ def test_fruit3d() -> None:
           compute_dual_action_target(c_pose, cutter_offset_up_mm=float('nan')) is None and
           verify_dual_action_compatibility((float('nan'), 0.0, 0.0), c_pose.position_mm) is None and
           verify_dual_action_compatibility(f_pos_test, c_pose.position_mm, tolerance_mm=-5.0) is None)
+
+    # 횡방향 왜곡(단순 거리 30mm이지만 줄기 축과 직교) 비정렬 과실 거절 검사
+    f_pos_skew = (
+        c_pose.position_mm[0] - 30.0 * c_pose.x_cut[0],
+        c_pose.position_mm[1] - 30.0 * c_pose.x_cut[1],
+        c_pose.position_mm[2] - 30.0 * c_pose.x_cut[2],
+    )
+    compat_skew = verify_dual_action_compatibility(f_pos_skew, c_pose.position_mm, cutter_offset_up_mm=30.0, tolerance_mm=10.0, stem_axis=c_pose.z_cut)
+    check("복합 엔드이펙터: verify_dual_action_compatibility가 줄기축 횡방향 직교 비정렬 과실을 엄밀히 거절(compatible=False)한다",
+          compat_skew is not None and compat_skew["compatible"] is False and compat_skew["axis_residual_mm"] > 10.0,
+          f"compat_skew={compat_skew}")
 
     # 복합 엔드이펙터 4단계 시퀀셜 궤적 계획 검증 (study 04 §4-§5)
     traj_res = plan_dual_action_trajectory(
@@ -1770,11 +1786,15 @@ def test_fruit3d() -> None:
         retract_standoff_mm=60.0,
         tolerance_mm=10.0,
     )
-    check("복합 엔드이펙터: plan_dual_action_trajectory가 4단계(Pre-grasp/Grasp/Cut/Retract) 궤적을 정상 산출한다",
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 4단계(Pre-grasp/Grasp/Cut/Retract) 궤적 및 1차 파지부 수확물 후퇴(retract_grasp_tcp)를 정상 산출한다",
           traj_res is not None and traj_res["compatible"] is True and
           "pre_grasp_tcp" in traj_res and "grasp_tcp" in traj_res and
-          "cut_tcp" in traj_res and "retract_tcp" in traj_res,
+          "cut_tcp" in traj_res and "retract_tcp" in traj_res and "retract_grasp_tcp" in traj_res and
+          abs(traj_res["retract_grasp_tcp"][0] - (traj_res["grasp_tcp"][0] - 60.0 * c_pose.x_cut[0])) < 1e-4,
           f"traj={traj_res}")
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 줄기축 비정렬 과실 유입 시 비수용(compatible=False)한다",
+          plan_dual_action_trajectory(f_pos_skew, c_pose) is not None and
+          plan_dual_action_trajectory(f_pos_skew, c_pose)["compatible"] is False)
     check("복합 엔드이펙터: plan_dual_action_trajectory가 결측(None) 및 음수 스탠드오프를 거절한다",
           plan_dual_action_trajectory(None, c_pose) is None and
           plan_dual_action_trajectory(f_pos_test, None) is None and
