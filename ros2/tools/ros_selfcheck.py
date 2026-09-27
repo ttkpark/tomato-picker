@@ -458,8 +458,13 @@ def test_geometry_matches() -> None:
           f"mount_dy={mdy}, mount_gap={mgap}, pitch={pitch}, outer={pitch + mdy}")
     check("tomato_case.scad 배터리 자리가 BOTTOM 관통 터널(43×57×134, 사용자 확인)과 같다",
           re.search(r"^\s*batt\s*=\s*\[\s*134\s*,\s*43\s*,\s*57\s*\]\s*;", scad_src, re.M) is not None)
-    check("tomato_case.scad SO-101 받침 구멍 간격이 BOTTOM 가운데 두 나사 67.5mm다",
-          re.search(r"so101_holes\s*=\s*\[\[\s*-67\.5\s*/\s*2\s*,", scad_src) is not None)
+    # 2026-09-27 사용자 실측(전수): 전면 간격 56.7(BOTTOM STL 계산값 67.5는 폐기), 후면 간격 64.4.
+    check("tomato_case.scad SO-101 받침 4구멍이 실측(전면 56.7·+15.0 / 후면 64.4·-55.0)과 일치한다",
+          re.search(r"so101_front_gap\s*=\s*56\.7\s*;", scad_src) is not None and
+          re.search(r"so101_holes\s*=\s*\[\[\s*-so101_front_gap\s*/\s*2\s*,\s*15\.0\s*\],"
+                    r"\s*\[\s*so101_front_gap\s*/\s*2\s*,\s*15\.0\s*\],"
+                    r"\s*\[\s*-64\.4\s*/\s*2\s*,\s*-55\.0\s*\],"
+                    r"\s*\[\s*64\.4\s*/\s*2\s*,\s*-55\.0\s*\]\s*\]\s*;", scad_src) is not None)
     check("tomato_case.scad에 차체 길이 195.5를 박아 두지 않았다 (195.5는 나사 간 거리)",
           re.search(r"(chassis_d|case_d)\s*=\s*195\.5", scad_src) is None)
 
