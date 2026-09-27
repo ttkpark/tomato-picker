@@ -666,8 +666,14 @@ def test_dual_action_geometry() -> None:
     # 14. 궤적 작업공간(Workspace) 물리 한계 도달 가능성 계측 검증 (T40/T68/T69 실측치)
     check("plan_dual_action_trajectory: workspace 진단 필드 및 feasible=True 정상 반환",
           traj is not None and "workspace" in traj and
+          traj.get("feasible") is True and
           traj["workspace"]["feasible"] is True and
           len(traj["workspace"]["violations"]) == 0)
+
+    # 15. 음수 허용오차(tolerance_mm) 및 비수치 거절 검증
+    check("plan_dual_action_trajectory: 음수 허용오차(<0) 및 비수치 거절",
+          plan_dual_action_trajectory(fruit_pos, cut_pose, tolerance_mm=-1.0) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, tolerance_mm=float('nan')) is None)
 
     # evaluate_trajectory_workspace 단독 검증
     valid_wps = {

@@ -769,7 +769,8 @@ def plan_dual_action_trajectory(
     4단계: Retract (수확물 분리 및 차체 후퇴 자세)
 
     반환 딕셔너리:
-    - 'compatible': verify_dual_action_compatibility 결과 (동시 파지/절단 가능 여부)
+    - 'feasible': 종합 실행 가능 여부 (compat['compatible'] and workspace['feasible'])
+    - 'compatible': verify_dual_action_compatibility 결과 (동시 파지/절단 기하 공차 호환성)
     - 'distance_mm': 과실 중심 ↔ 절단점 3D 거리
     - 'residual_mm': 30mm 오프셋과의 스칼라 거리 잔차
     - 'axis_residual_mm': 줄기 축 정합성을 고려한 3D 공간 잔차
@@ -787,7 +788,7 @@ def plan_dual_action_trajectory(
 
     거절 사유:
     - fruit_pos_base 또는 cut_pose_base is None
-    - 비수치(NaN/Inf), 음수 스탠드오프, 작업공간 매개변수 비수치/모순, 또는 과실-절단점 정합성 검증 실패
+    - 비수치(NaN/Inf), 음수 스탠드오프, 음수 공차, 작업공간 매개변수 비수치/모순, 또는 과실-절단점 정합성 검증 실패
     """
     if fruit_pos_base is None or cut_pose_base is None:
         return None
@@ -799,6 +800,9 @@ def plan_dual_action_trajectory(
         return None
     if not (isinstance(retract_standoff_mm, (int, float)) and
             math.isfinite(retract_standoff_mm) and retract_standoff_mm >= 0.0):
+        return None
+    if not (isinstance(tolerance_mm, (int, float)) and
+            math.isfinite(tolerance_mm) and tolerance_mm >= 0.0):
         return None
     if not (isinstance(roll_limit_deg, (int, float)) and
             math.isfinite(roll_limit_deg) and roll_limit_deg > 0.0):
@@ -873,7 +877,11 @@ def plan_dual_action_trajectory(
     if workspace is None:
         return None
 
+    # 종합 실행 가능성 (엔드이펙터 파지/절단 기하 적합성 AND 로봇 팔 5대 경유점 작업공간 한계 충족)
+    is_feasible = bool(compat["compatible"] and workspace["feasible"])
+
     return {
+        "feasible": is_feasible,
         "compatible": compat["compatible"],
         "distance_mm": compat["distance_mm"],
         "residual_mm": compat["residual_mm"],

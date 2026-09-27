@@ -1817,6 +1817,10 @@ def test_fruit3d() -> None:
           traj_res["workspace"] is not None and traj_res["workspace"]["feasible"] is True and
           len(traj_res["workspace"]["violations"]) == 0,
           f"workspace={traj_res.get('workspace') if traj_res else None}")
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 종합 실행 가능성(feasible=True) 및 tolerance_mm 유효성을 검증한다",
+          traj_res is not None and traj_res.get("feasible") is True and
+          plan_dual_action_trajectory(f_pos_test, c_pose, tolerance_mm=-5.0) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, tolerance_mm=float('nan')) is None)
     check("복합 엔드이펙터: evaluate_trajectory_workspace가 바닥(z<15) 및 사거리(r>310) 위반을 정확히 검출한다",
           evaluate_trajectory_workspace({"bad_floor": (200.0, 0.0, 5.0)}) is not None and
           evaluate_trajectory_workspace({"bad_floor": (200.0, 0.0, 5.0)})["feasible"] is False and

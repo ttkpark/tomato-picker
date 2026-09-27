@@ -168,12 +168,9 @@ class AutonomousTomatoHarvester:
             r_min_mm=90.0,
             r_max_mm=310.0,
         )
-        if traj is None or not traj["compatible"]:
-            print("[Error] 과실-절단점 기하 불일치 또는 궤적 생성 실패!")
-            return False
-
-        if not traj["workspace"]["feasible"]:
-            print(f"[Error] 작업공간 물리 한계 위반: {traj['workspace']['violations']}")
+        if traj is None or not traj["feasible"]:
+            err_reason = traj["workspace"]["violations"] if (traj and not traj["workspace"]["feasible"]) else "기하 불일치"
+            print(f"[Error] 복합 궤적 실행 불가: {err_reason}")
             return False
 
         # 2. 1단계 Pre-grasp: 접근 반대방향 50mm 대기 위치 이동
@@ -230,14 +227,12 @@ python tools/eye_check.py
 # 3. 직교 제어 및 기구학 처짐 피드백 검증 (93개 테스트)
 python tools/arm_cartesian_check.py
 
-# 4. ROS 2 스택 및 보드 통신 종합 검증 (557개 테스트)
+# 4. ROS 2 스택 및 보드 통신 종합 검증 (558개 테스트)
 python ros2/tools/ros_selfcheck.py
 
-# 5. 복합 엔드이펙터 궤적 및 줄기 절단 검증 (102개 테스트)
+# 5. 복합 엔드이펙터 궤적 및 줄기 절단 검증 (103개 테스트)
 python ros2/tools/stem_cut_check.py
 ```
-
-모든 테스트가 통과하면 수학적 변환 오류나 특이점 충돌 없이 실장비에서 안전하게 구동됩니다.
 
 모든 테스트가 통과하면 수학적 변환 오류나 특이점 충돌 없이 실장비에서 안전하게 구동됩니다.
 
