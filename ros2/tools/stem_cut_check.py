@@ -572,7 +572,8 @@ def test_dual_action_geometry() -> None:
     # 8. 결측 및 비수치 거절: compute_dual_action_target
     check("compute_dual_action_target: cut_pose_base=None 시 None 반환",
           compute_dual_action_target(None) is None)
-    check("compute_dual_action_target: 음수 오프셋/스탠드오프 또는 NaN 시 None 반환",
+    check("compute_dual_action_target: 0이하 오프셋(<=0)/음수 스탠드오프 또는 NaN 시 None 반환 (특이점 방어)",
+          compute_dual_action_target(cut_pose, cutter_offset_up_mm=0.0) is None and
           compute_dual_action_target(cut_pose, cutter_offset_up_mm=-5.0) is None and
           compute_dual_action_target(cut_pose, standoff_mm=-10.0) is None and
           compute_dual_action_target(cut_pose, cutter_offset_up_mm=float('nan')) is None)

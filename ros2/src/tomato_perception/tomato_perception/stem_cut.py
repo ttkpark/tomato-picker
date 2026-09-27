@@ -562,14 +562,14 @@ def compute_dual_action_target(
 
     거절 사유:
     - cut_pose_base is None
-    - cutter_offset_up_mm < 0.0 또는 비수치(NaN/Inf)
+    - cutter_offset_up_mm <= 0.0 또는 비수치(NaN/Inf) (오프셋 0 특이점 거절)
     - standoff_mm < 0.0 또는 비수치(NaN/Inf)
     - cut_pose_base의 좌표/벡터에 NaN 또는 Inf 유입
     """
     if cut_pose_base is None:
         return None
     if not (isinstance(cutter_offset_up_mm, (int, float)) and
-            math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm >= 0.0):
+            math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm > 0.0):
         return None
     if not (isinstance(standoff_mm, (int, float)) and
             math.isfinite(standoff_mm) and standoff_mm >= 0.0):

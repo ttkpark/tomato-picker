@@ -1832,6 +1832,10 @@ def test_fruit3d() -> None:
           evaluate_trajectory_workspace({"bad_reach": (350.0, 0.0, 100.0)}) is not None and
           evaluate_trajectory_workspace({"bad_reach": (350.0, 0.0, 100.0)})["feasible"] is False and
           evaluate_trajectory_workspace(None) is None)
+    check("복합 엔드이펙터: compute_dual_action_target이 0이하 오프셋(<=0) 및 비수치 특이점을 엄밀 거절한다",
+          compute_dual_action_target(c_pose, cutter_offset_up_mm=0.0) is None and
+          compute_dual_action_target(c_pose, cutter_offset_up_mm=-10.0) is None and
+          compute_dual_action_target(c_pose, cutter_offset_up_mm=float('nan')) is None)
 
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)
