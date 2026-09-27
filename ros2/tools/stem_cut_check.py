@@ -170,6 +170,16 @@ def test_sample_stem_depth() -> None:
           sample_stem_depth(dmap, -10.0, 50.0) is None and
           sample_stem_depth(dmap, 50.0, 150.0) is None)
 
+    # 비수치(NaN/Inf) 및 인자 결함
+    check("화소 좌표가 NaN 또는 Inf이면 None(비수치 거절)",
+          sample_stem_depth(dmap, float('nan'), 50.0) is None and
+          sample_stem_depth(dmap, 50.0, float('inf')) is None)
+    check("depth_map이 None 또는 빈 배열이면 None(입력 결함 방어)",
+          sample_stem_depth(None, 50.0, 50.0) is None and
+          sample_stem_depth(np.zeros((0, 0), dtype=np.float32), 0, 0) is None)
+    check("window_radius < 0이면 None(유효 범위 거절)",
+          sample_stem_depth(dmap, 50.0, 50.0, window_radius=-1) is None)
+
 
 class _DummyIntrinsics:
     def __init__(self, fx=400.0, fy=400.0, ppx=50.0, ppy=50.0):
@@ -234,13 +244,33 @@ def test_compute_cutting_pose() -> None:
         check("날 정렬 y_cut이 카메라 전방 방향(y_z > 0)을 향한다",
               pose_slant.y_cut[2] > 0.0, f"y_z={pose_slant.y_cut[2]:.4f}")
 
-    # 3. 거절 조건 (무효 깊이 및 특이점)
+    # 3. 3D 줄기 자세 (tangent = [0.6, 0.0, 0.8])
+    cut_3d = CutPoint(u=50.0, v=50.0, tangent=(0.6, 0.0, 0.8))
+    pose_3d = compute_cutting_pose(cut_3d, depth_mm=250.0, intr=intr)
+    check("3D 줄기 접선에 대해 6-DoF 절단 포즈를 산출한다", pose_3d is not None)
+    if pose_3d is not None:
+        r_3d = pose_3d.rotation_matrix
+        check("3D 줄기 회전 행렬이 SO(3)(det=1.0, R.T@R=I)를 만족한다",
+              abs(np.linalg.det(r_3d) - 1.0) < 1e-6 and np.allclose(r_3d.T @ r_3d, np.eye(3), atol=1e-6))
+        check("3D 줄기 접근 벡터 x_cut이 광축 v_cam과 직교한다(x_z=0)",
+              abs(pose_3d.x_cut[2]) < 1e-6)
+
+    # 4. 거절 조건 (무효 깊이, 특이점 및 입력 결함)
     check("depth_mm <= 0.0은 None(무효 깊이 거절)",
           compute_cutting_pose(cut_straight, depth_mm=0.0, intr=intr) is None and
           compute_cutting_pose(cut_straight, depth_mm=-50.0, intr=intr) is None)
     zero_tangent = CutPoint(u=50.0, v=50.0, tangent=(0.0, 0.0))
     check("접선 크기가 0이면 None(방향 부재 거절)",
           compute_cutting_pose(zero_tangent, depth_mm=200.0, intr=intr) is None)
+    singularity_tangent = CutPoint(u=50.0, v=50.0, tangent=(0.0, 0.0, 1.0))
+    check("줄기가 카메라 광축과 평행하면 None(특이점 거절)",
+          compute_cutting_pose(singularity_tangent, depth_mm=200.0, intr=intr) is None)
+    check("cut_point가 None이면 None(결측 방어)",
+          compute_cutting_pose(None, depth_mm=200.0, intr=intr) is None)
+    check("depth_mm이 NaN 또는 Inf이면 None(비수치 거절)",
+          compute_cutting_pose(cut_straight, depth_mm=float('nan'), intr=intr) is None and
+          compute_cutting_pose(cut_straight, depth_mm=float('inf'), intr=intr) is None)
+
 
 
 def main() -> int:

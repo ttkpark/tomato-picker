@@ -16,6 +16,7 @@ study 문서(`docs/study/04_END_EFFECTOR_MANIPULATION.md` §2)가 제안하는 �
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from dataclasses import dataclass
@@ -29,7 +30,7 @@ class CutPoint:
 
     u: float
     v: float
-    tangent: tuple[float, float]  # 단위 벡터, 화면 좌표계
+    tangent: tuple[float, float] | tuple[float, float, float]  # 단위 벡터 (2D 화면 좌표계 또는 3D 광학 좌표계)
 
 
 @dataclass(frozen=True)
@@ -198,6 +199,13 @@ def sample_stem_depth(
     절단 화소 (u, v) 주변 (2*radius+1)^2 영역에서 유효 대역([min, max] mm)
     화소들의 중앙값을 취한다. 유효 화소가 하나도 없으면 None 반환.
     """
+    if depth_map is None or not isinstance(depth_map, np.ndarray) or depth_map.size == 0:
+        return None
+    if not (isinstance(u, (int, float)) and isinstance(v, (int, float)) and
+            math.isfinite(u) and math.isfinite(v)):
+        return None
+    if window_radius < 0:
+        return None
     h, w = depth_map.shape[:2]
     iu = int(round(u))
     iv = int(round(v))
@@ -210,7 +218,7 @@ def sample_stem_depth(
         return None
 
     patch = depth_map[v_min:v_max, u_min:u_max].astype(np.float64)
-    valid = patch[(patch >= min_depth_mm) & (patch <= max_depth_mm)]
+    valid = patch[(patch >= min_depth_mm) & (patch <= max_depth_mm) & np.isfinite(patch)]
     if len(valid) == 0:
         return None
     return float(np.median(valid))
@@ -221,21 +229,24 @@ def compute_cutting_pose(
     depth_mm: float,
     intr: Any,
 ) -> CutPose3D | None:
-    """2D 절단점(CutPoint) + 깊이(mm) + 카메라 내부파라미터 → 6-DoF 절단 자세.
+    """2D/3D 절단점(CutPoint) + 깊이(mm) + 카메라 내부파라미터 → 6-DoF 절단 자세.
 
     docs/study/04_END_EFFECTOR_MANIPULATION.md §2.2 수학 공식 구현:
     1. 3D 역투영: P_cut = deproject(u, v, depth_mm) (카메라 광학 좌표계)
-    2. 줄기 축 단위 벡터 z_cut: 2D 접선 (tu, tv)를 3D로 정규화 (t_stem)
+    2. 줄기 축 단위 벡터 z_cut: 접선 (tu, tv[, tz]) 정규화 (t_stem)
     3. 접근 벡터 x_cut: 카메라 시선 v_cam=(0,0,1)과 z_cut의 외적 정규화
        x_cut = (v_cam x z_cut) / ||v_cam x z_cut||
     4. 전단 날 정렬 벡터 y_cut: y_cut = z_cut x x_cut
     5. 회전 행렬 R_cut = [x_cut, y_cut, z_cut] (우수계 SO(3), det(R) = +1.0)
 
     거절 사유:
-    - depth_mm <= 0.0 (무효 깊이)
+    - cut_point is None
+    - not math.isfinite(depth_mm) or depth_mm <= 0.0 (무효 깊이)
     - ||v_cam x z_cut|| < 1e-4 (줄기가 카메라 광축과 평행한 특이점)
     """
-    if depth_mm <= 0.0:
+    if cut_point is None:
+        return None
+    if not (isinstance(depth_mm, (int, float)) and math.isfinite(depth_mm) and depth_mm > 0.0):
         return None
 
     # 1. 3D 역투영
@@ -246,23 +257,31 @@ def compute_cutting_pose(
         fy = getattr(intr, "fy", 438.0)
         ppx = getattr(intr, "ppx", 424.0)
         ppy = getattr(intr, "ppy", 240.0)
+        if fx <= 0.0 or fy <= 0.0:
+            return None
         x = (cut_point.u - ppx) * depth_mm / fx
         y = (cut_point.v - ppy) * depth_mm / fy
         p_cut = (float(x), float(y), float(depth_mm))
 
-    # 2. 줄기 축 벡터 z_cut
-    tu, tv = cut_point.tangent
-    norm_2d = float(np.hypot(tu, tv))
-    if norm_2d < 1e-9:
+    # 2. 줄기 축 벡터 z_cut (2D 접선 또는 3D 접선)
+    if not hasattr(cut_point, "tangent") or cut_point.tangent is None:
         return None
-    zx = tu / norm_2d
-    zy = tv / norm_2d
-    zz = 0.0
-    z_cut = np.array([zx, zy, zz], dtype=np.float64)
+    t = cut_point.tangent
+    if len(t) == 2:
+        zx, zy, zz = float(t[0]), float(t[1]), 0.0
+    elif len(t) == 3:
+        zx, zy, zz = float(t[0]), float(t[1]), float(t[2])
+    else:
+        return None
+
+    norm_3d = float(np.hypot(np.hypot(zx, zy), zz))
+    if norm_3d < 1e-9:
+        return None
+    z_cut = np.array([zx / norm_3d, zy / norm_3d, zz / norm_3d], dtype=np.float64)
 
     # 3. 접근 벡터 x_cut (v_cam = [0, 0, 1])
-    # v_cam x z_cut = [-zy, zx, 0]
-    cross_cam = np.array([-zy, zx, 0.0], dtype=np.float64)
+    # v_cam x z_cut = [-z_cut[1], z_cut[0], 0.0]
+    cross_cam = np.array([-z_cut[1], z_cut[0], 0.0], dtype=np.float64)
     sin_theta = float(np.linalg.norm(cross_cam))
     if sin_theta < 1e-4:
         return None  # 광축 평행 특이점 (v_cam과 z_cut이 평행하여 접근 방향 불능)
@@ -286,3 +305,4 @@ def compute_cutting_pose(
         z_cut=(float(z_cut[0]), float(z_cut[1]), float(z_cut[2])),
         depth_mm=float(depth_mm),
     )
+
