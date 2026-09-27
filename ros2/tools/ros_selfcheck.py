@@ -1667,9 +1667,13 @@ def test_fruit3d() -> None:
 
     # 6-DoF 절단 포즈 및 국소 깊이 평활화 계측 검증 (study 04 §2.2, docs/인수인계 §80)
     from tomato_perception.stem_cut import (
-        CutPoint, CutPose3D, compute_cutting_pose, sample_stem_depth,
+        CutPoint, CutPose3D, compute_cutting_pose,
+        compute_pre_grasp_pose, compute_retract_pose,
+        evaluate_5dof_cut_alignment, sample_stem_depth,
+        transform_cut_pose,
     )
     from tomato_picker.hardware.handeye import Intrinsics as HandeyeIntr
+    from tomato_picker.hardware.handeye import Rigid
     dummy_intr = HandeyeIntr(width=848, height=480, fx=438.0, fy=438.0, ppx=424.0, ppy=240.0)
     c_pose = compute_cutting_pose(c_pt, depth_mm=250.0, intr=dummy_intr)
     check("6-DoF 절단 포즈: compute_cutting_pose가 우수계 SO(3) 회전행렬(det=1.0) 및 3D 절단 위치를 산출한다 (study 04 §2.2)",
@@ -1692,6 +1696,29 @@ def test_fruit3d() -> None:
     check("줄기 깊이 평활화: sample_stem_depth가 결손(0)을 배제하고 국소 윈도우 중앙값을 정상 산출한다",
           s_depth is not None and abs(s_depth - 245.0) < 1e-4,
           f"sampled={s_depth}")
+
+    # Pre-grasp 모션 대기 위치 및 강체 좌표계 변환 계측 (study 04 §5, docs/인수인계 §81)
+    pre_p = compute_pre_grasp_pose(c_pose, standoff_mm=50.0)
+    check("모션 대기 위치: compute_pre_grasp_pose가 접근 반대방향 50mm standoff 위치를 정확히 산출한다 (study 04 §5)",
+          pre_p is not None and c_pose is not None and
+          abs(pre_p[0] - (c_pose.position_mm[0] - 50.0 * c_pose.x_cut[0])) < 1e-4 and
+          abs(pre_p[1] - (c_pose.position_mm[1] - 50.0 * c_pose.x_cut[1])) < 1e-4 and
+          abs(pre_p[2] - (c_pose.position_mm[2] - 50.0 * c_pose.x_cut[2])) < 1e-4,
+          f"pre={pre_p}")
+
+    r_test = Rigid(np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype=float), np.array([50.0, 100.0, 150.0]))
+    t_cpose = transform_cut_pose(c_pose, r_test)
+    check("좌표계 변환: transform_cut_pose가 강체 변환 후 SO(3) 직교 기저(det=1.0) 및 위치를 엄밀히 보존한다",
+          t_cpose is not None and abs(np.linalg.det(t_cpose.rotation_matrix) - 1.0) < 1e-6 and
+          np.allclose(t_cpose.rotation_matrix.T @ t_cpose.rotation_matrix, np.eye(3), atol=1e-6),
+          f"t_cpose={t_cpose.position_mm if t_cpose else None}")
+
+    # 5-DoF 기구학 정합성 및 케이블 감김 한계 해결 진단
+    diag_res = evaluate_5dof_cut_alignment(t_cpose, roll_limit_deg=97.9)
+    check("5-DoF 기구학: evaluate_5dof_cut_alignment가 pan/pitch 편차 및 케이블 감김 대칭 각도를 정확히 진단한다 (study 04 §3)",
+          diag_res is not None and "pan_deg" in diag_res and "alignment_angle_deg" in diag_res and
+          diag_res["within_roll_limits"] is True,
+          f"diag={diag_res}")
 
 
 

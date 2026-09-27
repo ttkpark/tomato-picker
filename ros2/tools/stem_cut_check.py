@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 
@@ -27,7 +28,10 @@ sys.path.insert(0, os.path.join(SRC, "tomato_perception"))
 
 from tomato_perception.stem_cut import (  # noqa: E402
     CutPoint, CutPose3D, compute_cutting_pose,
-    find_cut_point, sample_stem_depth, skeleton_points, zhang_suen_thin,
+    compute_pre_grasp_pose, compute_retract_pose,
+    evaluate_5dof_cut_alignment, find_cut_point,
+    sample_stem_depth, skeleton_points, transform_cut_pose,
+    zhang_suen_thin,
 )
 
 FAILED: list[str] = []
@@ -272,6 +276,182 @@ def test_compute_cutting_pose() -> None:
           compute_cutting_pose(cut_straight, depth_mm=float('inf'), intr=intr) is None)
 
 
+def test_pre_grasp_and_retract() -> None:
+    print("\n[모션 위치] compute_pre_grasp_pose & compute_retract_pose")
+    intr = _DummyIntrinsics(fx=400.0, fy=400.0, ppx=50.0, ppy=50.0)
+    cut = CutPoint(u=50.0, v=60.0, tangent=(0.0, 1.0))
+    pose = compute_cutting_pose(cut, depth_mm=200.0, intr=intr)
+    assert pose is not None
+
+    # 1. Pre-grasp (기본 standoff = 50.0mm, x_cut = [-1, 0, 0])
+    pre_pos = compute_pre_grasp_pose(pose, standoff_mm=50.0)
+    check("Pre-grasp 위치가 접근 벡터 반대 방향으로 정확히 50mm 후퇴한다 (50, 5, 200)",
+          pre_pos is not None and
+          abs(pre_pos[0] - 50.0) < 1e-4 and
+          abs(pre_pos[1] - 5.0) < 1e-4 and
+          abs(pre_pos[2] - 200.0) < 1e-4,
+          f"pre={pre_pos}")
+
+    # 2. Retract (기본 retract = 60.0mm)
+    ret_pos = compute_retract_pose(pose, retract_mm=60.0)
+    check("Retract 위치가 접근 벡터 반대 방향으로 정확히 60mm 후퇴한다 (60, 5, 200)",
+          ret_pos is not None and
+          abs(ret_pos[0] - 60.0) < 1e-4 and
+          abs(ret_pos[1] - 5.0) < 1e-4 and
+          abs(ret_pos[2] - 200.0) < 1e-4,
+          f"ret={ret_pos}")
+
+    # 3. 거절 조건 (결측 및 비수치)
+    check("cut_pose=None 시 Pre-grasp/Retract 모두 None",
+          compute_pre_grasp_pose(None) is None and compute_retract_pose(None) is None)
+    check("거리 음수(<0) 또는 NaN 시 거절",
+          compute_pre_grasp_pose(pose, standoff_mm=-10.0) is None and
+          compute_retract_pose(pose, retract_mm=float('nan')) is None)
+
+
+def test_transform_cut_pose() -> None:
+    print("\n[좌표계 변환] transform_cut_pose")
+    intr = _DummyIntrinsics(fx=400.0, fy=400.0, ppx=50.0, ppy=50.0)
+    cut = CutPoint(u=50.0, v=60.0, tangent=(0.0, 1.0))
+    pose = compute_cutting_pose(cut, depth_mm=200.0, intr=intr)
+    assert pose is not None
+
+    # Z축 기준 +90도 회전 및 평행이동 (100, 200, 300)
+    R_z90 = np.array([[0.0, -1.0, 0.0],
+                      [1.0,  0.0, 0.0],
+                      [0.0,  0.0, 1.0]], dtype=np.float64)
+    t_vec = np.array([100.0, 200.0, 300.0], dtype=np.float64)
+
+    # 1. 튜플 (R, t) 입력
+    t_pose = transform_cut_pose(pose, (R_z90, t_vec))
+    check("강체 변환 후 CutPose3D를 산출한다", t_pose is not None)
+    if t_pose is not None:
+        check("변환 후 위치가 정확히 일치한다 (95, 200, 500)",
+              abs(t_pose.position_mm[0] - 95.0) < 1e-4 and
+              abs(t_pose.position_mm[1] - 200.0) < 1e-4 and
+              abs(t_pose.position_mm[2] - 500.0) < 1e-4,
+              f"pos={t_pose.position_mm}")
+        check("접근 벡터 x_cut이 회전되어 [0, -1, 0]이다",
+              abs(t_pose.x_cut[0] - 0.0) < 1e-4 and
+              abs(t_pose.x_cut[1] - (-1.0)) < 1e-4 and
+              abs(t_pose.x_cut[2] - 0.0) < 1e-4,
+              f"x_cut={t_pose.x_cut}")
+        r_new = t_pose.rotation_matrix
+        check("변환 후 회전 행렬이 SO(3)(det=1.0, R.T@R=I)를 엄밀히 유지한다",
+              abs(float(np.linalg.det(r_new)) - 1.0) < 1e-6 and
+              np.allclose(r_new.T @ r_new, np.eye(3), atol=1e-6))
+
+    # 2. 4x4 동차 행렬 입력
+    T_mat = np.eye(4, dtype=np.float64)
+    T_mat[:3, :3] = R_z90
+    T_mat[:3, 3] = t_vec
+    t_mat_pose = transform_cut_pose(pose, T_mat)
+    check("4x4 동차 변환 행렬 입력으로도 동일한 변환 결과를 산출한다",
+          t_mat_pose is not None and
+          abs(t_mat_pose.position_mm[0] - 95.0) < 1e-4)
+
+    # 3. 비직교/비SO(3) 행렬 거절
+    R_bad = np.array([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])  # det=2.0 (스케일 변형)
+    check("스케일 변형 또는 비SO(3) 변환은 None(강체 불변성 위배 거절)",
+          transform_cut_pose(pose, (R_bad, t_vec)) is None)
+    check("cut_pose=None 또는 transform 결함 시 None",
+          transform_cut_pose(None, (R_z90, t_vec)) is None and
+          transform_cut_pose(pose, "invalid_transform") is None)
+
+
+def test_evaluate_5dof_cut_alignment() -> None:
+    print("\n[5-DoF 기구학 진단] evaluate_5dof_cut_alignment")
+    # 1. 완벽 정합 사례 (pan = 30°, pitch = 15°, approach가 arm 평면과 완전 일치)
+    pan = math.radians(30.0)
+    pitch = math.radians(15.0)
+    x_aligned = (math.cos(pitch) * math.cos(pan), math.cos(pitch) * math.sin(pan), math.sin(pitch))
+    l_0 = (-math.sin(pan), math.cos(pan), 0.0)
+    u_0 = (-math.sin(pitch) * math.cos(pan), -math.sin(pitch) * math.sin(pan), math.cos(pitch))
+    y_aligned = l_0
+    z_aligned = tuple(np.cross(x_aligned, y_aligned))
+    r_aligned = np.column_stack([x_aligned, y_aligned, z_aligned])
+
+    pose_aligned = CutPose3D(
+        position_mm=(float(200.0 * math.cos(pan)), float(200.0 * math.sin(pan)), 100.0),
+        rotation_matrix=r_aligned,
+        x_cut=x_aligned,
+        y_cut=y_aligned,
+        z_cut=z_aligned,
+        depth_mm=200.0,
+    )
+    diag1 = evaluate_5dof_cut_alignment(pose_aligned)
+    check("완벽 정합 자세에 대해 5-DoF 진단 결과를 산출한다", diag1 is not None)
+    if diag1 is not None:
+        check("pan 각도가 30.0도와 일치한다", abs(diag1["pan_deg"] - 30.0) < 1e-4)
+        check("pitch 각도가 15.0도와 일치한다", abs(diag1["pitch_deg"] - 15.0) < 1e-4)
+        check("yaw 편차 및 3D 정렬 오차가 0.0도이다",
+              abs(diag1["yaw_mismatch_deg"]) < 1e-4 and abs(diag1["alignment_angle_deg"]) < 1e-4)
+        check("최적 롤 각도가 0.0도이며 가동범위 내이다",
+              abs(diag1["optimal_roll_deg"]) < 1e-4 and diag1["within_roll_limits"] is True)
+        check("수직 하향 자세가 아니다 (is_vertical_down=False)", diag1["is_vertical_down"] is False)
+
+    # 2. 180도 커터 날 대칭 및 케이블 감김 한계 해결 사례 (optimal_roll = 120° -> -60°)
+    y_120 = tuple(math.cos(math.radians(120.0)) * np.array(l_0) + math.sin(math.radians(120.0)) * np.array(u_0))
+    z_120 = tuple(np.cross(x_aligned, y_120))
+    r_120 = np.column_stack([x_aligned, y_120, z_120])
+    pose_120 = CutPose3D(
+        position_mm=pose_aligned.position_mm,
+        rotation_matrix=r_120,
+        x_cut=x_aligned,
+        y_cut=y_120,
+        z_cut=z_120,
+        depth_mm=200.0,
+    )
+    diag2 = evaluate_5dof_cut_alignment(pose_120, roll_limit_deg=97.9)
+    check("120도 최적 롤에 대해 180도 대칭 보정 후 -60도를 도출한다",
+          diag2 is not None and
+          abs(diag2["optimal_roll_deg"] - 120.0) < 1e-4 and
+          abs(diag2["achievable_roll_deg"] - (-60.0)) < 1e-4 and
+          diag2["within_roll_limits"] is True)
+
+    # 3. 횡방향 접근 (yaw 편차 90°, 5-DoF 정렬 오차 90°)
+    x_lateral = (-math.sin(pan), math.cos(pan), 0.0)  # 횡방향 직교
+    y_lateral = (0.0, 0.0, 1.0)
+    z_lateral = tuple(np.cross(x_lateral, y_lateral))
+    pose_lateral = CutPose3D(
+        position_mm=pose_aligned.position_mm,
+        rotation_matrix=np.column_stack([x_lateral, y_lateral, z_lateral]),
+        x_cut=x_lateral,
+        y_cut=y_lateral,
+        z_cut=z_lateral,
+        depth_mm=200.0,
+    )
+    diag_lat = evaluate_5dof_cut_alignment(pose_lateral)
+    check("횡방향 직교 접근 시 정렬 오차가 90도(차체 회전 필요)로 정확히 진단된다",
+          diag_lat is not None and abs(diag_lat["alignment_angle_deg"] - 90.0) < 1e-4)
+
+    # 4. 수직 하향 자세 예외 (pitch = -90°, is_vertical_down=True)
+    x_vert = (0.0, 0.0, -1.0)
+    y_vert = (0.0, 1.0, 0.0)
+    z_vert = (1.0, 0.0, 0.0)
+    pose_vert = CutPose3D(
+        position_mm=(150.0, 0.0, 50.0),
+        rotation_matrix=np.column_stack([x_vert, y_vert, z_vert]),
+        x_cut=x_vert,
+        y_cut=y_vert,
+        z_cut=z_vert,
+        depth_mm=200.0,
+    )
+    diag_vert = evaluate_5dof_cut_alignment(pose_vert)
+    check("수직 하향 자세(pitch=-90°)에서 is_vertical_down=True(Roll=Yaw 예외)를 판정한다",
+          diag_vert is not None and diag_vert["is_vertical_down"] is True)
+
+    # 5. 특이점 및 결측 거절
+    pose_zero_r = CutPose3D(
+        position_mm=(0.0, 0.0, 100.0),
+        rotation_matrix=r_aligned,
+        x_cut=x_aligned, y_cut=y_aligned, z_cut=z_aligned, depth_mm=200.0,
+    )
+    check("pan 원점 특이점(r_xy=0)은 None(특이점 거절)",
+          evaluate_5dof_cut_alignment(pose_zero_r) is None)
+    check("cut_pose_base=None 시 None(결측 방어)",
+          evaluate_5dof_cut_alignment(None) is None)
+
 
 def main() -> int:
     test_thinning()
@@ -281,6 +461,9 @@ def main() -> int:
     test_offset_scales_with_px_per_mm()
     test_sample_stem_depth()
     test_compute_cutting_pose()
+    test_pre_grasp_and_retract()
+    test_transform_cut_pose()
+    test_evaluate_5dof_cut_alignment()
 
     print(f"\n{'='*60}")
     if FAILED:

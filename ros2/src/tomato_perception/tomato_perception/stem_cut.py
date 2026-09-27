@@ -306,3 +306,212 @@ def compute_cutting_pose(
         depth_mm=float(depth_mm),
     )
 
+
+def compute_pre_grasp_pose(
+    cut_pose: CutPose3D | None,
+    standoff_mm: float = 50.0,
+) -> tuple[float, float, float] | None:
+    """절단점 진입 전 대기 위치 (Pre-grasp Pose).
+
+    docs/study/04_END_EFFECTOR_MANIPULATION.md §5 Step 3 명세:
+    - 엔드이펙터 접근 벡터(x_cut)의 역방향으로 standoff_mm(기본 50mm) 후퇴한 3D 위치.
+    - P_pre = P_cut - standoff_mm * x_cut
+
+    거절:
+    - cut_pose is None
+    - standoff_mm < 0.0 또는 비수치(NaN/Inf)
+    """
+    if cut_pose is None:
+        return None
+    if not (isinstance(standoff_mm, (int, float)) and math.isfinite(standoff_mm) and standoff_mm >= 0.0):
+        return None
+    px, py, pz = cut_pose.position_mm
+    ax, ay, az = cut_pose.x_cut
+    return (
+        float(px - standoff_mm * ax),
+        float(py - standoff_mm * ay),
+        float(pz - standoff_mm * az),
+    )
+
+
+def compute_retract_pose(
+    cut_pose: CutPose3D | None,
+    retract_mm: float = 60.0,
+) -> tuple[float, float, float] | None:
+    """절단 완료 후 과실 안전 후퇴 위치 (Retract Pose).
+
+    docs/study/04_END_EFFECTOR_MANIPULATION.md §5 Step 9 명세:
+    - 절단점으로부터 접근 벡터(x_cut)의 역방향으로 retract_mm(기본 60mm) 후퇴한 3D 위치.
+    - P_retract = P_cut - retract_mm * x_cut
+
+    거절:
+    - cut_pose is None
+    - retract_mm < 0.0 또는 비수치(NaN/Inf)
+    """
+    if cut_pose is None:
+        return None
+    if not (isinstance(retract_mm, (int, float)) and math.isfinite(retract_mm) and retract_mm >= 0.0):
+        return None
+    px, py, pz = cut_pose.position_mm
+    ax, ay, az = cut_pose.x_cut
+    return (
+        float(px - retract_mm * ax),
+        float(py - retract_mm * ay),
+        float(pz - retract_mm * az),
+    )
+
+
+def transform_cut_pose(
+    cut_pose: CutPose3D | None,
+    transform: Any,
+) -> CutPose3D | None:
+    """CutPose3D를 강체 변환(Rigid / 4x4 matrix / (R, t))으로 다른 좌표계로 변환.
+
+    T = (R, t)
+    P_new = R @ P + t
+    x_new = R @ x_cut
+    y_new = R @ y_cut
+    z_new = R @ z_cut
+    R_new = R @ cut_pose.rotation_matrix
+
+    SO(3) 정규직교 기저(det(R)=1.0, R.T@R=I) 보존.
+    """
+    if cut_pose is None:
+        return None
+    if hasattr(transform, "R") and hasattr(transform, "t"):
+        R = np.asarray(transform.R, dtype=np.float64)
+        t = np.asarray(transform.t, dtype=np.float64).reshape(3)
+    elif isinstance(transform, np.ndarray) and transform.shape == (4, 4):
+        R = transform[:3, :3].astype(np.float64)
+        t = transform[:3, 3].astype(np.float64)
+    elif isinstance(transform, (tuple, list)) and len(transform) == 2:
+        R = np.asarray(transform[0], dtype=np.float64)
+        t = np.asarray(transform[1], dtype=np.float64).reshape(3)
+    else:
+        return None
+
+    if R.shape != (3, 3) or t.shape != (3,):
+        return None
+    if not (np.all(np.isfinite(R)) and np.all(np.isfinite(t))):
+        return None
+    det_r = float(np.linalg.det(R))
+    if abs(det_r - 1.0) > 1e-4:
+        return None  # 순수 회전(SO(3))이 아니거나 반사/왜곡인 경우 거절
+
+    p_old = np.array(cut_pose.position_mm, dtype=np.float64)
+    p_new = R @ p_old + t
+
+    x_new = R @ np.array(cut_pose.x_cut, dtype=np.float64)
+    y_new = R @ np.array(cut_pose.y_cut, dtype=np.float64)
+    z_new = R @ np.array(cut_pose.z_cut, dtype=np.float64)
+    rot_new = R @ cut_pose.rotation_matrix
+
+    x_norm = float(np.linalg.norm(x_new))
+    y_norm = float(np.linalg.norm(y_new))
+    z_norm = float(np.linalg.norm(z_new))
+    if x_norm < 1e-9 or y_norm < 1e-9 or z_norm < 1e-9:
+        return None
+
+    return CutPose3D(
+        position_mm=(float(p_new[0]), float(p_new[1]), float(p_new[2])),
+        rotation_matrix=rot_new,
+        x_cut=(float(x_new[0] / x_norm), float(x_new[1] / x_norm), float(x_new[2] / x_norm)),
+        y_cut=(float(y_new[0] / y_norm), float(y_new[1] / y_norm), float(y_new[2] / y_norm)),
+        z_cut=(float(z_new[0] / z_norm), float(z_new[1] / z_norm), float(z_new[2] / z_norm)),
+        depth_mm=float(cut_pose.depth_mm),
+    )
+
+
+def evaluate_5dof_cut_alignment(
+    cut_pose_base: CutPose3D | None,
+    roll_limit_deg: float = 97.90,
+) -> dict[str, float | bool] | None:
+    """5-DoF 매니퓰레이터(SO-101)의 6-DoF 절단 포즈 기구학적 정합성 및 접근 여유각 진단.
+
+    docs/study/04_END_EFFECTOR_MANIPULATION.md §3 명세 준수:
+    1. SO-101은 손목 독립 Yaw가 없어, 팔의 접근 방위각(pan)은 위치 (x, y)에 고정된다:
+       pan_deg = atan2(y, x)
+    2. 원하는 절단 접근 벡터 x_cut과의 수평 방위각 편차:
+       yaw_mismatch_deg = atan2(x_cut.y, x_cut.x) - pan_deg
+    3. 예외 조건 (is_vertical_down):
+       집게가 바닥을 수직으로 내려다보는 자세(pitch <= -75°)일 때,
+       wrist_roll이 물리적으로 yaw 회전 역할을 대체 가능.
+    4. 3D 정렬 오차각:
+       alignment_angle_deg = acos(x_cut · a_arm)
+    5. 최적 커터 날 회전각 및 180° 대칭성 해결:
+       커터/집게는 180° 반전에 대칭이므로, 케이블 감김 한계([-roll_limit_deg, roll_limit_deg])를
+       벗어날 경우 +-180° 보정하여 안전 가동범위 내 각도를 보장한다.
+       (span 195.8° >= 180°이므로 수학적으로 항상 존재).
+    """
+    if cut_pose_base is None:
+        return None
+    px, py, pz = cut_pose_base.position_mm
+    ax, ay, az = cut_pose_base.x_cut
+    bx, by, bz = cut_pose_base.y_cut
+
+    r_xy = math.hypot(px, py)
+    if r_xy < 1e-4:
+        return None  # pan 특이점 (원점 바로 위)
+
+    pan_rad = math.atan2(py, px)
+    pan_deg = math.degrees(pan_rad)
+
+    # 절단 접근 벡터의 pitch 각도 (elevation)
+    pitch_rad = math.asin(max(-1.0, min(1.0, az)))
+    pitch_deg = math.degrees(pitch_rad)
+
+    # 접근 벡터의 수평 방위각 및 pan 편차
+    approach_yaw_rad = math.atan2(ay, ax)
+    yaw_mismatch_rad = (approach_yaw_rad - pan_rad + math.pi) % (2.0 * math.pi) - math.pi
+    yaw_mismatch_deg = math.degrees(yaw_mismatch_rad)
+
+    # 수직 하향 예외 판정 (study 04 §3.1)
+    is_vertical_down = bool(pitch_deg <= -75.0)
+
+    # SO-101 5-DoF 암이 취할 수 있는 단위 접근 벡터
+    a_arm = np.array([
+        math.cos(pitch_rad) * math.cos(pan_rad),
+        math.cos(pitch_rad) * math.sin(pan_rad),
+        math.sin(pitch_rad),
+    ], dtype=np.float64)
+
+    # 원하는 3D 접근 벡터와 실현 가능 벡터 간의 내적 및 오차각
+    x_cut_vec = np.array([ax, ay, az], dtype=np.float64)
+    dot_align = float(np.dot(x_cut_vec, a_arm))
+    dot_clamped = max(-1.0, min(1.0, dot_align))
+    align_angle_deg = math.degrees(math.acos(dot_clamped))
+
+    # 도구 롤 0 자세에서의 lateral 및 up 기저 벡터
+    l_0 = np.array([-math.sin(pan_rad), math.cos(pan_rad), 0.0], dtype=np.float64)
+    u_0 = np.array([
+        -math.sin(pitch_rad) * math.cos(pan_rad),
+        -math.sin(pitch_rad) * math.sin(pan_rad),
+        math.cos(pitch_rad),
+    ], dtype=np.float64)
+
+    y_cut_vec = np.array([bx, by, bz], dtype=np.float64)
+    y_l = float(np.dot(y_cut_vec, l_0))
+    y_u = float(np.dot(y_cut_vec, u_0))
+
+    opt_roll_rad = math.atan2(y_u, y_l)
+    opt_roll_deg = math.degrees(opt_roll_rad)
+
+    # 180도 절단 날 대칭성 및 케이블 감김 한계 해결
+    achievable_roll = opt_roll_deg
+    if achievable_roll > roll_limit_deg:
+        achievable_roll -= 180.0
+    elif achievable_roll < -roll_limit_deg:
+        achievable_roll += 180.0
+
+    within_limits = bool(-roll_limit_deg <= achievable_roll <= roll_limit_deg)
+
+    return {
+        "pan_deg": float(pan_deg),
+        "pitch_deg": float(pitch_deg),
+        "yaw_mismatch_deg": float(yaw_mismatch_deg),
+        "is_vertical_down": is_vertical_down,
+        "alignment_angle_deg": float(align_angle_deg),
+        "optimal_roll_deg": float(opt_roll_deg),
+        "achievable_roll_deg": float(achievable_roll),
+        "within_roll_limits": within_limits,
+    }
