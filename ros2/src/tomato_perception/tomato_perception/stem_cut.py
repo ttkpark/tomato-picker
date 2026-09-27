@@ -248,6 +248,9 @@ def compute_cutting_pose(
         return None
     if not (isinstance(depth_mm, (int, float)) and math.isfinite(depth_mm) and depth_mm > 0.0):
         return None
+    if not (isinstance(cut_point.u, (int, float)) and isinstance(cut_point.v, (int, float)) and
+            math.isfinite(cut_point.u) and math.isfinite(cut_point.v)):
+        return None
 
     # 1. 3D 역투영
     if hasattr(intr, "deproject"):
@@ -272,6 +275,8 @@ def compute_cutting_pose(
     elif len(t) == 3:
         zx, zy, zz = float(t[0]), float(t[1]), float(t[2])
     else:
+        return None
+    if not (math.isfinite(zx) and math.isfinite(zy) and math.isfinite(zz)):
         return None
 
     norm_3d = float(np.hypot(np.hypot(zx, zy), zz))
@@ -327,6 +332,8 @@ def compute_pre_grasp_pose(
         return None
     px, py, pz = cut_pose.position_mm
     ax, ay, az = cut_pose.x_cut
+    if not (all(math.isfinite(v) for v in (px, py, pz)) and all(math.isfinite(v) for v in (ax, ay, az))):
+        return None
     return (
         float(px - standoff_mm * ax),
         float(py - standoff_mm * ay),
@@ -354,6 +361,8 @@ def compute_retract_pose(
         return None
     px, py, pz = cut_pose.position_mm
     ax, ay, az = cut_pose.x_cut
+    if not (all(math.isfinite(v) for v in (px, py, pz)) and all(math.isfinite(v) for v in (ax, ay, az))):
+        return None
     return (
         float(px - retract_mm * ax),
         float(py - retract_mm * ay),
@@ -378,27 +387,36 @@ def transform_cut_pose(
     """
     if cut_pose is None:
         return None
-    if hasattr(transform, "R") and hasattr(transform, "t"):
-        R = np.asarray(transform.R, dtype=np.float64)
-        t = np.asarray(transform.t, dtype=np.float64).reshape(3)
-    elif isinstance(transform, np.ndarray) and transform.shape == (4, 4):
-        R = transform[:3, :3].astype(np.float64)
-        t = transform[:3, 3].astype(np.float64)
-    elif isinstance(transform, (tuple, list)) and len(transform) == 2:
-        R = np.asarray(transform[0], dtype=np.float64)
-        t = np.asarray(transform[1], dtype=np.float64).reshape(3)
-    else:
+    try:
+        if hasattr(transform, "R") and hasattr(transform, "t"):
+            R = np.asarray(transform.R, dtype=np.float64)
+            t_raw = np.asarray(transform.t, dtype=np.float64)
+        elif isinstance(transform, np.ndarray) and transform.shape == (4, 4):
+            R = transform[:3, :3].astype(np.float64)
+            t_raw = transform[:3, 3].astype(np.float64)
+        elif isinstance(transform, (tuple, list)) and len(transform) == 2:
+            R = np.asarray(transform[0], dtype=np.float64)
+            t_raw = np.asarray(transform[1], dtype=np.float64)
+        else:
+            return None
+
+        if R.shape != (3, 3) or t_raw.size != 3:
+            return None
+        t = t_raw.reshape(3)
+    except (ValueError, TypeError, IndexError):
         return None
 
-    if R.shape != (3, 3) or t.shape != (3,):
-        return None
     if not (np.all(np.isfinite(R)) and np.all(np.isfinite(t))):
         return None
     det_r = float(np.linalg.det(R))
     if abs(det_r - 1.0) > 1e-4:
-        return None  # 순수 회전(SO(3))이 아니거나 반사/왜곡인 경우 거절
+        return None  # 순수 회전(SO(3))이 아니거나 반사/스케일 왜곡인 경우 거절
+    if not np.allclose(R.T @ R, np.eye(3), atol=1e-4):
+        return None  # 비직교(전단 shear/비강체) 변환 거절
 
     p_old = np.array(cut_pose.position_mm, dtype=np.float64)
+    if not np.all(np.isfinite(p_old)):
+        return None
     p_new = R @ p_old + t
 
     x_new = R @ np.array(cut_pose.x_cut, dtype=np.float64)
@@ -445,9 +463,16 @@ def evaluate_5dof_cut_alignment(
     """
     if cut_pose_base is None:
         return None
+    if not (isinstance(roll_limit_deg, (int, float)) and math.isfinite(roll_limit_deg) and roll_limit_deg > 0.0):
+        return None
     px, py, pz = cut_pose_base.position_mm
     ax, ay, az = cut_pose_base.x_cut
     bx, by, bz = cut_pose_base.y_cut
+
+    if not (all(math.isfinite(v) for v in (px, py, pz)) and
+            all(math.isfinite(v) for v in (ax, ay, az)) and
+            all(math.isfinite(v) for v in (bx, by, bz))):
+        return None
 
     r_xy = math.hypot(px, py)
     if r_xy < 1e-4:
@@ -467,6 +492,9 @@ def evaluate_5dof_cut_alignment(
 
     # 수직 하향 예외 판정 (study 04 §3.1)
     is_vertical_down = bool(pitch_deg <= -75.0)
+    if is_vertical_down and math.hypot(ax, ay) < 1e-4:
+        # 수직 하향 특이점: 수평 yaw가 정의되지 않으며 wrist_roll이 yaw 역할을 온전히 대체함
+        yaw_mismatch_deg = 0.0
 
     # SO-101 5-DoF 암이 취할 수 있는 단위 접근 벡터
     a_arm = np.array([

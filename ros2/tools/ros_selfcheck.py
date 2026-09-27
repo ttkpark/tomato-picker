@@ -1712,6 +1712,8 @@ def test_fruit3d() -> None:
           t_cpose is not None and abs(np.linalg.det(t_cpose.rotation_matrix) - 1.0) < 1e-6 and
           np.allclose(t_cpose.rotation_matrix.T @ t_cpose.rotation_matrix, np.eye(3), atol=1e-6),
           f"t_cpose={t_cpose.position_mm if t_cpose else None}")
+    check("좌표계 변환: transform_cut_pose가 det=1.0 전단(shear) 비직교 왜곡 변환을 엄밀히 거절한다",
+          transform_cut_pose(c_pose, (np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]), np.zeros(3))) is None)
 
     # 5-DoF 기구학 정합성 및 케이블 감김 한계 해결 진단
     diag_res = evaluate_5dof_cut_alignment(t_cpose, roll_limit_deg=97.9)
@@ -1719,6 +1721,9 @@ def test_fruit3d() -> None:
           diag_res is not None and "pan_deg" in diag_res and "alignment_angle_deg" in diag_res and
           diag_res["within_roll_limits"] is True,
           f"diag={diag_res}")
+    check("5-DoF 기구학: evaluate_5dof_cut_alignment가 비수치(NaN) 입력 및 무효 롤 한계를 엄밀히 거절한다",
+          evaluate_5dof_cut_alignment(CutPose3D((float('nan'), 0.0, 100.0), np.eye(3), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 100.0)) is None and
+          evaluate_5dof_cut_alignment(t_cpose, roll_limit_deg=-10.0) is None)
 
 
 

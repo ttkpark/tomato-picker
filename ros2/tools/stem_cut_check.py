@@ -274,6 +274,9 @@ def test_compute_cutting_pose() -> None:
     check("depth_mm이 NaN 또는 Inf이면 None(비수치 거절)",
           compute_cutting_pose(cut_straight, depth_mm=float('nan'), intr=intr) is None and
           compute_cutting_pose(cut_straight, depth_mm=float('inf'), intr=intr) is None)
+    check("cut_point 좌표/접선에 NaN 또는 Inf 시 None(비수치 거절)",
+          compute_cutting_pose(CutPoint(u=float('nan'), v=50.0, tangent=(0.0, 1.0)), depth_mm=200.0, intr=intr) is None and
+          compute_cutting_pose(CutPoint(u=50.0, v=50.0, tangent=(float('nan'), 1.0)), depth_mm=200.0, intr=intr) is None)
 
 
 def test_pre_grasp_and_retract() -> None:
@@ -307,6 +310,10 @@ def test_pre_grasp_and_retract() -> None:
     check("거리 음수(<0) 또는 NaN 시 거절",
           compute_pre_grasp_pose(pose, standoff_mm=-10.0) is None and
           compute_retract_pose(pose, retract_mm=float('nan')) is None)
+    pose_nan = CutPose3D(position_mm=(float('nan'), 5.0, 200.0), rotation_matrix=np.eye(3),
+                         x_cut=(-1.0, 0.0, 0.0), y_cut=(0.0, 1.0, 0.0), z_cut=(0.0, 0.0, 1.0), depth_mm=200.0)
+    check("cut_pose 좌표/벡터에 NaN 시 Pre-grasp/Retract 모두 None",
+          compute_pre_grasp_pose(pose_nan) is None and compute_retract_pose(pose_nan) is None)
 
 
 def test_transform_cut_pose() -> None:
@@ -354,6 +361,12 @@ def test_transform_cut_pose() -> None:
     R_bad = np.array([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])  # det=2.0 (스케일 변형)
     check("스케일 변형 또는 비SO(3) 변환은 None(강체 불변성 위배 거절)",
           transform_cut_pose(pose, (R_bad, t_vec)) is None)
+    R_shear = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])  # det=1.0이지만 비직교(전단 shear)
+    check("det=1.0 전단(shear) 비직교 변환 거절",
+          transform_cut_pose(pose, (R_shear, t_vec)) is None)
+    check("t 차원 불일치(size!=3) 또는 형변환 실패 시 None(예외 삼킴 없이 방어)",
+          transform_cut_pose(pose, (R_z90, np.array([1.0, 2.0]))) is None and
+          transform_cut_pose(pose, (R_z90, "bad_t")) is None)
     check("cut_pose=None 또는 transform 결함 시 None",
           transform_cut_pose(None, (R_z90, t_vec)) is None and
           transform_cut_pose(pose, "invalid_transform") is None)
@@ -441,6 +454,16 @@ def test_evaluate_5dof_cut_alignment() -> None:
     check("수직 하향 자세(pitch=-90°)에서 is_vertical_down=True(Roll=Yaw 예외)를 판정한다",
           diag_vert is not None and diag_vert["is_vertical_down"] is True)
 
+    # 수직 하향(pitch=-90°) 임의 pan 회전 시에도 yaw 편차 0° 판정 (wrist roll 대체)
+    pose_vert_pan45 = CutPose3D(
+        position_mm=(150.0, 150.0, 50.0),  # pan = 45°
+        rotation_matrix=np.column_stack([x_vert, y_vert, z_vert]),
+        x_cut=x_vert, y_cut=y_vert, z_cut=z_vert, depth_mm=200.0,
+    )
+    diag_vert_pan = evaluate_5dof_cut_alignment(pose_vert_pan45)
+    check("수직 하향 자세는 임의의 pan에서도 yaw 편차가 0.0도로 유지된다 (wrist roll 대체)",
+          diag_vert_pan is not None and abs(diag_vert_pan["yaw_mismatch_deg"]) < 1e-4)
+
     # 5. 특이점 및 결측 거절
     pose_zero_r = CutPose3D(
         position_mm=(0.0, 0.0, 100.0),
@@ -451,6 +474,16 @@ def test_evaluate_5dof_cut_alignment() -> None:
           evaluate_5dof_cut_alignment(pose_zero_r) is None)
     check("cut_pose_base=None 시 None(결측 방어)",
           evaluate_5dof_cut_alignment(None) is None)
+    pose_nan_eval = CutPose3D(
+        position_mm=(float('nan'), 100.0, 100.0),
+        rotation_matrix=r_aligned,
+        x_cut=x_aligned, y_cut=y_aligned, z_cut=z_aligned, depth_mm=200.0,
+    )
+    check("cut_pose_base 좌표/벡터 NaN 또는 Inf 시 None(비수치 거절)",
+          evaluate_5dof_cut_alignment(pose_nan_eval) is None)
+    check("roll_limit_deg 비수치(<=0 또는 NaN) 시 None",
+          evaluate_5dof_cut_alignment(pose_aligned, roll_limit_deg=-10.0) is None and
+          evaluate_5dof_cut_alignment(pose_aligned, roll_limit_deg=float('nan')) is None)
 
 
 def main() -> int:
