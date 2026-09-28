@@ -1842,6 +1842,7 @@ def test_fruit3d() -> None:
           traj_res is not None and traj_res["compatible"] is True and
           "pre_grasp_tcp" in traj_res and "grasp_tcp" in traj_res and
           "cut_tcp" in traj_res and "retract_tcp" in traj_res and "retract_grasp_tcp" in traj_res and
+          "waypoints" in traj_res and len(traj_res["waypoints"]) == 5 and
           abs(traj_res["retract_grasp_tcp"][0] - (traj_res["grasp_tcp"][0] - 60.0 * c_pose.x_cut[0])) < 1e-4,
           f"traj={traj_res}")
     check("복합 엔드이펙터: plan_dual_action_trajectory가 5-DoF 기구학 정합 진단(kinematics_5dof)을 포함한다",

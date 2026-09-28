@@ -1006,6 +1006,7 @@ def plan_dual_action_trajectory(
     - 'retract_tcp': (x, y, z) 2차 절단 날 후퇴 TCP (mm, 호환용)
     - 'retract_cut_tcp': (x, y, z) 2차 절단 날 후퇴 TCP (mm)
     - 'retract_grasp_tcp': (x, y, z) 1차 파지부 수확물 후퇴 TCP (mm)
+    - 'waypoints': dict 5대 핵심 경유점 (pre_grasp, grasp, cut, retract_cut, retract_grasp) 딕셔너리
     - 'approach_vector': (ax, ay, az) 진입 단위 벡터 (x_cut)
     - 'stem_axis': (zx, zy, zz) 줄기 정렬 축 단위 벡터 (z_cut)
     - 'kinematics_5dof': evaluate_5dof_cut_alignment 결과 (SO-101 5축 정합 진단)
@@ -1113,15 +1114,17 @@ def plan_dual_action_trajectory(
     if kin_5dof is None:
         return None
 
+    waypoints = {
+        "pre_grasp_tcp": pre_grasp_tcp,
+        "grasp_tcp": grasp_tcp,
+        "cut_tcp": cut_tcp,
+        "retract_cut_tcp": retract_cut_tcp,
+        "retract_grasp_tcp": retract_grasp_tcp,
+    }
+
     # 작업공간 물리 한계 도달 가능성 계측 평가 (config.py Z_MIN/Z_MAX/R_MIN/R_MAX)
     workspace = evaluate_trajectory_workspace(
-        waypoints={
-            "pre_grasp_tcp": pre_grasp_tcp,
-            "grasp_tcp": grasp_tcp,
-            "cut_tcp": cut_tcp,
-            "retract_cut_tcp": retract_cut_tcp,
-            "retract_grasp_tcp": retract_grasp_tcp,
-        },
+        waypoints=waypoints,
         z_min_mm=z_min_mm,
         z_max_mm=z_max_mm,
         r_min_mm=r_min_mm,
@@ -1146,6 +1149,7 @@ def plan_dual_action_trajectory(
         "retract_tcp": retract_cut_tcp,
         "retract_cut_tcp": retract_cut_tcp,
         "retract_grasp_tcp": retract_grasp_tcp,
+        "waypoints": waypoints,
         "approach_vector": (float(ax), float(ay), float(az)),
         "stem_axis": (float(zx), float(zy), float(zz)),
         "kinematics_5dof": kin_5dof,

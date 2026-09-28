@@ -701,6 +701,14 @@ def test_dual_action_geometry() -> None:
               traj.get("axis_alignment") is not None and
               abs(traj["axis_alignment"] - 1.0) < 1e-4,
               f"axis_alignment={traj.get('axis_alignment')}")
+        check("5대 경유점 사전: traj['waypoints']가 5대 핵심 경유점을 온전히 포함한다",
+              isinstance(traj.get("waypoints"), dict) and
+              set(traj["waypoints"].keys()) == {"pre_grasp_tcp", "grasp_tcp", "cut_tcp", "retract_cut_tcp", "retract_grasp_tcp"} and
+              traj["waypoints"]["pre_grasp_tcp"] == traj["pre_grasp_tcp"] and
+              traj["waypoints"]["grasp_tcp"] == traj["grasp_tcp"] and
+              traj["waypoints"]["cut_tcp"] == traj["cut_tcp"] and
+              traj["waypoints"]["retract_cut_tcp"] == traj["retract_cut_tcp"] and
+              traj["waypoints"]["retract_grasp_tcp"] == traj["retract_grasp_tcp"])
 
     # stem_axis 3D 정렬 잔차 및 횡방향 직교 왜곡 거절 검증
     compat_axis_ok = verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=30.0, tolerance_mm=10.0, stem_axis=(0.0, 0.0, 1.0))
