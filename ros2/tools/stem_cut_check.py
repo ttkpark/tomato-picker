@@ -370,6 +370,10 @@ def test_pre_grasp_and_retract() -> None:
           compute_retract_pose(pose, cutter_offset_up_mm=float('nan')) is None and
           compute_pre_grasp_pose(pose, cutter_offset_up_mm=True) is None and
           compute_retract_pose(pose, cutter_offset_up_mm=True) is None)
+    check("compute_pre_grasp_pose & compute_retract_pose: cutter_offset_up_mm > max_step_mm 거절",
+          compute_pre_grasp_pose(pose, cutter_offset_up_mm=100.0, max_step_mm=80.0) is None and
+          compute_retract_pose(pose, cutter_offset_up_mm=100.0, max_step_mm=80.0) is None and
+          compute_pre_grasp_pose(pose, cutter_offset_up_mm=90.0, max_step_mm=100.0) is not None)
 
 
 def test_transform_cut_pose() -> None:

@@ -31,7 +31,16 @@ def _is_valid_3d_point(pt: Any) -> bool:
     if isinstance(pt, np.ndarray):
         if pt.dtype == bool or pt.size != 3:
             return False
-        return bool(np.all(np.isfinite(pt.astype(np.float64))))
+        if pt.dtype == object:
+            for v in pt.flat:
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                    return False
+            return True
+        try:
+            arr_float = pt.astype(np.float64)
+            return bool(np.all(np.isfinite(arr_float)))
+        except (ValueError, TypeError):
+            return False
     if isinstance(pt, (tuple, list)):
         if len(pt) != 3:
             return False
@@ -43,7 +52,7 @@ def _is_valid_3d_point(pt: Any) -> bool:
 
 
 def _is_valid_cut_pose(cut_pose: Any) -> bool:
-    """CutPose3D 객체의 위치 및 기저 벡터들이 유효한 수치이며 bool이 아닌지 검증."""
+    """CutPose3D 객체의 위치, 기저 벡터, 깊이, 회전행렬이 유효한 수치이며 bool이 아닌지 검증."""
     if cut_pose is None:
         return False
     try:
@@ -57,6 +66,25 @@ def _is_valid_cut_pose(cut_pose: Any) -> bool:
         return False
     if y is not None and not _is_valid_3d_point(y):
         return False
+    d = getattr(cut_pose, "depth_mm", None)
+    if d is not None:
+        if isinstance(d, bool) or not isinstance(d, (int, float)) or not math.isfinite(d) or d <= 0.0:
+            return False
+    rot = getattr(cut_pose, "rotation_matrix", None)
+    if rot is not None:
+        if not isinstance(rot, np.ndarray) or rot.dtype == bool or rot.shape != (3, 3):
+            return False
+        if rot.dtype == object:
+            for v in rot.flat:
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                    return False
+        else:
+            try:
+                rot_float = rot.astype(np.float64)
+                if not np.all(np.isfinite(rot_float)):
+                    return False
+            except (ValueError, TypeError):
+                return False
     return True
 
 
@@ -426,7 +454,7 @@ def compute_pre_grasp_pose(
     - cut_pose is None
     - standoff_mm < 0.0 또는 비수치(NaN/Inf)
     - max_step_mm <= 0.0 또는 비수치(NaN/Inf)
-    - standoff_mm > max_step_mm (단일 직교 이동 한계 초과)
+    - standoff_mm > max_step_mm 또는 cutter_offset_up_mm > max_step_mm (단일 직교 이동 한계 초과)
     - cutter_offset_up_mm < 0.0 또는 비수치(NaN/Inf)
     """
     if cut_pose is None or not _is_valid_cut_pose(cut_pose):
@@ -440,7 +468,7 @@ def compute_pre_grasp_pose(
     if not (isinstance(cutter_offset_up_mm, (int, float)) and not isinstance(cutter_offset_up_mm, bool) and
             math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm >= 0.0):
         return None
-    if standoff_mm > max_step_mm:
+    if standoff_mm > max_step_mm or cutter_offset_up_mm > max_step_mm:
         return None
     try:
         px, py, pz = cut_pose.position_mm
@@ -477,7 +505,7 @@ def compute_retract_pose(
     - cut_pose is None
     - retract_mm < 0.0 또는 비수치(NaN/Inf)
     - max_step_mm <= 0.0 또는 비수치(NaN/Inf)
-    - retract_mm > max_step_mm (단일 직교 이동 한계 초과)
+    - retract_mm > max_step_mm 또는 cutter_offset_up_mm > max_step_mm (단일 직교 이동 한계 초과)
     - cutter_offset_up_mm < 0.0 또는 비수치(NaN/Inf)
     """
     if cut_pose is None or not _is_valid_cut_pose(cut_pose):
@@ -491,7 +519,7 @@ def compute_retract_pose(
     if not (isinstance(cutter_offset_up_mm, (int, float)) and not isinstance(cutter_offset_up_mm, bool) and
             math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm >= 0.0):
         return None
-    if retract_mm > max_step_mm:
+    if retract_mm > max_step_mm or cutter_offset_up_mm > max_step_mm:
         return None
     try:
         px, py, pz = cut_pose.position_mm
@@ -529,20 +557,40 @@ def transform_cut_pose(
         return None
     try:
         if hasattr(transform, "R") and hasattr(transform, "t"):
-            R = np.asarray(transform.R, dtype=np.float64)
-            t_raw = np.asarray(transform.t, dtype=np.float64)
+            R_raw = transform.R
+            t_raw = transform.t
         elif isinstance(transform, np.ndarray) and transform.shape == (4, 4):
-            R = transform[:3, :3].astype(np.float64)
-            t_raw = transform[:3, 3].astype(np.float64)
+            R_raw = transform[:3, :3]
+            t_raw = transform[:3, 3]
         elif isinstance(transform, (tuple, list)) and len(transform) == 2:
-            R = np.asarray(transform[0], dtype=np.float64)
-            t_raw = np.asarray(transform[1], dtype=np.float64)
+            R_raw = transform[0]
+            t_raw = transform[1]
         else:
             return None
 
-        if R.shape != (3, 3) or t_raw.size != 3:
+        if not _is_valid_3d_point(t_raw):
             return None
-        t = t_raw.reshape(3)
+
+        if not isinstance(R_raw, np.ndarray):
+            R_arr = np.asarray(R_raw)
+        else:
+            R_arr = R_raw
+
+        if R_arr.dtype == bool or R_arr.shape != (3, 3):
+            return None
+
+        if R_arr.dtype == object:
+            for v in R_arr.flat:
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                    return None
+            R = R_arr.astype(np.float64)
+        else:
+            try:
+                R = R_arr.astype(np.float64)
+            except (ValueError, TypeError):
+                return None
+
+        t = np.asarray(t_raw, dtype=np.float64).reshape(3)
     except (ValueError, TypeError, IndexError):
         return None
 
@@ -719,7 +767,7 @@ def compute_dual_action_target(
     - cutter_offset_up_mm <= 0.0 또는 비수치(NaN/Inf) (오프셋 0 특이점 거절)
     - standoff_mm < 0.0 또는 비수치(NaN/Inf)
     - max_step_mm <= 0.0 또는 비수치(NaN/Inf)
-    - standoff_mm > max_step_mm (단일 직교 이동 한계 초과)
+    - standoff_mm > max_step_mm 또는 cutter_offset_up_mm > max_step_mm (단일 직교 이동 한계 초과)
     - cut_pose_base의 좌표/벡터에 NaN 또는 Inf 유입
     """
     if cut_pose_base is None or not _is_valid_cut_pose(cut_pose_base):
@@ -733,7 +781,7 @@ def compute_dual_action_target(
     if not (isinstance(max_step_mm, (int, float)) and not isinstance(max_step_mm, bool) and
             math.isfinite(max_step_mm) and max_step_mm > 0.0):
         return None
-    if standoff_mm > max_step_mm:
+    if standoff_mm > max_step_mm or cutter_offset_up_mm > max_step_mm:
         return None
 
     try:
@@ -967,7 +1015,7 @@ def plan_dual_action_trajectory(
     거절 사유:
     - fruit_pos_base 또는 cut_pose_base is None
     - 비수치(NaN/Inf), 0 이하(<=0) 스탠드오프, 음수 공차, 작업공간 매개변수 비수치/모순,
-    - 단일 직교 스텝 상한 초과(pre_standoff_mm > max_step_mm 또는 retract_standoff_mm > max_step_mm),
+    - 단일 직교 스텝 상한 초과(pre_standoff_mm > max_step_mm, retract_standoff_mm > max_step_mm, 또는 cutter_offset_up_mm > max_step_mm),
     - 과실-절단점 정합성 검증 실패, 또는 5-DoF 기구학 진단 실패(pan 특이점 r_xy < 1e-4 등)
     """
     if fruit_pos_base is None or cut_pose_base is None:
@@ -994,7 +1042,11 @@ def plan_dual_action_trajectory(
     if not (isinstance(max_step_mm, (int, float)) and not isinstance(max_step_mm, bool) and
             math.isfinite(max_step_mm) and max_step_mm > 0.0):
         return None
-    if pre_standoff_mm > max_step_mm or retract_standoff_mm > max_step_mm:
+    if (
+        pre_standoff_mm > max_step_mm
+        or retract_standoff_mm > max_step_mm
+        or cutter_offset_up_mm > max_step_mm
+    ):
         return None
     for param in (z_min_mm, z_max_mm, r_min_mm, r_max_mm):
         if not (isinstance(param, (int, float)) and not isinstance(param, bool) and math.isfinite(param)):
