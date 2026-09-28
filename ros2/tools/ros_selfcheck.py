@@ -1747,6 +1747,11 @@ def test_fruit3d() -> None:
           compute_retract_pose(c_pose, retract_mm=90.0, max_step_mm=80.0) is None and
           compute_pre_grasp_pose(c_pose, standoff_mm=True) is None and
           compute_retract_pose(c_pose, max_step_mm=-5.0) is None)
+    check("모션 대기 위치: compute_pre_grasp_pose 및 compute_retract_pose가 cutter_offset_up_mm 적용 및 음수/bool 거절을 엄밀히 수행한다",
+          compute_pre_grasp_pose(c_pose, standoff_mm=50.0, cutter_offset_up_mm=30.0) is not None and
+          compute_retract_pose(c_pose, retract_mm=60.0, cutter_offset_up_mm=30.0) is not None and
+          compute_pre_grasp_pose(c_pose, cutter_offset_up_mm=-5.0) is None and
+          compute_retract_pose(c_pose, cutter_offset_up_mm=True) is None)
 
     r_test = Rigid(np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype=float), np.array([50.0, 100.0, 150.0]))
     t_cpose = transform_cut_pose(c_pose, r_test)
@@ -1868,6 +1873,21 @@ def test_fruit3d() -> None:
           plan_dual_action_trajectory(f_pos_test, c_pose, tolerance_mm=-5.0) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, tolerance_mm=float('nan')) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, tolerance_mm=True) is None)
+    # 5-DoF 롤 가동범위 초과 시 feasible=False 엄밀 판정
+    pose_roll_lim = CutPose3D(
+        position_mm=(200.0, 0.0, 130.0),
+        rotation_matrix=np.column_stack([(1.0, 0.0, 0.0), (0.0, 0.5, 0.866025), (0.0, -0.866025, 0.5)]),
+        x_cut=(1.0, 0.0, 0.0),
+        y_cut=(0.0, 0.5, 0.866025),
+        z_cut=(0.0, -0.866025, 0.5),
+        depth_mm=250.0,
+    )
+    f_roll_lim = (200.0, 30.0 * 0.866025, 130.0 - 30.0 * 0.5)
+    traj_lim = plan_dual_action_trajectory(f_roll_lim, pose_roll_lim, roll_limit_deg=45.0)
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 5-DoF 롤 가동범위 초과 시 feasible=False를 엄밀히 판정한다",
+          traj_lim is not None and traj_lim["compatible"] is True and
+          traj_lim["kinematics_5dof"]["within_roll_limits"] is False and
+          traj_lim["feasible"] is False)
     check("복합 엔드이펙터: evaluate_trajectory_workspace가 바닥(z<15) 및 사거리(r>310) 위반 및 bool 파라미터를 정확히 검출/거절한다",
           evaluate_trajectory_workspace({"bad_floor": (200.0, 0.0, 5.0)}) is not None and
           evaluate_trajectory_workspace({"bad_floor": (200.0, 0.0, 5.0)})["feasible"] is False and

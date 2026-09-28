@@ -376,18 +376,22 @@ def compute_pre_grasp_pose(
     cut_pose: CutPose3D | None,
     standoff_mm: float = 50.0,
     max_step_mm: float = 80.0,
+    cutter_offset_up_mm: float = 0.0,
 ) -> tuple[float, float, float] | None:
     """절단점 진입 전 대기 위치 (Pre-grasp Pose).
 
     docs/study/04_END_EFFECTOR_MANIPULATION.md §5 Step 3 명세:
-    - 엔드이펙터 접근 벡터(x_cut)의 역방향으로 standoff_mm(기본 50mm) 후퇴한 3D 위치.
-    - P_pre = P_cut - standoff_mm * x_cut
+    - 2차 절단 날 기준(cutter_offset_up_mm=0.0):
+      P_pre_cut = P_cut - standoff_mm * x_cut
+    - 1차 파지 TCP 기준(cutter_offset_up_mm > 0.0):
+      P_pre_grasp = P_cut - cutter_offset_up_mm * z_cut - standoff_mm * x_cut
 
     거절:
     - cut_pose is None
     - standoff_mm < 0.0 또는 비수치(NaN/Inf)
     - max_step_mm <= 0.0 또는 비수치(NaN/Inf)
     - standoff_mm > max_step_mm (단일 직교 이동 한계 초과)
+    - cutter_offset_up_mm < 0.0 또는 비수치(NaN/Inf)
     """
     if cut_pose is None:
         return None
@@ -397,19 +401,25 @@ def compute_pre_grasp_pose(
     if not (isinstance(max_step_mm, (int, float)) and not isinstance(max_step_mm, bool) and
             math.isfinite(max_step_mm) and max_step_mm > 0.0):
         return None
+    if not (isinstance(cutter_offset_up_mm, (int, float)) and not isinstance(cutter_offset_up_mm, bool) and
+            math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm >= 0.0):
+        return None
     if standoff_mm > max_step_mm:
         return None
     try:
         px, py, pz = cut_pose.position_mm
         ax, ay, az = cut_pose.x_cut
+        zx, zy, zz = cut_pose.z_cut
     except (AttributeError, ValueError, TypeError):
         return None
-    if not (all(math.isfinite(v) for v in (px, py, pz)) and all(math.isfinite(v) for v in (ax, ay, az))):
+    if not (all(math.isfinite(v) for v in (px, py, pz)) and
+            all(math.isfinite(v) for v in (ax, ay, az)) and
+            all(math.isfinite(v) for v in (zx, zy, zz))):
         return None
     return (
-        float(px - standoff_mm * ax),
-        float(py - standoff_mm * ay),
-        float(pz - standoff_mm * az),
+        float(px - cutter_offset_up_mm * zx - standoff_mm * ax),
+        float(py - cutter_offset_up_mm * zy - standoff_mm * ay),
+        float(pz - cutter_offset_up_mm * zz - standoff_mm * az),
     )
 
 
@@ -417,18 +427,22 @@ def compute_retract_pose(
     cut_pose: CutPose3D | None,
     retract_mm: float = 60.0,
     max_step_mm: float = 80.0,
+    cutter_offset_up_mm: float = 0.0,
 ) -> tuple[float, float, float] | None:
     """절단 완료 후 과실 안전 후퇴 위치 (Retract Pose).
 
     docs/study/04_END_EFFECTOR_MANIPULATION.md §5 Step 9 명세:
-    - 절단점으로부터 접근 벡터(x_cut)의 역방향으로 retract_mm(기본 60mm) 후퇴한 3D 위치.
-    - P_retract = P_cut - retract_mm * x_cut
+    - 2차 절단 날 기준(cutter_offset_up_mm=0.0):
+      P_retract_cut = P_cut - retract_mm * x_cut
+    - 1차 파지 TCP 기준(cutter_offset_up_mm > 0.0):
+      P_retract_grasp = P_cut - cutter_offset_up_mm * z_cut - retract_mm * x_cut
 
     거절:
     - cut_pose is None
     - retract_mm < 0.0 또는 비수치(NaN/Inf)
     - max_step_mm <= 0.0 또는 비수치(NaN/Inf)
     - retract_mm > max_step_mm (단일 직교 이동 한계 초과)
+    - cutter_offset_up_mm < 0.0 또는 비수치(NaN/Inf)
     """
     if cut_pose is None:
         return None
@@ -438,19 +452,25 @@ def compute_retract_pose(
     if not (isinstance(max_step_mm, (int, float)) and not isinstance(max_step_mm, bool) and
             math.isfinite(max_step_mm) and max_step_mm > 0.0):
         return None
+    if not (isinstance(cutter_offset_up_mm, (int, float)) and not isinstance(cutter_offset_up_mm, bool) and
+            math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm >= 0.0):
+        return None
     if retract_mm > max_step_mm:
         return None
     try:
         px, py, pz = cut_pose.position_mm
         ax, ay, az = cut_pose.x_cut
+        zx, zy, zz = cut_pose.z_cut
     except (AttributeError, ValueError, TypeError):
         return None
-    if not (all(math.isfinite(v) for v in (px, py, pz)) and all(math.isfinite(v) for v in (ax, ay, az))):
+    if not (all(math.isfinite(v) for v in (px, py, pz)) and
+            all(math.isfinite(v) for v in (ax, ay, az)) and
+            all(math.isfinite(v) for v in (zx, zy, zz))):
         return None
     return (
-        float(px - retract_mm * ax),
-        float(py - retract_mm * ay),
-        float(pz - retract_mm * az),
+        float(px - cutter_offset_up_mm * zx - retract_mm * ax),
+        float(py - cutter_offset_up_mm * zy - retract_mm * ay),
+        float(pz - cutter_offset_up_mm * zz - retract_mm * az),
     )
 
 
@@ -884,7 +904,7 @@ def plan_dual_action_trajectory(
     4단계: Retract (수확물 분리 및 차체 후퇴 자세)
 
     반환 딕셔너리:
-    - 'feasible': 종합 실행 가능 여부 (compat['compatible'] and workspace['feasible'])
+    - 'feasible': 종합 실행 가능 여부 (compat['compatible'] and workspace['feasible'] and kinematics_5dof['within_roll_limits'])
     - 'compatible': verify_dual_action_compatibility 결과 (동시 파지/절단 기하 공차 호환성)
     - 'distance_mm': 과실 중심 ↔ 절단점 3D 거리
     - 'residual_mm': 30mm 오프셋과의 스칼라 거리 잔차
@@ -1014,8 +1034,8 @@ def plan_dual_action_trajectory(
     if workspace is None:
         return None
 
-    # 종합 실행 가능성 (엔드이펙터 파지/절단 기하 적합성 AND 로봇 팔 5대 경유점 작업공간 한계 충족)
-    is_feasible = bool(compat["compatible"] and workspace["feasible"])
+    # 종합 실행 가능성 (엔드이펙터 파지/절단 기하 적합성 AND 로봇 팔 5대 경유점 작업공간 한계 충족 AND 5-DoF 롤 가동범위 준수)
+    is_feasible = bool(compat["compatible"] and workspace["feasible"] and kin_5dof["within_roll_limits"])
 
     return {
         "feasible": is_feasible,

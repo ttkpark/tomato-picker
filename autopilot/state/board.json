@@ -1714,13 +1714,8 @@
    "done_when": "젯슨 셸에서 ls /dev/video0 /dev/ttyUSB0 등이 보임",
    "attempts": 0,
    "created": "2026-09-20 19:53",
-   "updated": "2026-09-28 13:14",
+   "updated": "2026-09-28 13:23",
    "notes": [
-    {
-     "t": "2026-09-28 01:04",
-     "by": "tester",
-     "text": "4대 자체검증 804/804 전수 합격(45, 102, 564, 93 All RC=0), stem_cut_check 108/108, move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77 대기)."
-    },
     {
      "t": "2026-09-28 12:11",
      "by": "tester",
@@ -1775,6 +1770,11 @@
      "t": "2026-09-28 13:14",
      "by": "builder",
      "text": "2026-09-28 13:14 builder: 줄기 절단 및 깊이 해석 함수군 bool 타입 주입 방어 가드 구축, 4대 자체검증 810/810 전수 합격(45, 102, 570, 93 All RC=0), stem_cut_check 116/116, move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77, T12 대기)."
+    },
+    {
+     "t": "2026-09-28 13:23",
+     "by": "metrologist",
+     "text": "2026-09-28 13:24 metrologist: 복합 툴 3대 모션(Pre-grasp/Grasp/Retract) 및 5-DoF 롤 가동범위 6항목 계측 카드 확립(인수인계 §103), compute_pre_grasp/retract 오프셋 통합 및 롤 한계 초과 시 feasible=False 강제. 4대 자체검증 812/812 전수 합격(45, 102, 572, 93 All RC=0), stem_cut_check 119/119, move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77, T12 대기)."
     }
    ]
   },

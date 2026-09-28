@@ -358,6 +358,19 @@ def test_pre_grasp_and_retract() -> None:
     check("cut_pose 좌표/벡터에 NaN 시 Pre-grasp/Retract 모두 None",
           compute_pre_grasp_pose(pose_nan) is None and compute_retract_pose(pose_nan) is None)
 
+    # 4. 복합 엔드이펙터 cutter_offset_up_mm 반영 검증
+    pre_dual = compute_pre_grasp_pose(pose, standoff_mm=50.0, cutter_offset_up_mm=30.0)
+    ret_dual = compute_retract_pose(pose, retract_mm=60.0, cutter_offset_up_mm=30.0)
+    check("compute_pre_grasp_pose & compute_retract_pose: cutter_offset_up_mm 적용 시 z_cut 감산 반영",
+          pre_dual is not None and ret_dual is not None and
+          abs(pre_dual[0] - 50.0) < 1e-4 and abs(pre_dual[1] - (-25.0)) < 1e-4 and abs(pre_dual[2] - 200.0) < 1e-4 and
+          abs(ret_dual[0] - 60.0) < 1e-4 and abs(ret_dual[1] - (-25.0)) < 1e-4 and abs(ret_dual[2] - 200.0) < 1e-4)
+    check("compute_pre_grasp_pose & compute_retract_pose: cutter_offset_up_mm 음수 및 비수치/bool 거절",
+          compute_pre_grasp_pose(pose, cutter_offset_up_mm=-5.0) is None and
+          compute_retract_pose(pose, cutter_offset_up_mm=float('nan')) is None and
+          compute_pre_grasp_pose(pose, cutter_offset_up_mm=True) is None and
+          compute_retract_pose(pose, cutter_offset_up_mm=True) is None)
+
 
 def test_transform_cut_pose() -> None:
     print("\n[좌표계 변환] transform_cut_pose")
@@ -770,6 +783,32 @@ def test_dual_action_geometry() -> None:
           plan_dual_action_trajectory(fruit_pos, cut_pose, retract_standoff_mm=0.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=-5.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, retract_standoff_mm=-5.0) is None)
+
+    # 20. 5-DoF 롤 가동범위 초과 시 feasible=False 엄밀 판정 검증
+    l_base = np.array([0.0, 1.0, 0.0])
+    u_base = np.array([0.0, 0.0, 1.0])
+    y_60 = tuple(math.cos(math.radians(60.0)) * l_base + math.sin(math.radians(60.0)) * u_base)
+    z_60 = tuple(np.cross((1.0, 0.0, 0.0), y_60))
+    pose_roll60 = CutPose3D(
+        position_mm=(200.0, 0.0, 130.0),
+        rotation_matrix=np.column_stack([(1.0, 0.0, 0.0), y_60, z_60]),
+        x_cut=(1.0, 0.0, 0.0),
+        y_cut=y_60,
+        z_cut=z_60,
+        depth_mm=250.0,
+    )
+    f_pos_60 = (200.0 - 30.0 * z_60[0], 0.0 - 30.0 * z_60[1], 130.0 - 30.0 * z_60[2])
+    traj_roll_limit = plan_dual_action_trajectory(
+        fruit_pos_base=f_pos_60,
+        cut_pose_base=pose_roll60,
+        roll_limit_deg=45.0,
+    )
+    check("plan_dual_action_trajectory: 5-DoF 롤 가동범위 초과 시 feasible=False 엄밀 판정",
+          traj_roll_limit is not None and
+          traj_roll_limit["compatible"] is True and
+          traj_roll_limit["kinematics_5dof"]["within_roll_limits"] is False and
+          traj_roll_limit["feasible"] is False,
+          f"traj_roll={traj_roll_limit.get('feasible') if traj_roll_limit else None}")
 
     # evaluate_trajectory_workspace 단독 검증
     valid_wps = {
