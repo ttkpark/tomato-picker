@@ -1714,13 +1714,8 @@
    "done_when": "젯슨 셸에서 ls /dev/video0 /dev/ttyUSB0 등이 보임",
    "attempts": 0,
    "created": "2026-09-20 19:53",
-   "updated": "2026-09-28 13:39",
+   "updated": "2026-09-28 17:30",
    "notes": [
-    {
-     "t": "2026-09-28 12:40",
-     "by": "metrologist",
-     "text": "2026-09-28 metrologist: 2D 줄기 절단점(find_cut_point) 6항목 계측 카드 확립(docs/인수인계 §98) 및 IEEE 754 NaN/Inf 조용한 가짜 절단점 산출·3D 배열 크래시 엄밀 방어 완료. 4대 자체검증 805종(45/102/565/93 All RC=0), stem_cut_check 110종 전수 합격. 젯슨 5대 서비스 inactive 확인 및 물리 장치 미인식 지속(사람 T77, T12 대기)."
-    },
     {
      "t": "2026-09-28 12:42",
      "by": "builder",
@@ -1775,6 +1770,11 @@
      "t": "2026-09-28 13:39",
      "by": "tester",
      "text": "4대 자체검증 813/813 전수 합격(45, 102, 573, 93 All RC=0), stem_cut_check 122/122, move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77, T12 대기)."
+    },
+    {
+     "t": "2026-09-28 17:30",
+     "by": "tester",
+     "text": "4대 자체검증 813/813 전수 합격(45, 102, 573, 93 All RC=0), stem_cut_check 123/123, move5_check --dry-run 5/5 확인. 젯슨 SSH 5대 서비스 inactive 안전 대기 확인, 물리 장치(/dev/video*, /dev/ttyUSB*, /dev/ttyACM*) 미인식 지속 확인(사람 T77, T12 대기)."
     }
    ]
   },
