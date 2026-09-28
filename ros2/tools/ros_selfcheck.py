@@ -1794,11 +1794,13 @@ def test_fruit3d() -> None:
           abs(compat_res["axis_residual_mm"]) < 1e-4,
           f"compat={compat_res}")
 
-    check("복합 엔드이펙터: 비수치(NaN) 입력 및 음수 오프셋/공차 입력을 엄밀히 거절한다",
+    check("복합 엔드이펙터: 비수치(NaN/bool) 입력 및 음수 오프셋/공차 입력을 엄밀히 거절한다",
           compute_dual_action_target(c_pose, cutter_offset_up_mm=-10.0) is None and
           compute_dual_action_target(c_pose, cutter_offset_up_mm=float('nan')) is None and
+          compute_dual_action_target(c_pose, cutter_offset_up_mm=True) is None and
           verify_dual_action_compatibility((float('nan'), 0.0, 0.0), c_pose.position_mm) is None and
-          verify_dual_action_compatibility(f_pos_test, c_pose.position_mm, tolerance_mm=-5.0) is None)
+          verify_dual_action_compatibility(f_pos_test, c_pose.position_mm, tolerance_mm=-5.0) is None and
+          verify_dual_action_compatibility(f_pos_test, c_pose.position_mm, tolerance_mm=True) is None)
 
     # 횡방향 왜곡(단순 거리 30mm이지만 줄기 축과 직교) 비정렬 과실 거절 검사
     f_pos_skew = (
@@ -1861,24 +1863,27 @@ def test_fruit3d() -> None:
           traj_res["workspace"] is not None and traj_res["workspace"]["feasible"] is True and
           len(traj_res["workspace"]["violations"]) == 0,
           f"workspace={traj_res.get('workspace') if traj_res else None}")
-    check("복합 엔드이펙터: plan_dual_action_trajectory가 종합 실행 가능성(feasible=True) 및 tolerance_mm 유효성을 검증한다",
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 종합 실행 가능성(feasible=True) 및 tolerance_mm 유효성/bool을 검증한다",
           traj_res is not None and traj_res.get("feasible") is True and
           plan_dual_action_trajectory(f_pos_test, c_pose, tolerance_mm=-5.0) is None and
-          plan_dual_action_trajectory(f_pos_test, c_pose, tolerance_mm=float('nan')) is None)
-    check("복합 엔드이펙터: evaluate_trajectory_workspace가 바닥(z<15) 및 사거리(r>310) 위반을 정확히 검출한다",
+          plan_dual_action_trajectory(f_pos_test, c_pose, tolerance_mm=float('nan')) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, tolerance_mm=True) is None)
+    check("복합 엔드이펙터: evaluate_trajectory_workspace가 바닥(z<15) 및 사거리(r>310) 위반 및 bool 파라미터를 정확히 검출/거절한다",
           evaluate_trajectory_workspace({"bad_floor": (200.0, 0.0, 5.0)}) is not None and
           evaluate_trajectory_workspace({"bad_floor": (200.0, 0.0, 5.0)})["feasible"] is False and
           evaluate_trajectory_workspace({"bad_reach": (350.0, 0.0, 100.0)}) is not None and
           evaluate_trajectory_workspace({"bad_reach": (350.0, 0.0, 100.0)})["feasible"] is False and
+          evaluate_trajectory_workspace({"ok": (200.0, 0.0, 100.0)}, z_min_mm=True) is None and
           evaluate_trajectory_workspace(None) is None)
     check("복합 엔드이펙터: compute_dual_action_target이 0이하 오프셋(<=0) 및 비수치 특이점을 엄밀 거절한다",
           compute_dual_action_target(c_pose, cutter_offset_up_mm=0.0) is None and
           compute_dual_action_target(c_pose, cutter_offset_up_mm=-10.0) is None and
           compute_dual_action_target(c_pose, cutter_offset_up_mm=float('nan')) is None)
-    check("복합 엔드이펙터: plan_dual_action_trajectory가 작업공간 모순(z_min>=z_max) 및 비수치 파라미터를 엄밀 거절한다",
+    check("복합 엔드이펙터: plan_dual_action_trajectory가 작업공간 모순(z_min>=z_max) 및 비수치/bool 파라미터를 엄밀 거절한다",
           plan_dual_action_trajectory(f_pos_test, c_pose, z_min_mm=500.0, z_max_mm=400.0) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, r_min_mm=-10.0) is None and
-          plan_dual_action_trajectory(f_pos_test, c_pose, z_min_mm=float('nan')) is None)
+          plan_dual_action_trajectory(f_pos_test, c_pose, z_min_mm=float('nan')) is None and
+          plan_dual_action_trajectory(f_pos_test, c_pose, z_min_mm=True) is None)
     check("복합 엔드이펙터: plan_dual_action_trajectory가 단일 직교 스텝 상한(80mm) 초과 및 비수치를 엄밀 거절한다",
           plan_dual_action_trajectory(f_pos_test, c_pose, pre_standoff_mm=90.0) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, retract_standoff_mm=90.0) is None and

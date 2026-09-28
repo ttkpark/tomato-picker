@@ -547,7 +547,8 @@ def evaluate_5dof_cut_alignment(
     """
     if cut_pose_base is None:
         return None
-    if not (isinstance(roll_limit_deg, (int, float)) and math.isfinite(roll_limit_deg) and roll_limit_deg > 0.0):
+    if not (isinstance(roll_limit_deg, (int, float)) and not isinstance(roll_limit_deg, bool) and
+            math.isfinite(roll_limit_deg) and roll_limit_deg > 0.0):
         return None
     try:
         px, py, pz = cut_pose_base.position_mm
@@ -718,10 +719,10 @@ def verify_dual_action_compatibility(
     """
     if fruit_pos_base is None or cut_pos_base is None:
         return None
-    if not (isinstance(cutter_offset_up_mm, (int, float)) and
+    if not (isinstance(cutter_offset_up_mm, (int, float)) and not isinstance(cutter_offset_up_mm, bool) and
             math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm > 0.0):
         return None
-    if not (isinstance(tolerance_mm, (int, float)) and
+    if not (isinstance(tolerance_mm, (int, float)) and not isinstance(tolerance_mm, bool) and
             math.isfinite(tolerance_mm) and tolerance_mm >= 0.0):
         return None
 
@@ -809,7 +810,7 @@ def evaluate_trajectory_workspace(
     if waypoints is None or not isinstance(waypoints, dict) or len(waypoints) == 0:
         return None
     for param in (z_min_mm, z_max_mm, r_min_mm, r_max_mm):
-        if not (isinstance(param, (int, float)) and math.isfinite(param)):
+        if not (isinstance(param, (int, float)) and not isinstance(param, bool) and math.isfinite(param)):
             return None
     if z_min_mm >= z_max_mm or r_min_mm >= r_max_mm or r_min_mm < 0.0 or z_min_mm < 0.0:
         return None
@@ -900,30 +901,30 @@ def plan_dual_action_trajectory(
     """
     if fruit_pos_base is None or cut_pose_base is None:
         return None
-    if not (isinstance(cutter_offset_up_mm, (int, float)) and
+    if not (isinstance(cutter_offset_up_mm, (int, float)) and not isinstance(cutter_offset_up_mm, bool) and
             math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm > 0.0):
         return None
     # 궤적 4단계 시퀀스 물리 정합성: 대기(pre) 및 후퇴(retract) 스탠드오프는
     # 반드시 0 초과(>0)의 전진/후퇴 여유 공간이 확보되어야 함 (0 이하 시 충돌회피 대기/후퇴 불능)
-    if not (isinstance(pre_standoff_mm, (int, float)) and
+    if not (isinstance(pre_standoff_mm, (int, float)) and not isinstance(pre_standoff_mm, bool) and
             math.isfinite(pre_standoff_mm) and pre_standoff_mm > 0.0):
         return None
-    if not (isinstance(retract_standoff_mm, (int, float)) and
+    if not (isinstance(retract_standoff_mm, (int, float)) and not isinstance(retract_standoff_mm, bool) and
             math.isfinite(retract_standoff_mm) and retract_standoff_mm > 0.0):
         return None
-    if not (isinstance(tolerance_mm, (int, float)) and
+    if not (isinstance(tolerance_mm, (int, float)) and not isinstance(tolerance_mm, bool) and
             math.isfinite(tolerance_mm) and tolerance_mm >= 0.0):
         return None
-    if not (isinstance(roll_limit_deg, (int, float)) and
+    if not (isinstance(roll_limit_deg, (int, float)) and not isinstance(roll_limit_deg, bool) and
             math.isfinite(roll_limit_deg) and roll_limit_deg > 0.0):
         return None
-    if not (isinstance(max_step_mm, (int, float)) and
+    if not (isinstance(max_step_mm, (int, float)) and not isinstance(max_step_mm, bool) and
             math.isfinite(max_step_mm) and max_step_mm > 0.0):
         return None
     if pre_standoff_mm > max_step_mm or retract_standoff_mm > max_step_mm:
         return None
     for param in (z_min_mm, z_max_mm, r_min_mm, r_max_mm):
-        if not (isinstance(param, (int, float)) and math.isfinite(param)):
+        if not (isinstance(param, (int, float)) and not isinstance(param, bool) and math.isfinite(param)):
             return None
     if z_min_mm >= z_max_mm or r_min_mm >= r_max_mm or r_min_mm < 0.0 or z_min_mm < 0.0:
         return None

@@ -517,9 +517,10 @@ def test_evaluate_5dof_cut_alignment() -> None:
     )
     check("cut_pose_base 좌표/벡터 NaN 또는 Inf 시 None(비수치 거절)",
           evaluate_5dof_cut_alignment(pose_nan_eval) is None)
-    check("roll_limit_deg 비수치(<=0 또는 NaN) 시 None",
+    check("roll_limit_deg 비수치(<=0 또는 NaN/bool) 시 None",
           evaluate_5dof_cut_alignment(pose_aligned, roll_limit_deg=-10.0) is None and
-          evaluate_5dof_cut_alignment(pose_aligned, roll_limit_deg=float('nan')) is None)
+          evaluate_5dof_cut_alignment(pose_aligned, roll_limit_deg=float('nan')) is None and
+          evaluate_5dof_cut_alignment(pose_aligned, roll_limit_deg=True) is None)
 
 
 def test_dual_action_geometry() -> None:
@@ -625,10 +626,12 @@ def test_dual_action_geometry() -> None:
           verify_dual_action_compatibility(fruit_pos, (200.0, float('inf'), 130.0)) is None)
 
     # 10. 특이점(거리 0) 및 음수 공차 거절
-    check("verify_dual_action_compatibility: 과실-절단점 일치(거리<1e-4) 및 음수 공차 거절",
+    check("verify_dual_action_compatibility: 과실-절단점 일치(거리<1e-4) 및 음수/bool 공차 거절",
           verify_dual_action_compatibility(fruit_pos, fruit_pos) is None and
           verify_dual_action_compatibility(fruit_pos, cut_pos, tolerance_mm=-1.0) is None and
-          verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=0.0) is None)
+          verify_dual_action_compatibility(fruit_pos, cut_pos, tolerance_mm=True) is None and
+          verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=0.0) is None and
+          verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=True) is None)
 
     # 11. plan_dual_action_trajectory 4단계 시퀀셜 궤적 계획 검증
     # 정상 시나리오: fruit (200, 0, 100), cut (200, 0, 130), offset=30, pre=50, ret=60, x_cut=[1,0,0]
@@ -720,22 +723,25 @@ def test_dual_action_geometry() -> None:
           len(traj["workspace"]["violations"]) == 0)
 
     # 15. 음수 허용오차(tolerance_mm) 및 비수치 거절 검증
-    check("plan_dual_action_trajectory: 음수 허용오차(<0) 및 비수치 거절",
+    check("plan_dual_action_trajectory: 음수 허용오차(<0) 및 비수치/bool 거절",
           plan_dual_action_trajectory(fruit_pos, cut_pose, tolerance_mm=-1.0) is None and
-          plan_dual_action_trajectory(fruit_pos, cut_pose, tolerance_mm=float('nan')) is None)
+          plan_dual_action_trajectory(fruit_pos, cut_pose, tolerance_mm=float('nan')) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, tolerance_mm=True) is None)
 
     # 16. 작업공간 파라미터 모순 및 비수치 거절 검증
-    check("plan_dual_action_trajectory: 작업공간 모순(z_min>=z_max, r_min<0) 및 비수치 거절",
+    check("plan_dual_action_trajectory: 작업공간 모순(z_min>=z_max, r_min<0) 및 비수치/bool 거절",
           plan_dual_action_trajectory(fruit_pos, cut_pose, z_min_mm=500.0, z_max_mm=400.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, r_min_mm=-10.0) is None and
-          plan_dual_action_trajectory(fruit_pos, cut_pose, z_min_mm=float('nan')) is None)
+          plan_dual_action_trajectory(fruit_pos, cut_pose, z_min_mm=float('nan')) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, z_min_mm=True) is None)
 
     # 17. 단일 직교 스텝 상한(max_step_mm, 기본 80.0mm = ARM_CART_MAX_STEP_MM) 초과 및 비수치 거절 검증
-    check("plan_dual_action_trajectory: 단일 직교 스텝 상한(80mm) 초과 및 비수치 거절",
+    check("plan_dual_action_trajectory: 단일 직교 스텝 상한(80mm) 초과 및 비수치/bool 거절",
           plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=90.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, retract_standoff_mm=90.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, max_step_mm=-5.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, max_step_mm=float('nan')) is None and
+          plan_dual_action_trajectory(fruit_pos, cut_pose, max_step_mm=True) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=90.0, max_step_mm=100.0) is not None and
           plan_dual_action_trajectory(fruit_pos, cut_pose).get("max_step_mm") == 80.0)
 
@@ -796,12 +802,13 @@ def test_dual_action_geometry() -> None:
           any("reach overload" in v for v in ws_far["violations"]))
 
     # 매개변수 모순 및 비수치 거절
-    check("evaluate_trajectory_workspace: 결측/모순(z_min>=z_max)/비수치 거절",
+    check("evaluate_trajectory_workspace: 결측/모순(z_min>=z_max)/비수치/bool 거절",
           evaluate_trajectory_workspace(None) is None and
           evaluate_trajectory_workspace({}) is None and
           evaluate_trajectory_workspace(valid_wps, z_min_mm=500.0, z_max_mm=400.0) is None and
           evaluate_trajectory_workspace(valid_wps, r_min_mm=-10.0) is None and
-          evaluate_trajectory_workspace(valid_wps, z_min_mm=float('nan')) is None)
+          evaluate_trajectory_workspace(valid_wps, z_min_mm=float('nan')) is None and
+          evaluate_trajectory_workspace(valid_wps, z_min_mm=True) is None)
 
 
 
