@@ -1680,6 +1680,11 @@ def test_fruit3d() -> None:
     check("T89 계측: yolo_seg 추출 줄기 마스크가 stem_cut.find_cut_point에 정상 연동된다",
           c_pt is not None and abs(c_pt.v - 15.0) <= 2.0,
           f"c_pt={c_pt}")
+    check("2D 줄기 절단점: find_cut_point가 비수치(NaN/Inf) 및 차원 불일치(3D) 입력을 엄밀히 거절한다",
+          find_cut_point(s_mask, f_mask, px_per_mm=float("nan"), cut_offset_mm=10.0) is None and
+          find_cut_point(s_mask, f_mask, px_per_mm=1.0, cut_offset_mm=float("nan")) is None and
+          find_cut_point(s_mask, f_mask, px_per_mm=float("inf"), cut_offset_mm=10.0) is None and
+          find_cut_point(np.ones((10, 10, 3), bool), np.ones((10, 10, 3), bool), 1.0, 10.0) is None)
 
     # 6-DoF 절단 포즈 및 국소 깊이 평활화 계측 검증 (study 04 §2.2, docs/인수인계 §80)
     from tomato_perception.stem_cut import (

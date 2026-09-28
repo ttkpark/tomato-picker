@@ -61,6 +61,8 @@ def zhang_suen_thin(mask: np.ndarray) -> np.ndarray:
     표준 알고리즘을 직접 짠다 — 마스크가 보통 수백 화소라 순수 파이썬 루프도
     실용적 속도로 끝난다(자체검증 기준 100x100 마스크 <50ms).
     """
+    if not isinstance(mask, np.ndarray) or mask.ndim != 2 or mask.size == 0:
+        return np.zeros((0, 0), dtype=bool)
     img = mask.astype(np.uint8).copy()
     changed = True
     while changed:
@@ -96,6 +98,8 @@ def zhang_suen_thin(mask: np.ndarray) -> np.ndarray:
 
 def skeleton_points(skeleton: np.ndarray) -> np.ndarray:
     """스켈레톤의 화소 좌표를 (N,2) [u,v] 배열로. 비어 있으면 shape (0,2)."""
+    if not isinstance(skeleton, np.ndarray) or skeleton.ndim != 2:
+        return np.zeros((0, 2), dtype=np.float64)
     ys, xs = np.nonzero(skeleton)
     return np.stack([xs, ys], axis=1).astype(np.float64)
 
@@ -115,11 +119,20 @@ def find_cut_point(
 
     px_per_mm: 그 깊이에서의 화소/mm 환산(`fx / depth_mm` 등, 호출부 책임).
     실패 사유:
+      - stem_mask 또는 fruit_mask가 2D ndarray가 아님
+      - px_per_mm 또는 cut_offset_mm이 비수치(NaN/Inf)이거나 0 이하(<=0)
+      - stem_mask와 fruit_mask의 형상(shape)이 다름
       - 줄기 스켈레톤이 비어 있다 (마스크가 너무 작거나 끊겼다)
       - 과실과 줄기가 맞닿는 화소가 없다 (분할이 어긋났다)
       - 스켈레톤이 꽃받침 접점에서 cut_offset_mm만큼 뻗어나갈 만큼 길지 않다
     """
-    if px_per_mm <= 0.0 or cut_offset_mm <= 0.0:
+    if not isinstance(stem_mask, np.ndarray) or not isinstance(fruit_mask, np.ndarray):
+        return None
+    if stem_mask.ndim != 2 or fruit_mask.ndim != 2:
+        return None
+    if not (isinstance(px_per_mm, (int, float)) and math.isfinite(px_per_mm) and px_per_mm > 0.0):
+        return None
+    if not (isinstance(cut_offset_mm, (int, float)) and math.isfinite(cut_offset_mm) and cut_offset_mm > 0.0):
         return None
     if stem_mask.shape != fruit_mask.shape:
         return None  # 다른 프레임/해상도의 마스크를 섞은 것 — 조용히 계산하지 않는다

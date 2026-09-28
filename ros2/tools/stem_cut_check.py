@@ -138,6 +138,14 @@ def test_find_cut_point_rejections() -> None:
     check("cut_offset_mm <= 0이면 None(비물리적 오프셋 거절)",
           find_cut_point(stem, fruit, px_per_mm=1.0, cut_offset_mm=0.0) is None and
           find_cut_point(stem, fruit, px_per_mm=1.0, cut_offset_mm=-5.0) is None)
+    check("find_cut_point: 비수치(NaN/Inf) 축척 또는 오프셋 시 None(조용한 가짜 절단점 산출 방어)",
+          find_cut_point(stem, fruit, px_per_mm=float("nan"), cut_offset_mm=12.0) is None and
+          find_cut_point(stem, fruit, px_per_mm=1.0, cut_offset_mm=float("nan")) is None and
+          find_cut_point(stem, fruit, px_per_mm=float("inf"), cut_offset_mm=12.0) is None and
+          find_cut_point(stem, fruit, px_per_mm=1.0, cut_offset_mm=float("inf")) is None)
+    check("find_cut_point: 3D 배열 또는 비배열 마스크 입력 시 None(차원 불일치 크래시 방어)",
+          find_cut_point(np.ones((20, 20, 3), bool), np.ones((20, 20, 3), bool), 1.0, 12.0) is None and
+          find_cut_point("invalid", fruit, 1.0, 12.0) is None)
 
 
 def test_offset_scales_with_px_per_mm() -> None:
