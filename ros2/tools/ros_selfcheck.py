@@ -1711,6 +1711,13 @@ def test_fruit3d() -> None:
     check("6-DoF 절단 포즈: compute_cutting_pose가 무효 깊이(<=0) 및 접선 부재(0벡터)를 거절한다",
           compute_cutting_pose(c_pt, depth_mm=0.0, intr=dummy_intr) is None and
           compute_cutting_pose(c_pt_zero, depth_mm=250.0, intr=dummy_intr) is None)
+    class _FailDeproject:
+        def deproject(self, u, v, z): return None
+    class _NanDeproject:
+        def deproject(self, u, v, z): return (float('nan'), 0.0, z)
+    check("6-DoF 절단 포즈: compute_cutting_pose가 deproject 실패(None) 및 비수치(NaN) 역투영 좌표를 엄밀히 거절한다",
+          compute_cutting_pose(c_pt, depth_mm=250.0, intr=_FailDeproject()) is None and
+          compute_cutting_pose(c_pt, depth_mm=250.0, intr=_NanDeproject()) is None)
 
     # 국소 깊이 평활화
     fake_dmap = np.zeros((40, 40), dtype=np.float32)
@@ -1720,6 +1727,12 @@ def test_fruit3d() -> None:
     check("줄기 깊이 평활화: sample_stem_depth가 결손(0)을 배제하고 국소 윈도우 중앙값을 정상 산출한다",
           s_depth is not None and abs(s_depth - 245.0) < 1e-4,
           f"sampled={s_depth}")
+    check("줄기 깊이 평활화: sample_stem_depth가 3D 배열 및 비수치/모순 깊이 범위를 엄밀히 거절한다",
+          sample_stem_depth(np.ones((20, 20, 3), dtype=np.float32), c_pt.u, c_pt.v) is None and
+          sample_stem_depth(fake_dmap, c_pt.u, c_pt.v, min_depth_mm=float('nan')) is None and
+          sample_stem_depth(fake_dmap, c_pt.u, c_pt.v, min_depth_mm=500.0, max_depth_mm=300.0) is None and
+          sample_stem_depth(fake_dmap, c_pt.u, c_pt.v, window_radius=True) is None and
+          sample_stem_depth(fake_dmap, c_pt.u, c_pt.v, window_radius=1.5) is None)
 
     # Pre-grasp 모션 대기 위치 및 강체 좌표계 변환 계측 (study 04 §5, docs/인수인계 §81)
     pre_p = compute_pre_grasp_pose(c_pose, standoff_mm=50.0)

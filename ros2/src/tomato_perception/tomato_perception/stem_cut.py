@@ -211,13 +211,25 @@ def sample_stem_depth(
     1~3mm 직경의 가는 줄기는 깊이 맵 결손(0값)이나 배경 난반사가 잦으므로,
     절단 화소 (u, v) 주변 (2*radius+1)^2 영역에서 유효 대역([min, max] mm)
     화소들의 중앙값을 취한다. 유효 화소가 하나도 없으면 None 반환.
+
+    거절 사유:
+      - depth_map이 None, 비-ndarray, 빈 배열, 또는 2D 배열이 아님 (ndim != 2)
+      - u 또는 v가 비수치(NaN/Inf)이거나 유효하지 않음
+      - window_radius가 정수가 아니거나(bool 제외) 음수(<0)
+      - min_depth_mm 또는 max_depth_mm이 비수치(NaN/Inf), min_depth_mm < 0, 또는 min_depth_mm >= max_depth_mm
     """
     if depth_map is None or not isinstance(depth_map, np.ndarray) or depth_map.size == 0:
+        return None
+    if depth_map.ndim != 2:
         return None
     if not (isinstance(u, (int, float)) and isinstance(v, (int, float)) and
             math.isfinite(u) and math.isfinite(v)):
         return None
-    if window_radius < 0:
+    if not (isinstance(window_radius, int) and not isinstance(window_radius, bool) and window_radius >= 0):
+        return None
+    if not (isinstance(min_depth_mm, (int, float)) and math.isfinite(min_depth_mm) and min_depth_mm >= 0.0):
+        return None
+    if not (isinstance(max_depth_mm, (int, float)) and math.isfinite(max_depth_mm) and max_depth_mm > min_depth_mm):
         return None
     h, w = depth_map.shape[:2]
     iu = int(round(u))
@@ -253,41 +265,67 @@ def compute_cutting_pose(
     5. 회전 행렬 R_cut = [x_cut, y_cut, z_cut] (우수계 SO(3), det(R) = +1.0)
 
     거절 사유:
-    - cut_point is None
+    - cut_point is None 또는 필수 속성 결측/비수치
     - not math.isfinite(depth_mm) or depth_mm <= 0.0 (무효 깊이)
+    - 3D 역투영 실패 (deproject 결과 None 또는 NaN/Inf 비수치 유입)
     - ||v_cam x z_cut|| < 1e-4 (줄기가 카메라 광축과 평행한 특이점)
     """
     if cut_point is None:
         return None
     if not (isinstance(depth_mm, (int, float)) and math.isfinite(depth_mm) and depth_mm > 0.0):
         return None
-    if not (isinstance(cut_point.u, (int, float)) and isinstance(cut_point.v, (int, float)) and
-            math.isfinite(cut_point.u) and math.isfinite(cut_point.v)):
+    try:
+        u_val = cut_point.u
+        v_val = cut_point.v
+    except AttributeError:
+        return None
+    if not (isinstance(u_val, (int, float)) and isinstance(v_val, (int, float)) and
+            math.isfinite(u_val) and math.isfinite(v_val)):
         return None
 
     # 1. 3D 역투영
     if hasattr(intr, "deproject"):
-        p_cut = intr.deproject(cut_point.u, cut_point.v, depth_mm)
+        try:
+            p_cut = intr.deproject(u_val, v_val, depth_mm)
+        except Exception:
+            return None
     else:
         fx = getattr(intr, "fx", 438.0)
         fy = getattr(intr, "fy", 438.0)
         ppx = getattr(intr, "ppx", 424.0)
         ppy = getattr(intr, "ppy", 240.0)
-        if fx <= 0.0 or fy <= 0.0:
+        if not (isinstance(fx, (int, float)) and isinstance(fy, (int, float)) and
+                isinstance(ppx, (int, float)) and isinstance(ppy, (int, float))):
             return None
-        x = (cut_point.u - ppx) * depth_mm / fx
-        y = (cut_point.v - ppy) * depth_mm / fy
+        if not (math.isfinite(fx) and math.isfinite(fy) and fx > 0.0 and fy > 0.0):
+            return None
+        if not (math.isfinite(ppx) and math.isfinite(ppy)):
+            return None
+        x = (u_val - ppx) * depth_mm / fx
+        y = (v_val - ppy) * depth_mm / fy
         p_cut = (float(x), float(y), float(depth_mm))
+
+    if p_cut is None:
+        return None
+    try:
+        p_arr = np.asarray(p_cut, dtype=np.float64).reshape(3)
+    except (ValueError, TypeError, IndexError):
+        return None
+    if not np.all(np.isfinite(p_arr)):
+        return None
 
     # 2. 줄기 축 벡터 z_cut (2D 접선 또는 3D 접선)
     if not hasattr(cut_point, "tangent") or cut_point.tangent is None:
         return None
     t = cut_point.tangent
-    if len(t) == 2:
-        zx, zy, zz = float(t[0]), float(t[1]), 0.0
-    elif len(t) == 3:
-        zx, zy, zz = float(t[0]), float(t[1]), float(t[2])
-    else:
+    try:
+        if len(t) == 2:
+            zx, zy, zz = float(t[0]), float(t[1]), 0.0
+        elif len(t) == 3:
+            zx, zy, zz = float(t[0]), float(t[1]), float(t[2])
+        else:
+            return None
+    except (TypeError, ValueError, IndexError):
         return None
     if not (math.isfinite(zx) and math.isfinite(zy) and math.isfinite(zz)):
         return None
@@ -316,7 +354,7 @@ def compute_cutting_pose(
     rot_matrix = np.column_stack([x_cut, y_cut, z_cut])
 
     return CutPose3D(
-        position_mm=(float(p_cut[0]), float(p_cut[1]), float(p_cut[2])),
+        position_mm=(float(p_arr[0]), float(p_arr[1]), float(p_arr[2])),
         rotation_matrix=rot_matrix,
         x_cut=(float(x_cut[0]), float(x_cut[1]), float(x_cut[2])),
         y_cut=(float(y_cut[0]), float(y_cut[1]), float(y_cut[2])),
@@ -343,8 +381,11 @@ def compute_pre_grasp_pose(
         return None
     if not (isinstance(standoff_mm, (int, float)) and math.isfinite(standoff_mm) and standoff_mm >= 0.0):
         return None
-    px, py, pz = cut_pose.position_mm
-    ax, ay, az = cut_pose.x_cut
+    try:
+        px, py, pz = cut_pose.position_mm
+        ax, ay, az = cut_pose.x_cut
+    except (AttributeError, ValueError, TypeError):
+        return None
     if not (all(math.isfinite(v) for v in (px, py, pz)) and all(math.isfinite(v) for v in (ax, ay, az))):
         return None
     return (
@@ -372,8 +413,11 @@ def compute_retract_pose(
         return None
     if not (isinstance(retract_mm, (int, float)) and math.isfinite(retract_mm) and retract_mm >= 0.0):
         return None
-    px, py, pz = cut_pose.position_mm
-    ax, ay, az = cut_pose.x_cut
+    try:
+        px, py, pz = cut_pose.position_mm
+        ax, ay, az = cut_pose.x_cut
+    except (AttributeError, ValueError, TypeError):
+        return None
     if not (all(math.isfinite(v) for v in (px, py, pz)) and all(math.isfinite(v) for v in (ax, ay, az))):
         return None
     return (
@@ -427,15 +471,24 @@ def transform_cut_pose(
     if not np.allclose(R.T @ R, np.eye(3), atol=1e-4):
         return None  # 비직교(전단 shear/비강체) 변환 거절
 
-    p_old = np.array(cut_pose.position_mm, dtype=np.float64)
-    if not np.all(np.isfinite(p_old)):
+    try:
+        p_old = np.array(cut_pose.position_mm, dtype=np.float64)
+        x_old = np.array(cut_pose.x_cut, dtype=np.float64)
+        y_old = np.array(cut_pose.y_cut, dtype=np.float64)
+        z_old = np.array(cut_pose.z_cut, dtype=np.float64)
+        rot_old = np.asarray(cut_pose.rotation_matrix, dtype=np.float64)
+    except (AttributeError, ValueError, TypeError):
+        return None
+    if not (np.all(np.isfinite(p_old)) and np.all(np.isfinite(x_old)) and
+            np.all(np.isfinite(y_old)) and np.all(np.isfinite(z_old)) and
+            np.all(np.isfinite(rot_old))):
         return None
     p_new = R @ p_old + t
 
-    x_new = R @ np.array(cut_pose.x_cut, dtype=np.float64)
-    y_new = R @ np.array(cut_pose.y_cut, dtype=np.float64)
-    z_new = R @ np.array(cut_pose.z_cut, dtype=np.float64)
-    rot_new = R @ cut_pose.rotation_matrix
+    x_new = R @ x_old
+    y_new = R @ y_old
+    z_new = R @ z_old
+    rot_new = R @ rot_old
 
     x_norm = float(np.linalg.norm(x_new))
     y_norm = float(np.linalg.norm(y_new))
@@ -478,9 +531,12 @@ def evaluate_5dof_cut_alignment(
         return None
     if not (isinstance(roll_limit_deg, (int, float)) and math.isfinite(roll_limit_deg) and roll_limit_deg > 0.0):
         return None
-    px, py, pz = cut_pose_base.position_mm
-    ax, ay, az = cut_pose_base.x_cut
-    bx, by, bz = cut_pose_base.y_cut
+    try:
+        px, py, pz = cut_pose_base.position_mm
+        ax, ay, az = cut_pose_base.x_cut
+        bx, by, bz = cut_pose_base.y_cut
+    except (AttributeError, ValueError, TypeError):
+        return None
 
     if not (all(math.isfinite(v) for v in (px, py, pz)) and
             all(math.isfinite(v) for v in (ax, ay, az)) and
@@ -588,9 +644,12 @@ def compute_dual_action_target(
             math.isfinite(standoff_mm) and standoff_mm >= 0.0):
         return None
 
-    px, py, pz = cut_pose_base.position_mm
-    ax, ay, az = cut_pose_base.x_cut
-    zx, zy, zz = cut_pose_base.z_cut
+    try:
+        px, py, pz = cut_pose_base.position_mm
+        ax, ay, az = cut_pose_base.x_cut
+        zx, zy, zz = cut_pose_base.z_cut
+    except (AttributeError, ValueError, TypeError):
+        return None
 
     if not (all(math.isfinite(v) for v in (px, py, pz)) and
             all(math.isfinite(v) for v in (ax, ay, az)) and
@@ -843,9 +902,12 @@ def plan_dual_action_trajectory(
     if z_min_mm >= z_max_mm or r_min_mm >= r_max_mm or r_min_mm < 0.0 or z_min_mm < 0.0:
         return None
 
-    px, py, pz = cut_pose_base.position_mm
-    ax, ay, az = cut_pose_base.x_cut
-    zx, zy, zz = cut_pose_base.z_cut
+    try:
+        px, py, pz = cut_pose_base.position_mm
+        ax, ay, az = cut_pose_base.x_cut
+        zx, zy, zz = cut_pose_base.z_cut
+    except (AttributeError, ValueError, TypeError):
+        return None
 
     if not (all(math.isfinite(v) for v in (px, py, pz)) and
             all(math.isfinite(v) for v in (ax, ay, az)) and

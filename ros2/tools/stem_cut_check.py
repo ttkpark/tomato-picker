@@ -193,6 +193,15 @@ def test_sample_stem_depth() -> None:
           sample_stem_depth(np.zeros((0, 0), dtype=np.float32), 0, 0) is None)
     check("window_radius < 0이면 None(유효 범위 거절)",
           sample_stem_depth(dmap, 50.0, 50.0, window_radius=-1) is None)
+    check("sample_stem_depth: 3D 배열 및 비수치/모순 깊이 범위 거절(차원/범위 오류 방어)",
+          sample_stem_depth(np.ones((20, 20, 3), dtype=np.float32), 10.0, 10.0) is None and
+          sample_stem_depth("invalid_depth", 10.0, 10.0) is None and
+          sample_stem_depth(dmap, 50.0, 50.0, min_depth_mm=float('nan')) is None and
+          sample_stem_depth(dmap, 50.0, 50.0, max_depth_mm=float('nan')) is None and
+          sample_stem_depth(dmap, 50.0, 50.0, min_depth_mm=-10.0) is None and
+          sample_stem_depth(dmap, 50.0, 50.0, min_depth_mm=500.0, max_depth_mm=300.0) is None and
+          sample_stem_depth(dmap, 50.0, 50.0, window_radius=True) is None and
+          sample_stem_depth(dmap, 50.0, 50.0, window_radius=2.5) is None)
 
 
 class _DummyIntrinsics:
@@ -287,6 +296,17 @@ def test_compute_cutting_pose() -> None:
     check("cut_point 좌표/접선에 NaN 또는 Inf 시 None(비수치 거절)",
           compute_cutting_pose(CutPoint(u=float('nan'), v=50.0, tangent=(0.0, 1.0)), depth_mm=200.0, intr=intr) is None and
           compute_cutting_pose(CutPoint(u=50.0, v=50.0, tangent=(float('nan'), 1.0)), depth_mm=200.0, intr=intr) is None)
+
+    # 5. deproject 실패 및 비수치 좌표 거절
+    class _FailingDeprojectIntr:
+        def deproject(self, u: float, v: float, z_mm: float):
+            return None
+    class _NanDeprojectIntr:
+        def deproject(self, u: float, v: float, z_mm: float):
+            return (float('nan'), 0.0, z_mm)
+    check("compute_cutting_pose: deproject 반환 None 또는 NaN 시 None(조용한 NaN 생성 및 크래시 방어)",
+          compute_cutting_pose(cut_straight, depth_mm=200.0, intr=_FailingDeprojectIntr()) is None and
+          compute_cutting_pose(cut_straight, depth_mm=200.0, intr=_NanDeprojectIntr()) is None)
 
 
 def test_pre_grasp_and_retract() -> None:
