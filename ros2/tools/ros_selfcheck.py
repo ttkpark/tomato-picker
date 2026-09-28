@@ -1899,6 +1899,10 @@ def test_fruit3d() -> None:
           plan_dual_action_trajectory(f_pos_test, c_pose, retract_standoff_mm=0.0) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, pre_standoff_mm=-5.0) is None and
           plan_dual_action_trajectory(f_pos_test, c_pose, retract_standoff_mm=-5.0) is None)
+    check("줄기절단: find_cut_point 및 compute_cutting_pose가 bool 인수 주입을 엄밀 거절(None)한다",
+          find_cut_point(np.ones((20, 20), bool), np.ones((20, 20), bool), px_per_mm=True) is None and
+          compute_cutting_pose(c_pt, depth_mm=True, intr=INTR) is None and
+          sample_stem_depth(depth, 50.0, 50.0, min_depth_mm=True) is None)
 
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)

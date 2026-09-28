@@ -130,9 +130,11 @@ def find_cut_point(
         return None
     if stem_mask.ndim != 2 or fruit_mask.ndim != 2:
         return None
-    if not (isinstance(px_per_mm, (int, float)) and math.isfinite(px_per_mm) and px_per_mm > 0.0):
+    if not (isinstance(px_per_mm, (int, float)) and not isinstance(px_per_mm, bool) and
+            math.isfinite(px_per_mm) and px_per_mm > 0.0):
         return None
-    if not (isinstance(cut_offset_mm, (int, float)) and math.isfinite(cut_offset_mm) and cut_offset_mm > 0.0):
+    if not (isinstance(cut_offset_mm, (int, float)) and not isinstance(cut_offset_mm, bool) and
+            math.isfinite(cut_offset_mm) and cut_offset_mm > 0.0):
         return None
     if stem_mask.shape != fruit_mask.shape:
         return None  # 다른 프레임/해상도의 마스크를 섞은 것 — 조용히 계산하지 않는다
@@ -222,14 +224,17 @@ def sample_stem_depth(
         return None
     if depth_map.ndim != 2:
         return None
-    if not (isinstance(u, (int, float)) and isinstance(v, (int, float)) and
+    if not (isinstance(u, (int, float)) and not isinstance(u, bool) and
+            isinstance(v, (int, float)) and not isinstance(v, bool) and
             math.isfinite(u) and math.isfinite(v)):
         return None
     if not (isinstance(window_radius, int) and not isinstance(window_radius, bool) and window_radius >= 0):
         return None
-    if not (isinstance(min_depth_mm, (int, float)) and math.isfinite(min_depth_mm) and min_depth_mm >= 0.0):
+    if not (isinstance(min_depth_mm, (int, float)) and not isinstance(min_depth_mm, bool) and
+            math.isfinite(min_depth_mm) and min_depth_mm >= 0.0):
         return None
-    if not (isinstance(max_depth_mm, (int, float)) and math.isfinite(max_depth_mm) and max_depth_mm > min_depth_mm):
+    if not (isinstance(max_depth_mm, (int, float)) and not isinstance(max_depth_mm, bool) and
+            math.isfinite(max_depth_mm) and max_depth_mm > min_depth_mm):
         return None
     h, w = depth_map.shape[:2]
     iu = int(round(u))
@@ -272,14 +277,16 @@ def compute_cutting_pose(
     """
     if cut_point is None:
         return None
-    if not (isinstance(depth_mm, (int, float)) and math.isfinite(depth_mm) and depth_mm > 0.0):
+    if not (isinstance(depth_mm, (int, float)) and not isinstance(depth_mm, bool) and
+            math.isfinite(depth_mm) and depth_mm > 0.0):
         return None
     try:
         u_val = cut_point.u
         v_val = cut_point.v
     except AttributeError:
         return None
-    if not (isinstance(u_val, (int, float)) and isinstance(v_val, (int, float)) and
+    if not (isinstance(u_val, (int, float)) and not isinstance(u_val, bool) and
+            isinstance(v_val, (int, float)) and not isinstance(v_val, bool) and
             math.isfinite(u_val) and math.isfinite(v_val)):
         return None
 
@@ -294,8 +301,10 @@ def compute_cutting_pose(
         fy = getattr(intr, "fy", 438.0)
         ppx = getattr(intr, "ppx", 424.0)
         ppy = getattr(intr, "ppy", 240.0)
-        if not (isinstance(fx, (int, float)) and isinstance(fy, (int, float)) and
-                isinstance(ppx, (int, float)) and isinstance(ppy, (int, float))):
+        if not (isinstance(fx, (int, float)) and not isinstance(fx, bool) and
+                isinstance(fy, (int, float)) and not isinstance(fy, bool) and
+                isinstance(ppx, (int, float)) and not isinstance(ppx, bool) and
+                isinstance(ppy, (int, float)) and not isinstance(ppy, bool)):
             return None
         if not (math.isfinite(fx) and math.isfinite(fy) and fx > 0.0 and fy > 0.0):
             return None

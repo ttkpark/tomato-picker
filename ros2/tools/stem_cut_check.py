@@ -146,6 +146,9 @@ def test_find_cut_point_rejections() -> None:
     check("find_cut_point: 3D 배열 또는 비배열 마스크 입력 시 None(차원 불일치 크래시 방어)",
           find_cut_point(np.ones((20, 20, 3), bool), np.ones((20, 20, 3), bool), 1.0, 12.0) is None and
           find_cut_point("invalid", fruit, 1.0, 12.0) is None)
+    check("find_cut_point: bool 타입 인수 주입 시 None(불리언 묵시 변환 방어)",
+          find_cut_point(stem, fruit, px_per_mm=True, cut_offset_mm=12.0) is None and
+          find_cut_point(stem, fruit, px_per_mm=1.0, cut_offset_mm=True) is None)
 
 
 def test_offset_scales_with_px_per_mm() -> None:
@@ -307,6 +310,10 @@ def test_compute_cutting_pose() -> None:
     check("compute_cutting_pose: deproject 반환 None 또는 NaN 시 None(조용한 NaN 생성 및 크래시 방어)",
           compute_cutting_pose(cut_straight, depth_mm=200.0, intr=_FailingDeprojectIntr()) is None and
           compute_cutting_pose(cut_straight, depth_mm=200.0, intr=_NanDeprojectIntr()) is None)
+    check("compute_cutting_pose: bool 인수 주입 시 None(불리언 묵시 변환 방어)",
+          compute_cutting_pose(cut_straight, depth_mm=True, intr=intr) is None and
+          compute_cutting_pose(CutPoint(u=True, v=50.0, tangent=(0.0, 1.0)), depth_mm=200.0, intr=intr) is None and
+          compute_cutting_pose(CutPoint(u=50.0, v=True, tangent=(0.0, 1.0)), depth_mm=200.0, intr=intr) is None)
 
 
 def test_pre_grasp_and_retract() -> None:
