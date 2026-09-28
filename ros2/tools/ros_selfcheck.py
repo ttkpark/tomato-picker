@@ -1923,6 +1923,11 @@ def test_fruit3d() -> None:
           find_cut_point(np.ones((20, 20), bool), np.ones((20, 20), bool), px_per_mm=True) is None and
           compute_cutting_pose(c_pt, depth_mm=True, intr=INTR) is None and
           sample_stem_depth(depth, 50.0, 50.0, min_depth_mm=True) is None)
+    check("복합 엔드이펙터: 좌표 및 경유점 내 bool 원소 주입 시 엄밀 거절(None)한다",
+          verify_dual_action_compatibility([True, 0.0, 100.0], c_pose.position_mm) is None and
+          evaluate_trajectory_workspace({"bad": [True, 0.0, 100.0]}) is None and
+          plan_dual_action_trajectory([True, 0.0, 100.0], c_pose) is None and
+          compute_pre_grasp_pose(CutPose3D((True, 0.0, 100.0), np.eye(3), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 100.0)) is None)
 
 
     # detector_type 파라미터 및 YOLO/HSV 분기 검증 (study 05 autonomous_harvester 연동)

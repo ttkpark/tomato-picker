@@ -24,6 +24,42 @@ from dataclasses import dataclass
 import numpy as np
 
 
+def _is_valid_3d_point(pt: Any) -> bool:
+    """3차원 좌표/벡터가 유효한 수치(int, float)이며 bool이 아니고 유한한지 검증."""
+    if pt is None:
+        return False
+    if isinstance(pt, np.ndarray):
+        if pt.dtype == bool or pt.size != 3:
+            return False
+        return bool(np.all(np.isfinite(pt.astype(np.float64))))
+    if isinstance(pt, (tuple, list)):
+        if len(pt) != 3:
+            return False
+        for v in pt:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                return False
+        return True
+    return False
+
+
+def _is_valid_cut_pose(cut_pose: Any) -> bool:
+    """CutPose3D 객체의 위치 및 기저 벡터들이 유효한 수치이며 bool이 아닌지 검증."""
+    if cut_pose is None:
+        return False
+    try:
+        p = cut_pose.position_mm
+        x = cut_pose.x_cut
+        y = getattr(cut_pose, "y_cut", None)
+        z = cut_pose.z_cut
+    except (AttributeError, TypeError):
+        return False
+    if not (_is_valid_3d_point(p) and _is_valid_3d_point(x) and _is_valid_3d_point(z)):
+        return False
+    if y is not None and not _is_valid_3d_point(y):
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class CutPoint:
     """줄기 위 절단점 — 아직 3D 아님(픽셀 좌표 + 접선 방향)."""
@@ -393,7 +429,7 @@ def compute_pre_grasp_pose(
     - standoff_mm > max_step_mm (단일 직교 이동 한계 초과)
     - cutter_offset_up_mm < 0.0 또는 비수치(NaN/Inf)
     """
-    if cut_pose is None:
+    if cut_pose is None or not _is_valid_cut_pose(cut_pose):
         return None
     if not (isinstance(standoff_mm, (int, float)) and not isinstance(standoff_mm, bool) and
             math.isfinite(standoff_mm) and standoff_mm >= 0.0):
@@ -444,7 +480,7 @@ def compute_retract_pose(
     - retract_mm > max_step_mm (단일 직교 이동 한계 초과)
     - cutter_offset_up_mm < 0.0 또는 비수치(NaN/Inf)
     """
-    if cut_pose is None:
+    if cut_pose is None or not _is_valid_cut_pose(cut_pose):
         return None
     if not (isinstance(retract_mm, (int, float)) and not isinstance(retract_mm, bool) and
             math.isfinite(retract_mm) and retract_mm >= 0.0):
@@ -489,7 +525,7 @@ def transform_cut_pose(
 
     SO(3) 정규직교 기저(det(R)=1.0, R.T@R=I) 보존.
     """
-    if cut_pose is None:
+    if cut_pose is None or not _is_valid_cut_pose(cut_pose):
         return None
     try:
         if hasattr(transform, "R") and hasattr(transform, "t"):
@@ -574,7 +610,7 @@ def evaluate_5dof_cut_alignment(
        벗어날 경우 +-180° 보정하여 안전 가동범위 내 각도를 보장한다.
        (span 195.8° >= 180°이므로 수학적으로 항상 존재).
     """
-    if cut_pose_base is None:
+    if cut_pose_base is None or not _is_valid_cut_pose(cut_pose_base):
         return None
     if not (isinstance(roll_limit_deg, (int, float)) and not isinstance(roll_limit_deg, bool) and
             math.isfinite(roll_limit_deg) and roll_limit_deg > 0.0):
@@ -686,7 +722,7 @@ def compute_dual_action_target(
     - standoff_mm > max_step_mm (단일 직교 이동 한계 초과)
     - cut_pose_base의 좌표/벡터에 NaN 또는 Inf 유입
     """
-    if cut_pose_base is None:
+    if cut_pose_base is None or not _is_valid_cut_pose(cut_pose_base):
         return None
     if not (isinstance(cutter_offset_up_mm, (int, float)) and not isinstance(cutter_offset_up_mm, bool) and
             math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm > 0.0):
@@ -748,6 +784,8 @@ def verify_dual_action_compatibility(
     """
     if fruit_pos_base is None or cut_pos_base is None:
         return None
+    if not (_is_valid_3d_point(fruit_pos_base) and _is_valid_3d_point(cut_pos_base)):
+        return None
     if not (isinstance(cutter_offset_up_mm, (int, float)) and not isinstance(cutter_offset_up_mm, bool) and
             math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm > 0.0):
         return None
@@ -766,6 +804,8 @@ def verify_dual_action_compatibility(
 
     s_unit = None
     if stem_axis is not None:
+        if not _is_valid_3d_point(stem_axis):
+            return None
         try:
             s_arr = np.asarray(stem_axis, dtype=np.float64).reshape(3)
         except (ValueError, TypeError, IndexError):
@@ -848,6 +888,8 @@ def evaluate_trajectory_workspace(
     metrics: dict[str, dict[str, Any]] = {}
 
     for name, pt in waypoints.items():
+        if not _is_valid_3d_point(pt):
+            return None
         try:
             arr = np.asarray(pt, dtype=np.float64).reshape(3)
         except (ValueError, TypeError, IndexError):
@@ -929,6 +971,8 @@ def plan_dual_action_trajectory(
     - 과실-절단점 정합성 검증 실패, 또는 5-DoF 기구학 진단 실패(pan 특이점 r_xy < 1e-4 등)
     """
     if fruit_pos_base is None or cut_pose_base is None:
+        return None
+    if not (_is_valid_3d_point(fruit_pos_base) and _is_valid_cut_pose(cut_pose_base)):
         return None
     if not (isinstance(cutter_offset_up_mm, (int, float)) and not isinstance(cutter_offset_up_mm, bool) and
             math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm > 0.0):

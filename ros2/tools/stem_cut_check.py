@@ -652,6 +652,10 @@ def test_dual_action_geometry() -> None:
           verify_dual_action_compatibility(fruit_pos, cut_pos, tolerance_mm=True) is None and
           verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=0.0) is None and
           verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=True) is None)
+    check("verify_dual_action_compatibility: 좌표/벡터 내 bool 주입 시 엄밀 거절(None)한다",
+          verify_dual_action_compatibility([True, 0.0, 100.0], cut_pos) is None and
+          verify_dual_action_compatibility(fruit_pos, [200.0, True, 130.0]) is None and
+          verify_dual_action_compatibility(fruit_pos, cut_pos, stem_axis=[0.0, 0.0, True]) is None)
 
     # 11. plan_dual_action_trajectory 4단계 시퀀셜 궤적 계획 검증
     # 정상 시나리오: fruit (200, 0, 100), cut (200, 0, 130), offset=30, pre=50, ret=60, x_cut=[1,0,0]
@@ -725,6 +729,9 @@ def test_dual_action_geometry() -> None:
           plan_dual_action_trajectory(fruit_pos, None) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, pre_standoff_mm=-10.0) is None and
           plan_dual_action_trajectory(fruit_pos, cut_pose, retract_standoff_mm=float('nan')) is None)
+    check("plan_dual_action_trajectory: 과실 좌표 또는 절단 자세 내 bool 주입 시 엄밀 거절(None)한다",
+          plan_dual_action_trajectory([True, 0.0, 100.0], cut_pose) is None and
+          plan_dual_action_trajectory((200.0, True, 100.0), cut_pose) is None)
 
     # 13. roll_limit_deg 파라미터 전달 및 비수치 거절 검증
     traj_custom_roll = plan_dual_action_trajectory(fruit_pos, cut_pose, roll_limit_deg=45.0)
@@ -855,6 +862,10 @@ def test_dual_action_geometry() -> None:
           evaluate_trajectory_workspace(valid_wps, r_min_mm=-10.0) is None and
           evaluate_trajectory_workspace(valid_wps, z_min_mm=float('nan')) is None and
           evaluate_trajectory_workspace(valid_wps, z_min_mm=True) is None)
+    check("evaluate_trajectory_workspace: 경유점 좌표 내 bool 주입 시 엄밀 거절(None)한다",
+          evaluate_trajectory_workspace({"bad_wp": [True, 0.0, 100.0]}) is None and
+          evaluate_trajectory_workspace({"bad_wp": (200.0, True, 100.0)}) is None and
+          evaluate_trajectory_workspace({"bad_wp": (200.0, 0.0, False)}) is None)
 
 
 
