@@ -1980,6 +1980,19 @@ def test_fruit3d() -> None:
           "self._blobs_hsv(bgr)" in dn_body and "HSV로 폴백" in dn_body,
           "모델 미설치 환경 크래시 방지 폴백")
 
+    # study 05 autonomous_harvester 기구학/손-눈 변환 무결성 감사 (Kinematics 비존재 임포트 차단 및 T_base_tool compose 강제)
+    study05_path = os.path.join(REPO, "docs", "study", "05_PRACTICE_JETSON_ROS2.md")
+    with open(study05_path, encoding="utf-8") as f:
+        s05_body = f.read()
+    check("study 05: autonomous_harvester가 비존재 Kinematics 임포트 없이 kinematics 및 tool_frame Rigid 합성을 사용한다",
+          "from tomato_picker.hardware.kinematics import Kinematics" not in s05_body and
+          "from tomato_picker.hardware import kinematics as kin" in s05_body and
+          "from tomato_picker.hardware.handeye import Rigid, Intrinsics, tool_frame" in s05_body and
+          "T_base_tool = tool_frame(fk)" in s05_body and
+          "T_base_cam = T_base_tool.compose(self.T_tool_cam)" in s05_body and
+          'traj["stages"][0]["tcp"]' in s05_body,
+          "autonomous_harvester 실전 가이드 기구학/손-눈 합성 무결성")
+
 # ⑥ TF 수학
 # ----------------------------------------------------------------------
 

@@ -41,8 +41,8 @@ import cv2
 from ultralytics import YOLO
 
 # 레포지토리 하드웨어 기구학, 손-눈 보정 및 절단 모듈 직접 import
-from tomato_picker.hardware.kinematics import Kinematics
-from tomato_picker.hardware.handeye import Rigid, Intrinsics
+from tomato_picker.hardware import kinematics as kin
+from tomato_picker.hardware.handeye import Rigid, Intrinsics, tool_frame
 from tomato_perception.stem_cut import (
     find_cut_point,
     sample_stem_depth,
@@ -73,10 +73,7 @@ class AutonomousTomatoHarvester:
         t_data = calib_data.get("transform", {})
         self.T_tool_cam = Rigid.from_dict(t_data) if t_data else Rigid(np.eye(3), np.zeros(3))
         
-        # 2. 기구학 엔진 초기화 (SO-101 기구학, 모든 길이 단위: mm)
-        self.kin = Kinematics()
-        
-        # 3. 딥러닝 세그멘테이션 모델 로드
+        # 2. 딥러닝 세그멘테이션 모델 로드
         print("[AI] YOLOv8 세그멘테이션 모델 로딩 중...")
         self.model = YOLO("yolov8n-seg.pt")
         print("[AI] 준비 완료.")
@@ -89,23 +86,18 @@ class AutonomousTomatoHarvester:
         """카메라 광학 좌표(mm) -> 팔 베이스 3D 좌표(mm) 동적 변환 (Eye-in-Hand).
 
         T_base_cam(t) = T_base_tool(q(t)) * T_tool_cam
-        P_base = T_base_tool(q) * (T_tool_cam * P_cam)
+        P_base = T_base_tool(q) * (T_tool_cam * P_cam) = T_base_cam * P_cam
         """
-        # 1. Tool Frame(TCP) 좌표로 변환: P_tool = T_tool_cam * P_cam
-        p_tool = self.T_tool_cam.apply(P_cam_mm)
+        # 1. 현재 관절각에서의 순기구학 FK 및 T_base_tool (Rigid 변환) 도출
+        fk = kin.forward(current_joints)
+        T_base_tool = tool_frame(fk)
 
-        # 2. 현재 관절각에서의 순기구학 T_base_tool (FK)
-        # kinematics.forward()는 TCP 위치 (x, y, z) 및 pitch, roll 산출
-        fk = self.kin.forward(
-            current_joints.get("shoulder_pan", 0.0),
-            current_joints.get("shoulder_lift", 90.0),
-            current_joints.get("elbow_flex", 0.0),
-            current_joints.get("wrist_flex", 0.0),
-            current_joints.get("wrist_roll", 0.0),
-        )
-        # 간이 기저 변환 또는 TF 버퍼 lookup_transform('arm_base', 'tool0') 사용
-        # (실전 ROS 2 환경에서는 tf2_ros Buffer를 통해 arm_base -> camera_optical_frame 직접 조회 권장)
-        return (float(p_tool[0] + fk.x), float(p_tool[1] + fk.y), float(p_tool[2] + fk.z))
+        # 2. 동적 Eye-in-Hand 합성 변환: T_base_cam = T_base_tool ∘ T_tool_cam
+        T_base_cam = T_base_tool.compose(self.T_tool_cam)
+
+        # 3. 카메라 광학 좌표(mm)를 팔 베이스 arm_base 좌표(mm)로 변환
+        P_base = T_base_cam.apply(P_cam_mm)
+        return (float(P_base[0]), float(P_base[1]), float(P_base[2]))
 
     def detect_target(self, color_bgr: np.ndarray, depth_img_raw: np.ndarray, current_joints: dict[str, float]):
         """
@@ -173,26 +165,26 @@ class AutonomousTomatoHarvester:
             print(f"[Error] 복합 궤적 실행 불가: {err_reason}")
             return False
 
-        # 2. 1단계 Pre-grasp: 접근 반대방향 50mm 대기 위치 이동
-        pre_x, pre_y, pre_z = traj["pre_grasp_tcp"]
+        # 2. 1단계 Pre-grasp: 접근 반대방향 50mm 대기 위치 이동 (stages[0])
+        pre_x, pre_y, pre_z = traj["stages"][0]["tcp"]
         print(f"[Motion] 1단계: Pre-grasp 대기 자세 접근 (X={pre_x:.1f}, Y={pre_y:.1f}, Z={pre_z:.1f})")
         arm_controller.move_to_cartesian(pre_x, pre_y, pre_z)
         time.sleep(1.5)
 
-        # 3. 2단계 Grasp: 과실 파지/흡착 접촉 자세 진입 및 진공 흡착 ON
-        gx, gy, gz = traj["grasp_tcp"]
+        # 3. 2단계 Grasp: 과실 파지/흡착 접촉 자세 진입 및 진공 흡착 ON (stages[1])
+        gx, gy, gz = traj["stages"][1]["tcp"]
         print(f"[Motion] 2단계: 과실 흡착 접촉 진입 (X={gx:.1f}, Y={gy:.1f}, Z={gz:.1f})")
         arm_controller.set_vacuum(True)
         arm_controller.move_to_cartesian(gx, gy, gz)
         time.sleep(1.0)
 
-        # 4. 3단계 Cut: 과실 흡착 유지 상태에서 전단 가위 구동 (줄기 순간 절단)
+        # 4. 3단계 Cut: 과실 흡착 유지 상태에서 전단 가위 구동 (줄기 순간 절단, stages[2])
         print("[Tool] 3단계: 줄기 전단 가위 작동 (0.3초 순간 절단)")
         arm_controller.actuate_cutter()
         time.sleep(0.5)
 
-        # 5. 4단계 Retract: 수확물 분리 후 안전 후퇴 (1차 파지부 수확물 후퇴 좌표)
-        rx, ry, rz = traj["retract_grasp_tcp"]
+        # 5. 4단계 Retract: 수확물 분리 후 안전 후퇴 (1차 파지부 수확물 후퇴 좌표, stages[3])
+        rx, ry, rz = traj["stages"][3]["tcp_grasp"]
         print(f"[Motion] 4단계: 과실 분리 후 안전 후퇴 (X={rx:.1f}, Y={ry:.1f}, Z={rz:.1f})")
         arm_controller.move_to_cartesian(rx, ry, rz)
         time.sleep(1.0)
@@ -227,7 +219,7 @@ python tools/eye_check.py
 # 3. 직교 제어 및 기구학 처짐 피드백 검증 (93개 테스트)
 python tools/arm_cartesian_check.py
 
-# 4. ROS 2 스택 및 보드 통신 종합 검증 (575개 테스트)
+# 4. ROS 2 스택 및 보드 통신 종합 검증 (576개 테스트)
 python ros2/tools/ros_selfcheck.py
 
 # 5. 복합 엔드이펙터 궤적 및 줄기 절단 검증 (126개 테스트)
