@@ -1742,6 +1742,11 @@ def test_fruit3d() -> None:
           abs(pre_p[1] - (c_pose.position_mm[1] - 50.0 * c_pose.x_cut[1])) < 1e-4 and
           abs(pre_p[2] - (c_pose.position_mm[2] - 50.0 * c_pose.x_cut[2])) < 1e-4,
           f"pre={pre_p}")
+    check("모션 대기 위치: compute_pre_grasp_pose 및 compute_retract_pose가 max_step_mm 초과 및 비수치/bool을 거절한다",
+          compute_pre_grasp_pose(c_pose, standoff_mm=90.0, max_step_mm=80.0) is None and
+          compute_retract_pose(c_pose, retract_mm=90.0, max_step_mm=80.0) is None and
+          compute_pre_grasp_pose(c_pose, standoff_mm=True) is None and
+          compute_retract_pose(c_pose, max_step_mm=-5.0) is None)
 
     r_test = Rigid(np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype=float), np.array([50.0, 100.0, 150.0]))
     t_cpose = transform_cut_pose(c_pose, r_test)
@@ -1770,6 +1775,11 @@ def test_fruit3d() -> None:
           abs(dual_grip[1] - (c_pose.position_mm[1] - 30.0 * c_pose.z_cut[1] - 50.0 * c_pose.x_cut[1])) < 1e-4 and
           abs(dual_grip[2] - (c_pose.position_mm[2] - 30.0 * c_pose.z_cut[2] - 50.0 * c_pose.x_cut[2])) < 1e-4,
           f"dual_grip={dual_grip}")
+    check("복합 엔드이펙터: compute_dual_action_target이 max_step_mm 초과 및 비수치/bool을 거절한다",
+          compute_dual_action_target(c_pose, standoff_mm=90.0, max_step_mm=80.0) is None and
+          compute_dual_action_target(c_pose, standoff_mm=True) is None and
+          compute_dual_action_target(c_pose, max_step_mm=-5.0) is None and
+          compute_dual_action_target(c_pose, standoff_mm=90.0, max_step_mm=100.0) is not None)
 
     f_pos_test = (
         c_pose.position_mm[0] - 30.0 * c_pose.z_cut[0],

@@ -366,6 +366,7 @@ def compute_cutting_pose(
 def compute_pre_grasp_pose(
     cut_pose: CutPose3D | None,
     standoff_mm: float = 50.0,
+    max_step_mm: float = 80.0,
 ) -> tuple[float, float, float] | None:
     """절단점 진입 전 대기 위치 (Pre-grasp Pose).
 
@@ -376,10 +377,18 @@ def compute_pre_grasp_pose(
     거절:
     - cut_pose is None
     - standoff_mm < 0.0 또는 비수치(NaN/Inf)
+    - max_step_mm <= 0.0 또는 비수치(NaN/Inf)
+    - standoff_mm > max_step_mm (단일 직교 이동 한계 초과)
     """
     if cut_pose is None:
         return None
-    if not (isinstance(standoff_mm, (int, float)) and math.isfinite(standoff_mm) and standoff_mm >= 0.0):
+    if not (isinstance(standoff_mm, (int, float)) and not isinstance(standoff_mm, bool) and
+            math.isfinite(standoff_mm) and standoff_mm >= 0.0):
+        return None
+    if not (isinstance(max_step_mm, (int, float)) and not isinstance(max_step_mm, bool) and
+            math.isfinite(max_step_mm) and max_step_mm > 0.0):
+        return None
+    if standoff_mm > max_step_mm:
         return None
     try:
         px, py, pz = cut_pose.position_mm
@@ -398,6 +407,7 @@ def compute_pre_grasp_pose(
 def compute_retract_pose(
     cut_pose: CutPose3D | None,
     retract_mm: float = 60.0,
+    max_step_mm: float = 80.0,
 ) -> tuple[float, float, float] | None:
     """절단 완료 후 과실 안전 후퇴 위치 (Retract Pose).
 
@@ -408,10 +418,18 @@ def compute_retract_pose(
     거절:
     - cut_pose is None
     - retract_mm < 0.0 또는 비수치(NaN/Inf)
+    - max_step_mm <= 0.0 또는 비수치(NaN/Inf)
+    - retract_mm > max_step_mm (단일 직교 이동 한계 초과)
     """
     if cut_pose is None:
         return None
-    if not (isinstance(retract_mm, (int, float)) and math.isfinite(retract_mm) and retract_mm >= 0.0):
+    if not (isinstance(retract_mm, (int, float)) and not isinstance(retract_mm, bool) and
+            math.isfinite(retract_mm) and retract_mm >= 0.0):
+        return None
+    if not (isinstance(max_step_mm, (int, float)) and not isinstance(max_step_mm, bool) and
+            math.isfinite(max_step_mm) and max_step_mm > 0.0):
+        return None
+    if retract_mm > max_step_mm:
         return None
     try:
         px, py, pz = cut_pose.position_mm
@@ -618,6 +636,7 @@ def compute_dual_action_target(
     cut_pose_base: CutPose3D | None,
     cutter_offset_up_mm: float = 30.0,
     standoff_mm: float = 0.0,
+    max_step_mm: float = 80.0,
 ) -> tuple[float, float, float] | None:
     """복합 엔드이펙터(파지/흡착 + 전단 커터)의 1차 파지 TCP 목표 위치 산출.
 
@@ -633,15 +652,22 @@ def compute_dual_action_target(
     - cut_pose_base is None
     - cutter_offset_up_mm <= 0.0 또는 비수치(NaN/Inf) (오프셋 0 특이점 거절)
     - standoff_mm < 0.0 또는 비수치(NaN/Inf)
+    - max_step_mm <= 0.0 또는 비수치(NaN/Inf)
+    - standoff_mm > max_step_mm (단일 직교 이동 한계 초과)
     - cut_pose_base의 좌표/벡터에 NaN 또는 Inf 유입
     """
     if cut_pose_base is None:
         return None
-    if not (isinstance(cutter_offset_up_mm, (int, float)) and
+    if not (isinstance(cutter_offset_up_mm, (int, float)) and not isinstance(cutter_offset_up_mm, bool) and
             math.isfinite(cutter_offset_up_mm) and cutter_offset_up_mm > 0.0):
         return None
-    if not (isinstance(standoff_mm, (int, float)) and
+    if not (isinstance(standoff_mm, (int, float)) and not isinstance(standoff_mm, bool) and
             math.isfinite(standoff_mm) and standoff_mm >= 0.0):
+        return None
+    if not (isinstance(max_step_mm, (int, float)) and not isinstance(max_step_mm, bool) and
+            math.isfinite(max_step_mm) and max_step_mm > 0.0):
+        return None
+    if standoff_mm > max_step_mm:
         return None
 
     try:
@@ -930,11 +956,13 @@ def plan_dual_action_trajectory(
         cut_pose_base,
         cutter_offset_up_mm=cutter_offset_up_mm,
         standoff_mm=0.0,
+        max_step_mm=max_step_mm,
     )
     pre_grasp_tcp = compute_dual_action_target(
         cut_pose_base,
         cutter_offset_up_mm=cutter_offset_up_mm,
         standoff_mm=pre_standoff_mm,
+        max_step_mm=max_step_mm,
     )
     if grasp_tcp is None or pre_grasp_tcp is None:
         return None

@@ -334,12 +334,18 @@ def test_pre_grasp_and_retract() -> None:
           abs(ret_pos[2] - 200.0) < 1e-4,
           f"ret={ret_pos}")
 
-    # 3. 거절 조건 (결측 및 비수치)
+    # 3. 거절 조건 (결측 및 비수치, 직교 이동 한계 max_step_mm)
     check("cut_pose=None 시 Pre-grasp/Retract 모두 None",
           compute_pre_grasp_pose(None) is None and compute_retract_pose(None) is None)
     check("거리 음수(<0) 또는 NaN 시 거절",
           compute_pre_grasp_pose(pose, standoff_mm=-10.0) is None and
           compute_retract_pose(pose, retract_mm=float('nan')) is None)
+    check("compute_pre_grasp_pose & compute_retract_pose: max_step_mm 초과 및 비수치/bool 거절",
+          compute_pre_grasp_pose(pose, standoff_mm=90.0, max_step_mm=80.0) is None and
+          compute_retract_pose(pose, retract_mm=90.0, max_step_mm=80.0) is None and
+          compute_pre_grasp_pose(pose, standoff_mm=True) is None and
+          compute_retract_pose(pose, max_step_mm=-5.0) is None and
+          compute_pre_grasp_pose(pose, standoff_mm=90.0, max_step_mm=100.0) is not None)
     pose_nan = CutPose3D(position_mm=(float('nan'), 5.0, 200.0), rotation_matrix=np.eye(3),
                          x_cut=(-1.0, 0.0, 0.0), y_cut=(0.0, 1.0, 0.0), z_cut=(0.0, 0.0, 1.0), depth_mm=200.0)
     check("cut_pose 좌표/벡터에 NaN 시 Pre-grasp/Retract 모두 None",
@@ -605,6 +611,11 @@ def test_dual_action_geometry() -> None:
           compute_dual_action_target(cut_pose, cutter_offset_up_mm=-5.0) is None and
           compute_dual_action_target(cut_pose, standoff_mm=-10.0) is None and
           compute_dual_action_target(cut_pose, cutter_offset_up_mm=float('nan')) is None)
+    check("compute_dual_action_target: max_step_mm 초과 및 비수치/bool 거절",
+          compute_dual_action_target(cut_pose, standoff_mm=90.0, max_step_mm=80.0) is None and
+          compute_dual_action_target(cut_pose, standoff_mm=True) is None and
+          compute_dual_action_target(cut_pose, max_step_mm=-5.0) is None and
+          compute_dual_action_target(cut_pose, standoff_mm=90.0, max_step_mm=100.0) is not None)
 
     # 9. 결측 및 비수치 거절: verify_dual_action_compatibility
     check("verify_dual_action_compatibility: None 입력 또는 비수치(NaN) 입력 시 None 반환",
