@@ -709,6 +709,15 @@ def test_dual_action_geometry() -> None:
               traj["waypoints"]["cut_tcp"] == traj["cut_tcp"] and
               traj["waypoints"]["retract_cut_tcp"] == traj["retract_cut_tcp"] and
               traj["waypoints"]["retract_grasp_tcp"] == traj["retract_grasp_tcp"])
+        check("4단계 순차 작업 리스트: traj['stages']가 1~4단계 순서 및 엔드이펙터 동작을 규약대로 포함한다",
+              isinstance(traj.get("stages"), list) and len(traj["stages"]) == 4 and
+              [s["stage"] for s in traj["stages"]] == [1, 2, 3, 4] and
+              [s["name"] for s in traj["stages"]] == ["pre_grasp", "grasp", "cut", "retract"] and
+              [s["ee_action"] for s in traj["stages"]] == ["open", "vacuum_on", "shear_cut", "hold_fruit"] and
+              traj["stages"][0]["tcp"] == traj["pre_grasp_tcp"] and
+              traj["stages"][1]["tcp"] == traj["grasp_tcp"] and
+              traj["stages"][2]["tcp"] == traj["cut_tcp"] and
+              traj["stages"][3]["tcp"] == traj["retract_cut_tcp"])
 
         # 복합 엔드이펙터 강체 불변성 (Rigid Body Invariant) 및 궤적 단계별 정합성 검증
         c_tcp = np.array(traj["cut_tcp"])

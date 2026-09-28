@@ -230,7 +230,7 @@ python tools/arm_cartesian_check.py
 # 4. ROS 2 스택 및 보드 통신 종합 검증 (575개 테스트)
 python ros2/tools/ros_selfcheck.py
 
-# 5. 복합 엔드이펙터 궤적 및 줄기 절단 검증 (125개 테스트)
+# 5. 복합 엔드이펙터 궤적 및 줄기 절단 검증 (126개 테스트)
 python ros2/tools/stem_cut_check.py
 ```
 

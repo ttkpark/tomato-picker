@@ -1021,6 +1021,7 @@ def plan_dual_action_trajectory(
     - 'retract_cut_tcp': (x, y, z) 2차 절단 날 후퇴 TCP (mm)
     - 'retract_grasp_tcp': (x, y, z) 1차 파지부 수확물 후퇴 TCP (mm)
     - 'waypoints': dict 5대 핵심 경유점 (pre_grasp, grasp, cut, retract_cut, retract_grasp) 딕셔너리
+    - 'stages': list[dict[str, Any]] MoveIt 2 및 조작 시퀀서 실행을 위한 4단계 순차 작업 리스트
     - 'approach_vector': (ax, ay, az) 진입 단위 벡터 (x_cut)
     - 'stem_axis': (zx, zy, zz) 줄기 정렬 축 단위 벡터 (z_cut)
     - 'kinematics_5dof': evaluate_5dof_cut_alignment 결과 (SO-101 5축 정합 진단)
@@ -1147,6 +1148,38 @@ def plan_dual_action_trajectory(
     if workspace is None:
         return None
 
+    stages = [
+        {
+            "stage": 1,
+            "name": "pre_grasp",
+            "tcp": pre_grasp_tcp,
+            "ee_action": "open",
+            "description": "과실 파지 대기 자세 (접근 반대방향 standoff 후퇴)",
+        },
+        {
+            "stage": 2,
+            "name": "grasp",
+            "tcp": grasp_tcp,
+            "ee_action": "vacuum_on",
+            "description": "과실 파지/흡착 접촉 자세 (진공 ON)",
+        },
+        {
+            "stage": 3,
+            "name": "cut",
+            "tcp": cut_tcp,
+            "ee_action": "shear_cut",
+            "description": "전단 가위 절단 자세 (과실 파지 유지 상태에서 날 진입 및 절단)",
+        },
+        {
+            "stage": 4,
+            "name": "retract",
+            "tcp": retract_cut_tcp,
+            "tcp_grasp": retract_grasp_tcp,
+            "ee_action": "hold_fruit",
+            "description": "수확물 분리 및 차체 후퇴 자세 (파지 유지)",
+        },
+    ]
+
     # 종합 실행 가능성 (엔드이펙터 파지/절단 기하 적합성 AND 로봇 팔 5대 경유점 작업공간 한계 충족 AND 5-DoF 롤 가동범위 준수)
     is_feasible = bool(compat["compatible"] and workspace["feasible"] and kin_5dof["within_roll_limits"])
 
@@ -1164,6 +1197,7 @@ def plan_dual_action_trajectory(
         "retract_cut_tcp": retract_cut_tcp,
         "retract_grasp_tcp": retract_grasp_tcp,
         "waypoints": waypoints,
+        "stages": stages,
         "approach_vector": (float(ax), float(ay), float(az)),
         "stem_axis": (float(zx), float(zy), float(zz)),
         "kinematics_5dof": kin_5dof,
