@@ -643,6 +643,10 @@ def evaluate_5dof_cut_alignment(
 ) -> dict[str, float | bool] | None:
     """5-DoF 매니퓰레이터(SO-101)의 6-DoF 절단 포즈 기구학적 정합성 및 접근 여유각 진단.
 
+    ⚠ 좌표계 규약: cut_pose_base의 좌표는 base_link(차체 바닥)가 아니라
+       arm_base(로봇 팔 마운트 평면 z=0, 1번 pan 회전축 원점) 기준이다.
+       (pan_deg = atan2(y, x)가 1번 shoulder_pan 모터 각도와 일치하기 위한 필수 조건).
+
     docs/study/04_END_EFFECTOR_MANIPULATION.md §3 명세 준수:
     1. SO-101은 손목 독립 Yaw가 없어, 팔의 접근 방위각(pan)은 위치 (x, y)에 고정된다:
        pan_deg = atan2(y, x)
@@ -753,6 +757,9 @@ def compute_dual_action_target(
     max_step_mm: float = 80.0,
 ) -> tuple[float, float, float] | None:
     """복합 엔드이펙터(파지/흡착 + 전단 커터)의 1차 파지 TCP 목표 위치 산출.
+
+    ⚠ 좌표계 규약: 모든 좌표(cut_pose_base, 반환값 P_grip)는 base_link(차체 바닥)가 아니라
+       arm_base(로봇 팔 마운트 평면 z=0, 1번 pan 회전축 원점) 기준이다.
 
     docs/study/04_END_EFFECTOR_MANIPULATION.md §4 & §5 명세 준수:
     - 흡착 컵(1차 파지 TCP, l3=168.0mm) 상단 cutter_offset_up_mm(기본 30.0mm) 위치에
@@ -908,6 +915,10 @@ def evaluate_trajectory_workspace(
 ) -> dict[str, Any] | None:
     """복합 엔드이펙터 궤적의 로봇 팔 작업공간(Workspace) 물리 한계 도달 가능성 계측 평가.
 
+    ⚠ 좌표계 규약: waypoints의 모든 좌표는 base_link(차체 바닥)가 아니라
+       arm_base(로봇 팔 마운트 평면 z=0, 1번 pan 회전축 원점) 기준이다.
+       (z는 마운트 평면 기준 높이, r은 pan 회전축으로부터의 수평 거리).
+
     SO-101 팔 물리 계측 경계 (config.py 및 2026-09-18 T40/T68/T69 실측치):
     1. 바닥 간섭 하한: z >= z_min_mm (기본 15.0mm, ARM_CART_Z_MIN) - 미만 시 작업대/무대 스크래치
     2. 중력 실속 상한: z <= z_max_mm (기본 445.0mm, ARM_LOAD_Z_MAX) - 초과 시 서보 중력 처짐(73~103mm) 실패
@@ -986,6 +997,9 @@ def plan_dual_action_trajectory(
     max_step_mm: float = 80.0,
 ) -> dict[str, Any] | None:
     """복합 엔드이펙터(파지/흡착 + 전단 커터) 4단계 시퀀셜 궤적 계획.
+
+    ⚠ 좌표계 규약: fruit_pos_base, cut_pose_base, waypoints 등 모든 좌표는
+       base_link(차체 바닥)가 아니라 arm_base(로봇 팔 마운트 평면 z=0, 1번 pan 회전축 원점) 기준이다.
 
     docs/study/04_END_EFFECTOR_MANIPULATION.md §4 및 §5 명세 준수:
     1단계: Pre-grasp (과실 파지 TCP 대기 자세 - 접근 반대방향 standoff 후퇴)

@@ -1845,6 +1845,36 @@ def test_fruit3d() -> None:
           "waypoints" in traj_res and len(traj_res["waypoints"]) == 5 and
           abs(traj_res["retract_grasp_tcp"][0] - (traj_res["grasp_tcp"][0] - 60.0 * c_pose.x_cut[0])) < 1e-4,
           f"traj={traj_res}")
+    c_tcp_arr = np.array(traj_res["cut_tcp"])
+    g_tcp_arr = np.array(traj_res["grasp_tcp"])
+    rc_tcp_arr = np.array(traj_res["retract_cut_tcp"])
+    rg_tcp_arr = np.array(traj_res["retract_grasp_tcp"])
+    z_stem_arr = np.array(traj_res["stem_axis"])
+    x_app_arr = np.array(traj_res["approach_vector"])
+    check("복합 엔드이펙터: 강체 불변성(Grasp↔Cut 30mm 및 Retract 편차 항등성) 오차가 0.0mm다",
+          traj_res is not None and
+          np.allclose(c_tcp_arr - g_tcp_arr, 30.0 * z_stem_arr, atol=1e-4) and
+          np.allclose(rc_tcp_arr - rg_tcp_arr, 30.0 * z_stem_arr, atol=1e-4) and
+          np.allclose(c_tcp_arr - rc_tcp_arr, 60.0 * x_app_arr, atol=1e-4) and
+          np.allclose(g_tcp_arr - rg_tcp_arr, 60.0 * x_app_arr, atol=1e-4),
+          f"rigid_err={np.linalg.norm(c_tcp_arr - g_tcp_arr - 30.0 * z_stem_arr):.6f}")
+    from tomato_picker.config import (  # noqa: E402
+        ARM_CART_MAX_STEP_MM,
+        ARM_CART_R_MIN,
+        ARM_CART_Z_MIN,
+        ARM_LOAD_R_MAX,
+        ARM_LOAD_Z_MAX,
+    )
+    geom_yaml = _geometry_yaml()
+    check("복합 엔드이펙터 궤적 계측 규약: 작업공간 경계(z_min=15, z_max=445, r_min=90, r_max=310)가 arm_base 프레임(z0=119.5, d0=-31.5)과 정합한다",
+          traj_res is not None and
+          traj_res["max_step_mm"] == ARM_CART_MAX_STEP_MM and
+          traj_res["workspace"]["metrics"]["cut_tcp"]["z_mm"] >= ARM_CART_Z_MIN and
+          traj_res["workspace"]["metrics"]["cut_tcp"]["z_mm"] <= ARM_LOAD_Z_MAX and
+          traj_res["workspace"]["metrics"]["cut_tcp"]["r_mm"] >= ARM_CART_R_MIN and
+          traj_res["workspace"]["metrics"]["cut_tcp"]["r_mm"] <= ARM_LOAD_R_MAX and
+          geom_yaml["arm"]["z0"] == 119.5 and geom_yaml["arm"]["d0"] == -31.5 and
+          geom_yaml["mount"]["z"] == 76.5)
     check("복합 엔드이펙터: plan_dual_action_trajectory가 5-DoF 기구학 정합 진단(kinematics_5dof)을 포함한다",
           traj_res is not None and "kinematics_5dof" in traj_res and
           traj_res["kinematics_5dof"] is not None and traj_res["kinematics_5dof"]["within_roll_limits"] is True,

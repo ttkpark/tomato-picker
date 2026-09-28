@@ -710,6 +710,22 @@ def test_dual_action_geometry() -> None:
               traj["waypoints"]["retract_cut_tcp"] == traj["retract_cut_tcp"] and
               traj["waypoints"]["retract_grasp_tcp"] == traj["retract_grasp_tcp"])
 
+        # 복합 엔드이펙터 강체 불변성 (Rigid Body Invariant) 및 궤적 단계별 정합성 검증
+        c_tcp = np.array(traj["cut_tcp"])
+        g_tcp = np.array(traj["grasp_tcp"])
+        rc_tcp = np.array(traj["retract_cut_tcp"])
+        rg_tcp = np.array(traj["retract_grasp_tcp"])
+        pg_tcp = np.array(traj["pre_grasp_tcp"])
+        z_stem = np.array(traj["stem_axis"])
+        x_app = np.array(traj["approach_vector"])
+        check("복합 엔드이펙터 강체 불변성: Grasp↔Cut(30mm) 및 Retract 단계별 강체 항등성 오차 0.0mm",
+              np.allclose(c_tcp - g_tcp, 30.0 * z_stem, atol=1e-4) and
+              np.allclose(rc_tcp - rg_tcp, 30.0 * z_stem, atol=1e-4) and
+              np.allclose(g_tcp - pg_tcp, 50.0 * x_app, atol=1e-4) and
+              np.allclose(c_tcp - rc_tcp, 60.0 * x_app, atol=1e-4) and
+              np.allclose(g_tcp - rg_tcp, 60.0 * x_app, atol=1e-4),
+              f"err_cg={np.linalg.norm(c_tcp - g_tcp - 30.0 * z_stem):.6f}")
+
     # stem_axis 3D 정렬 잔차 및 횡방향 직교 왜곡 거절 검증
     compat_axis_ok = verify_dual_action_compatibility(fruit_pos, cut_pos, cutter_offset_up_mm=30.0, tolerance_mm=10.0, stem_axis=(0.0, 0.0, 1.0))
     check("verify_dual_action_compatibility: stem_axis 지정 시 3D 정합성 및 axis_residual 0.0mm 산출",
