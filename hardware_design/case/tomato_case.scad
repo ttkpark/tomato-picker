@@ -66,6 +66,8 @@ servo_shaft_off = 45.23/2 - 12.5;   // 축이 몸체 중심에서 12.5 → 가�
 horn_dia = 19.95;                // 원판 혼(6061), 두께 4.5
 horn_pcd = 14; horn_hole = 3.4;  // 혼 쪽이 M3 암나사 4개 → 회전판은 M3 통과
 horn_top = 4.3;                  // 서보 윗면 → 혼 윗면 (스플라인 3.4 + 허브 위 0.9)
+servo_raise = 3;                 // 서보를 뚜껑 판 속으로 이만큼 올린다 — 혼 나사를 M3×20으로 끝내려고(2026-09-29)
+horn_cb = 3;                     // 회전판 위 혼 나사머리 카운터보어 깊이 (판 6 → 밑에 3 남음)
 
 // 회전 중심 = 배터리 바로 뒤에 서보 걸이가 오는 자리. (지금 팔 받침 자리보다 약 5mm 뒤)
 rot_center = [case_w/2, batt_pos[1] + batt[1] + batt_lip + 2 + wall + servo_body[1]/2];
@@ -147,7 +149,7 @@ brg_fit_id = -0.1;           // [가정] fit_test 미실측 — 시험 3종(-0.2
 seat_shoulder_h = 3;         // 바깥 링 밑 받침 높이 (안쪽 링과 걸쇠가 뚜껑에 안 닿게)
 seat_wall = 6;               // 받침 벽 → 받침 바깥지름 112
 seat_r = brg[1]/2 + seat_wall;
-clamp_t = 2;                 // 바깥 누름 링 두께
+clamp_t = 2;                 // 바깥 누름 링 두께 — 나사 M3×12 = 링 2 + 받침 구멍 10
 clamp_screw_r = brg[1]/2 + seat_wall/2;
 hub_wall = 3;
 snap_lip = 0.5;  snap_h = 1.2;  snap_slots = 6;
@@ -163,7 +165,8 @@ cable_r = 20;  cable_w = 12;  cable_deg = 180;
 
 /* ===================== 회전판 ===================== */
 plat_dia = 150;  plat_t = 6;
-coupler_h = plat_z - (horn_top - lid_t);   // 혼 윗면 → 회전판 밑면 (혼 나사 M3×25)
+coupler_h = plat_z - (horn_top - lid_t) - servo_raise;   // 혼 윗면 → 회전판 밑면 = 12.7
+// 혼 나사 길이 = (plat_t − horn_cb) + coupler_h + 혼 나사산 4.3 = 3 + 12.7 + 4.3 = 20 → **M3×20**
 // SO-101 받침 체결 4구멍 — [자] 2026-09-27 전수 실측(3차 정정). 전부 받침 중심선(X=0) 기준 좌우대칭.
 // 이 회전판 좌표는 +Y = 전면(팔이 보는 쪽), -Y = 후면(사용자 확인).
 //   기존 2개: 간격 56.7(← STL 계산값 67.5는 틀렸다, 실측으로 교체), 회전축보다 15.0 앞(+Y, 전면쪽) — PDF 9쪽 볼트
@@ -201,6 +204,10 @@ if (floor_t + uno_standoff_h + uno_stack_h > astra_zc - astra[1]/2 - astra_brack
     echo("⚠ 접힌 Astra 받침대가 아두이노 쉴드에 닿는다 — astra_bracket_t 실측 또는 astra_zc 올리기");
 if (case_d - cradle_y0 > bed_y) echo("⚠ 트레이 전장(크래들 포함)이 베드를 넘는다", case_d - cradle_y0);
 if (cradle_w > bed_x) echo("⚠ 크래들 폭이 베드를 넘는다", cradle_w);
+if (servo_raise > lid_t - 1) echo("⚠ 서보 포켓이 뚜껑 판을 뚫는다");
+if (plat_t - horn_cb < 2.5) echo("⚠ 혼 나사머리 밑 판이 너무 얇다");
+echo("나사 길이 — 혼", (plat_t - horn_cb) + coupler_h + 4.3, " 뚜껑", lid_t + 8, " 누름링", clamp_t + 10, " 캡", 20);
+if (cap_h - 10 < 3) echo("⚠ 캡 나사머리 밑 살이 3mm 미만");
 if (cradle_z0 < floor_t + uno_standoff_h + uno_stack_h + 1) echo("⚠ 크래들 바닥이 아두이노 스택에 닿는다");
 if (lid_y0 + lid_screw_inset + 5 > rot_center[1] - seat_r) echo("⚠ 뚜껑 앞 나사가 베어링 받침과 겹친다");
 if (astra_zc + astra[1]/2 + cap_t > tray_h + lid_t + plat_z && cradle_y1 > rot_center[1] - plat_dia/2)
@@ -266,7 +273,7 @@ module astra_cap() {   // 위에서 덮어 나사 4개로 조인다. 좌표는 �
             cube([cradle_w + 2, wall + 2, astra[1]/2 - astra_lip + 1]);
         for (c = cap_screws) {
             translate([c[0], c[1], cradle_top - 1]) cylinder(h = cap_h + 2, d = m3_clear);
-            translate([c[0], c[1], cradle_top + cap_h - 2.5]) cylinder(h = 3, d = 6.5);   // 나사머리 자리
+            translate([c[0], c[1], cradle_top + 10]) cylinder(h = cap_h, d = 6.5);   // 머리를 깊이 묻어 M3×20 (크래들 10 + 캡 10)
         }
     }
 }
@@ -291,10 +298,12 @@ module tray_raw() {
         translate([case_w - wall - 1, meter_y, meter_z]) cube([wall + 2, meter_cut[0], meter_cut[1]]);
         for (p = rear_ports) translate([p[0], case_d - wall - 1, p[1]]) cube([p[2], wall + 2, p[3]]);
     }
+    // 뚜껑 나사 기둥: M3 인서트(Ø4.2×5) 자리 6 + 나사 끝 여유 → M3×12 (뚜껑 4 + 기둥 8)
     for (c = lid_corners) translate([c[0], c[1], 0])
         difference() {
             cylinder(h = tray_h, d = 9);
-            translate([0, 0, tray_h - 12]) cylinder(h = 13, d = m3_tap);
+            translate([0, 0, tray_h - 6]) cylinder(h = 7, d = insert_d);
+            translate([0, 0, tray_h - 9]) cylinder(h = 4, d = 2.6);   // 나사 끝 도피
         }
     bosses(uno_pos, uno_holes, uno_standoff_h);
     for (b = buck_pos) bosses(b, buck_holes, 5);
@@ -329,10 +338,13 @@ module lid() {
                 cylinder(h = seat_shoulder_h + brg[2], r = seat_r, $fn = 120);
                 translate([0, 0, seat_shoulder_h]) cylinder(h = brg[2] + 1, d = brg[1] + brg_fit_od, $fn = 180);
                 translate([0, 0, -1]) cylinder(h = seat_shoulder_h + 2, r = brg[1]/2 - 3.5, $fn = 120);
-                translate([0, 0, 3]) ring_holes(2*clamp_screw_r, m3_tap, seat_shoulder_h + brg[2]);   // 누름 링 나사
+                translate([0, 0, 2]) ring_holes(2*clamp_screw_r, m3_tap, seat_shoulder_h + brg[2]);   // 누름 링 나사 (깊이 11, M3×12)
             }
         }
         for (c = lid_corners) translate([c[0], c[1], -1]) cylinder(h = lid_t + 2, d = m3_clear);
+        // 서보 몸체가 뚜껑 판 속으로 servo_raise만큼 들어오는 포켓
+        translate([rot_center[0] - servo_shaft_off - 0.2, rot_center[1] - servo_body[1]/2 - 0.2, -1])
+            cube([servo_body[0] + 0.4, servo_body[1] + 0.4, servo_raise + 1]);
         translate([rot_center[0], rot_center[1], 0]) {
             translate([0, 0, -1]) cylinder(h = lid_t + 2, d = horn_dia + 3);
             translate([0, 0, -1]) arc(cable_r, cable_w, lid_t + 2, cable_deg - travel_deg/2, travel_deg);
@@ -343,7 +355,7 @@ module lid() {
         for (x = [0 : 8 : jetson_size[0] - 12]) translate([jetson_pos[0] + 6 + x, rot_center[1] + seat_r + 2, -1])
             cube([4, case_d - (rot_center[1] + seat_r + 2) - 10, lid_t + 2]);
     }
-    translate([rot_center[0] - servo_shaft_off, rot_center[1] - servo_body[1]/2, -servo_body[2]])
+    translate([rot_center[0] - servo_shaft_off, rot_center[1] - servo_body[1]/2, -servo_body[2] + servo_raise])
         difference() {
             translate([-wall, -wall, 0]) cube([servo_body[0] + 2*wall, servo_body[1] + 2*wall, servo_body[2]]);
             translate([-0.2, -0.2, -1]) cube([servo_body[0] + 0.4, servo_body[1] + 0.4, servo_body[2] + 2]);
@@ -369,6 +381,7 @@ module platform() {
     difference() {
         cylinder(h = plat_t, d = plat_dia, $fn = 120);
         ring_holes(horn_pcd, horn_hole, plat_t);
+        translate([0, 0, plat_t - horn_cb]) ring_holes(horn_pcd, 6.5, horn_cb + 1);   // 나사머리 자리
         translate([0, 0, -1]) cylinder(h = plat_t + 2, d = 3);
         rotate(cable_deg) translate([cable_r, 0, -1]) cylinder(h = plat_t + 2, d = cable_w - 1);
         for (h = so101_holes) translate([so101_offset[0] + h[0], so101_offset[1] + h[1], -1])
