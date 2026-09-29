@@ -104,7 +104,7 @@ meter_y = jetson_pos[1] + 10; meter_z = 22;
 astra = [165, 30, 40];       // [DS] Orbbec 공식 165×30×40. 캘리퍼(150mm)로 154까지밖에 못 재서 공식값을 쓴다(사용자 확인 2026-09-29)
 astra_clear = 0.6;           // 홈 여유(전체)
 astra_yc = 10;               // 본체 앞뒤 중심 — 앞면(렌즈)은 y = astra_yc − 20 = −10 (앞벽보다 10 앞)
-astra_zc = tray_h;           // 본체 중심 높이 = 트레이 윗면
+astra_zc = tray_h + 5;       // 본체 중심 높이 — 접힌 받침대(14)가 아두이노 스택(Z 41) 위 5mm에 오도록 트레이 윗면 +5
 astra_tilt = 0;              // 위로 기울임(도). 무대가 높으면 5~10 — 홈과 캡이 같이 돈다
 astra_end_wall = 6;          // 양 끝벽 (나사가 들어간다)
 astra_back = 9;              // 뒷벽 (나사가 들어간다)
@@ -112,7 +112,7 @@ astra_lip = 5;               // 앞면 아래·위 턱 높이 — 렌즈 띠는 
 // 접이식 받침대(60×23, 1/4" 너트)는 분리가 안 된다(사용자) → 접은 채 본체 밑에 매달린다. 크래들 바닥에 관통 구멍을 내
 // 받침대와 케이블이 트레이 안(아두이노 위)으로 빠지게 한다. 아두이노 스택 위(Z 41)와 받침대 밑 사이가 남아야 한다.
 astra_bracket = [60, 23];    // [자] 받침대 판 (X, Y)
-astra_bracket_t = 10;        // [실측 요] 접었을 때 본체 밑으로 나오는 두께 — 아두이노 스택과 간섭 검사에만 쓴다
+astra_bracket_t = 14;        // [자] 2026-09-29 접었을 때 본체 밑으로 나오는 두께
 astra_bracket_yo = 0;        // 받침대 중심이 본체 앞뒤 중심에서 어긋난 양(+뒤)
 astra_pocket = [astra_bracket[0] + 2, astra_bracket[1] + 3];   // 관통 구멍 (케이블도 여기로)
 uno_stack_h = 30.0;          // [자] 2026-09-29 아두이노 밑면→Moebius 쉴드 위 가장 높은 부품
@@ -122,7 +122,8 @@ cradle_y0 = astra_yc - astra[2]/2 - wall;          // −13
 cradle_y1 = astra_yc + astra[2]/2 + astra_back;     // 39
 cradle_z0 = astra_zc - astra[1]/2 - wall;           // 52
 cap_t = 3;
-cap_h = astra[1]/2 + astra_clear/2 + cap_t;         // 캡 높이 (트레이 윗면 기준)
+cradle_top = astra_zc;                              // 홈 블록 윗면 = 본체 중심 높이 (캡이 여기서 시작)
+cap_h = astra[1]/2 + astra_clear/2 + cap_t;         // 캡 높이 (cradle_top 기준)
 cap_screws = [[cradle_x0 + astra_end_wall/2, astra_yc], [cradle_x0 + cradle_w - astra_end_wall/2, astra_yc],
               [case_w/2 - 40, cradle_y1 - astra_back/2], [case_w/2 + 40, cradle_y1 - astra_back/2]];
 lid_y0 = cradle_y1 + 1;      // 뚜껑은 크래들 뒤부터 (앞 나사 기둥도 여기 뒤로)
@@ -200,6 +201,7 @@ if (floor_t + uno_standoff_h + uno_stack_h > astra_zc - astra[1]/2 - astra_brack
     echo("⚠ 접힌 Astra 받침대가 아두이노 쉴드에 닿는다 — astra_bracket_t 실측 또는 astra_zc 올리기");
 if (case_d - cradle_y0 > bed_y) echo("⚠ 트레이 전장(크래들 포함)이 베드를 넘는다", case_d - cradle_y0);
 if (cradle_w > bed_x) echo("⚠ 크래들 폭이 베드를 넘는다", cradle_w);
+if (cradle_z0 < floor_t + uno_standoff_h + uno_stack_h + 1) echo("⚠ 크래들 바닥이 아두이노 스택에 닿는다");
 if (lid_y0 + lid_screw_inset + 5 > rot_center[1] - seat_r) echo("⚠ 뚜껑 앞 나사가 베어링 받침과 겹친다");
 if (astra_zc + astra[1]/2 + cap_t > tray_h + lid_t + plat_z && cradle_y1 > rot_center[1] - plat_dia/2)
     echo("⚠ Astra 캡이 회전판 밑으로 들어간다");
@@ -242,8 +244,8 @@ module astra_body(clear = astra_clear) {   // 본체 자리 (홈·캡 공통, �
 }
 module astra_cradle() {   // 트레이 앞 윗면에 붙는 홈 블록 (앞벽 위쪽을 대신한다) — 구멍은 astra_cuts()가 판다
     difference() {
-        translate([cradle_x0, cradle_y0, cradle_z0]) cube([cradle_w, cradle_y1 - cradle_y0, tray_h - cradle_z0]);
-        for (c = cap_screws) translate([c[0], c[1], tray_h - 10]) cylinder(h = 11, d = m3_tap);
+        translate([cradle_x0, cradle_y0, cradle_z0]) cube([cradle_w, cradle_y1 - cradle_y0, cradle_top - cradle_z0]);
+        for (c = cap_screws) translate([c[0], c[1], cradle_top - 10]) cylinder(h = 11, d = m3_tap);
     }
 }
 module astra_cuts() {   // 트레이 전체에서 판다 — 앞벽(y 0~3)이 홈 안에 남지 않게
@@ -255,16 +257,16 @@ module astra_cuts() {   // 트레이 전체에서 판다 — 앞벽(y 0~3)이 �
     translate([case_w/2 - astra_pocket[0]/2, astra_yc + astra_bracket_yo - astra_pocket[1]/2, cradle_z0 - 1])
         cube([astra_pocket[0], astra_pocket[1], astra_zc - cradle_z0 + 2]);
 }
-module astra_cap() {   // 위에서 덮어 나사 4개로 조인다. 좌표는 조립 위치(밑면 = tray_h)
+module astra_cap() {   // 위에서 덮어 나사 4개로 조인다. 좌표는 조립 위치(밑면 = cradle_top)
     difference() {
-        translate([cradle_x0, cradle_y0, tray_h]) cube([cradle_w, cradle_y1 - cradle_y0, cap_h]);
+        translate([cradle_x0, cradle_y0, cradle_top]) cube([cradle_w, cradle_y1 - cradle_y0, cap_h]);
         astra_body();
         // 앞면 렌즈 창 — 위 턱(astra_lip)만 남긴다
-        translate([cradle_x0 - 1, cradle_y0 - 1, tray_h - 1])
+        translate([cradle_x0 - 1, cradle_y0 - 1, cradle_top - 1])
             cube([cradle_w + 2, wall + 2, astra[1]/2 - astra_lip + 1]);
         for (c = cap_screws) {
-            translate([c[0], c[1], tray_h - 1]) cylinder(h = cap_h + 2, d = m3_clear);
-            translate([c[0], c[1], tray_h + cap_h - 2.5]) cylinder(h = 3, d = 6.5);   // 나사머리 자리
+            translate([c[0], c[1], cradle_top - 1]) cylinder(h = cap_h + 2, d = m3_clear);
+            translate([c[0], c[1], cradle_top + cap_h - 2.5]) cylinder(h = 3, d = 6.5);   // 나사머리 자리
         }
     }
 }
@@ -424,7 +426,7 @@ else if (part == "lid") lid();
 else if (part == "clamp") clamp();
 else if (part == "platform") platform();
 else if (part == "fit_test") fit_test();
-else if (part == "astra_cap") rotate([180, 0, 0]) translate([0, 0, -(tray_h + cap_h)]) astra_cap();   // 뒤집어 베드에
+else if (part == "astra_cap") rotate([180, 0, 0]) translate([0, 0, -(cradle_top + cap_h)]) astra_cap();   // 뒤집어 베드에
 else {
     lz = tray_h + lid_t;
     %color("black") astra_body(0);                                          // Astra 본체 (유령)
