@@ -100,8 +100,8 @@ meter_y = jetson_pos[1] + 10; meter_z = 22;
 /* ===================== Astra Pro 전면 크래들 (2026-09-29) ===================== */
 // 바닥 카메라(RPi Cam, 라인주행)는 뺐다 — 라인주행을 안 쓴다. 대신 Astra Pro(원거리 무대 조망, 60~400cm)를
 // **트레이 앞 윗면 홈에 눕혀 끼우고 캡으로 눌러 나사 고정**한다(접이식 받침대의 틸트는 힘이 약해 안 쓴다 — 사용자).
-// 본체 154 > 케이스 폭 151.9 → 크래들이 양옆으로 나간다(바퀴 폭 안). 아래 반은 홈, 위 반은 캡이 덮는다.
-astra = [154.0, 30, 40];     // [자] 길이 154.0 · [DS] 높이 30·깊이 40 (Orbbec 공식) — 높이·깊이 실측으로 확인 요
+// 본체 165 > 케이스 폭 151.9 → 크래들이 양옆으로 나간다(바퀴 폭 안). 아래 반은 홈, 위 반은 캡이 덮는다.
+astra = [165, 30, 40];       // [DS] Orbbec 공식 165×30×40. 캘리퍼(150mm)로 154까지밖에 못 재서 공식값을 쓴다(사용자 확인 2026-09-29)
 astra_clear = 0.6;           // 홈 여유(전체)
 astra_yc = 10;               // 본체 앞뒤 중심 — 앞면(렌즈)은 y = astra_yc − 20 = −10 (앞벽보다 10 앞)
 astra_zc = tray_h;           // 본체 중심 높이 = 트레이 윗면
@@ -109,8 +109,13 @@ astra_tilt = 0;              // 위로 기울임(도). 무대가 높으면 5~10 
 astra_end_wall = 6;          // 양 끝벽 (나사가 들어간다)
 astra_back = 9;              // 뒷벽 (나사가 들어간다)
 astra_lip = 5;               // 앞면 아래·위 턱 높이 — 렌즈 띠는 비운다
-astra_cable = [12, 14];      // 배선 구멍 (X폭, Y길이) 본체 바닥 중심 → 트레이 안으로 [실측] 케이블 나오는 자리
-uno_stack_h = 35;            // [실측 요] 아두이노 보드 밑면→Moebius 쉴드 위 가장 높은 부품(단자대). 크래들 바닥 Z=52 → 41 이하여야 한다
+// 접이식 받침대(60×23, 1/4" 너트)는 분리가 안 된다(사용자) → 접은 채 본체 밑에 매달린다. 크래들 바닥에 관통 구멍을 내
+// 받침대와 케이블이 트레이 안(아두이노 위)으로 빠지게 한다. 아두이노 스택 위(Z 41)와 받침대 밑 사이가 남아야 한다.
+astra_bracket = [60, 23];    // [자] 받침대 판 (X, Y)
+astra_bracket_t = 10;        // [실측 요] 접었을 때 본체 밑으로 나오는 두께 — 아두이노 스택과 간섭 검사에만 쓴다
+astra_bracket_yo = 0;        // 받침대 중심이 본체 앞뒤 중심에서 어긋난 양(+뒤)
+astra_pocket = [astra_bracket[0] + 2, astra_bracket[1] + 3];   // 관통 구멍 (케이블도 여기로)
+uno_stack_h = 30.0;          // [자] 2026-09-29 아두이노 밑면→Moebius 쉴드 위 가장 높은 부품
 cradle_w  = astra[0] + astra_clear + 2*astra_end_wall;
 cradle_x0 = case_w/2 - cradle_w/2;
 cradle_y0 = astra_yc - astra[2]/2 - wall;          // −13
@@ -190,7 +195,9 @@ if (floor_t + batt[2] > tray_h - 4) echo("⚠ 배터리가 뚜껑 밑 볼트와 
 if (jetson_pos[0] + jetson_size[0] > case_w - wall - 22) echo("⚠ 전압계 몸통 자리가 없다");
 if (floor_t + jetson_standoff_h + jetson_h > tray_h - 3) echo("⚠ 젯슨이 뚜껑에 닿는다 — buck_parts_h를 재거나 tray_h를 키울 것");
 if (jetson_pos[1] + jetson_size[1] > case_d - wall) echo("⚠ 젯슨이 뒷벽을 넘는다");
-if (floor_t + uno_standoff_h + uno_stack_h > cradle_z0 - 1) echo("⚠ 아두이노 쉴드가 Astra 크래들 바닥에 닿는다 — uno_stack_h 실측", cradle_z0);
+if (floor_t + uno_standoff_h + uno_stack_h > cradle_z0 - 1) echo("⚠ 아두이노 쉴드가 Astra 크래들 바닥에 닿는다", cradle_z0);
+if (floor_t + uno_standoff_h + uno_stack_h > astra_zc - astra[1]/2 - astra_bracket_t - 2)
+    echo("⚠ 접힌 Astra 받침대가 아두이노 쉴드에 닿는다 — astra_bracket_t 실측 또는 astra_zc 올리기");
 if (case_d - cradle_y0 > bed_y) echo("⚠ 트레이 전장(크래들 포함)이 베드를 넘는다", case_d - cradle_y0);
 if (cradle_w > bed_x) echo("⚠ 크래들 폭이 베드를 넘는다", cradle_w);
 if (lid_y0 + lid_screw_inset + 5 > rot_center[1] - seat_r) echo("⚠ 뚜껑 앞 나사가 베어링 받침과 겹친다");
@@ -244,9 +251,9 @@ module astra_cuts() {   // 트레이 전체에서 판다 — 앞벽(y 0~3)이 �
     // 앞면 렌즈 창 — 아래 턱(astra_lip)만 남기고 앞을 연다 (블록 앞면 + 원래 앞벽 둘 다)
     translate([cradle_x0 - 1, cradle_y0 - 1, astra_zc - astra[1]/2 + astra_lip])
         cube([cradle_w + 2, wall + 2 + (0 - cradle_y0), astra[1]]);
-    // 배선 구멍: 본체 바닥 중심 → 트레이 안 (USB가 배터리 옆을 지나 젯슨으로)
-    translate([case_w/2 - astra_cable[0]/2, astra_yc - astra_cable[1]/2, cradle_z0 - 1])
-        cube([astra_cable[0], astra_cable[1], wall + 6]);
+    // 받침대·케이블 관통 구멍: 본체 바닥 중심 → 트레이 안 (USB가 배터리 옆을 지나 젯슨으로)
+    translate([case_w/2 - astra_pocket[0]/2, astra_yc + astra_bracket_yo - astra_pocket[1]/2, cradle_z0 - 1])
+        cube([astra_pocket[0], astra_pocket[1], astra_zc - cradle_z0 + 2]);
 }
 module astra_cap() {   // 위에서 덮어 나사 4개로 조인다. 좌표는 조립 위치(밑면 = tray_h)
     difference() {
