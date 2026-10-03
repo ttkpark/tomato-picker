@@ -5,7 +5,7 @@
 
 ![조립](../../docs/design/case-render-assembly.png)
 
-**조립 가이드 = [`assembly_guide.html`](assembly_guide.html)** — 14단계 렌더, 중앙 기준 치수표, 3D 뷰어, 출력 방향.
+**조립 가이드 = [`docs/design/case-assembly-guide.html`](../../docs/design/case-assembly-guide.html)** — 브라우저로 연다(인터넷 없이도 3D까지 열림). 14단계 렌더, 중앙 기준 치수표, 3D 뷰어, 출력 방향.
 
 ## 구조
 | 부품 | 들어가는 것 |
