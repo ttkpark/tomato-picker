@@ -88,9 +88,12 @@ buck_parts_h = 14.2;         // [자] 2026-09-27 사용자 실측 (판+부품 �
 jetson_size  = [103, 90.5];  // [DS] 103 × 90.5 × 35 (방열판·팬 포함)
 jetson_h     = 35;           // [DS]
 jetson_fence_h = 6;          // 옆 턱 높이 — 보드 밑판(방열판 포함) 두께만큼
-jetson_pos = [wall + 2, rot_center[1] + servo_body[1]/2 + wall + 2];   // 왼쪽으로 붙여 오른쪽에 전압계 자리
+// x: 뒤 왼쪽 뚜껑 기둥(Ø9, x 2.5~11.5)을 비켜 wall+9 (2026-10-03 — wall+2일 때 젯슨 모서리와 2×5.5 겹쳤다). 오른쪽 전압계 자리는 22 이상 남는다
+jetson_pos = [wall + 9, rot_center[1] + servo_body[1]/2 + wall + 2];
 jetson_standoff_h = buck_standoff_h + 1.6 + buck_parts_h + 2;          // 벅부스트 위 2mm
-buck_pos = [for (i = [0, 1]) [jetson_pos[0] + (jetson_size[0] - buck_size[0])/2,
+// 벅부스트 X는 젯슨을 따라가지 않는다 — 7 오른쪽으로 가면 보스가 뒤 차체 나사머리(X 100.95, Y 186)에 얹힌다
+buck_x = wall + 2 + (jetson_size[0] - buck_size[0])/2;   // 18.2
+buck_pos = [for (i = [0, 1]) [buck_x,
                                jetson_pos[1] + 0.25 + i*buck_size[1]]];
 
 case_d = jetson_pos[1] + jetson_size[1] + 3 + wall;   // 젯슨 뒤 3mm 여유
@@ -151,6 +154,7 @@ seat_wall = 6;               // 받침 벽 → 받침 바깥지름 112
 seat_r = brg[1]/2 + seat_wall;
 clamp_t = 2;                 // 바깥 누름 링 두께 — 나사 M3×12 = 링 2 + 받침 구멍 10
 clamp_screw_r = brg[1]/2 + seat_wall/2;
+head_groove_w = 8;  head_groove_d = 3;   // 회전판 밑 나사머리 홈 (R49~57, 깊이 3 → 판 3 남음)
 hub_wall = 3;
 snap_lip = 0.5;  snap_h = 1.2;  snap_slots = 6;
 plat_z = seat_shoulder_h + brg[2] + clamp_t + 1;   // 뚜껑 윗면 → 회전판 밑면 = 16
@@ -158,7 +162,7 @@ plat_z = seat_shoulder_h + brg[2] + clamp_t + 1;   // 뚜껑 윗면 → 회전�
 // 180° 기계 제한 — 배선이 감겨 끊기지 않게. 허브 안(반지름 < 37)에 들어간다.
 travel_deg = 180;
 stop_r = 32;  stop_pin_d = 5;  stop_groove_depth = 3;
-stop_deg = 0;
+stop_deg = 180;   // 서보 몸통 반대편(−X). 0(+X)이면 핀이 서보 윗면을 1.5 파고들었다(2026-10-03 간섭 검사)
 
 // 배선 — 서보가 중심을 차지하므로 호형 슬롯. 서보 몸체(+X) 반대편으로, 배터리와 젯슨 사이 왼쪽 빈칸에 떨어진다.
 cable_r = 20;  cable_w = 12;  cable_deg = 180;
@@ -168,12 +172,13 @@ plat_dia = 150;  plat_t = 6;
 coupler_h = plat_z - (horn_top - lid_t) - servo_raise;   // 혼 윗면 → 회전판 밑면 = 12.7
 // 혼 나사 길이 = (plat_t − horn_cb) + coupler_h + 혼 나사산 4.3 = 3 + 12.7 + 4.3 = 20 → **M3×20**
 // SO-101 받침 체결 4구멍 — [자] 2026-09-27 전수 실측(3차 정정). 전부 받침 중심선(X=0) 기준 좌우대칭.
-// 이 회전판 좌표는 +Y = 전면(팔이 보는 쪽), -Y = 후면(사용자 확인).
-//   기존 2개: 간격 56.7(← STL 계산값 67.5는 틀렸다, 실측으로 교체), 회전축보다 15.0 앞(+Y, 전면쪽) — PDF 9쪽 볼트
-//   나머지 2개: 간격 64.4, 회전축보다 55.0 뒤(−Y, 후면쪽)
+// 회전판은 돌리지 않고 놓이므로 회전판 좌표 = 케이스 좌표: −Y = 케이스 앞(Astra) = 스토퍼 가운데에서 팔이 보는 쪽.
+// (2026-10-03: 예전엔 +Y를 팔 정면으로 놓아 팔이 가운데에서 케이스 뒤를 봤고 ±90°로 앞을 못 봤다)
+//   기존 2개: 간격 56.7(← STL 계산값 67.5는 틀렸다, 실측으로 교체), 회전축보다 15.0 앞(−Y, 전면쪽) — PDF 9쪽 볼트
+//   나머지 2개: 간격 64.4, 회전축보다 55.0 뒤(+Y, 후면쪽)
 // 회전판에 M3 열압입 인서트(Ø4.2)를 박고 위에서 조인다 — 판 밑은 베어링이라 너트를 못 댄다.
 so101_front_gap = 56.7;  // [자] 실측 — BOTTOM 계산값(67.5)은 폐기
-so101_holes = [[-so101_front_gap/2, 15.0], [so101_front_gap/2, 15.0], [-64.4/2, -55.0], [64.4/2, -55.0]];
+so101_holes = [[-so101_front_gap/2, -15.0], [so101_front_gap/2, -15.0], [-64.4/2, 55.0], [64.4/2, 55.0]];
 so101_offset = [0, 0];           // 위 좌표가 이미 회전축(회전판 중심) 기준
 insert_d = 4.2;
 // (회전판의 Orbbec 1/4" 자리는 뺐다 — Astra는 차체 앞 크래들에, D405는 팔 손목에 있다)
@@ -206,6 +211,10 @@ if (case_d - cradle_y0 > bed_y) echo("⚠ 트레이 전장(크래들 포함)이 
 if (cradle_w > bed_x) echo("⚠ 크래들 폭이 베드를 넘는다", cradle_w);
 if (servo_raise > lid_t - 1) echo("⚠ 서보 포켓이 뚜껑 판을 뚫는다");
 if (plat_t - horn_cb < 2.5) echo("⚠ 혼 나사머리 밑 판이 너무 얇다");
+if (plat_z - seat_shoulder_h - brg[2] - clamp_t + head_groove_d < 3) echo("⚠ 누름 링 나사머리가 회전판에 닿는다");
+for (h = so101_holes) let (r = norm(h)) if (abs(r - clamp_screw_r) < head_groove_w/2 + insert_d/2 + 1) echo("⚠ SO-101 인서트가 나사머리 홈에 걸린다", r);
+for (c = lid_corners) if (c[0] + 4.5 > jetson_pos[0] && c[0] - 4.5 < jetson_pos[0] + jetson_size[0] && c[1] + 4.5 > jetson_pos[1] && c[1] - 4.5 < jetson_pos[1] + jetson_size[1]) echo("⚠ 뚜껑 기둥이 젯슨 자리와 겹친다", c);
+if (abs(cos(stop_deg)) > 0.5 && cos(stop_deg) > 0) echo("⚠ 스토퍼가 서보 몸통(+X) 쪽에 있다");
 echo("나사 길이 — 혼", (plat_t - horn_cb) + coupler_h + 4.3, " 뚜껑", lid_t + 8, " 누름링", clamp_t + 10, " 캡", 20);
 if (cap_h - 10 < 3) echo("⚠ 캡 나사머리 밑 살이 3mm 미만");
 if (cradle_z0 < floor_t + uno_standoff_h + uno_stack_h + 1) echo("⚠ 크래들 바닥이 아두이노 스택에 닿는다");
@@ -381,6 +390,11 @@ module platform() {
     difference() {
         cylinder(h = plat_t, d = plat_dia, $fn = 120);
         ring_holes(horn_pcd, horn_hole, plat_t);
+        // 누름 링 나사머리 도피 홈 (밑면 원형) — 누름 링 위 ↔ 판 밑 틈이 1이라 머리가 판을 긁었다(2026-10-03)
+        translate([0, 0, -1]) difference() {
+            cylinder(h = head_groove_d + 1, r = clamp_screw_r + head_groove_w/2, $fn = 120);
+            translate([0, 0, -1]) cylinder(h = head_groove_d + 3, r = clamp_screw_r - head_groove_w/2, $fn = 120);
+        }
         translate([0, 0, plat_t - horn_cb]) ring_holes(horn_pcd, 6.5, horn_cb + 1);   // 나사머리 자리
         translate([0, 0, -1]) cylinder(h = plat_t + 2, d = 3);
         rotate(cable_deg) translate([cable_r, 0, -1]) cylinder(h = plat_t + 2, d = cable_w - 1);
