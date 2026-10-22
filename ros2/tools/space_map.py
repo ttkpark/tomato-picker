@@ -925,7 +925,7 @@ def go_cmd(a, m) -> int:
     link = open_link()
     if link is None:
         return 1
-    est_w, est_v, stuck = math.radians(20), 0.10, 0
+    est_w, est_v, stuck, veer = math.radians(20), 0.10, 0, 0
     try:
         for i in range(a.max_steps):
             xy, th = s["pose"][:2], s["pose"][2]
@@ -947,9 +947,22 @@ def go_cmd(a, m) -> int:
                 prior = prev + [0, 0, sg * est_w]
                 what = "회전 %s" % ("왼" if sg > 0 else "오른")
             else:
+                i0 = imu_now()
                 drive(link, a.vx, 0, 0, a.vsecs)
                 prior = prev + [est_v * math.cos(th), est_v * math.sin(th), 0]
                 what = "전진"
+                # ⚠ 전진이 회전으로 바뀐다 = 바퀴가 걸렸거나 미끄러진다(2026-10-23 실기: 전진마다 +26~30°, 그 자리 지도가 25° 틀어졌다)
+                time.sleep(0.5)
+                i1 = imu_now()
+                turned = math.degrees(i1[1] - i0[1]) if i0 is not None and i1 is not None and i0[0] == i1[0] else 0.0
+                if abs(turned) > 10:
+                    veer += 1
+                    print("  ⚠ 전진했는데 %.0f° 돌았다 — 바퀴가 걸렸거나 바닥이 미끄럽다" % turned)
+                    if veer >= 2:
+                        print("⛔ 전진이 두 번 연달아 회전이 됐다 — 이 자리 바닥·바퀴를 본다(이대로면 지도가 틀어진다)")
+                        return 1
+                else:
+                    veer = 0
             # 제자리 회전이면 자리는 거의 그대로다(장착값이 실제 회전 중심 기준) — 넓게 찾으면 벽을 따라 0.1~0.3m 미끄러졌다
             localize(s, m, prior, 0.05 if what != "전진" else 0.3, 25, time.time() + 0.4)
             dxy = float(np.hypot(*(s["pose"][:2] - prev[:2])))

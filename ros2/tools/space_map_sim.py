@@ -56,6 +56,7 @@ def physics():
         true[0] += v * math.cos(true[2])
         true[1] += v * math.sin(true[2])
         true[2] += rng.normal(0, math.radians(2)) * dt            # 전진 중 조금 틀어진다(IMU도 본다)
+        true[2] += math.radians(float(os.environ.get("SIM_VEER", 0))) * dt   # 바퀴가 걸려 전진이 회전이 된다(°/s)
         T["yaw_imu"] += (true[2] - T.get("th_prev", true[2]))
     T["th_prev"] = true[2]
     T["yaw_imu"] += T["bias"] * dt
