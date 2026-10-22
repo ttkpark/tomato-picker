@@ -573,7 +573,8 @@ def register(base: dict, shots, pose0, k: float, m: dict) -> np.ndarray:
     if (base["lo"] > OCC).sum() < 100:
         return pose0                                   # 첫 바퀴 — 맞출 지도가 없다
     sc_all = np.concatenate([to_world((0.0, 0.0, r * k), sc_) for r, _, sc_ in shots if len(sc_)])
-    got, q, hit, amb = match(base, sc_all, pose0, 0.5, 10)
+    # θ는 IMU가 이미 안다 — ±10°로 찾으면 양끝이 20° 떨어져 "모호"에 걸렸다(2026-10-23 실기 세 번째 자리)
+    got, q, hit, amb = match(base, sc_all, pose0, 0.5, 6)
     if amb or q < Q_MIN or hit < 50:
         print("  ⚠ 새 자리 맞춤 실패(일치 %.2f · 겹친 점 %d · 모호 %s) — 시작 짐작 그대로" % (q, hit, amb))
         return np.asarray(pose0, float)
