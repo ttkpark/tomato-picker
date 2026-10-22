@@ -75,6 +75,12 @@
 - 감속기(프린트 기어)는 넣지 않는다 — 기어 유격이 서보 백래시에 더해진다. 판이 밀리는 게 실측되면 그때 3:1.
 - ⚠ **0/4095 경계를 180° 구간 밖에 두라** — wrist_roll에서 엔코더 경계가 가동구간에 걸려 팔이 튀었다
   (메모리 wrist-roll-wrap-fix). 조립 전에 중앙(2048)을 회전판 정면에 맞춰 영점을 쓴다.
+- **실기 설정 (2026-10-22)** — 서보 EEPROM에 써 둠, 바꾸면 여기도 고친다:
+  - ID 1(공장값) → **7**. 공장값 그대로 버스에 물리면 어깨 pan(ID 1)과 충돌해 둘 다 안 읽힌다
+    (핑 20번에 1번 응답) — ID는 **회전 서보만 단독으로** 물려서 바꾼다(둘 다 물린 채 쓰면 둘 다 7이 된다).
+  - 정면 = **2048**(Homing_Offset 1690, 사용자가 정면에 맞춘 자리 — 신뢰 기준). 경계 0/4095는 뒤쪽 180°.
+  - 손으로 잰 끝: 581(−129°, 여유 있음) · 3138(+96°, 끝). **Min/Max_Position_Limit = 1024/3072 (±90°)**.
+  - ⚠ **스토퍼 핀은 조립 전에 부러져 없다** — 기계식 멈춤이 없으므로 서보 한계(EEPROM)가 유일한 하드 리밋이다.
 - 출처: [RobotShop STS3215 12V 30kg](https://www.robotshop.com/products/feetech-12v-30kgcm-magnetic-encoding-servo-sts3215) ·
   [Robo9 백래시·반복정밀도 실측](https://robonine.com/testing-of-feetech-sts3215-servomotor-backlash-repeatability-and-torque/)
 
