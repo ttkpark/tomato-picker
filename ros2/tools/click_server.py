@@ -30,14 +30,18 @@ API 요약 (전부 JSON)
     GET  /frame.jpg                  손목 화면
     POST /click   {u,v,mode}         mode=target(줄기) | grip(십자)
     POST /clear                      표적 지움
-    POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge
+    POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge|space
     POST /stop                       도는 일을 끊는다
+    GET  /space?mt=                  공간 지도(격자·복셀·자세·길) — mt가 같으면 {same:true}
+    POST /space/plan {x,y}           지금 자리→(x,y) 길만 짠다(안 움직인다)
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import math
 import os
 import posixpath
 import signal
@@ -55,6 +59,7 @@ REPO = os.path.join(HERE, "..", "..")
 sys.path.insert(0, os.path.join(REPO, "src"))
 
 import arm_calib                                             # noqa: E402
+import space_map                                             # noqa: E402
 
 
 def _kin_constants() -> dict:
@@ -370,7 +375,50 @@ def build(job, args):
         if args.get("max_pwm"):
             a += ["--max-pwm", "%d" % int(num(args, "max_pwm", 0, 0, 4095))]
         return a
+    if job == "space":
+        # **집 안 공간 지도**(space_map.py) — 한 장 담기·제자리 스캔·목표로 가기·지우기.
+        # 주행 포트를 쥐는 일이라 넛지와 같이 한 번에 하나만 돈다.
+        mode = str(args.get("mode", ""))
+        if mode not in ("snap", "scan", "go", "clear"):
+            raise ValueError("space mode 는 snap|scan|go|clear")
+        a = [PY, T("space_map.py"), mode]
+        if mode in ("scan", "go"):
+            a += ["--w", "%d" % int(num(args, "w", 150, 60, 255)),
+                  "--wsecs", "%.2f" % num(args, "wsecs", 0.8, 0.2, 2.0)]
+        if mode == "scan":
+            a += ["--steps", "%d" % int(num(args, "steps", 16, 1, 40))]
+        if mode == "go":
+            if "x" not in args or "y" not in args:
+                raise ValueError("go 는 목표 x,y(m)가 있어야 한다 — 지도 바닥을 먼저 누른다")
+            half = space_map.N * space_map.RES / 2
+            a += ["--x", "%.3f" % num(args, "x", 0, -half, half),
+                  "--y", "%.3f" % num(args, "y", 0, -half, half),
+                  "--vx", "%d" % int(num(args, "vx", 150, 60, 255)),
+                  "--vsecs", "%.2f" % num(args, "vsecs", 0.6, 0.2, 2.0)]
+        return a
     raise ValueError("모르는 일: %s" % job)
+
+
+def space_payload(have: str) -> str:
+    """지도 파일 → 화면용 JSON. 격자는 칸 코드(0 모름·1 빈·2 장애물), 복셀은 int16 — 둘 다 base64."""
+    try:
+        mt = "%.3f" % os.path.getmtime(space_map.MAP)
+    except OSError:
+        return json.dumps({"ok": False, "why": "지도 없음 — [한 장 담기]나 [제자리 한 바퀴]부터"})
+    if mt == have:
+        return '{"ok":true,"same":true}'
+    s = space_map.load()
+    code = np.zeros(s["lo"].shape, np.uint8)
+    code[s["lo"] < -space_map.FREE] = 1
+    code[s["lo"] > space_map.OCC] = 2
+    b64 = lambda a: base64.b64encode(a.tobytes()).decode()   # noqa: E731
+    return json.dumps({"ok": True, "mt": mt, "res": space_map.RES, "n": space_map.N,
+                       "grid": b64(code.T.copy()),            # 화면은 [iy, ix] 순서로 읽는다
+                       "vox": b64(s["vox"].astype("<i2")),
+                       "pose": [float(v) for v in s["pose"]], "q": float(s["q"]),
+                       "frames": int(s["frames"]),
+                       "path": np.asarray(s["path"], float).tolist(),
+                       "goal": np.asarray(s["goal"], float).tolist()})
 
 
 PAGE = r"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
@@ -444,6 +492,29 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
   <div class="stage" id="stage">
     <img id="im" alt="손목 카메라">
     <svg id="ov" viewBox="0 0 848 480" preserveAspectRatio="none"></svg>
+  </div>
+  <div class="card"><h2>공간 지도 — Astra 3D (집 안 다니기)</h2>
+    <canvas class="k3d" id="sp3d" style="height:380px"></canvas>
+    <div class="legend">
+      <span>점=Astra가 본 표면(낮음 청록→높음 주황)</span>
+      <span><b style="background:#3caa5a"></b>빈 바닥(광선)</span>
+      <span><b style="background:#e64632"></b>장애물</span>
+      <span><b style="background:#ffd166"></b>길</span>
+      <span>드래그=회전·휠=확대·바닥 클릭=목표</span>
+    </div>
+    <div class="v" id="spInfo" style="margin-top:5px">지도 없음</div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="run('space',{mode:'snap'})">한 장 담기(안 움직임)</button>
+      <button class="go" onclick="run('space',spArgs({mode:'scan'}))">제자리 한 바퀴 스캔</button>
+      <button class="go" onclick="spGo()">목표로 가기</button>
+      <button onclick="if(confirm('지도를 지울까? 다음 장의 자리가 원점이 된다'))run('space',{mode:'clear'})">지도 지움</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label>회전<input id="sp_w" value="150"></label><label>초<input id="sp_ws" value="0.8" style="width:50px"></label>
+      <label>전진<input id="sp_v" value="150"></label><label>초<input id="sp_vs" value="0.6" style="width:50px"></label>
+    </div>
+    <div class="k" style="margin-top:4px">자세는 바퀴가 아니라 <b>지도와 맞춰서</b> 안다(엔코더 없음) — 넛지마다 다시 맞춘다.
+      Astra는 <b>60cm 안을 못 본다</b>: 가까운 장애물은 멀리서 봐 둔 지도로만 피한다. 멈춤은 [지금 하는 일 끊기].</div>
   </div>
   <div class="card"><h2>기록</h2><pre id="log"></pre></div>
 </div>
@@ -1068,6 +1139,96 @@ function k3dInit(){
 }
 k3dInit(); k3dInitRows();
 
+// ── 공간 지도 (space_map.py) — 좌표는 지도 그대로(m, z 위) ─────────────
+var sp={az:-2.4,el:0.85,dist:6,tgt:new THREE.Vector3(0,0,0.3),mt:'0',goalXY:null};
+function b64buf(t){var b=atob(t),u=new Uint8Array(b.length);for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u.buffer;}
+function spArgs(o){o.w=val('sp_w',150);o.wsecs=val('sp_ws',0.8);o.vx=val('sp_v',150);o.vsecs=val('sp_vs',0.6);return o;}
+function spInfo(t){document.getElementById('spInfo').textContent=t;}
+function spRender(){ if(!sp.r) return; var c=Math.cos(sp.el);
+  sp.cam.position.set(sp.tgt.x+sp.dist*c*Math.cos(sp.az),sp.tgt.y+sp.dist*c*Math.sin(sp.az),sp.tgt.z+sp.dist*Math.sin(sp.el));
+  sp.cam.lookAt(sp.tgt); sp.r.render(sp.scene,sp.cam);}
+function spInit(){
+  var cv=document.getElementById('sp3d');
+  sp.scene=new THREE.Scene();
+  sp.cam=new THREE.PerspectiveCamera(50,1,0.05,100); sp.cam.up.set(0,0,1);
+  sp.r=new THREE.WebGLRenderer({canvas:cv,antialias:true}); sp.r.setClearColor(0x11151c);
+  function resize(){var w=cv.clientWidth||600,h=cv.clientHeight||380;
+    sp.r.setSize(w,h,false); sp.cam.aspect=w/h; sp.cam.updateProjectionMatrix(); spRender();}
+  window.addEventListener('resize',resize);
+  var g=new THREE.Group();
+  var body=new THREE.Mesh(new THREE.BoxGeometry(0.30,0.24,0.18),
+    new THREE.MeshBasicMaterial({color:0x4a9eff,transparent:true,opacity:0.85}));
+  body.position.z=0.09; g.add(body);
+  var nose=new THREE.Mesh(new THREE.ConeGeometry(0.06,0.14,12),new THREE.MeshBasicMaterial({color:0xffd166}));
+  nose.rotation.z=-Math.PI/2; nose.position.set(0.22,0,0.09); g.add(nose);
+  sp.robot=g; sp.scene.add(g); sp.scene.add(new THREE.AxesHelper(0.5));
+  var down=false,dragged=false,x0=0,y0=0,lx=0,ly=0;
+  cv.addEventListener('pointerdown',function(e){down=true;dragged=false;x0=lx=e.clientX;y0=ly=e.clientY;});
+  window.addEventListener('pointerup',function(e){ if(down&&!dragged&&e.target===cv) spPick(e); down=false;});
+  window.addEventListener('pointermove',function(e){ if(!down) return;
+    if(Math.abs(e.clientX-x0)+Math.abs(e.clientY-y0)>5) dragged=true; if(!dragged) return;
+    sp.az-=(e.clientX-lx)*0.01; sp.el=Math.max(0.1,Math.min(1.55,sp.el+(e.clientY-ly)*0.01));
+    lx=e.clientX; ly=e.clientY; spRender();});
+  cv.addEventListener('wheel',function(e){e.preventDefault();
+    sp.dist=Math.max(0.8,Math.min(25,sp.dist*(1+e.deltaY*0.001))); spRender();},{passive:false});
+  resize();
+}
+function spDrawPath(path,goal){
+  if(sp.path){sp.scene.remove(sp.path);sp.path=null;} if(sp.goal){sp.scene.remove(sp.goal);sp.goal=null;}
+  if(path&&path.length>1){
+    sp.path=new THREE.Line(new THREE.BufferGeometry().setFromPoints(path.map(function(p){return new THREE.Vector3(p[0],p[1],0.03);})),
+      new THREE.LineBasicMaterial({color:0xffd166})); sp.scene.add(sp.path);}
+  if(goal&&goal.length===2){
+    sp.goal=new THREE.Mesh(new THREE.SphereGeometry(0.07,12,8),new THREE.MeshBasicMaterial({color:0xff9a3d}));
+    sp.goal.position.set(goal[0],goal[1],0.07); sp.scene.add(sp.goal);}
+  spRender();
+}
+function spPick(e){
+  var b=sp.r.domElement.getBoundingClientRect(), rc=new THREE.Raycaster(), p=new THREE.Vector3();
+  rc.setFromCamera(new THREE.Vector2((e.clientX-b.left)/b.width*2-1,-(e.clientY-b.top)/b.height*2+1),sp.cam);
+  if(!rc.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,0,1),0),p)) return;
+  sp.goalXY=[p.x,p.y];
+  post('/space/plan',{x:p.x,y:p.y}).then(function(j){
+    spDrawPath(j.path||[],sp.goalXY);
+    spInfo(j.ok?('목표 ('+p.x.toFixed(2)+', '+p.y.toFixed(2)+') · 길 '+j.len.toFixed(2)+'m — [목표로 가기]')
+               :('⛔ '+j.why));});
+}
+function spGo(){ if(!sp.goalXY){alert('지도 바닥을 먼저 눌러 목표를 정한다');return;}
+  run('space',spArgs({mode:'go',x:sp.goalXY[0],y:sp.goalXY[1]}));}
+function spBuild(j){
+  var R=j.res,N=j.n,g=new Uint8Array(b64buf(j.grid)),px=new Uint8Array(N*N*4);
+  for(var i=0;i<N*N;i++){
+    if(g[i]===1){px[4*i]=60;px[4*i+1]=170;px[4*i+2]=90;px[4*i+3]=80;}
+    else if(g[i]===2){px[4*i]=230;px[4*i+1]=70;px[4*i+2]=50;px[4*i+3]=235;}}
+  if(sp.plane){sp.scene.remove(sp.plane);sp.plane.material.map.dispose();sp.plane.geometry.dispose();}
+  var tex=new THREE.DataTexture(px,N,N,THREE.RGBAFormat); tex.needsUpdate=true;
+  sp.plane=new THREE.Mesh(new THREE.PlaneGeometry(N*R,N*R),
+    new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false}));
+  sp.plane.position.z=0.003; sp.scene.add(sp.plane);
+  var v=new Int16Array(b64buf(j.vox)),K=v.length/3,pos=new Float32Array(K*3),col=new Float32Array(K*3);
+  for(var k=0;k<K;k++){
+    var z=(v[3*k+2]+0.5)*R,t=Math.max(0,Math.min(1,z/2.0));
+    pos[3*k]=(v[3*k]+0.5)*R; pos[3*k+1]=(v[3*k+1]+0.5)*R; pos[3*k+2]=z;
+    col[3*k]=0.2+0.8*t; col[3*k+1]=0.85-0.35*t; col[3*k+2]=0.95-0.75*t;}
+  if(sp.pts){sp.scene.remove(sp.pts);sp.pts.geometry.dispose();}
+  var geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3)); geo.setAttribute('color',new THREE.BufferAttribute(col,3));
+  sp.pts=new THREE.Points(geo,new THREE.PointsMaterial({size:R*0.9,vertexColors:true})); sp.scene.add(sp.pts);
+  sp.robot.position.set(j.pose[0],j.pose[1],0); sp.robot.rotation.z=j.pose[2];
+  if(!sp.framed){sp.tgt.set(j.pose[0],j.pose[1],0.3); sp.framed=true;}
+  if(j.goal&&j.goal.length===2) sp.goalXY=j.goal;
+  spDrawPath(j.path,sp.goalXY);
+  spInfo('장 '+j.frames+' · 점 '+K+' · 자세 ('+j.pose[0].toFixed(2)+', '+j.pose[1].toFixed(2)+') '
+    +Math.round(j.pose[2]*180/Math.PI)+'° · 맞춤 '+j.q.toFixed(2));
+}
+function spLoad(){ fetch('/space?mt='+sp.mt).then(function(r){return r.json();}).then(function(j){
+  if(!j.ok){ if(sp.mt!=='0'){sp.mt='0';sp.framed=false;
+      if(sp.pts){sp.scene.remove(sp.pts);sp.pts=null;} if(sp.plane){sp.scene.remove(sp.plane);sp.plane=null;}
+      sp.goalXY=null; spDrawPath([],null);}
+    spInfo(j.why||'지도 없음'); return;}
+  if(j.same) return; sp.mt=j.mt; spBuild(j);}).catch(function(){});}
+spInit(); spLoad(); setInterval(spLoad,1500);
+
 // ⚠ 잡기가 도는 동안엔 더 자주 본다 — 걸음이 1초 안쪽이라 1.2초로는 건너뛴다.
 setInterval(tick,400); setInterval(function(){ if(servo) state(); },400);
 setInterval(state,1200); setInterval(log,900); tick(); state(); log();
@@ -1164,6 +1325,9 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:                          # noqa: BLE001
                     pass
             self._send(200, json.dumps(out))
+        elif p == "/space":
+            have = parse_qs(urlparse(self.path).query).get("mt", ["0"])[0]
+            self._send(200, space_payload(have))
         elif p == "/log":
             q = parse_qs(urlparse(self.path).query)
             try:
@@ -1222,6 +1386,23 @@ class Handler(BaseHTTPRequestHandler):
                       open(TARGET, "w"), indent=1)
             self._send(200, json.dumps({"ok": True, "u": u, "v": v, "z": z,
                                         "mode": "target"}))
+            return
+        if p == "/space/plan":
+            b = self._body()
+            try:
+                gx, gy = float(b["x"]), float(b["y"])
+            except Exception:                              # noqa: BLE001
+                self._send(400, json.dumps({"ok": False, "why": "x,y(m)가 있어야 한다"}))
+                return
+            if not (math.isfinite(gx) and math.isfinite(gy)):
+                self._send(400, json.dumps({"ok": False, "why": "x,y가 수가 아니다"}))
+                return
+            s = space_map.load()
+            path, why = space_map.plan(s["lo"], s["pose"][:2], (gx, gy),
+                                       space_map.mount()["radius"])
+            ln = sum(math.dist(a, b) for a, b in zip(path, path[1:])) if path else 0.0
+            self._send(200, json.dumps({"ok": path is not None, "why": why,
+                                        "path": path or [], "len": ln}))
             return
         if p in ("/run", "/api/run"):
             b = self._body()
