@@ -35,7 +35,8 @@ IT = {"fx": 570.3, "fy": 570.3, "ppx": 319.5, "ppy": 239.5}
 M = dict(sm.MOUNT)
 
 true = np.array([0.3, 0.2, 0.0])              # 참 자세 — 지도 원점과 다르다(지도는 첫 장 자리 = 원점)
-T = {"w": 0, "t": time.monotonic(), "yaw_imu": 0.0, "bias": math.radians(0.05)}
+T = {"w": 0, "vx": 0, "t": time.monotonic(), "yaw_imu": 0.0, "bias": math.radians(0.05)}
+THR_V, SPEED = 140, 0.12                        # 전진: 지령 140 아래면 안 간다, 넘으면 0.12m/s
 THR = 200                                       # 정지마찰 문턱(회전 지령)
 RATE = math.radians(35)                         # 문턱 넘으면 35°/s
 SCALE_ERR = 1.02                                # IMU 스케일 2% 틀림
@@ -50,6 +51,13 @@ def physics():
         # 순수 회전이 아니다 — 옆으로 밀린다(2026-09-09 실측)
         true[:2] += rng.normal(0, 0.01, 2) * dt * float(os.environ.get("SIM_SLIP", 5))
         T["yaw_imu"] += d * SCALE_ERR
+    if abs(T["vx"]) >= THR_V:
+        v = math.copysign(SPEED, T["vx"]) * dt
+        true[0] += v * math.cos(true[2])
+        true[1] += v * math.sin(true[2])
+        true[2] += rng.normal(0, math.radians(2)) * dt            # 전진 중 조금 틀어진다(IMU도 본다)
+        T["yaw_imu"] += (true[2] - T.get("th_prev", true[2]))
+    T["th_prev"] = true[2]
     T["yaw_imu"] += T["bias"] * dt
 
 
@@ -57,17 +65,17 @@ def imu_now(max_age=1.0):
     physics()
     if not USE_IMU:
         return None
-    return 1.0, T["yaw_imu"] + rng.normal(0, math.radians(0.02)), T["w"] == 0
+    return 1.0, T["yaw_imu"] + rng.normal(0, math.radians(0.02)), T["w"] == 0 and T["vx"] == 0
 
 
 class Link:
     def set_velocity(self, vx, vy, w):
         physics()
-        T["w"] = w
+        T["w"], T["vx"] = w, vx
 
     def stop(self):
         physics()
-        T["w"] = 0
+        T["w"] = T["vx"] = 0
 
     def close(self):
         pass
@@ -185,6 +193,15 @@ print("참 회전 %.0f° · 지도 θ 오차 %.1f°" % (math.degrees(true[2] - s
 print("복셀 %d · 표면 7.5cm 안 %.1f%% · 중앙값 %.3fm" % (len(dv), 100 * (dv < 0.075).mean(), np.median(dv)))
 print("장애물 칸 %d · 표면 10cm 안 %.1f%%" % (len(do), 100 * (do < 0.10).mean()))
 err = abs(math.degrees(sm.wrap(est_th - true[2])))
+if os.environ.get("SIM_GO"):            # 이어서 목표로 가기 — 지도 좌표 SIM_GO="x,y"
+    gx, gy = (float(v) for v in os.environ["SIM_GO"].split(","))
+    ga = types.SimpleNamespace(x=gx, y=gy, w=150, wsecs=0.8, vx=150, vsecs=0.8, tol=0.2, max_steps=40, deg=20.0)
+    rc2 = sm.go_cmd(ga, M)
+    s = sm.load()
+    tm = np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2])        # 참 자리(지도 좌표)
+    print("=== 가기 rc=%d · 참 자리 (%.2f, %.2f) · 목표까지 %.2fm · 지도 자세 오차 %.2fm %.1f°" % (
+        rc2, tm[0], tm[1], float(np.hypot(tm[0] - gx, tm[1] - gy)), float(np.hypot(*(s["pose"][:2] - tm))),
+        math.degrees(sm.wrap(s["pose"][2] + start[2] - true[2]))))
 if USE_IMU and not os.environ.get("SIM_SCALE") and not os.environ.get("SIM_XY"):
     assert rc == 0 and (dv < 0.075).mean() >= 0.75 and err <= 5.0, ("지도 품질 합격선 미달", rc, (dv < 0.075).mean(), err)
     print("space_map_sim ✅ 합격선(복셀 75%·θ 5°)")

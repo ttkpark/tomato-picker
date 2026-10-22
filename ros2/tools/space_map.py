@@ -252,6 +252,7 @@ def field(lo: np.ndarray) -> np.ndarray:
     return f
 
 
+NEAR = 0.05                    # 짐작에서 칸² 당 깎는 점수(맞은 점 1개 ≈ 1점). 모의 가기에서 0.2도 비슷 — 손으로 옮긴 뒤 0.5m 다시 찾기를 덜 막는 쪽
 HIT = 0.36                     # 우도 이 이상 = 장애물 2칸 안에 떨어졌다
 
 
@@ -284,7 +285,9 @@ def match(s: dict, scan: np.ndarray, prior, win_xy: float, win_deg: float):
     S = F - 0.5 * contra                        # 탐색 점수: 맞으면 +, 빈 곳에 장애물을 놓으면 −
     oi = np.arange(-round(win_xy / RES), round(win_xy / RES) + 1)
     # 동점이면 짐작에 가까운 쪽 — 벽 하나만 보이면 벽을 따라 미끄러져도 점수가 같다(합성 방에서 0.5m)
-    near = 1e-4 * (oi[:, None] ** 2 + oi[None, :] ** 2)
+    # 짐작에서 멀수록 조금씩 깎는다 — 벽을 따라 미끄러져도 점수가 같거나 몇 점 오르는 자리로 튀지 않게
+    # (모의 가기: 0.19m 튀었다 돌아오며 좌우로 흔들렸다). 진짜 고침은 맞은 점 수십 개로 이 값을 넘는다.
+    near = NEAR * (oi[:, None] ** 2 + oi[None, :] ** 2)
     best, bp = -1e9, prior
     ths = np.radians(np.arange(-win_deg, win_deg + 1e-9, 1.0))
     per = np.empty(len(ths))
