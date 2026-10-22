@@ -41,6 +41,9 @@ JOINT_NAMES = ("shoulder_pan", "shoulder_lift", "elbow_flex",
 # URDF에는 있지만 kinematics가 안 쓰는 관절. 값을 모를 때 0으로 채운다
 # (robot_state_publisher가 모든 비고정 관절값을 요구하므로 빠뜨릴 수 없다).
 EXTRA_JOINTS = ("gripper",)
+# 케이스 회전판 — 팔 받침 전체를 도는 URDF 관절. 소스가 `base_yaw_deg()`를 줄 때만
+# 읽고, proxy처럼 못 주면 0(정면)으로 채운다(robot_state_publisher가 요구한다).
+YAW_JOINT = "base_yaw"
 
 MODES = ("direct", "proxy")
 # proxy가 사라지는 이정표. docs/ros2-이행계획.md의 "레거시 의존 졸업표"와 같은 값.
@@ -122,6 +125,10 @@ class DirectArm:
 
     def describe(self) -> str:
         return f"direct · {self._io.describe()}"
+
+    def base_yaw_deg(self) -> float:
+        """케이스 회전판 각(도). 기구학 밖이라 joints_deg에 섞지 않는다."""
+        return self._io.read_yaw()
 
     def warning(self) -> str:
         return ""

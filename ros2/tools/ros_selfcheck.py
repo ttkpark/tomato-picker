@@ -78,7 +78,8 @@ from tomato_picker.hardware.handeye import (  # noqa: E402
 )
 
 from tomato_bridge import board_contract as bc  # noqa: E402
-from tomato_bridge.arm_source import EXTRA_JOINTS, JOINT_NAMES  # noqa: E402
+from tomato_bridge.arm_source import EXTRA_JOINTS, JOINT_NAMES, YAW_JOINT  # noqa: E402
+from tomato_bridge.follower_io import yaw_deg_from_raw, yaw_raw_from_deg  # noqa: E402
 from tomato_handeye import store  # noqa: E402
 from tomato_perception.fruit3d import (  # noqa: E402
     MAX_SPREAD_MM, Blob, core_mask, read_all, read_blob,
@@ -609,6 +610,25 @@ def test_urdf_matches_kinematics() -> None:
     check("브리지가 쓰는 이름도 같다", JOINT_NAMES == kin.JOINTS)
     check("URDF에만 있는 관절도 발행 목록에 있다",
           "gripper" in EXTRA_JOINTS, f"{EXTRA_JOINTS}")
+
+    # 케이스 회전판 — URDF에 돌아가는 관절로 있고, arm_node가 같은 이름으로 발행해야
+    # robot_state_publisher가 팔 TF를 낸다(빠지면 arm_base 아래가 통째로 사라진다).
+    robot = open(os.path.join(SRC, "tomato_description", "urdf", "tomato_robot.urdf.xacro"),
+                 encoding="utf-8").read()
+    check("회전판 관절이 URDF에 revolute로 있고 팔이 그 위에 앉는다",
+          f'<joint name="{YAW_JOINT}" type="revolute">' in robot
+          and 'parent="turntable"' in robot)
+    check("회전판 각 왕복: 정면=2048, +90°=3072, 부호 비트",
+          yaw_raw_from_deg(0) == 2048 and abs(yaw_deg_from_raw(yaw_raw_from_deg(45)) - 45) < 0.1
+          and abs(yaw_deg_from_raw(0x8000 | 10) - (-10 - 2048) * 360 / 4096) < 1e-9)
+    bad = []
+    for d in (86.0, -86.0, float("nan")):
+        try:
+            yaw_raw_from_deg(d)
+            bad.append(d)
+        except ValueError:
+            pass
+    check("회전판 한계 밖(±85° 초과·NaN)은 거절한다(자르지 않는다)", not bad, f"통과해 버린 값 {bad}")
 
     # 자세를 여러 개 넣어 본다. 기준 자세(전부 0)만 맞춰 놓고 축 부호가 틀린
     # 경우가 실제로 흔하다 — 그래서 **꺾인 자세**를 반드시 섞는다.

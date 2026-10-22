@@ -32,6 +32,11 @@
   <xacro:arg name="mount_y_mm" default="0.0"/>
   <xacro:arg name="mount_z_mm" default="76.5"/>
   <xacro:arg name="mount_yaw_deg" default="0.0"/>
+  <!-- 케이스 회전판(base_yaw) — mount_x/y/z는 **회전판 축**이 지나는 자리이고, 팔(pan 축)은
+       거기서 turntable_dx_mm만큼 앞에 앉는다. 0은 미실측(두 축이 같다고 가정).
+       한계는 config.BASE_YAW_LIMIT_DEG(소프트), 서보 EEPROM이 ±90°(하드). -->
+  <xacro:arg name="turntable_dx_mm" default="0.0"/>
+  <xacro:arg name="yaw_limit_deg" default="85.0"/>
 
   <!-- ── 차체 (mm) ── -->
   <xacro:arg name="base_length_mm" default="300.0"/>
@@ -110,11 +115,23 @@
   <xacro:wheel name="wheel_rr" x="${-bl/2 + 0.04}" y="${-bw/2 - 0.02}"/>
   <xacro:wheel name="wheel_rl" x="${-bl/2 + 0.04}" y="${ bw/2 + 0.02}"/>
 
+  <!-- 회전판: base_link → turntable(돈다) → arm_base. 정면(0)에서 예전 고정 마운트와 같다. -->
+  <link name="turntable"/>
+  <joint name="base_yaw" type="revolute">
+    <parent link="base_link"/>
+    <child link="turntable"/>
+    <origin xyz="${$(arg mount_x_mm)*mm} ${$(arg mount_y_mm)*mm} ${$(arg mount_z_mm)*mm}"
+            rpy="0 0 ${$(arg mount_yaw_deg)*d2r}"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="${-$(arg yaw_limit_deg)*d2r}" upper="${$(arg yaw_limit_deg)*d2r}"
+           effort="3.0" velocity="0.6"/>
+  </joint>
+
   <xacro:so101_arm
       prefix=""
-      parent="base_link"
-      xyz="${$(arg mount_x_mm)*mm} ${$(arg mount_y_mm)*mm} ${$(arg mount_z_mm)*mm}"
-      rpy="0 0 ${$(arg mount_yaw_deg)*d2r}"
+      parent="turntable"
+      xyz="${$(arg turntable_dx_mm)*mm} 0 0"
+      rpy="0 0 0"
       z0="${$(arg z0_mm)*mm}"
       d0="${$(arg d0_mm)*mm}"
       l1="${$(arg l1_mm)*mm}"

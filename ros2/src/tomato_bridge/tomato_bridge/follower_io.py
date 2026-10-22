@@ -41,6 +41,9 @@ try:
         ARM_LEADER_SERIAL,
         ARM_MOVE_FPS,
         ARM_SERIAL_PORT,
+        BASE_YAW_DEG_PER_SEC,
+        BASE_YAW_ID,
+        BASE_YAW_LIMIT_DEG,
     )
     from tomato_picker.hardware.cartesian import DEG_PER_TICK
     from tomato_picker.hardware.ports import resolve_arm_port
@@ -50,7 +53,29 @@ except ImportError:  # pragma: no cover - PC에서 상수만으로도 이 파일
     ARM_ID = "tomato_follower"
     ARM_MOVE_FPS = 30
     ARM_SERIAL_PORT = "/dev/ttyACM0"
+    BASE_YAW_ID, BASE_YAW_LIMIT_DEG, BASE_YAW_DEG_PER_SEC = 7, 85.0, 30.0
     DEG_PER_TICK = 360.0 / 4096.0
+
+# STS3215 레지스터(lerobot feetech/tables.py와 같은 값). base_yaw는 lerobot 모터
+# 목록 밖이라 이름이 아니라 주소로 부른다.
+_TORQUE_ENABLE, _GOAL_POSITION, _PRESENT_POSITION = 40, 42, 56
+_YAW_CENTER = 2048
+
+
+def yaw_deg_from_raw(raw: int) -> float:
+    """Present_Position(부호=15번 비트) → 회전판 각(도, 정면 0, 위에서 봐 반시계 +)."""
+    if raw & 0x8000:
+        raw = -(raw & 0x7FFF)
+    return (raw - _YAW_CENTER) * DEG_PER_TICK
+
+
+def yaw_raw_from_deg(deg: float) -> int:
+    """회전판 각 → Goal_Position. **소프트 리밋 밖이면 거절**한다(자르지 않는다 —
+    잘라서 성공했다고 말하면 사람은 거기 갔다고 믿는다)."""
+    deg = float(deg)
+    if not deg == deg or abs(deg) > BASE_YAW_LIMIT_DEG:  # NaN 포함
+        raise ValueError(f"base_yaw {deg}° — 한계 ±{BASE_YAW_LIMIT_DEG:g}° 밖")
+    return _YAW_CENTER + round(deg / DEG_PER_TICK)
     resolve_arm_port = None
     require_live_bus = None
 
@@ -291,6 +316,51 @@ class FollowerIO:
             rest = (start + interval * step) - time.monotonic()
             if rest > 0:
                 time.sleep(rest)
+
+    # ------------------------------------------------------------------
+    # base_yaw (케이스 회전판) — JointIO 밖. read()/write()에 섞지 않는다:
+    # 그 둘은 CartesianArm·도구들이 "팔 관절 전부"로 믿고 순회한다.
+    # ------------------------------------------------------------------
+
+    def read_yaw(self) -> float:
+        def _rd():
+            raw, _, _ = self._follower.bus._read(  # noqa: SLF001 - 이름 없는 모터라 주소로
+                _PRESENT_POSITION, 2, BASE_YAW_ID, num_retry=2,
+                err_msg=f"base_yaw(ID {BASE_YAW_ID}) 읽기 실패")
+            return yaw_deg_from_raw(raw)
+        return self._with_retry(_rd)
+
+    def move_yaw(self, deg: float, secs: float | None = None) -> None:
+        """회전판을 deg로. 속도는 BASE_YAW_DEG_PER_SEC를 넘지 않게 나눠 보낸다."""
+        goal_raw = yaw_raw_from_deg(deg)
+
+        def _mv():
+            bus = self._follower.bus
+            raw, _, _ = bus._read(_PRESENT_POSITION, 2, BASE_YAW_ID, num_retry=2)  # noqa: SLF001
+            now = yaw_deg_from_raw(raw)
+            # ⚠ 토크를 켜기 **전에** Goal을 지금 자리로. 켜는 순간 서보는 Goal 레지스터로
+            #   달려가는데, 거기엔 전원 넣은 뒤의 쓰레기 값이 있을 수 있다.
+            bus._write(_GOAL_POSITION, 2, BASE_YAW_ID, _YAW_CENTER + round(now / DEG_PER_TICK))  # noqa: SLF001
+            bus._write(_TORQUE_ENABLE, 1, BASE_YAW_ID, 1)  # noqa: SLF001
+            t = max(float(secs or 0.0), abs(deg - now) / BASE_YAW_DEG_PER_SEC, 0.2)
+            steps = max(2, int(t * self._fps))
+            start = time.monotonic()
+            for step in range(1, steps + 1):
+                d = now + (deg - now) * step / steps
+                bus._write(_GOAL_POSITION, 2, BASE_YAW_ID,  # noqa: SLF001
+                           _YAW_CENTER + round(d / DEG_PER_TICK))
+                rest = (start + t * step / steps) - time.monotonic()
+                if rest > 0:
+                    time.sleep(rest)
+            bus._write(_GOAL_POSITION, 2, BASE_YAW_ID, goal_raw)  # noqa: SLF001
+            # 마지막 지령 직후엔 3~4° 뒤처져 있다(실측 11.5→15.0) — 도착을 기다린 뒤 돌려준다.
+            end = time.monotonic() + 1.5
+            while time.monotonic() < end:
+                raw, _, _ = bus._read(_PRESENT_POSITION, 2, BASE_YAW_ID, num_retry=2)  # noqa: SLF001
+                if abs(yaw_deg_from_raw(raw) - deg) < 1.0:
+                    break
+                time.sleep(0.05)
+        self._with_retry(_mv)
 
     def spans_deg(self) -> dict[str, float]:
         """정규화 -100..100이 실제 몇 도인지 — **캘리브레이션에서 읽는다**.

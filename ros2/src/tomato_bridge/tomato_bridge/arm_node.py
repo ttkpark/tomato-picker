@@ -43,7 +43,7 @@ from tf2_ros import Buffer, TransformListener
 
 from tomato_msgs.srv import MoveToPoint
 
-from .arm_source import EXTRA_JOINTS, JOINT_NAMES, ArmUnavailable, make_source
+from .arm_source import EXTRA_JOINTS, JOINT_NAMES, YAW_JOINT, ArmUnavailable, make_source
 
 try:  # 저장소의 src/가 PYTHONPATH에 있어야 한다 (docker/entrypoint.sh가 넣어 준다)
     from tomato_picker.hardware import kinematics as kin
@@ -114,15 +114,20 @@ class ArmNode(Node):
     def _tick(self) -> None:
         try:
             degs = self._source.joints_deg()
+            yaw_fn = getattr(self._source, "base_yaw_deg", None)
+            yaw = float(yaw_fn()) if yaw_fn else 0.0
         except ArmUnavailable as exc:
             self._note(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 - 회전판만 못 읽어도 TF는 틀린다 — 발행하지 않는다
+            self._note(f"base_yaw를 못 읽는다: {exc}")
             return
         stamp = self.get_clock().now().to_msg()  # 읽은 직후 = 그 값의 시각
         self._note(None)
 
         msg = JointState()
         msg.header.stamp = stamp
-        msg.name = list(JOINT_NAMES) + list(EXTRA_JOINTS)
+        msg.name = list(JOINT_NAMES) + list(EXTRA_JOINTS) + [YAW_JOINT]
         # 집게는 지금 읽을 길이 없다(대시보드 status가 안 준다). 0으로 채우되
         # **모른다는 걸 파라미터 이름으로 남긴다** — 나중에 읽게 되면 여기만 고친다.
         gripper = math.radians(float(self.get_parameter("gripper_deg").value))
@@ -131,7 +136,7 @@ class ArmNode(Node):
         #    `TypeError: can only extend array with array (not "list")`가 난다.
         #    (실측: 팔이 붙은 첫 프레임에서 노드가 통째로 죽었다.)
         msg.position = ([math.radians(degs.get(j, 0.0)) for j in JOINT_NAMES]
-                        + [gripper] * len(EXTRA_JOINTS))
+                        + [gripper] * len(EXTRA_JOINTS) + [math.radians(yaw)])
         self._pub.publish(msg)
 
     def _note(self, error: str | None) -> None:

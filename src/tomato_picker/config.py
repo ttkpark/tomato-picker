@@ -545,6 +545,16 @@ ARM_LEADER_SERIAL = "5AE6055389"     # 죽은 보드의 시리얼 — 리더암�
 # 리더암(미러링)은 보드가 없어 못 쓴다. 프리셋 재생은 팔로워만 있으면 되므로
 # 데모(수확 시퀀스)는 그대로 돈다. 새 보드를 사면 이 두 값을 다시 확인할 것.
 ARM_MIRROR_FPS = 50.0
+# --- 케이스 180° 회전판 = 팔 버스의 7번째 서보 `base_yaw` (2026-10-22) ---
+# 팔 받침 전체를 돌린다. **기구학(IK) 밖**이다 — pan과 같은 세로축이라 같이 풀면
+# 답이 무한하다. 큰 방향(정면/좌/우)만 고르고, 겨냥은 그대로 pan이 한다.
+# lerobot 캘리 파일에 없어서 정규화하지 않는다: 각 = (raw − 2048) × 0.088°.
+# EEPROM: Homing_Offset 1690(정면=2048) · Min/Max_Position_Limit 1024/3072(±90°).
+# ⚠ 스토퍼 핀이 없다 — EEPROM 한계가 하드 리밋이고, 이 값은 그 안쪽 소프트 리밋.
+# 상세 = hardware_design/case/README.md "실기 설정".
+BASE_YAW_ID = 7
+BASE_YAW_LIMIT_DEG = 85.0
+BASE_YAW_DEG_PER_SEC = 30.0   # 팔을 통째로 휘두르므로 느리게 — 되받는 토크는 판이 받는다
 # controller_drive.py가 쓰는 것과 같은 프리셋 파일(슬롯 0~19 + 높이 앵커 메타데이터).
 # 형식은 hardware/presets.py 참고 — 옛 {"1": {...}} 파일을 그대로 읽는다.
 ARM_PRESET_FILE = "~/arm_presets.json"

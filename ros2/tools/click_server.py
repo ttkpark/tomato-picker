@@ -30,7 +30,7 @@ API 요약 (전부 JSON)
     GET  /frame.jpg                  손목 화면
     POST /click   {u,v,mode}         mode=target(줄기) | grip(십자)
     POST /clear                      표적 지움
-    POST /run     {job,args}         job=stage|jog|grasp|grip|pose|park|loop|extend|roll0|swab|nudge
+    POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge
     POST /stop                       도는 일을 끊는다
 """
 
@@ -272,6 +272,12 @@ def build(job, args):
         return a
     if job == "grip":
         return [PY, T("grip_set.py"), "%.0f" % num(args, "value", 78, 0, 100)]
+    if job == "yaw":
+        # 케이스 회전판(base_yaw). 한계는 base_yaw.py가 config로 거절한다 — 여기서 자르면
+        # 버튼과 터미널이 서로 다른 한계를 갖게 된다.
+        if args.get("read"):
+            return [PY, T("base_yaw.py"), "--read"]
+        return [PY, T("base_yaw.py"), "%.1f" % float(args.get("deg", 0))]
     if job == "jog":
         a = [PY, T("tool_jog.py")]
         for k, lo, hi in (("dx", -200, 200), ("dy", -200, 200), ("dz", -200, 200),
@@ -587,6 +593,17 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button onclick="run('pose',{})">자세 읽기</button>
       <button onclick="run('park',{})">대기 자세</button>
       <button onclick="run('roll0',{})">손목 롤 0</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <span class="k">회전판</span>
+      <button onclick="run('yaw',{deg:90})">◀ 왼쪽 90°</button>
+      <button onclick="run('yaw',{deg:45})">◀ 45°</button>
+      <button onclick="run('yaw',{deg:0})">정면</button>
+      <button onclick="run('yaw',{deg:-45})">45° ▶</button>
+      <button onclick="run('yaw',{deg:-90})">오른쪽 90° ▶</button>
+      <input id="y_d" style="width:60px" placeholder="도">
+      <button onclick="run('yaw',{deg:document.getElementById('y_d').value})">그 각도로</button>
+      <button onclick="run('yaw',{read:1})">읽기</button>
     </div>
     <div class="row" style="margin-top:8px">
       <input id="s_t" style="width:190px" placeholder="60,65,0,-100,6">
