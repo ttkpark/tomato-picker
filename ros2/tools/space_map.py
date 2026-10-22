@@ -49,7 +49,10 @@ IMU_FILE = "/dev/shm/imu.json"
 IMU_WIN_DEG = 5.0              # IMU가 있으면 θ는 IMU 짐작 ±이만큼만 찾는다(넛지 한 번의 자이로 오차 ≪ 1°)
 # 장착값 — 케이스 CAD(tomato_case.scad astra_*) 기준 추정. **실측해서 MOUNT_FILE로 덮어라.**
 # x=회전 중심→렌즈(앞+), h=바닥→렌즈, tilt=위로+, floor_cut/top=장애물로 칠 높이 띠, radius=차체 반지름
-MOUNT = {"x": 0.12, "h": 0.15, "tilt_deg": 0.0, "floor_cut": 0.05, "top": 0.9, "radius": 0.22,
+# y=렌즈가 회전 중심에서 왼쪽(+)으로, yaw_deg=카메라가 정면에서 왼쪽(+)으로 돈 각 — 제자리 회전의 **실제 회전 중심**
+#   기준이다(메카넘은 기하 중심이 아니라 미끄러지며 돈다). 2026-10-22 실기 두 바퀴 자기 보정: x 0.345·y −0.10·yaw +1°
+#   (이웃 장 겹침 10.4→5.7cm, 한 바퀴로 맞춰 다른 바퀴에 써도 10.5→5.6·9.9→7.9cm) — 젯슨 ~/space_mount.json에 있다.
+MOUNT = {"x": 0.12, "y": 0.0, "yaw_deg": 0.0, "h": 0.15, "tilt_deg": 0.0, "floor_cut": 0.05, "top": 0.9, "radius": 0.22,
          # 손목 D405용: 회전판 축이 차체 원점에서 얼마나 앞(arm_x)·바닥에서 얼마나 위(arm_z)인가.
          # so101_geometry.yaml mount(60·76.5mm)와 같은 값 — ⚠ 케이스 장착 전 값이라 실측해서 덮어라.
          "arm_x": 0.06, "arm_z": 0.0765}
@@ -86,7 +89,9 @@ def cloud(depth: np.ndarray, meta: dict, m: dict, stride: int = 3) -> np.ndarray
     Y = (v * stride - it["ppy"]) * Z / it["fy"]
     t = math.radians(m["tilt_deg"])
     c, s = math.cos(t), math.sin(t)
-    return np.stack([m["x"] + Z * c + Y * s, -X, m["h"] + Z * s - Y * c], 1)
+    fwd, left = Z * c + Y * s, -X
+    cy, sy = math.cos(math.radians(m["yaw_deg"])), math.sin(math.radians(m["yaw_deg"]))
+    return np.stack([m["x"] + cy * fwd - sy * left, m["y"] + sy * fwd + cy * left, m["h"] + Z * s - Y * c], 1)
 
 
 def scan2d(pts: np.ndarray, m: dict) -> np.ndarray:
@@ -94,9 +99,9 @@ def scan2d(pts: np.ndarray, m: dict) -> np.ndarray:
     p = pts[(pts[:, 2] > m["floor_cut"]) & (pts[:, 2] < m["top"])]
     if len(p) == 0:
         return np.zeros((0, 2))
-    dx = p[:, 0] - m["x"]
-    a = np.round(np.degrees(np.arctan2(p[:, 1], dx)) * 2).astype(int)
-    o = np.lexsort((np.hypot(dx, p[:, 1]), a))
+    dx, dy = p[:, 0] - m["x"], p[:, 1] - m["y"]
+    a = np.round(np.degrees(np.arctan2(dy, dx)) * 2).astype(int)
+    o = np.lexsort((np.hypot(dx, dy), a))
     _, first = np.unique(a[o], return_index=True)
     return p[o[first], :2]
 
@@ -183,7 +188,7 @@ def integrate(s: dict, scan: np.ndarray, pts: np.ndarray, m: dict) -> None:
     """광선으로 빈 칸을, 끝점으로 장애물을 칠하고 3D 점을 5cm 복셀로 더한다."""
     lo = s["lo"]
     if len(scan):
-        o = to_world(s["pose"], np.array([[m["x"], 0.0]]))[0]
+        o = to_world(s["pose"], np.array([[m["x"], m["y"]]]))[0]
         hits = to_world(s["pose"], scan)
         d = hits - o
         L = np.hypot(d[:, 0], d[:, 1])
@@ -445,7 +450,7 @@ def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: floa
     return bool(ok)
 
 
-CLOSE_DEG = 50.0               # 고리 닫기: 처음 이만큼의 장이 기준, 한 바퀴 뒤 이만큼 더 돌며 다시 본다
+CLOSE_DEG = 70.0               # 고리 닫기: 처음 이만큼의 장이 기준, 한 바퀴 뒤 이만큼 더 돌며 다시 본다
 COAST = 0.7                    # IMU가 목표의 이만큼 돌았다고 하면 지령을 끊는다 — 나머지는 감속 슬루가 민다
 
 
@@ -664,13 +669,15 @@ def close_and_build(s, base, pose0, shots, m, imu_end) -> int:
             best = max((icp2d(src, ref, (0.0, 0.0, wrap(r + math.radians(o)))) for o in range(-12, 13, 3)),
                        key=lambda g: (round(g[1], 2), -g[2]))
             got, frac, res = best
-            if frac >= 0.5 and res < 0.05:
+            if frac >= 0.5 and res < 0.05 and np.hypot(*got[:2]) < 0.3:   # 제자리인데 30cm 넘게 밀렸다 = 엉뚱한 답
                 ks.append((r + wrap(got[2] - wrap(r))) / r)
                 xy.append(got[:2])
-    # 장 하나가 엉뚱한 데 걸려도 끌려가지 않게 — 중앙값에서 1% 넘게 먼 추정은 뺀다
+    # 엉뚱한 답이 섞여도 끌려가지 않게 — **서로 0.75% 안에 가장 많이 모인 무리**만 쓴다. (중앙값 기준으로 거르면
+    #   2026-10-23 실기처럼 0.8955·0.973이 중앙값을 끌어내려 좋은 답 0.997·0.9996까지 버렸다)
     if ks:
-        k0 = float(np.median(ks))
-        keep = [i for i, v in enumerate(ks) if abs(v - k0) <= 0.01]
+        sup = [sum(abs(v - u) <= 0.0075 for u in ks) for v in ks]       # ±0.75% → 무리 폭이 아래 판정(1.5%) 안
+        c0 = ks[int(np.argmax(sup))]
+        keep = [i for i, v in enumerate(ks) if abs(v - c0) <= 0.0075]
         ks, xy = [ks[i] for i in keep], [xy[i] for i in keep]
     k = float(np.median(ks)) if ks else 1.0
     d = np.median(np.array(xy), 0) if xy else np.zeros(2)
@@ -878,6 +885,9 @@ def selftest() -> int:
     c = p[240 * 640 + 320]
     assert abs(c[0] - (m["x"] + 2.0)) < 1e-3 and abs(c[1]) < 0.01 and abs(c[2] - m["h"]) < 0.01, c
     assert p[240 * 640, 1] > 1.0, "화면 왼쪽(u=0)은 차체 왼쪽(y+)이어야 한다"
+    my = {**m, "y": -0.1, "yaw_deg": 90.0}                  # 렌즈가 오른쪽 10cm에서 왼쪽을 본다
+    cy_ = cloud(dep, meta, my, stride=1)[240 * 640 + 320]
+    assert abs(cy_[0] - m["x"]) < 0.01 and abs(cy_[1] - (-0.1 + 2.0)) < 0.01, cy_
     dep2 = np.zeros((480, 640), np.uint16)
     dep2[:, :100] = 2000                                   # 화면 왼쪽에만 벽
     assert cloud(dep2, meta, m, stride=4)[:, 1].mean() > 0.5, "거울 아님: 화면 왼쪽 = 차체 왼쪽"
