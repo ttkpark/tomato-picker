@@ -42,6 +42,9 @@ LSB = 131.0                                        # ±250°/s
 WIN = 100                                          # 정지 판정 창 ≈0.5초
 STILL_SD = 0.3                                     # 창 안 표준편차(°/s)가 세 축 모두 이 아래면 정지
 DEAD = 0.5                                         # 정지 중 이보다 작은 각속도는 0으로(표류 차단)
+CREEP = 0.15                                       # 영점에서 이만큼(°/s) 넘게 벗어난 창은 정지가 아니다(기어가는 회전)
+REBIAS_SEC = 8.0                                   # 조용한데 영점 밖이 이만큼 이어지면 영점이 옮겨 간 것
+BIAS_TOL = 0.05                                    # 영점은 이만큼 안에서만 옮긴다(창 평균 잡음 ≈0.01°/s)
 JUMP = 60.0                                        # 한 샘플(5ms)에 이보다 크게 바뀌면 깨진 샘플(°/s)
 
 
@@ -55,6 +58,7 @@ class Yaw:
         self.rate = 0.0
         self.still = False
         self.k = 0
+        self.quiet_n = 0
         self.last, self.rej, self.glitch = None, 0, 0
         self.g, self.a = deque(maxlen=WIN), deque(maxlen=WIN)
 
@@ -73,10 +77,23 @@ class Yaw:
             self.still = False
             m = [sum(v[i] for v in self.g) / WIN for i in range(3)]
             sd = [math.sqrt(sum((v[i] - m[i]) ** 2 for v in self.g) / WIN) for i in range(3)]
-            # 천천히 도는 꼬리를 영점으로 삼키지 않게 — 첫 영점 뒤엔 1°/s 넘게 다르면 정지가 아니다
-            if max(sd) < STILL_SD and (self.bias is None or max(abs(m[i] - self.bias[i]) for i in range(3)) < 1.0):
+            # 천천히 도는 꼬리를 영점으로 삼키지 않게 — 첫 영점 뒤엔 CREEP 넘게 다르면 정지가 아니다.
+            # ⚠ 예전 1°/s: 정지마찰 문턱 근처(지령 90~100)에서 0.5°/s로 기어가는 회전을 "정지"로 보고 적분에서 빼고
+            #   영점에 삼켰다 → 고리 닫기가 바퀴마다 ×0.997~1.015로 흔들렸다(2026-10-23, 모의 0.4°/s×10초 4°→0°).
+            quiet = max(sd) < STILL_SD
+            # 조용한데 영점에서 벗어난 채 REBIAS_SEC 넘게 간다 = 회전이 아니라 영점이 옮겨 갔다(온도) — 다시 잡는다.
+            #   (안 그러면 영점이 CREEP 밖으로 한 번 튄 뒤로 영영 "정지"가 안 나와 고칠 기회가 없다)
+            self.quiet_n = self.quiet_n + 1 if quiet else 0
+            if quiet and self.bias is not None and self.quiet_n * 10 * 0.005 > REBIAS_SEC:
+                self.bias, self.quiet_n = m, 0
+            if quiet and (self.bias is None or max(abs(m[i] - self.bias[i]) for i in range(3)) < CREEP):
                 self.still = True
-                self.bias = m if self.bias is None else [b + 0.2 * (x - b) for b, x in zip(self.bias, m)]
+                # 영점은 **진짜 정지**(BIAS_TOL 안)일 때만 옮긴다 — 기어가기가 막 시작된 창까지 따라가면 영점이
+                # 회전을 쫓아가 그만큼을 삼킨다(모의: 4° 중 1.3°).
+                if self.bias is None:
+                    self.bias = m
+                elif max(abs(m[i] - self.bias[i]) for i in range(3)) < BIAS_TOL:
+                    self.bias = [b + 0.2 * (x - b) for b, x in zip(self.bias, m)]
                 am = [sum(v[i] for v in self.a) / WIN for i in range(3)]
                 n = math.sqrt(sum(x * x for x in am)) or 1.0
                 self.up = tuple(x / n for x in am)
@@ -192,7 +209,17 @@ def selftest() -> int:
         y.step([0.0, 0.0, -250.0], [0.0, 0.0, -1.0], dt)
         feed(0.05, 0)
     assert abs(y.yaw - 90.0) < 1.0 and y.glitch == 3, (y.yaw, y.glitch)
-    feed(1.0, -30.0)                                # 시계 30°
+    y_c = y.yaw
+    feed(5.0, 0.8)                                  # 정지마찰 문턱 근처에서 0.8°/s로 5초 기어간다 — 4°
+    # (REBIAS_SEC 넘게 일정하게 기어가는 회전은 영점이 옮겨 간 것과 구별이 안 된다 — 차체의 기어가기는 감속 끝 몇 초다)
+    feed(1.0, 0)
+    assert abs(y.yaw - y_c - 4.0) < 0.3, ("기어가는 회전을 정지로 삼켰다", y.yaw - y_c)
+    feed(1.0, -34.0)                                # 시계 34° (기어간 4°까지 되돌려 60°로)
+    bias = (bias[0], bias[1], bias[2] + 0.4)        # 온도로 영점이 0.4°/s 튄다 — 8초 뒤 다시 잡아 표류가 멎어야
+    y_b = y.yaw
+    feed(20.0, 0)
+    assert abs(y.yaw - y_b) < 4.0, ("영점이 옮겨 간 걸 못 잡는다", y.yaw - y_b)
+    y.yaw = y_b
     feed(60.0, 0)
     assert abs(y.yaw - 60.0) < 1.0, ("1분 정지 뒤", y.yaw)
     print("imu_yaw selftest ✅ yaw %.2f° (참 60°)" % y.yaw)

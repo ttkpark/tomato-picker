@@ -598,7 +598,12 @@ def scan_imu(a, m, s, link) -> int:
                 time.sleep(3.0)
             continue
         stuck = 0
-        dep, meta = frame(time.time() + 0.4)
+        try:
+            # 벽 60cm 안을 보면 Astra가 투광기를 끄고 발행기가 30초 뒤 다시 연다(~40초) — 그만큼은 기다린다
+            dep, meta = frame(time.time() + 0.4, timeout=60.0)
+        except RuntimeError as e:
+            print("  ⚠ 이 장은 건너뛴다 — %s" % e)    # 장 하나 때문에 한 바퀴를 버리지 않는다(2026-10-23: 벽 가까운 자리)
+            continue
         im = imu_now()
         if im is None or im[0] != i0[0]:
             print("⛔ IMU가 끊겼거나 다시 켜졌다 — 이 스캔은 버린다")
