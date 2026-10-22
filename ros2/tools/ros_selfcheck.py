@@ -618,9 +618,10 @@ def test_urdf_matches_kinematics() -> None:
     check("회전판 관절이 URDF에 revolute로 있고 팔이 그 위에 앉는다",
           f'<joint name="{YAW_JOINT}" type="revolute">' in robot
           and 'parent="turntable"' in robot)
-    check("회전판 각 왕복: 정면=2048, +90°=3072, 부호 비트",
-          yaw_raw_from_deg(0) == 2048 and abs(yaw_deg_from_raw(yaw_raw_from_deg(45)) - 45) < 0.1
-          and abs(yaw_deg_from_raw(0x8000 | 10) - (-10 - 2048) * 360 / 4096) < 1e-9)
+    check("회전판 각 왕복: 정면=2048, +45°(왼쪽)=raw 감소(실측 시계방향=raw 증가), 부호 비트",
+          yaw_raw_from_deg(0) == 2048 and yaw_raw_from_deg(45) == 2048 - 512
+          and abs(yaw_deg_from_raw(yaw_raw_from_deg(45)) - 45) < 0.1
+          and abs(yaw_deg_from_raw(0x8000 | 10) - (2048 + 10) * 360 / 4096) < 1e-9)
     bad = []
     for d in (86.0, -86.0, float("nan")):
         try:

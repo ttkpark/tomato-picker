@@ -79,7 +79,8 @@
   - ID 1(공장값) → **7**. 공장값 그대로 버스에 물리면 어깨 pan(ID 1)과 충돌해 둘 다 안 읽힌다
     (핑 20번에 1번 응답) — ID는 **회전 서보만 단독으로** 물려서 바꾼다(둘 다 물린 채 쓰면 둘 다 7이 된다).
   - 정면 = **2048**(Homing_Offset 1690, 사용자가 정면에 맞춘 자리 — 신뢰 기준). 경계 0/4095는 뒤쪽 180°.
-  - 손으로 잰 끝: 581(−129°, 여유 있음) · 3138(+96°, 끝). **Min/Max_Position_Limit = 1024/3072 (±90°)**.
+  - 손으로 잰 끝: raw 581(왼쪽 +129°, 여유 있음) · raw 3138(오른쪽 −96°, 끝). **Min/Max_Position_Limit = 1024/3072 (±90°)**.
+  - **raw가 늘면 위에서 봐 시계방향(오른쪽)** — 소프트웨어 각은 pan과 같게 왼쪽 +라 부호를 뒤집는다(`follower_io._YAW_SIGN`).
   - ⚠ **스토퍼 핀은 조립 전에 부러져 없다** — 기계식 멈춤이 없으므로 서보 한계(EEPROM)가 유일한 하드 리밋이다.
 - 출처: [RobotShop STS3215 12V 30kg](https://www.robotshop.com/products/feetech-12v-30kgcm-magnetic-encoding-servo-sts3215) ·
   [Robo9 백래시·반복정밀도 실측](https://robonine.com/testing-of-feetech-sts3215-servomotor-backlash-repeatability-and-torque/)

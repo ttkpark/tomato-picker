@@ -60,13 +60,20 @@ except ImportError:  # pragma: no cover - PC에서 상수만으로도 이 파일
 # 목록 밖이라 이름이 아니라 주소로 부른다.
 _TORQUE_ENABLE, _GOAL_POSITION, _PRESENT_POSITION = 40, 42, 56
 _YAW_CENTER = 2048
+# raw가 늘면 위에서 봐 **시계방향**(2026-10-22 실측: +30° 지령이 오른쪽으로 돌았다).
+# 규약은 shoulder_pan과 같이 반시계(왼쪽) + 라서 부호를 뒤집는다.
+_YAW_SIGN = -1
+
+
+def _yaw_raw(deg: float) -> int:
+    return _YAW_CENTER + _YAW_SIGN * round(deg / DEG_PER_TICK)
 
 
 def yaw_deg_from_raw(raw: int) -> float:
-    """Present_Position(부호=15번 비트) → 회전판 각(도, 정면 0, 위에서 봐 반시계 +)."""
+    """Present_Position(부호=15번 비트) → 회전판 각(도, 정면 0, 위에서 봐 반시계=왼쪽 +)."""
     if raw & 0x8000:
         raw = -(raw & 0x7FFF)
-    return (raw - _YAW_CENTER) * DEG_PER_TICK
+    return _YAW_SIGN * (raw - _YAW_CENTER) * DEG_PER_TICK
 
 
 def yaw_raw_from_deg(deg: float) -> int:
@@ -75,7 +82,7 @@ def yaw_raw_from_deg(deg: float) -> int:
     deg = float(deg)
     if not deg == deg or abs(deg) > BASE_YAW_LIMIT_DEG:  # NaN 포함
         raise ValueError(f"base_yaw {deg}° — 한계 ±{BASE_YAW_LIMIT_DEG:g}° 밖")
-    return _YAW_CENTER + round(deg / DEG_PER_TICK)
+    return _yaw_raw(deg)
     resolve_arm_port = None
     require_live_bus = None
 
@@ -340,7 +347,7 @@ class FollowerIO:
             now = yaw_deg_from_raw(raw)
             # ⚠ 토크를 켜기 **전에** Goal을 지금 자리로. 켜는 순간 서보는 Goal 레지스터로
             #   달려가는데, 거기엔 전원 넣은 뒤의 쓰레기 값이 있을 수 있다.
-            bus._write(_GOAL_POSITION, 2, BASE_YAW_ID, _YAW_CENTER + round(now / DEG_PER_TICK))  # noqa: SLF001
+            bus._write(_GOAL_POSITION, 2, BASE_YAW_ID, _yaw_raw(now))  # noqa: SLF001
             bus._write(_TORQUE_ENABLE, 1, BASE_YAW_ID, 1)  # noqa: SLF001
             t = max(float(secs or 0.0), abs(deg - now) / BASE_YAW_DEG_PER_SEC, 0.2)
             steps = max(2, int(t * self._fps))
@@ -348,7 +355,7 @@ class FollowerIO:
             for step in range(1, steps + 1):
                 d = now + (deg - now) * step / steps
                 bus._write(_GOAL_POSITION, 2, BASE_YAW_ID,  # noqa: SLF001
-                           _YAW_CENTER + round(d / DEG_PER_TICK))
+                           _yaw_raw(d))
                 rest = (start + t * step / steps) - time.monotonic()
                 if rest > 0:
                     time.sleep(rest)
