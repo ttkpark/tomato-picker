@@ -130,6 +130,7 @@ SCALE_ERR = float(os.environ.get("SIM_SCALE", SCALE_ERR))
 sm.frame = frame
 sys.modules["base_nudge"] = types.SimpleNamespace(open_link=lambda *a, **k: Link(), drive=drive)
 sm.MAP = os.path.join(tempfile.mkdtemp(), "m.npz")
+sm.SCANS = os.path.join(os.path.dirname(sm.MAP), "scans")   # 홈에 기록을 남기지 않는다
 
 
 def surf_dist(p):

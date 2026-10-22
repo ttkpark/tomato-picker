@@ -608,10 +608,45 @@ def scan_imu(a, m, s, link) -> int:
         print("[%d/%d] IMU 누적 %.1f° (이번 %.1f°) · 복셀 %d" % (i + 1, steps, math.degrees(rel), g, len(s["vox"])))
         if abs(rel) >= 2 * math.pi + math.radians(CLOSE_DEG):
             break
+    record(shots)
+    return close_and_build(s, base, pose0, shots, m, (i0[0], i0[1] + rel))
+
+
+SCANS = os.path.expanduser("~/space_scans")
+
+
+def record(shots) -> None:
+    """한 바퀴의 장(IMU 각·점구름)을 남긴다 — PC에서 `replay`로 고리 닫기·다시 짓기를 실기 데이터로 되돌려 본다.
+    (2026-10-22: 실기 장이 지도에 녹아 사라져 고리 닫기를 실제 방에서 조정할 수 없었다)"""
+    try:
+        os.makedirs(SCANS, exist_ok=True)
+        f = os.path.join(SCANS, time.strftime("scan-%Y%m%d-%H%M%S.npz"))
+        np.savez_compressed(f, r=np.array([r for r, _, _ in shots]),
+                            n=np.array([len(p_) for _, p_, _ in shots]),
+                            pts=np.concatenate([p_ for _, p_, _ in shots]).astype(np.float32),
+                            ns=np.array([len(sc_) for _, _, sc_ in shots]),
+                            sc=np.concatenate([sc_ for _, _, sc_ in shots]).astype(np.float32))
+        print("  장 기록 → %s" % f)
+    except OSError as e:
+        print("  ⚠ 장 기록 실패: %s" % e)
+
+
+def load_shots(f: str):
+    z = np.load(f)
+    pi_, si_ = np.cumsum(np.r_[0, z["n"]]), np.cumsum(np.r_[0, z["ns"]])
+    return [(float(z["r"][i]), z["pts"][pi_[i]:pi_[i + 1]].astype(float), z["sc"][si_[i]:si_[i + 1]].astype(float))
+            for i in range(len(z["r"]))]
+
+
+def close_and_build(s, base, pose0, shots, m, imu_end) -> int:
+    """한 바퀴 넘게 모은 장 → 고리 닫기(ICP)로 IMU 스케일을 재고 지도를 다시 짓는다. scan_imu·replay 공용."""
+    rel = shots[-1][0]
     if abs(rel) < 2 * math.pi:
         print("걸음을 다 썼다 — IMU %.0f°. 한 바퀴가 안 돼 스케일은 못 고친다(회전은 IMU 그대로)" % math.degrees(rel))
         if len(shots) > 1:
             rebuild(s, base, pose0, shots, 1.0, m)
+            if imu_end is not None:
+                s["imu"] = np.array(imu_end)
             save(s)
         return 0
     # 고리 닫기 — 처음 CLOSE_DEG까지의 장의 점들에, 한 바퀴 뒤 같은 곳을 다시 본 장의 점을 **점구름 ICP**로 맞춘다.
@@ -646,10 +681,24 @@ def scan_imu(a, m, s, link) -> int:
     if abs(k - 1) > 0.005:
         print("  IMU 스케일 %.4f — imu-yaw.service 의 IMU_SCALE 에 곱하면 다음부터 처음부터 맞는다" % k)
     rebuild(s, base, pose0, shots, k, m)
-    s["imu"] = np.array([i0[0], i0[1] + rel])  # 기준 = 마지막 장의 IMU(자세 θ는 고친 값)
+    if imu_end is not None:
+        s["imu"] = np.array(imu_end)  # 기준 = 마지막 장의 IMU(자세 θ는 고친 값)
     save(s)
     print("✅ 한 바퀴 — 고친 회전 %.1f°로 지도를 다시 지었다 · 복셀 %d" % (math.degrees(rel * k), len(s["vox"])))
     return 0
+
+
+
+
+def replay_cmd(f: str, m: dict) -> int:
+    """기록한 한 바퀴를 빈 지도에 다시 짓는다(장치 없이) — ~/space_map.npz를 덮으니 PC에서 쓴다."""
+    s = empty()
+    shots = load_shots(f)
+    print("장 %d · IMU %.0f°" % (len(shots), math.degrees(shots[-1][0])))
+    integrate(s, shots[0][2], shots[0][1], m)
+    s["frames"] = 1
+    base = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in s.items()}
+    return close_and_build(s, base, np.zeros(3), shots, m, None)
 
 
 def scan_cmd(a, m) -> int:
@@ -901,7 +950,8 @@ def selftest() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "clear", "selftest"])
+    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "clear", "selftest", "replay"])
+    ap.add_argument("file", nargs="?", help="replay: ~/space_scans/scan-*.npz")
     ap.add_argument("--steps", type=int, default=16)
     ap.add_argument("--w", type=int, default=150, help="회전 넛지 크기(+=왼쪽)")
     ap.add_argument("--wsecs", type=float, default=0.8, help="회전 넛지 시간(IMU 있으면 최대 ×2.5까지 --deg를 채운다)")
@@ -927,6 +977,8 @@ def main() -> int:
         return 0
     m = mount()
     print("장착", m, "(바꾸려면 %s)" % MOUNT_FILE)
+    if a.mode == "replay":
+        return replay_cmd(a.file, m)
     if a.mode == "snap":
         s = load()
         # 사람이 손으로 돌리거나 옮겨 놓고 누르는 버튼이다 — 자리는 ±0.5m 찾는다.
