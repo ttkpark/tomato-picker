@@ -420,16 +420,26 @@ def turn(link, w: int, secs: float, deg: float) -> float:
     if i0 is None:
         drive(link, 0, 0, w, secs)
         return float("nan")
-    t0 = time.monotonic()
+    t0 = t_kick = time.monotonic()
+    w_now, moved = w, False
     try:
         while time.monotonic() - t0 < secs * 2.5:
             i = imu_now()
-            if i is not None and i[0] == i0[0] and abs(math.degrees(i[1] - i0[1])) >= deg * COAST:
+            got = abs(math.degrees(i[1] - i0[1])) if i is not None and i[0] == i0[0] else 0.0
+            if got >= deg * COAST:
                 break
-            link.set_velocity(0, 0, w)
+            moved = moved or got > 1.0
+            # 아직 1°도 못 돌았으면 0.5초마다 +30 — 정지마찰 문턱을 IMU로 더듬는다(각도로 끊으니 넘쳐도 안전)
+            if not moved and time.monotonic() - t_kick > 0.5 and abs(w_now) < 255:
+                w_now = int(math.copysign(min(255, abs(w_now) + 30), w))
+                t_kick = time.monotonic()
+            link.set_velocity(0, 0, w_now)
             time.sleep(0.03)
     finally:
         link.stop()
+    if w_now != w:
+        print("  회전 지령 %d → %d 에서 움직였다(정지마찰)" % (w, w_now) if moved else
+              "  회전 지령 %d → %d 까지 올려도 안 움직였다" % (w, w_now))
     for _ in range(30):                        # 멈출 때까지(감속 슬루) 기다려야 돈 양이 다 잡힌다
         time.sleep(0.1)
         i = imu_now()
