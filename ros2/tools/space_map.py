@@ -504,6 +504,57 @@ def hand_turn(deg: float, timeout: float = 60.0) -> float:
     return float("nan")
 
 
+def flat(pts: np.ndarray, m: dict, n: int = 800) -> np.ndarray:
+    """높이 띠 안의 3D 점 → 2D(x,y) n개로 고르게 솎는다(ICP용)."""
+    p = pts[(pts[:, 2] > m["floor_cut"]) & (pts[:, 2] < m["top"])][:, :2]
+    return p[np.linspace(0, len(p) - 1, n).astype(int)] if len(p) > n else p
+
+
+def icp2d(src: np.ndarray, dst: np.ndarray, pose, iters: int = 40):
+    """차체 좌표 점 src를 pose로 옮겨 dst(지도 좌표)에 맞춘다(점-점 ICP, 먼 짝은 버린다) → (pose, 짝 비율, 평균 잔차 m).
+    numpy만 — 젯슨엔 scipy가 없다. 800×3000 전수 거리라 한 번에 수십 ms."""
+    pose = np.asarray(pose, float).copy()
+    if len(src) < 30 or len(dst) < 30:
+        return pose, 0.0, float("inf")
+    if len(dst) > 3000:
+        dst = dst[np.linspace(0, len(dst) - 1, 3000).astype(int)]
+    frac, res = 0.0, float("inf")
+    for it in range(iters):
+        w = to_world(pose, src)
+        d2 = ((w[:, None, :] - dst[None, :, :]) ** 2).sum(-1)
+        j = d2.argmin(1)
+        dd = np.sqrt(d2[np.arange(len(w)), j])
+        ok = dd < max(0.3 * (1 - it / iters), 0.08)       # 처음엔 넓게, 끝엔 8cm 안의 짝만
+        frac, res = float(ok.mean()), float(dd[ok].mean()) if ok.any() else float("inf")
+        if ok.sum() < 30:
+            return pose, 0.0, float("inf")
+        a_, b_ = src[ok], dst[j[ok]]
+        ca, cb = a_.mean(0), b_.mean(0)
+        H = (a_ - ca).T @ (b_ - cb)
+        th = math.atan2(H[0, 1] - H[1, 0], H[0, 0] + H[1, 1])
+        c, sn = math.cos(th), math.sin(th)
+        new = np.array([cb[0] - (c * ca[0] - sn * ca[1]), cb[1] - (sn * ca[0] + c * ca[1]), th])
+        done = np.hypot(*(new[:2] - pose[:2])) < 1e-4 and abs(wrap(new[2] - pose[2])) < 1e-5
+        pose = new
+        if done:
+            break
+    return pose, frac, res
+
+
+def rebuild(s: dict, base: dict, pose0, shots, k: float, m: dict) -> None:
+    """모은 장으로 지도를 다시 짓는다 — θ = IMU × k, 자리 = 제자리.
+    ⚠ 걸음마다 바로 앞 장과 ICP로 평행이동을 따라가 봤다(2026-10-22 모의) — 점-점 ICP도 벽 하나만 겹치면 벽을 따라
+      미끄러져 "돌며 밀린 길이"가 참(0.03~0.2m)의 5~30배(0.9~1.5m)로 나왔고 지도가 94% → 25~45%로 나빠졌다. 되돌렸다.
+    ponytail: 돌며 옆으로 밀리는 만큼은 못 본다 — 실측 어긋남(고리 닫기가 찍는다)이 크면 회전 중심 모델을 붙인다."""
+    for kk, v in base.items():
+        s[kk] = v
+    for r, p_, sc_ in shots[1:]:
+        s["pose"] = pose0 + [0, 0, r * k]
+        s["pose"][2] = wrap(s["pose"][2])
+        integrate(s, sc_, p_, m)
+        s["frames"] = int(s["frames"]) + 1
+
+
 def scan_imu(a, m, s, link) -> int:
     """IMU 제자리 한 바퀴 — **걸음마다 맞추지 않는다.** θ=IMU, 자리=그대로로 장을 모으고(화면엔 바로 더해
     보여 준다), 한 바퀴를 넘기면 **첫 장과 마지막 장을 맞춰(고리 닫기) IMU 스케일을 고친 뒤** 지도를 다시 짓는다.
@@ -558,45 +609,43 @@ def scan_imu(a, m, s, link) -> int:
         if abs(rel) >= 2 * math.pi + math.radians(CLOSE_DEG):
             break
     if abs(rel) < 2 * math.pi:
-        print("걸음을 다 썼다 — IMU %.0f°. 한 바퀴가 안 돼 스케일은 못 고친다(지도는 IMU 그대로)" % math.degrees(rel))
+        print("걸음을 다 썼다 — IMU %.0f°. 한 바퀴가 안 돼 스케일은 못 고친다(회전은 IMU 그대로)" % math.degrees(rel))
+        if len(shots) > 1:
+            rebuild(s, base, pose0, shots, 1.0, m)
+            save(s)
         return 0
-    # 고리 닫기 — 처음 CLOSE_DEG까지의 장으로 지은 깨끗한 지도에, 한 바퀴 뒤 같은 곳을 다시 본 장들을 맞춘다.
-    #   (첫 장 하나 대 마지막 장 하나는 겹침이 작아 겹친 점 0~23 — 모의에서 셋 중 둘을 못 믿었다)
-    t = empty()
-    for r, p_, sc_ in shots:
-        if abs(r) <= math.radians(CLOSE_DEG):
-            t["pose"] = np.array([0.0, 0.0, r])
-            integrate(t, sc_, p_, m)
+    # 고리 닫기 — 처음 CLOSE_DEG까지의 장의 점들에, 한 바퀴 뒤 같은 곳을 다시 본 장의 점을 **점구름 ICP**로 맞춘다.
+    #   5cm 격자·2D 스캔 100점 맞춤은 가구 많은 방(2026-10-22 실기)에서 장마다 k가 0.962~1.0385로 흩어졌다.
+    ref = np.concatenate([to_world((0.0, 0.0, r), flat(p_, m)) for r, p_, _ in shots
+                          if abs(r) <= math.radians(CLOSE_DEG)])
     ks, xy = [], []
-    for r, p_, sc_ in shots:
+    for r, p_, _ in shots:
         if abs(r) >= 2 * math.pi - math.radians(10):
-            prior = np.array([0.0, 0.0, wrap(r)])
-            got, q, hit, amb = match(t, sc_, prior, 0.2, 8)
-            if not amb and q >= Q_MIN and hit >= HIT_MIN:
-                ks.append((r + wrap(got[2] - prior[2])) / r)
+            # IMU 스케일 3% = 400°에 12° — 한 곳에서만 출발하면 그만큼 먼 답에 못 닿는다(모의). ±12°를 3°씩 출발해 고른다.
+            src = flat(p_, m)
+            best = max((icp2d(src, ref, (0.0, 0.0, wrap(r + math.radians(o)))) for o in range(-12, 13, 3)),
+                       key=lambda g: (round(g[1], 2), -g[2]))
+            got, frac, res = best
+            if frac >= 0.5 and res < 0.05:
+                ks.append((r + wrap(got[2] - wrap(r))) / r)
                 xy.append(got[:2])
+    # 장 하나가 엉뚱한 데 걸려도 끌려가지 않게 — 중앙값에서 1% 넘게 먼 추정은 뺀다
+    if ks:
+        k0 = float(np.median(ks))
+        keep = [i for i, v in enumerate(ks) if abs(v - k0) <= 0.01]
+        ks, xy = [ks[i] for i in keep], [xy[i] for i in keep]
     k = float(np.median(ks)) if ks else 1.0
-    print("고리 닫기: 맞춘 장 %d · 참 회전 = IMU × %.4f %s" % (len(ks), k, np.round(ks, 4).tolist()))
-    if xy:
-        # 자리는 0으로 두고 지었다 — 한 바퀴 뒤 실제로 얼마나 밀려 있나(메카넘은 돌며 옆으로 밀린다, 실측 전)
-        d = np.median(np.array(xy), 0)
-        print("  한 바퀴 뒤 자리 어긋남 %.2fm (%.2f, %.2f)%s" % (float(np.hypot(*d)), d[0], d[1],
-              " — ⚠ 크다: 돌며 밀린다. 지도가 번진다(회전 중심 보정이 필요)" if np.hypot(*d) > 0.1 else ""))
-    # ⚠ 추정끼리 맞을 때만 — 가구 많은 방(2026-10-22 실기)에선 장마다 0.962~1.0385로 흩어졌는데 중앙값 0.9707을
-    #   그대로 써서 400°에 12°를 비틀었다. 흩어지면 IMU(데이터시트 스케일)를 믿는 편이 낫다.
+    d = np.median(np.array(xy), 0) if xy else np.zeros(2)
+    print("고리 닫기(ICP): 맞춘 장 %d · 참 회전 = IMU × %.4f %s · 한 바퀴 뒤 자리 어긋남 %.2fm (%.2f, %.2f)" % (
+        len(ks), k, np.round(ks, 4).tolist(), float(np.hypot(*d)), d[0], d[1]))
+    # ⚠ 추정끼리 맞을 때만 — 흩어지면 IMU(데이터시트 스케일)를 믿는 편이 낫다(실기: 0.9707을 그대로 써 400°에 12° 비틀었다)
     spread = (max(ks) - min(ks)) if len(ks) >= 2 else 1.0
-    if not ks or abs(k - 1) > 0.04 or spread > 0.015:
-        print("  ⚠ 고리 닫기를 못 믿는다(맞춘 장 %d · 흩어짐 %.3f) — 지도는 IMU 그대로 둔다" % (len(ks), spread))
-        return 0
+    if len(ks) < 2 or abs(k - 1) > 0.04 or spread > 0.015:
+        print("  ⚠ 고리 닫기를 못 믿는다(맞춘 장 %d · 흩어짐 %.3f) — 회전은 IMU 그대로 둔다" % (len(ks), spread))
+        k = 1.0
     if abs(k - 1) > 0.005:
         print("  IMU 스케일 %.4f — imu-yaw.service 의 IMU_SCALE 에 곱하면 다음부터 처음부터 맞는다" % k)
-    for kk, v in base.items():
-        s[kk] = v
-    for r, p_, sc_ in shots[1:]:
-        s["pose"] = pose0 + [0, 0, r * k]
-        s["pose"][2] = wrap(s["pose"][2])
-        integrate(s, sc_, p_, m)
-        s["frames"] = int(s["frames"]) + 1
+    rebuild(s, base, pose0, shots, k, m)
     s["imu"] = np.array([i0[0], i0[1] + rel])  # 기준 = 마지막 장의 IMU(자세 θ는 고친 값)
     save(s)
     print("✅ 한 바퀴 — 고친 회전 %.1f°로 지도를 다시 지었다 · 복셀 %d" % (math.degrees(rel * k), len(s["vox"])))
@@ -834,6 +883,17 @@ def selftest() -> int:
     t6 = np.array([0.3, 0.2, math.radians(15)])
     g6 = match(s6, _room_scan(t6, m=m), t6, 0.15, 0)[0]
     assert np.hypot(*(g6[:2] - t6[:2])) < 0.06, ("조리개 미끄럼", g6)
+    # ⑦ ICP — 벽 두 면 + 상자 모서리에서 알려진 변환(7cm, −12cm, 6.3°)을 3° 틀린 짐작에서 되찾는다
+    rg = np.random.default_rng(0)
+    dst = np.concatenate([np.c_[np.linspace(-2, 3, 400), np.full(400, 2.0)],
+                          np.c_[np.full(300, 3.0), np.linspace(-1.5, 2, 300)],
+                          np.c_[np.linspace(1, 1.4, 50), np.full(50, 0.3)]])
+    t7 = np.array([0.07, -0.12, math.radians(6.3)])
+    c7, s7 = math.cos(t7[2]), math.sin(t7[2])
+    src = np.c_[c7 * (dst[:, 0] - t7[0]) + s7 * (dst[:, 1] - t7[1]),
+                -s7 * (dst[:, 0] - t7[0]) + c7 * (dst[:, 1] - t7[1])] + rg.normal(0, 0.01, dst.shape)
+    g7, f7, _ = icp2d(src, dst, (0, 0, math.radians(3)))
+    assert np.hypot(*(g7[:2] - t7[:2])) < 0.01 and abs(wrap(g7[2] - t7[2])) < math.radians(0.3) and f7 > 0.9, g7
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
