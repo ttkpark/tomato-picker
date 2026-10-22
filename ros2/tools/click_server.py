@@ -429,7 +429,7 @@ def space_payload(have: str) -> str:
     b64 = lambda a: base64.b64encode(a.tobytes()).decode()   # noqa: E731
     return json.dumps({"ok": True, "mt": mt, "res": space_map.RES, "n": space_map.N,
                        "grid": b64(code.T.copy()),            # 화면은 [iy, ix] 순서로 읽는다
-                       "vox": b64(s["vox"].astype("<i2")),
+                       "vox": b64(space_map.solid(s).astype("<i2")),   # 두 번 넘게 본 칸만(잡음 두께 빼기)
                        "pose": [float(v) for v in s["pose"]], "q": float(s["q"]),
                        "frames": int(s["frames"]),
                        "path": np.asarray(s["path"], float).tolist(),

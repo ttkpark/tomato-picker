@@ -101,6 +101,7 @@ def scan2d(pts: np.ndarray, m: dict) -> np.ndarray:
 # ── 지도 ───────────────────────────────────────────────────────────────
 def empty() -> dict:
     return {"lo": np.zeros((N, N), np.float32), "vox": np.zeros((0, 3), np.int16),
+            "vn": np.zeros(0, np.uint16),   # 복셀마다 본 장 수 — 한 번만 본 칸은 대개 깊이 잡음이다
             "pose": np.zeros(3), "q": 0.0, "frames": 0,
             "path": np.zeros((0, 2)), "goal": np.zeros(0),
             "imu": np.full(2, np.nan)}  # 지금 자세를 정할 때의 IMU (boot, yaw rad) — 다음 회전 짐작의 기준
@@ -116,7 +117,26 @@ def load() -> dict:
     except (OSError, KeyError, ValueError):
         pass
     s["pose"] = np.asarray(s["pose"], float)
+    if len(s["vn"]) != len(s["vox"]):         # 횟수가 없던 옛 지도 — 전부 한 번 본 것으로
+        s["vn"] = np.ones(len(s["vox"]), np.uint16)
     return s
+
+
+def add_vox(s: dict, k: np.ndarray) -> None:
+    """복셀을 더하고 본 횟수를 센다 — 한 장 안의 여러 점은 칸마다 한 번으로.
+    2026-10-22 실기: 같은 자리 두 바퀴에서 새 복셀 중 첫 지도 8cm 안은 27%(방향 어긋남은 없었다) — 잡음 두께."""
+    k = np.unique(k.astype(np.int16), axis=0)
+    allv = np.concatenate([s["vox"], k])
+    u, inv = np.unique(allv, axis=0, return_inverse=True)
+    w = np.concatenate([s["vn"].astype(np.int64), np.ones(len(k), np.int64)])
+    s["vox"], s["vn"] = u, np.minimum(np.bincount(inv.ravel(), w, len(u)), 65535).astype(np.uint16)
+
+
+def solid(s: dict) -> np.ndarray:
+    """화면에 그릴 복셀. ⚠ "두 번 넘게 본 칸만"은 한 바퀴 지도를 거의 지운다(2026-10-22 실기: 10,529 → 647) —
+    20°씩 돌면 한 표면이 2~3장에 걸치지만 5cm 칸에선 잡음으로 매번 다른 칸에 떨어진다. 걸러 쓰려면 칸을 키우거나
+    이웃을 함께 세야 한다. 지금은 다 그린다(횟수는 계속 센다)."""
+    return s["vox"]
 
 
 def save(s: dict) -> None:
@@ -176,7 +196,7 @@ def integrate(s: dict, scan: np.ndarray, pts: np.ndarray, m: dict) -> None:
         np.clip(lo, -4.0, 4.0, out=lo)
     if len(pts):
         k = np.floor(to_world(s["pose"], pts) / RES).astype(np.int16)
-        s["vox"] = np.unique(np.concatenate([s["vox"], k]), axis=0)
+        add_vox(s, k)
 
 
 def wrist_to_body(p_arm_mm: np.ndarray, yaw_deg: float, m: dict) -> np.ndarray:
@@ -237,7 +257,7 @@ def integrate_near(s: dict, pts: np.ndarray, m: dict) -> int:
     s["lo"].flat[cells] += 0.9
     np.clip(s["lo"], -4.0, 4.0, out=s["lo"])
     if len(w):
-        s["vox"] = np.unique(np.concatenate([s["vox"], np.floor(w / RES).astype(np.int16)]), axis=0)
+        add_vox(s, np.floor(w / RES))
     return len(cells)
 
 
@@ -510,9 +530,13 @@ def scan_imu(a, m, s, link) -> int:
         g = hand_turn(a.deg) if link is None else turn(link, a.w, a.wsecs, a.deg)
         if not abs(g) >= 0.5:                       # nan(IMU 끊김) 포함
             stuck += 1
-            if stuck >= 3:
-                print("⛔ 세 번 연속 안 돌았다 — 회전 크기·시간을 올리거나 모터 전원을 본다(손 스캔이면 60초 안에 돌린다)")
+            if stuck >= 5:
+                print("⛔ 다섯 번 연속 안 돌았다 — 회전 크기·시간을 올리거나 모터 전원을 본다(손 스캔이면 60초 안에 돌린다)")
                 return 1
+            # 2026-10-22 실기: 7.8V에선 연달아 밀면 보드가 브라운아웃 리셋을 되풀이하며 255에서도 안 돈다 —
+            # 20초 쉬고 나니 바로 돌았다. 전원이 숨 돌릴 틈을 준다.
+            if link is not None:
+                time.sleep(3.0)
             continue
         stuck = 0
         dep, meta = frame(time.time() + 0.4)
@@ -547,7 +571,7 @@ def scan_imu(a, m, s, link) -> int:
     for r, p_, sc_ in shots:
         if abs(r) >= 2 * math.pi - math.radians(10):
             prior = np.array([0.0, 0.0, wrap(r)])
-            got, q, hit, amb = match(t, sc_, prior, 0.2, 15)
+            got, q, hit, amb = match(t, sc_, prior, 0.2, 8)
             if not amb and q >= Q_MIN and hit >= HIT_MIN:
                 ks.append((r + wrap(got[2] - prior[2])) / r)
                 xy.append(got[:2])
@@ -558,8 +582,11 @@ def scan_imu(a, m, s, link) -> int:
         d = np.median(np.array(xy), 0)
         print("  한 바퀴 뒤 자리 어긋남 %.2fm (%.2f, %.2f)%s" % (float(np.hypot(*d)), d[0], d[1],
               " — ⚠ 크다: 돌며 밀린다. 지도가 번진다(회전 중심 보정이 필요)" if np.hypot(*d) > 0.1 else ""))
-    if not ks or abs(k - 1) > 0.06:
-        print("  ⚠ 고리 닫기를 못 믿는다 — 지도는 IMU 그대로 둔다")
+    # ⚠ 추정끼리 맞을 때만 — 가구 많은 방(2026-10-22 실기)에선 장마다 0.962~1.0385로 흩어졌는데 중앙값 0.9707을
+    #   그대로 써서 400°에 12°를 비틀었다. 흩어지면 IMU(데이터시트 스케일)를 믿는 편이 낫다.
+    spread = (max(ks) - min(ks)) if len(ks) >= 2 else 1.0
+    if not ks or abs(k - 1) > 0.04 or spread > 0.015:
+        print("  ⚠ 고리 닫기를 못 믿는다(맞춘 장 %d · 흩어짐 %.3f) — 지도는 IMU 그대로 둔다" % (len(ks), spread))
         return 0
     if abs(k - 1) > 0.005:
         print("  IMU 스케일 %.4f — imu-yaw.service 의 IMU_SCALE 에 곱하면 다음부터 처음부터 맞는다" % k)
@@ -787,6 +814,8 @@ def selftest() -> int:
     s2 = empty()
     k = integrate_near(s2, np.array([[0.3, 0.0, 0.2], [0.3, 0.0, 0.01]]), m)
     assert k == 1 and s2["lo"][tuple(idx([0.3, 0.0]))] > 0 and len(s2["vox"]) == 2, "바닥 점은 장애물이 아니다"
+    integrate_near(s2, np.array([[0.3, 0.0, 0.2], [0.31, 0.0, 0.2], [0.9, 0.0, 0.2]]), m)
+    assert sorted(s2["vn"].tolist()) == [1, 1, 1, 2], ("한 장에서 같은 칸은 한 번, 두 장이면 2", s2["vn"])
     # ⑤ IMU 짐작 — 기준과 같은 boot면 θ = 마지막 θ + 자이로 회전, 폭은 좁힌다. 다시 켜졌으면 안 쓴다.
     si = empty()
     si["pose"] = np.array([0.0, 0.0, math.radians(170)])
