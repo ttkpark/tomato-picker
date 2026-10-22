@@ -30,7 +30,7 @@ API 요약 (전부 JSON)
     GET  /frame.jpg                  손목 화면
     POST /click   {u,v,mode}         mode=target(줄기) | grip(십자)
     POST /clear                      표적 지움
-    POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge|space
+    POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge|space(snap|scan|go|step|wrist|clear)
     POST /stop                       도는 일을 끊는다
     GET  /space?mt=                  공간 지도(격자·복셀·자세·길) — mt가 같으면 {same:true}
     POST /space/plan {x,y}           지금 자리→(x,y) 길만 짠다(안 움직인다)
@@ -379,9 +379,16 @@ def build(job, args):
         # **집 안 공간 지도**(space_map.py) — 한 장 담기·제자리 스캔·목표로 가기·지우기.
         # 주행 포트를 쥐는 일이라 넛지와 같이 한 번에 하나만 돈다.
         mode = str(args.get("mode", ""))
-        if mode not in ("snap", "scan", "go", "clear"):
-            raise ValueError("space mode 는 snap|scan|go|clear")
+        if mode not in ("snap", "scan", "go", "step", "wrist", "clear"):
+            raise ValueError("space mode 는 snap|scan|go|step|wrist|clear")
         a = [PY, T("space_map.py"), mode]
+        if mode == "step":
+            # 손으로 한 걸음 — 움직인 뒤 지도와 맞춰 자세를 다시 잡는다(넛지와 달리 지도가 따라온다).
+            v = {k: int(num(args, k, 0, -255, 255)) for k in ("vx", "vy", "w")}
+            if not any(v.values()):
+                raise ValueError("걸음 지령이 전부 0이다")
+            a += ["--vx", str(v["vx"]), "--vy", str(v["vy"]), "--w", str(v["w"]),
+                  "--secs", "%.2f" % num(args, "secs", 0.8, 0.2, 2.0)]
         if mode in ("scan", "go"):
             a += ["--w", "%d" % int(num(args, "w", 150, 60, 255)),
                   "--wsecs", "%.2f" % num(args, "wsecs", 0.8, 0.2, 2.0)]
@@ -394,7 +401,7 @@ def build(job, args):
             a += ["--x", "%.3f" % num(args, "x", 0, -half, half),
                   "--y", "%.3f" % num(args, "y", 0, -half, half),
                   "--vx", "%d" % int(num(args, "vx", 150, 60, 255)),
-                  "--vsecs", "%.2f" % num(args, "vsecs", 0.6, 0.2, 2.0)]
+                  "--vsecs", "%.2f" % num(args, "vsecs", 0.8, 0.2, 2.0)]
         return a
     raise ValueError("모르는 일: %s" % job)
 
@@ -510,11 +517,21 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button onclick="if(confirm('지도를 지울까? 다음 장의 자리가 원점이 된다'))run('space',{mode:'clear'})">지도 지움</button>
     </div>
     <div class="row" style="margin-top:6px">
+      <span class="k">한 걸음</span>
+      <button onclick="spStep(1,0,0)">▲ 앞</button>
+      <button onclick="spStep(-1,0,0)">▼ 뒤</button>
+      <button onclick="spStep(0,1,0)">◀ 좌</button>
+      <button onclick="spStep(0,-1,0)">▶ 우</button>
+      <button onclick="spStep(0,0,1)">↺ 좌회전</button>
+      <button onclick="spStep(0,0,-1)">↻ 우회전</button>
+      <button class="go" onclick="run('space',{mode:'wrist'})">손목 D405 담기</button>
+    </div>
+    <div class="row" style="margin-top:6px">
       <label>회전<input id="sp_w" value="150"></label><label>초<input id="sp_ws" value="0.8" style="width:50px"></label>
-      <label>전진<input id="sp_v" value="150"></label><label>초<input id="sp_vs" value="0.6" style="width:50px"></label>
+      <label>전진<input id="sp_v" value="150"></label><label>초<input id="sp_vs" value="0.8" style="width:50px"></label>
     </div>
     <div class="k" style="margin-top:4px">자세는 바퀴가 아니라 <b>지도와 맞춰서</b> 안다(엔코더 없음) — 넛지마다 다시 맞춘다.
-      Astra는 <b>60cm 안을 못 본다</b>: 가까운 장애물은 멀리서 봐 둔 지도로만 피한다. 멈춤은 [지금 하는 일 끊기].</div>
+      Astra는 <b>60cm 안을 못 본다</b>: 가까운 장애물은 멀리서 봐 둔 지도나 [손목 D405 담기](팔이 보는 곳 7~90cm)로 채운다. 멈춤은 [지금 하는 일 끊기].</div>
   </div>
   <div class="card"><h2>기록</h2><pre id="log"></pre></div>
 </div>
@@ -1142,7 +1159,7 @@ k3dInit(); k3dInitRows();
 // ── 공간 지도 (space_map.py) — 좌표는 지도 그대로(m, z 위) ─────────────
 var sp={az:-2.4,el:0.85,dist:6,tgt:new THREE.Vector3(0,0,0.3),mt:'0',goalXY:null};
 function b64buf(t){var b=atob(t),u=new Uint8Array(b.length);for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u.buffer;}
-function spArgs(o){o.w=val('sp_w',150);o.wsecs=val('sp_ws',0.8);o.vx=val('sp_v',150);o.vsecs=val('sp_vs',0.6);return o;}
+function spArgs(o){o.w=val('sp_w',150);o.wsecs=val('sp_ws',0.8);o.vx=val('sp_v',150);o.vsecs=val('sp_vs',0.8);return o;}
 function spInfo(t){document.getElementById('spInfo').textContent=t;}
 function spRender(){ if(!sp.r) return; var c=Math.cos(sp.el);
   sp.cam.position.set(sp.tgt.x+sp.dist*c*Math.cos(sp.az),sp.tgt.y+sp.dist*c*Math.sin(sp.az),sp.tgt.z+sp.dist*Math.sin(sp.el));
@@ -1193,6 +1210,8 @@ function spPick(e){
     spInfo(j.ok?('목표 ('+p.x.toFixed(2)+', '+p.y.toFixed(2)+') · 길 '+j.len.toFixed(2)+'m — [목표로 가기]')
                :('⛔ '+j.why));});
 }
+function spStep(sx,sy,sw){ var v=val('sp_v',150), w=val('sp_w',150);
+  run('space',{mode:'step',vx:sx*v,vy:sy*v,w:sw*w,secs:sw?val('sp_ws',0.8):val('sp_vs',0.8)});}
 function spGo(){ if(!sp.goalXY){alert('지도 바닥을 먼저 눌러 목표를 정한다');return;}
   run('space',spArgs({mode:'go',x:sp.goalXY[0],y:sp.goalXY[1]}));}
 function spBuild(j){

@@ -43,7 +43,10 @@ MAP = os.path.expanduser("~/space_map.npz")
 MOUNT_FILE = os.path.expanduser("~/space_mount.json")
 # 장착값 — 케이스 CAD(tomato_case.scad astra_*) 기준 추정. **실측해서 MOUNT_FILE로 덮어라.**
 # x=회전 중심→렌즈(앞+), h=바닥→렌즈, tilt=위로+, floor_cut/top=장애물로 칠 높이 띠, radius=차체 반지름
-MOUNT = {"x": 0.12, "h": 0.15, "tilt_deg": 0.0, "floor_cut": 0.05, "top": 0.9, "radius": 0.22}
+MOUNT = {"x": 0.12, "h": 0.15, "tilt_deg": 0.0, "floor_cut": 0.05, "top": 0.9, "radius": 0.22,
+         # 손목 D405용: 회전판 축이 차체 원점에서 얼마나 앞(arm_x)·바닥에서 얼마나 위(arm_z)인가.
+         # so101_geometry.yaml mount(60·76.5mm)와 같은 값 — ⚠ 케이스 장착 전 값이라 실측해서 덮어라.
+         "arm_x": 0.06, "arm_z": 0.0765}
 
 
 def mount() -> dict:
@@ -144,6 +147,68 @@ def integrate(s: dict, scan: np.ndarray, pts: np.ndarray, m: dict) -> None:
     if len(pts):
         k = np.floor(to_world(s["pose"], pts) / RES).astype(np.int16)
         s["vox"] = np.unique(np.concatenate([s["vox"], k]), axis=0)
+
+
+def wrist_to_body(p_arm_mm: np.ndarray, yaw_deg: float, m: dict) -> np.ndarray:
+    """팔 base 좌표(mm, 회전판 위) → 차체 좌표(m). URDF와 같은 사슬: 회전판 축에서 Rz(yaw)."""
+    t = math.radians(yaw_deg)
+    c, s = math.cos(t), math.sin(t)
+    p = np.asarray(p_arm_mm, float) / 1000.0
+    return np.stack([m["arm_x"] + c * p[:, 0] - s * p[:, 1],
+                     s * p[:, 0] + c * p[:, 1],
+                     m["arm_z"] + p[:, 2]], 1)
+
+
+def wrist_cloud(m: dict, stride: int = 4) -> np.ndarray:
+    """손목 D405 한 장 → 차체 좌표 점(m). 팔 자세·회전판·손-눈 보정을 그 자리에서 읽는다."""
+    sys.path.insert(0, os.path.join(HERE, "..", "src", "tomato_bridge"))
+    from tomato_bridge.follower_io import FollowerIO
+    from tomato_picker.config import DEPTH_CAMERAS
+    from tomato_picker.hardware.cartesian import CartesianArm
+    from tomato_picker.hardware.eye import EyeConfig
+    from tomato_picker.hardware.handeye import tool_frame
+    cfg = EyeConfig(camera="d405")
+    if cfg.mount != "on_arm" or cfg.transform is None or not cfg.good:
+        raise RuntimeError("D405 손-눈 보정(on_arm)이 없거나 나쁘다 — 먼저 보정한다")
+    io = FollowerIO(hold_torque=True)
+    try:
+        pose, yaw = CartesianArm(io).pose(), io.read_yaw()
+    finally:
+        io.hold_close()
+    spec = DEPTH_CAMERAS["d405"]
+    after = time.time()                     # 팔을 읽은 뒤에 찍힌 장이어야 그 자세의 화면이다
+    for _ in range(30):
+        meta = json.load(open(spec["meta"]))
+        if float(meta["ts"]) > after:
+            break
+        time.sleep(0.1)
+    else:
+        raise RuntimeError("D405 새 프레임이 없다 — depth-cam이 죽었다")
+    dep = np.load(spec["depth"])
+    # ponytail: 핀홀만(왜곡 계수 무시) — 5cm 칸에선 안 보인다. 칸을 줄이면 Intrinsics.deproject로.
+    it = meta["intrinsics"]
+    d = dep[::stride, ::stride].astype(np.float32) * float(meta["depth_scale_mm"])
+    v, u = np.nonzero((d >= meta["min_mm"]) & (d <= meta["max_mm"]))
+    Z = d[v, u]
+    cam = np.stack([(u * stride - it["ppx"]) * Z / it["fx"], (v * stride - it["ppy"]) * Z / it["fy"], Z], 1)
+    arm = tool_frame(pose).apply(cfg.transform.apply(cam))
+    print("  손목: 회전판 %.1f° · 집게 (%.0f, %.0f, %.0f)mm · D405 %d점" % (yaw, pose.x, pose.y, pose.z, len(Z)))
+    return wrist_to_body(arm, yaw, m)
+
+
+def integrate_near(s: dict, pts: np.ndarray, m: dict) -> int:
+    """손목 점을 3D 복셀에 더하고, 높이 띠 안의 점은 장애물로 칠한다(Astra 60cm 사각 메우기).
+    ponytail: 끝점만 — 빈 칸 광선은 안 쏜다(손목 화각이 좁고 자세가 제각각). 치운 물건은 Astra가 지운다."""
+    w = to_world(s["pose"], pts)
+    band = w[(pts[:, 2] > m["floor_cut"]) & (pts[:, 2] < m["top"])]
+    hi = idx(band[:, :2])
+    hi = hi[((hi >= 0) & (hi < N)).all(1)]
+    cells = np.unique(hi[:, 0] * N + hi[:, 1])
+    s["lo"].flat[cells] += 0.9
+    np.clip(s["lo"], -4.0, 4.0, out=s["lo"])
+    if len(w):
+        s["vox"] = np.unique(np.concatenate([s["vox"], np.floor(w / RES).astype(np.int16)]), axis=0)
+    return len(cells)
 
 
 def field(lo: np.ndarray) -> np.ndarray:
@@ -304,6 +369,36 @@ def scan_cmd(a, m) -> int:
         link.close()
 
 
+def step_cmd(a, m) -> int:
+    """손으로 한 걸음(앞뒤·옆·회전) → 지도로 자세를 다시 맞추고 그 장을 더한다."""
+    from base_nudge import drive, open_link
+    s = load()
+    prev = s["pose"].copy()
+    link = open_link()
+    if link is None:
+        return 1
+    try:
+        drive(link, a.vx, a.vy, a.w, a.secs)
+    finally:
+        link.close()
+    # 짐작만 준다 — 실제로 얼마 갔는지는 맞춤이 정한다(넛지 크기는 바닥·배터리마다 다르다).
+    f, l = 0.10 * np.sign(a.vx), 0.08 * np.sign(a.vy)
+    c, sn = math.cos(prev[2]), math.sin(prev[2])
+    prior = prev + [f * c - l * sn, f * sn + l * c, math.radians(20) * np.sign(a.w)]
+    localize(s, m, prior, 0.3, 30, time.time() + 0.4)
+    d = s["pose"] - prev
+    print("한 걸음 → %.2fm %.0f°" % (float(np.hypot(d[0], d[1])), math.degrees(wrap(d[2]))))
+    return 0
+
+
+def wrist_cmd(m) -> int:
+    s = load()
+    k = integrate_near(s, wrist_cloud(m), m)
+    save(s)
+    print("손목 D405를 지도에 더했다 — 장애물 칸 %d · 복셀 %d" % (k, len(s["vox"])))
+    return 0
+
+
 def lookahead(path, xy, dist: float):
     for p in path:
         if math.hypot(p[0] - xy[0], p[1] - xy[1]) >= dist:
@@ -410,6 +505,14 @@ def selftest() -> int:
     occ = dilate(s["lo"] > OCC, 2)
     assert not any(occ[tuple(idx(q_))] for q_ in path), "길이 장애물을 지난다"
     assert plan(s["lo"], (0, 0), (3.0, 0.0), m["radius"])[0] is None
+    # ④ 손목 사슬 — 회전판 0°면 팔 base 원점이 (arm_x, 0, arm_z), 90°면 팔의 앞이 차체 왼쪽
+    w0 = wrist_to_body(np.array([[0.0, 0.0, 0.0], [100.0, 0.0, 50.0]]), 0.0, m)
+    w9 = wrist_to_body(np.array([[100.0, 0.0, 50.0]]), 90.0, m)[0]
+    assert np.allclose(w0[0], [m["arm_x"], 0, m["arm_z"]]) and np.allclose(w0[1], [m["arm_x"] + 0.1, 0, m["arm_z"] + 0.05])
+    assert np.allclose(w9, [m["arm_x"], 0.1, m["arm_z"] + 0.05]), w9
+    s2 = empty()
+    k = integrate_near(s2, np.array([[0.3, 0.0, 0.2], [0.3, 0.0, 0.01]]), m)
+    assert k == 1 and s2["lo"][tuple(idx([0.3, 0.0]))] > 0 and len(s2["vox"]) == 2, "바닥 점은 장애물이 아니다"
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
@@ -417,12 +520,14 @@ def selftest() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["snap", "scan", "go", "clear", "selftest"])
+    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "clear", "selftest"])
     ap.add_argument("--steps", type=int, default=16)
     ap.add_argument("--w", type=int, default=150, help="회전 넛지 크기(+=왼쪽)")
     ap.add_argument("--wsecs", type=float, default=0.8)
     ap.add_argument("--vx", type=int, default=150, help="전진 넛지 크기")
-    ap.add_argument("--vsecs", type=float, default=0.6)
+    ap.add_argument("--vsecs", type=float, default=0.8)   # 0.6은 슬루 램프가 못 올라가 0(2026-10-22 실측)
+    ap.add_argument("--vy", type=int, default=0, help="step: 옆걸음(+=왼쪽)")
+    ap.add_argument("--secs", type=float, default=0.8, help="step: 걸음 시간")
     ap.add_argument("--x", type=float)
     ap.add_argument("--y", type=float)
     ap.add_argument("--tol", type=float, default=0.2)
@@ -444,6 +549,13 @@ def main() -> int:
         return 0
     if a.mode == "scan":
         return scan_cmd(a, m)
+    if a.mode == "step":
+        if not (a.vx or a.vy or a.w):
+            print("step 은 --vx/--vy/--w 중 하나가 0이 아니어야 한다")
+            return 2
+        return step_cmd(a, m)
+    if a.mode == "wrist":
+        return wrist_cmd(m)
     if a.x is None or a.y is None:
         print("go 는 --x --y (지도 좌표, m)가 있어야 한다")
         return 2
