@@ -178,6 +178,8 @@ ow = np.stack([start[0] + c * oc[:, 0] - sn * oc[:, 1], start[1] + sn * oc[:, 0]
 do = surf_dist(ow)
 est_th = s["pose"][2] + start[2]
 print("\n=== %s seed %d rc=%d %.0fs ===" % ("IMU" if USE_IMU else "IMU 없음", SEED, rc, time.time() - t0))
+print("참 이동 %.2fm (지도 좌표 %.2f, %.2f)" % ((float(np.hypot(*(true[:2] - start[:2]))),) +
+      tuple(np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2]))))
 print("참 회전 %.0f° · 지도 θ 오차 %.1f°" % (math.degrees(true[2] - start[2]),
                                        math.degrees(sm.wrap(est_th - true[2]))))
 print("복셀 %d · 표면 7.5cm 안 %.1f%% · 중앙값 %.3fm" % (len(dv), 100 * (dv < 0.075).mean(), np.median(dv)))

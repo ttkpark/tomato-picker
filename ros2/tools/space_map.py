@@ -540,15 +540,21 @@ def scan_imu(a, m, s, link) -> int:
         if abs(r) <= math.radians(CLOSE_DEG):
             t["pose"] = np.array([0.0, 0.0, r])
             integrate(t, sc_, p_, m)
-    ks = []
+    ks, xy = [], []
     for r, p_, sc_ in shots:
         if abs(r) >= 2 * math.pi - math.radians(10):
             prior = np.array([0.0, 0.0, wrap(r)])
-            got, q, hit, amb = match(t, sc_, prior, 0.1, 15)
+            got, q, hit, amb = match(t, sc_, prior, 0.2, 15)
             if not amb and q >= Q_MIN and hit >= HIT_MIN:
                 ks.append((r + wrap(got[2] - prior[2])) / r)
+                xy.append(got[:2])
     k = float(np.median(ks)) if ks else 1.0
     print("고리 닫기: 맞춘 장 %d · 참 회전 = IMU × %.4f %s" % (len(ks), k, np.round(ks, 4).tolist()))
+    if xy:
+        # 자리는 0으로 두고 지었다 — 한 바퀴 뒤 실제로 얼마나 밀려 있나(메카넘은 돌며 옆으로 밀린다, 실측 전)
+        d = np.median(np.array(xy), 0)
+        print("  한 바퀴 뒤 자리 어긋남 %.2fm (%.2f, %.2f)%s" % (float(np.hypot(*d)), d[0], d[1],
+              " — ⚠ 크다: 돌며 밀린다. 지도가 번진다(회전 중심 보정이 필요)" if np.hypot(*d) > 0.1 else ""))
     if not ks or abs(k - 1) > 0.06:
         print("  ⚠ 고리 닫기를 못 믿는다 — 지도는 IMU 그대로 둔다")
         return 0
