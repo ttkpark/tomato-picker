@@ -4,7 +4,7 @@
 
 | 폴더 | 상태 | 설명 |
 |---|---|---|
-| **`mecanum_stable/`** | ✅ **현재 사용(주행)** | 젯슨 시리얼 주행 펌웨어. `V/S/T/P/L` 프로토콜 + 데드맨 + HW워치독. **PS2 배제.** 상위 제어는 젯슨 [`tools/controller_drive.py`](../tools/controller_drive.py)(게임패드)·자율주행이 담당. → [mecanum_stable/README.md](mecanum_stable/README.md), 젯슨 셋업은 [docs/jetson-gamepad-setup.md](../docs/jetson-gamepad-setup.md) |
+| **`mecanum_stable/`** | ✅ **현재 사용(주행)** | 젯슨 시리얼 주행 펌웨어. `V/S/T/P/L` 프로토콜 + 데드맨 + HW워치독. **PS2 배제.** 상위 제어는 젯슨 [`motor_link.py`](../src/tomato_picker/hardware/motor_link.py)(대시보드·조작대)와 ROS `cmd_vel_node`. → [mecanum_stable/README.md](mecanum_stable/README.md) |
 | `PS2-MOTOR/` | 레거시 | PS2 컨트롤러 **직접** 조종판(주행+L1토글+R1프리셋). PS2X가 이 보드에서 `millis()`를 얼리는 등 불안정 → `mecanum_stable`로 대체됨. PS2 배선/진단 이력 참고용. |
 | `mecanum_serial/` | 폐기 | 직결 HR8833 핀 가정(이 PCA9685 보드와 불일치). `mecanum_stable`이 이 자리를 대체. |
 | `diagnostics/` | 진단용 | `motor_test/`(PS2 없이 시리얼로 모터 직접구동) 및 PS2/PCA9685 배선·부팅 최소 스케치. 아래 [진단 스케치](#진단-스케치) 참고 |

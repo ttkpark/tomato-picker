@@ -4,7 +4,7 @@
     ~/lerobot/.venv/bin/python ros2/tools/base_nudge.py --vx 130 --secs 0.6     # 앞으로 톡
     ~/lerobot/.venv/bin/python ros2/tools/base_nudge.py --w -130 --secs 0.8     # 제자리 회전
 
-⚠ `tomato-voice`·`controller-drive`는 내린 채로(주행 보드 포트는 한 프로세스).
+⚠ `tomato-voice`는 내린 채로(주행 보드 포트는 한 프로세스).
 ⚠ 포트를 열면 Uno가 리셋된다(DTR) — 첫 하트비트를 기다린 뒤에만 지령을 낸다.
 ⚠ 정지마찰 문턱(실측 ≈90)보다 작은 지령은 물리적으로 0이다 — 게인 말고 크기부터.
 ⚠ 회전 부호: 2026-09-09 실측 **w=+가 반시계(왼쪽)**, w=−가 시계 — README("시계+")와 반대.

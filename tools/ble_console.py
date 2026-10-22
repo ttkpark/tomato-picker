@@ -74,7 +74,7 @@ ADV_MIN_MS = int(os.environ.get("BLE_ADV_MIN_MS", "150"))
 ADV_MAX_MS = int(os.environ.get("BLE_ADV_MAX_MS", "250"))
 
 # 재시작을 허용할 서비스 — 여기 없는 이름은 거부한다.
-ALLOWED_SERVICES = ("tomato-voice", "line-cam", "line-follow", "controller-drive")
+ALLOWED_SERVICES = ("tomato-voice", "line-cam", "line-follow")
 
 BLUEZ = "org.bluez"
 GATT_MGR = "org.bluez.GattManager1"
@@ -290,7 +290,7 @@ HELP = """명령
   wifi                   접속 중인 망 + 보이는 망 목록
   join <SSID> <비번>     그 WiFi로 갈아타기 (BLE는 안 끊깁니다)
   status                 서비스·팔·라인 검출 상태
-  restart <서비스>       tomato-voice | line-cam | line-follow | controller-drive
+  restart <서비스>       tomato-voice | line-cam | line-follow
   sys                    가동시간·온도·디스크·부하
   help                   이 도움말"""
 

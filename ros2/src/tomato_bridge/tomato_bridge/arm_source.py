@@ -157,7 +157,7 @@ class DirectArm:
         except Exception as exc:  # noqa: BLE001 - 포트 점유·전원 등 이유를 그대로 올린다
             raise ArmUnavailable(
                 f"팔을 못 읽는다: {exc}. 포트를 다른 프로세스가 잡고 있으면 "
-                "(tomato-voice / controller-drive) **그것부터 끄라** — "
+                "(tomato-voice) **그것부터 끄라** — "
                 "proxy로 도망가면 TF 시각이 흐려진다."
             ) from exc
 

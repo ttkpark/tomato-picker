@@ -4,8 +4,7 @@
 주행 보드(`/dev/ttyUSB0`), 그리고 **D405도 마찬가지다**(`depth-cam.service`가
 잡고 있으면 realsense2_camera가 못 연다).
 
-    sudo systemctl stop tomato-voice depth-cam       # 팔 + 카메라
-    sudo systemctl stop controller-drive             # 주행까지 쓸 때
+    sudo systemctl stop tomato-voice click-server depth-cam   # 팔·주행 + 카메라
 
 그다음 하나씩 켜 가며 붙인다.
 
@@ -51,7 +50,7 @@ def generate_launch_description() -> LaunchDescription:
             "arm_mode", default_value="direct",
             description="direct=ROS가 포트를 직접(기본) / proxy=레거시 대시보드 경유(브링업 전용)"),
         DeclareLaunchArgument("base", default_value="false",
-                              description="⚠ controller-drive를 먼저 끌 것"),
+                              description="⚠ tomato-voice를 먼저 끌 것(주행 포트는 한 프로세스)"),
         DeclareLaunchArgument("base_type", default_value="uno",
                               description="uno=개루프(기본) / sim=시뮬레이터 / stm32=폐루프 / mock=무동작"),
         DeclareLaunchArgument("camera", default_value="false",

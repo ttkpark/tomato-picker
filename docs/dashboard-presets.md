@@ -62,10 +62,9 @@
 
 슬롯 개수는 `hardware/presets.py`의 `SLOT_COUNT` 하나로 정한다 — 대시보드 격자는
 `auto-fill`이고 시퀀스 파서는 `\d+`라 두 자리 슬롯도 그대로 먹으므로, 그 상수만 바꾸면
-저장소·화면·게임패드가 전부 따라온다.
+저장소·화면이 전부 따라온다.
 
-저장 위치는 `~/arm_presets.json` — 게임패드 드라이버(`controller_drive.py`)가 읽는 파일과
-같다. 형식은 **옛 파일과 호환**되며(숫자 키 = 자세), 이름·앵커 메타데이터만 `"__meta__"`
+저장 위치는 `~/arm_presets.json`. 형식은 **옛 파일과 호환**되며(숫자 키 = 자세), 이름·앵커 메타데이터만 `"__meta__"`
 키에 따로 들어간다. 저장은 임시파일 → `os.replace` 원자적 교체라, 데모 중 전원이 나가도
 프리셋 파일이 깨지지 않는다.
 
@@ -111,5 +110,5 @@
 - `hb N초 전` — 펌웨어 하트비트. 3초 넘게 안 오면 "끊김"으로 뜬다.
 - `⚠ 깨진프레임 N` — 체크섬 불일치로 **거부한** 지령 수. 늘어나면 USB 케이블/전원 문제다
   (이 숫자가 0이 아니면 예전 같으면 그 지령이 그냥 실행됐다는 뜻).
-- `Device or resource busy` — `controller-drive`(게임패드) 서비스가 포트를 이미 잡았다.
-  둘 중 하나만 켤 것: `sudo systemctl stop controller-drive`
+- `Device or resource busy` — 다른 프로세스(`base_nudge`·ROS `cmd_vel_node`)가 주행 포트를 이미 잡았다.
+  하나만 켤 것.

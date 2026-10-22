@@ -4,7 +4,7 @@
 echo "── tomato-picker 현재 상태 ($(hostname), $(date '+%m-%d %H:%M')) ──"
 
 # 배타적 리소스 (팔 포트/8090/주행): 동시에 하나만 뜬다
-for svc in click-server tomato-voice controller-drive; do
+for svc in click-server tomato-voice; do
     if systemctl is-active --quiet "$svc" 2>/dev/null; then
         echo "  ● $svc  실행중"
     fi

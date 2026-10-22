@@ -928,8 +928,6 @@ _SETTINGS_BODY = """
   <p class="dim" style="margin:0.6rem 0 0; font-size:0.85rem">
     <b>팔이 안 움직이면</b> [🦾 팔·음성·바퀴 재시작] — 팔·바퀴 연결은 tomato-voice가 들고
     있어서 이게 곧 재연결입니다. 재시작하면 이 화면이 몇 초 끊겼다 돌아옵니다(새로고침 불필요).
-    게임패드(controller-drive)는 여기 없습니다 — tomato-voice와 모터 포트를 다투므로
-    둘 중 하나만 켜야 합니다.
   </p>
 </div>
 

@@ -126,7 +126,7 @@ ssh server@<젯슨> "sudo install -m 644 /tmp/ble-console.service /etc/systemd/s
 | `wifi` | 접속 중인 망 + 보이는 망(신호 순) |
 | `join <SSID> <비번>` | 그 WiFi로 갈아타기. SSID에 **공백이 있어도 된다** |
 | `status` | 서비스·팔(USB 시리얼)·라인 검출 상태 |
-| `restart <서비스>` | `tomato-voice`·`line-cam`·`line-follow`·`controller-drive`만 |
+| `restart <서비스>` | `tomato-voice`·`line-cam`·`line-follow`만 |
 | `sys` | 가동시간·온도·디스크·부하 |
 
 ## 설계에서 조심한 것들

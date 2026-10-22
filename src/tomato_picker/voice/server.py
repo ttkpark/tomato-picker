@@ -399,8 +399,7 @@ def _handle_line_command(body: dict, line) -> tuple[bool, str] | None:
     return False, f"알 수 없는 라인 명령: {action}"
 
 
-# 대시보드에서 재시작을 허용하는 서비스. ⚠ controller-drive는 뺐다 —
-# tomato-voice와 ttyUSB0을 다투므로(독점) 둘이 같이 뜨면 나중 쪽이 죽는다.
+# 대시보드에서 재시작을 허용하는 서비스.
 _SERVICES = ("tomato-voice", "line-follow", "line-cam", "tomato-vision",
              "depth-cam", "astra-cam")
 

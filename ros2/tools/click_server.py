@@ -583,7 +583,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button onclick="nudge(0,0,1)">↺ 좌회전</button>
       <button onclick="nudge(0,0,-1)">↻ 우회전</button>
     </div>
-    <div class="k" style="margin-top:4px">한 번 짧게 톡 움직인다(정지마찰 문턱≈90 duty). ⚠ tomato-voice·controller-drive가 꺼져 있어야 함.</div>
+    <div class="k" style="margin-top:4px">한 번 짧게 톡 움직인다(케이스 장착 후 문턱 재측정 필요 — 2026-10-22 듀티 37% 정지·58% 주행). ⚠ tomato-voice가 꺼져 있어야 함.</div>
   </div>
 
   <div class="card"><h2>집게 · 자세</h2>

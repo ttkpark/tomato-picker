@@ -7,7 +7,7 @@
 ```bash
 sudo systemctl stop tomato-voice              # 대시보드가 /dev/ttyACM0(팔)을 잡고 있다
 sudo systemctl stop depth-cam                 # 발행기가 D405를 잡고 있다
-sudo systemctl stop controller-drive          # 게임패드가 /dev/ttyUSB0을 잡고 있다
+sudo systemctl stop click-server              # 조작대가 팔 포트를 잡고 있다(일을 돌릴 때)
 ```
 
 ⚠ **D405를 빠뜨리기 쉽다.** 팔과 바퀴만 끄고 카메라를 놔두면 `realsense2_camera`가
@@ -67,7 +67,7 @@ ros2 topic echo /joint_states --once
 ros2 launch tomato_bringup stage1.launch.py camera:=true perception:=true
 ros2 topic echo /fruits --once
 
-# ④ 주행 (⚠ controller-drive를 먼저 끌 것)
+# ④ 주행 (⚠ tomato-voice를 먼저 끌 것)
 ros2 launch tomato_bringup stage1.launch.py base:=true
 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}}"
 ```

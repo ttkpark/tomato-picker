@@ -558,7 +558,7 @@ ARM_MIRROR_FPS = 50.0
 BASE_YAW_ID = 7
 BASE_YAW_LIMIT_DEG = 85.0
 BASE_YAW_DEG_PER_SEC = 30.0   # 팔을 통째로 휘두르므로 느리게 — 되받는 토크는 판이 받는다
-# controller_drive.py가 쓰는 것과 같은 프리셋 파일(슬롯 0~19 + 높이 앵커 메타데이터).
+# 팔 프리셋 파일(슬롯 0~19 + 높이 앵커 메타데이터).
 # 형식은 hardware/presets.py 참고 — 옛 {"1": {...}} 파일을 그대로 읽는다.
 ARM_PRESET_FILE = "~/arm_presets.json"
 # 프리셋 1→2→3→4 = 접근→집기→들기→놓기(2026-06-27 확인된 전체 수확 시퀀스).

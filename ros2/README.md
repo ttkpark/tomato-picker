@@ -135,12 +135,11 @@ sudo HOME="$HOME" docker compose run --rm ros bash /ws/tools/bringup_check.sh
 | 장치 | 레거시가 잡는 것 | ROS가 잡는 것 |
 |---|---|---|
 | `/dev/ttyACM0` (팔) | `tomato-voice.service` | `arm_node` |
-| `/dev/ttyUSB0` (주행 보드) | `controller-drive.service` | `cmd_vel_node` |
+| `/dev/ttyUSB0` (주행 보드) | `tomato-voice.service` | `cmd_vel_node` |
 | **D405** | `depth-cam.service` (`/dev/shm`) | `realsense2_camera` |
 
 ```bash
-sudo systemctl stop tomato-voice depth-cam      # 팔 + 카메라
-sudo systemctl stop controller-drive            # 주행까지 쓸 때
+sudo systemctl stop tomato-voice click-server depth-cam   # 팔·주행 + 카메라
 ```
 
 `arm_mode:=proxy`는 **레거시 대시보드를 켜 둔 채 배선만 확인하는** 임시 경로다.

@@ -25,8 +25,8 @@ behavior the task requires stay in.
   그래서 `kinematics`·`handeye`·`cartesian`·`eye.EyeConfig`는 계속 쓴다(라이브러리다).
   반대로 팔을 여는 일은 ROS가 가져왔다(`tomato_bridge/follower_io.py`).
   졸업표 = [`docs/ros2-이행계획.md`](docs/ros2-이행계획.md) §4, **강제** = `ros_selfcheck`의 [경계] 검사.
-  ⚠ **둘을 동시에 못 켠다** — 팔(`tomato-voice`)·주행(`controller-drive`)·**D405(`depth-cam`)**
-  넷(**Astra `astra-cam`** 포함) 다 한 프로세스만 연다. ROS를 띄우기 전에 끈다. `arm_mode:=proxy`는 배선 확인용
+  ⚠ **둘을 동시에 못 켠다** — 팔(`tomato-voice`/`click-server`)·주행(`tomato-voice`)·**D405(`depth-cam`)**
+  셋(**Astra `astra-cam`** 포함) 다 한 프로세스만 연다. ROS를 띄우기 전에 끈다. `arm_mode:=proxy`는 배선 확인용
   임시 경로일 뿐이다(HTTP 폴링이라 TF 시각 정렬이 안 된다, ros.3에서 삭제).
   ⚠ **보정 파일은 한 벌** — `~/arm_eye.json`을 대시보드와 ROS가 같이 쓴다
   (카메라별로 칸이 나뉘고, **최상위가 D405**다 — ROS가 읽는 자리라 안 옮겼다).
@@ -87,25 +87,22 @@ behavior the task requires stay in.
   `V` 무응답 + 1초 하트비트에 링크 카운터. 젯슨 쪽은
   [`hardware/motor_link.py`](src/tomato_picker/hardware/motor_link.py)가 **상시 연결 + 20ms 재전송
   스레드 + 자동 재연결**로 물린다. ⚠ 포트는 **한 프로세스만**(`exclusive=True`) —
-  `tomato-voice`와 `controller-drive`를 동시에 켜지 말 것.
+  주행 포트를 여는 것끼리(`tomato-voice`·`base_nudge`·ROS `cmd_vel_node`) 동시에 켜지 말 것.
   ⚠ **소음↔속도는 맞바꾸는 관계**(PCA9685 상한 1526Hz라 초음파 불가). 대시보드
   "모터 튜닝" 패널에서 `F`(주파수)/`P`(듀티상한)/`R`(슬루)을 재플래시 없이 바꿔 찾는다.
-  현재 기본 700Hz·듀티 2600. ⚠ 포트를 열면 커널 DTR 토글로 **Uno가 리셋**되므로
+  현재 기본 700Hz·듀티 4095(2026-10-22: 케이스 무게로 2600은 정지마찰을 못 넘김). ⚠ 포트를 열면 커널 DTR 토글로 **Uno가 리셋**되므로
   설정은 **첫 하트비트 이후**에 넣어야 먹는다(부트로더 ~2초가 다 먹어버림).
   ⚠️ **`firmware/PS2-MOTOR/`는 레거시**(PS2 직접조종, 불안정). `mecanum_serial/`은 폐기. 새 작업은 `mecanum_stable` 기준.
   모터↔바퀴 실측(2026-10-22 케이스 장착 후): A=RR B=RL C=FR D=FL, `POL={-1,1,-1,1}`.
-- **게임패드 주행 + 팔 프리셋 = [`tools/controller_drive.py`](tools/controller_drive.py)** (젯슨, lerobot venv).
-  Switch 프로콘/Xbox360 게임패드(evdev)를 읽어 → 메카넘 `V` 지령 + 팔 프리셋 재생.
-  **systemd `controller-drive` 서비스로 부팅 자동실행**([`deploy/`](deploy/)). 조작: **LT(ZL) 데드맨=누르는 동안만 주행**,
-  왼스틱=이동/오른스틱=회전/D패드=디지털, **LB/RB=팔 프리셋(이전/다음)**. 셋업·이슈=[`docs/jetson-gamepad-setup.md`](docs/jetson-gamepad-setup.md).
+- **게임패드 주행은 폐지했다(2026-10-22)** — `controller_drive.py`·`controller-drive.service`·셋업 문서를
+  지웠다(필요하면 git 이력에서). 주행은 대시보드·조작대(`base_nudge`)·ROS `cmd_vel_node`로 한다.
 - **팔 제어 = 대시보드 `/control`** ✅ 권장 — 리더암 연결·미러링·프리셋 **슬롯 0~19** 저장/재생·
   **높이 앵커 보간**을 브라우저에서 전부 한다([`docs/dashboard-presets.md`](docs/dashboard-presets.md)).
   슬롯 수는 `presets.py`의 `SLOT_COUNT` 하나로 정한다(2026-08-17: 10→20).
   구현: [`hardware/presets.py`](src/tomato_picker/hardware/presets.py)(저장소·보간) +
   [`hardware/arm.py`](src/tomato_picker/hardware/arm.py)(미러링·재생).
   프리셋=`~/arm_presets.json` — 옛 형식 호환, 이름·앵커는 `"__meta__"` 키에.
-  대안: [`tools/mirror_toggle.py`](tools/mirror_toggle.py)(터미널·리더 필요, 레거시) 또는
-  `controller_drive.py`의 프리셋 재생(리더 없이 팔로워만).
+  대안: [`tools/mirror_toggle.py`](tools/mirror_toggle.py)(터미널·리더 필요, 레거시).
 - **팔 3D 좌표 이동 = `arm.cartesian`** ✅ (2026-08-22 추가) — 프리셋이 "저장한 자세로
   점프"라면 이쪽은 **"문 물건을 xyz로 옮기고 제자리에서 돌리기"**.
   [`hardware/kinematics.py`](src/tomato_picker/hardware/kinematics.py)(순/역기구학, import가
@@ -121,12 +118,11 @@ behavior the task requires stay in.
   중력이 끌어내려** 그 처짐이 영점 오차가 되기 때문 — 수직은 문틀에 대보면 눈으로 맞는다.
   세운 직후엔 집게가 회전축 위(특이점)라 **조그가 막히는 게 정상**이다(프리셋으로 먼저 뻗는다).
   팔 범위 캘리브레이션을 다시 하면 **영점도 다시** 잡아야 한다(정규화값의 뜻이 바뀐다).
-- **hid-nintendo**: 이 젯슨 커널엔 없어서 out-of-tree 빌드해 설치함(게임패드 필수). 빌드법=`docs/jetson-gamepad-setup.md`.
 
 ## 젯슨 접속
 - `ssh server@192.168.0.8` (IP는 DHCP라 바뀔 수 있음 / 공개키 등록·passwordless sudo).
   Bash 툴은 `-i /c/Users/parkg/.ssh/id_ed25519` 명시 필요(HOME 다름).
-- 장치: `/dev/ttyUSB0`=모터보드, `/dev/ttyACM0`=팔로버, 게임패드=USB/BT.
+- 장치: `/dev/ttyUSB0`=모터보드, `/dev/ttyACM0`=팔로버(ID 1~6 팔 + ID 7 회전판).
 - **IP를 모를 때는 블루투스로 물어본다** ([`docs/bluetooth-console.md`](docs/bluetooth-console.md), 2026-08-22 추가).
   `ble-console.service`가 BLE로 `tomato-jetson`을 광고하고, **안드로이드 앱**
   ([`android/handset/`](android/handset/), `./build.sh install`) 또는 **PC 앱**
@@ -184,10 +180,9 @@ behavior the task requires stay in.
   있다(롤을 만지면 무효 — 겨냥이 정확할수록 틀린 자리로 정확히 간다) ② 가장 가까운 것이
   표적이다(자기 손가락이다) ③ 거리를 맞힐 수 있다(가는 표적의 깊이는 정답 구간보다 넓게
   흔들린다 — **맞히지 말고 더듬어라**: 60%만 가서 물어보고 아니면 8mm 더).
-- **USB 접촉/전원 불안정**: 게임패드 `error -71`(케이블 손상), CH340 반복 disconnect. `controller_drive.py`는
-  모터 시리얼 **자동재연결** 내장. 근본은 양품 케이블 + 안정 전원(전류제한 넉넉히).
+- **USB 접촉/전원 불안정**: CH340 반복 disconnect·`error -71`(2026-10-22에도 모터 시험 중 먹통 → 재삽입으로 복구).
+  `motor_link.py`는 **자동재연결** 내장. 근본은 양품 케이블 + 안정 전원(전류제한 넉넉히).
 - **PS2X는 이 보드에서 `millis()`를 얼림**(timer0 간섭) → 주행 펌웨어에서 PS2 완전 배제, 안전은 HW워치독.
-- 게임패드 스틱 드리프트/latch 폭주 방지 위해 **데드맨(LT 홀드) 필수 설계**.
 - ⚠ **줄끝(CRLF)** — Windows에서 고쳐 젯슨으로 scp하는 저장소다. 셸 스크립트·systemd
   유닛에 CR이 섞이면 **통째로** 안 돈다(2026-09-18: 컨테이너 bash가 `bringup_check.sh`를
   못 읽어 하루 막혔다). 루트 [`.gitattributes`](.gitattributes)가 배포되는 종류를 LF로

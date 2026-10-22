@@ -5,7 +5,7 @@
 (불안정 요소 제거) 젯슨↔아두이노 시리얼 링크에 집중한 안정판.
 
 > 기존 `firmware/PS2-MOTOR/`(PS2 직접조종)와 `firmware/mecanum_serial/`(직결핀 가정, 미완)을
-> 대체한다. 상위 제어(게임패드/자율)는 젯슨의 `tools/controller_drive.py`가 담당.
+> 대체한다. 상위 제어는 젯슨의 `motor_link.py`(대시보드·조작대)와 ROS `cmd_vel_node`가 담당.
 
 ## 하드웨어
 - **Arduino Uno (CH340)** + **PCA9685(I2C)** 모터 드라이버. 라이브러리: `FaBo_PWM_PCA9685`.
@@ -43,15 +43,14 @@ F <hz>            PWM 주파수(24~1526). 소음/드라이버 튜닝용
 **체크섬**: 모든 라인 끝에 `*HH`를 붙일 수 있다(HH = 앞부분 전체의 XOR, 2자리 16진수).
 예) `V 140 0 0*43`. 한 번이라도 올바른 체크섬을 받으면 그 뒤로 **무체크섬 `V`는 거부**된다
 (`nak nocrc`) — USB 노이즈로 깨진 속도지령이 실행되는 사고를 막는다. 젯슨 쪽 구현은
-[`motor_link.py`](../../src/tomato_picker/hardware/motor_link.py)와
-[`controller_drive.py`](../../tools/controller_drive.py) 둘 다 체크섬을 붙인다.
+[`motor_link.py`](../../src/tomato_picker/hardware/motor_link.py)가 체크섬을 붙인다.
 
 응답: `ok ...`(설정계열), `nak crc`/`nak nocrc`(거부), 1초마다
 `hb <ms> rx=<수신수> bad=<거부수> v=<vx,vy,w>` 하트비트 — 이 카운터가 링크 품질 지표다.
 
 > ⚠ **모터보드 포트는 한 프로세스만** 쓸 수 있다. 젯슨 쪽이 이제 상시 점유
-> (`exclusive=True`)하므로 `tomato-voice`(대시보드)와 `controller-drive`(게임패드)를
-> 동시에 켜면 나중 쪽이 "Device or resource busy"로 실패한다. 둘 중 하나만 켤 것.
+> (`exclusive=True`)하므로 `tomato-voice`(대시보드)·`base_nudge`·ROS `cmd_vel_node`를
+> 동시에 켜면 나중 쪽이 "Device or resource busy"로 실패한다. 하나만 켤 것.
 
 메카넘 mixing: `FL=vx-vy-w, FR=vx+vy+w, RL=vx+vy-w, RR=vx-vy+w` → 바퀴별 `POL` 적용.
 (strafe/회전 부호는 실기에서 `L`·`T`로 최종 확정할 것. 전진만 확정됨.)
@@ -99,6 +98,6 @@ stty -F /dev/ttyUSB0 115200 raw -echo && timeout 4 cat /dev/ttyUSB0
 필요 라이브러리: `FaBo_PWM_PCA9685`(중복파일 제거), `PS2X_lib`는 이 펌웨어엔 불필요.
 
 ## 상위 통합
-젯슨의 [`tools/controller_drive.py`](../../tools/controller_drive.py)가 게임패드(evdev)를 읽어
-이 프로토콜(`V`/`S`)로 주행 + 팔 프리셋 재생. 젯슨 셋업(hid-nintendo 빌드, systemd 자동실행,
-알려진 이슈)은 [`docs/jetson-gamepad-setup.md`](../../docs/jetson-gamepad-setup.md) 참고.
+젯슨의 [`motor_link.py`](../../src/tomato_picker/hardware/motor_link.py)(대시보드)·
+[`base_nudge.py`](../../ros2/tools/base_nudge.py)(조작대)·ROS `cmd_vel_node`가 이 프로토콜(`V`/`S`)을 쓴다.
+(게임패드 드라이버 `controller_drive.py`는 2026-10-22 폐지.)
