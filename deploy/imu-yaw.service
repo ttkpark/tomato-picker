@@ -1,0 +1,22 @@
+[Unit]
+Description=Tomato-picker chassis yaw (MPU6050 on i2c-7 -> /dev/shm/imu.json)
+After=network.target
+
+[Service]
+Type=simple
+User=server
+Group=server
+# /dev/i2c-7 은 root:i2c 0660 — server가 i2c 그룹이어야 연다.
+SupplementaryGroups=i2c
+WorkingDirectory=/home/server
+Environment=PYTHONUNBUFFERED=1
+Environment=IMU_BUS=7
+# 자이로 스케일 보정 — 지도 앞에서 360° 돌려 실측한 값으로 덮는다(1.0 = 데이터시트).
+Environment=IMU_SCALE=1.0
+# stdlib만 쓴다 — venv가 필요 없다.
+ExecStart=/usr/bin/python3 /home/server/tomato-picker/tools/imu_yaw.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

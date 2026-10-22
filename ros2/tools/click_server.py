@@ -33,6 +33,7 @@ API 요약 (전부 JSON)
     POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge|space(snap|scan|go|step|wrist|clear)
     POST /stop                       도는 일을 끊는다
     GET  /space?mt=                  공간 지도(격자·복셀·자세·길) — mt가 같으면 {same:true}
+    GET  /imu                        차체 회전량(tools/imu_yaw.py가 쓰는 /dev/shm/imu.json 그대로 + age)
     POST /space/plan {x,y}           지금 자리→(x,y) 길만 짠다(안 움직인다)
 """
 
@@ -391,6 +392,9 @@ def build(job, args):
                 raise ValueError("걸음 지령이 전부 0이다")
             a += ["--vx", str(v["vx"]), "--vy", str(v["vy"]), "--w", str(v["w"]),
                   "--secs", "%.2f" % num(args, "secs", 0.8, 0.2, 2.0)]
+        if mode in ("step", "scan", "go"):
+            # IMU가 있으면 회전 넛지는 시간이 아니라 이 각도까지 민다(정지마찰에 안 속는다)
+            a += ["--deg", "%.0f" % num(args, "deg", 20, 3, 45)]
         if mode in ("scan", "go"):
             a += ["--w", "%d" % int(num(args, "w", 150, 60, 255)),
                   "--wsecs", "%.2f" % num(args, "wsecs", 0.8, 0.2, 2.0)]
@@ -427,7 +431,9 @@ def space_payload(have: str) -> str:
                        "pose": [float(v) for v in s["pose"]], "q": float(s["q"]),
                        "frames": int(s["frames"]),
                        "path": np.asarray(s["path"], float).tolist(),
-                       "goal": np.asarray(s["goal"], float).tolist()})
+                       "goal": np.asarray(s["goal"], float).tolist(),
+                       # 자세를 정할 때의 IMU (boot, yaw rad) — 화면이 그 뒤의 회전을 실시간으로 더한다
+                       "imu": [None if np.isnan(v) else float(v) for v in np.asarray(s["imu"], float)]})
 
 
 PAGE = r"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
@@ -512,6 +518,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <span>드래그=회전·휠=확대·바닥 클릭=목표</span>
     </div>
     <div class="v" id="spInfo" style="margin-top:5px">지도 없음</div>
+    <div class="v" id="spImu" title="tools/imu_yaw.py — MPU6050 자이로 적분. 멈출 때마다 영점을 다시 잰다">IMU …</div>
     <div class="row" style="margin-top:8px">
       <button onclick="run('space',{mode:'snap',turn:document.getElementById('sp_turn').value})">한 장 담기(안 움직임)</button>
       <label title="손으로 돌려 놓았으면 대략 몇 도(+=왼쪽). 비우면 전 방향을 찾되, 곧은 벽만 보이면 모호로 거절한다">손으로 돌린 각도<input id="sp_turn" placeholder="예 90" style="width:56px"></label>
@@ -532,6 +539,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <div class="row" style="margin-top:6px">
       <label>회전<input id="sp_w" value="150"></label><label>초<input id="sp_ws" value="0.8" style="width:50px"></label>
       <label>전진<input id="sp_v" value="150"></label><label>초<input id="sp_vs" value="0.8" style="width:50px"></label>
+      <label title="IMU가 있으면 회전 넛지 한 번을 이 각도까지 민다(초는 상한의 1/2.5)">회전 목표°<input id="sp_deg" value="20" style="width:44px"></label>
     </div>
     <div class="k" style="margin-top:4px">자세는 바퀴가 아니라 <b>지도와 맞춰서</b> 안다(엔코더 없음) — 넛지마다 다시 맞춘다.
       Astra는 <b>60cm 안을 못 본다</b>: 가까운 장애물은 멀리서 봐 둔 지도나 [손목 D405 담기](팔이 보는 곳 7~90cm)로 채운다. 멈춤은 [지금 하는 일 끊기].</div>
@@ -1162,7 +1170,7 @@ k3dInit(); k3dInitRows();
 // ── 공간 지도 (space_map.py) — 좌표는 지도 그대로(m, z 위) ─────────────
 var sp={az:-2.4,el:0.85,dist:6,tgt:new THREE.Vector3(0,0,0.3),mt:'0',goalXY:null};
 function b64buf(t){var b=atob(t),u=new Uint8Array(b.length);for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u.buffer;}
-function spArgs(o){o.w=val('sp_w',150);o.wsecs=val('sp_ws',0.8);o.vx=val('sp_v',150);o.vsecs=val('sp_vs',0.8);return o;}
+function spArgs(o){o.w=val('sp_w',150);o.wsecs=val('sp_ws',0.8);o.vx=val('sp_v',150);o.vsecs=val('sp_vs',0.8);o.deg=val('sp_deg',20);return o;}
 function spInfo(t){document.getElementById('spInfo').textContent=t;}
 function spRender(){ if(!sp.r) return; var c=Math.cos(sp.el);
   sp.cam.position.set(sp.tgt.x+sp.dist*c*Math.cos(sp.az),sp.tgt.y+sp.dist*c*Math.sin(sp.az),sp.tgt.z+sp.dist*Math.sin(sp.el));
@@ -1214,7 +1222,7 @@ function spPick(e){
                :('⛔ '+j.why));});
 }
 function spStep(sx,sy,sw){ var v=val('sp_v',150), w=val('sp_w',150);
-  run('space',{mode:'step',vx:sx*v,vy:sy*v,w:sw*w,secs:sw?val('sp_ws',0.8):val('sp_vs',0.8)});}
+  run('space',{mode:'step',vx:sx*v,vy:sy*v,w:sw*w,deg:val('sp_deg',20),secs:sw?val('sp_ws',0.8):val('sp_vs',0.8)});}
 function spGo(){ if(!sp.goalXY){alert('지도 바닥을 먼저 눌러 목표를 정한다');return;}
   run('space',spArgs({mode:'go',x:sp.goalXY[0],y:sp.goalXY[1]}));}
 function spBuild(j){
@@ -1237,6 +1245,7 @@ function spBuild(j){
   geo.setAttribute('position',new THREE.BufferAttribute(pos,3)); geo.setAttribute('color',new THREE.BufferAttribute(col,3));
   sp.pts=new THREE.Points(geo,new THREE.PointsMaterial({size:R*0.9,vertexColors:true})); sp.scene.add(sp.pts);
   sp.robot.position.set(j.pose[0],j.pose[1],0); sp.robot.rotation.z=j.pose[2];
+  sp.pose=j.pose; sp.imuRef=j.imu||[null,null];
   if(!sp.framed){sp.tgt.set(j.pose[0],j.pose[1],0.3); sp.framed=true;}
   if(j.goal&&j.goal.length===2) sp.goalXY=j.goal;
   spDrawPath(j.path,sp.goalXY);
@@ -1249,7 +1258,18 @@ function spLoad(){ fetch('/space?mt='+sp.mt).then(function(r){return r.json();})
       sp.goalXY=null; spDrawPath([],null);}
     spInfo(j.why||'지도 없음'); return;}
   if(j.same) return; sp.mt=j.mt; spBuild(j);}).catch(function(){});}
-spInit(); spLoad(); setInterval(spLoad,1500);
+// 차체 회전량(IMU) — 지도 자세 뒤의 회전을 실시간으로 더해 3D 차체를 돌린다
+function spImu(){ fetch('/imu').then(function(r){return r.json();}).then(function(d){
+  var el=document.getElementById('spImu');
+  if(!d.ok||d.age>2){ el.textContent='IMU 없음/멈춤 — '+(d.why||('마지막 '+d.age.toFixed(0)+'초 전')); return;}
+  if(!d.ready){ el.textContent='IMU 영점 잡는 중 — 차체를 가만히 둔다'; return;}
+  var t='차체 회전(IMU) 누적 '+d.yaw_deg.toFixed(1)+'° · '+d.rate_dps.toFixed(1)+'°/s · '+(d.still?'정지':'도는 중');
+  if(sp.pose&&sp.imuRef&&sp.imuRef[0]===d.boot){
+    var dy=d.yaw_deg*Math.PI/180-sp.imuRef[1], h=sp.pose[2]+dy;
+    t+=' · 지도 자세 뒤 '+(dy*180/Math.PI).toFixed(1)+'° → 방향 '+Math.round(((h*180/Math.PI)%360+540)%360-180)+'°';
+    sp.robot.rotation.z=h; spRender();}
+  el.textContent=t+' · '+d.hz+'Hz';}).catch(function(){});}
+spInit(); spLoad(); setInterval(spLoad,1500); spImu(); setInterval(spImu,300);
 
 // ⚠ 잡기가 도는 동안엔 더 자주 본다 — 걸음이 1초 안쪽이라 1.2초로는 건너뛴다.
 setInterval(tick,400); setInterval(function(){ if(servo) state(); },400);
@@ -1350,6 +1370,14 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/space":
             have = parse_qs(urlparse(self.path).query).get("mt", ["0"])[0]
             self._send(200, space_payload(have))
+        elif p == "/imu":
+            try:
+                d = json.load(open(space_map.IMU_FILE))
+                d["age"] = time.time() - float(d.get("ts", 0))
+                d["ok"] = True
+            except (OSError, ValueError):
+                d = {"ok": False, "why": "IMU 없음 — systemctl status imu-yaw"}
+            self._send(200, json.dumps(d))
         elif p == "/log":
             q = parse_qs(urlparse(self.path).query)
             try:

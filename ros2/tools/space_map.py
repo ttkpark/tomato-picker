@@ -18,6 +18,9 @@
   절반이 통째로 비었다). 그래서 빈 칸은 바닥이 아니라 **장애물까지 쏜 광선**으로만 칠한다.
 ⚠ **Astra는 60cm 안을 못 본다** — 가까운 장애물은 멀리서 봐 둔 지도로만 피한다.
 ⚠ 주행 포트는 한 프로세스 — tomato-voice·base_nudge와 동시에 못 돈다.
+⚠ **회전은 IMU가 먼저 말한다**(2026-10-22~, tools/imu_yaw.py → /dev/shm/imu.json). 마지막 자세 이후
+  자이로가 잰 회전을 θ 짐작으로 쓰고 맞춤은 그 둘레 ±IMU_WIN_DEG만 찾는다 — 곧은 벽의 모호함이
+  사라지고, 맞춤이 거절돼도 θ는 맞는다. IMU가 없거나 다시 켜졌으면(boot가 다르면) 예전처럼 지도만 믿는다.
 """
 
 from __future__ import annotations
@@ -42,6 +45,8 @@ Q_MIN = 0.6                    # 일치율 = 맞은 점 / (맞은 점 + 빈 곳�
 HIT_MIN = 20                   # 지도와 겹친 점이 이보다 적으면 자세를 못 믿는다(화면 거의 전부가 처음 보는 곳)
 MAP = os.path.expanduser("~/space_map.npz")
 MOUNT_FILE = os.path.expanduser("~/space_mount.json")
+IMU_FILE = "/dev/shm/imu.json"
+IMU_WIN_DEG = 5.0              # IMU가 있으면 θ는 IMU 짐작 ±이만큼만 찾는다(넛지 한 번의 자이로 오차 ≪ 1°)
 # 장착값 — 케이스 CAD(tomato_case.scad astra_*) 기준 추정. **실측해서 MOUNT_FILE로 덮어라.**
 # x=회전 중심→렌즈(앞+), h=바닥→렌즈, tilt=위로+, floor_cut/top=장애물로 칠 높이 띠, radius=차체 반지름
 MOUNT = {"x": 0.12, "h": 0.15, "tilt_deg": 0.0, "floor_cut": 0.05, "top": 0.9, "radius": 0.22,
@@ -97,7 +102,8 @@ def scan2d(pts: np.ndarray, m: dict) -> np.ndarray:
 def empty() -> dict:
     return {"lo": np.zeros((N, N), np.float32), "vox": np.zeros((0, 3), np.int16),
             "pose": np.zeros(3), "q": 0.0, "frames": 0,
-            "path": np.zeros((0, 2)), "goal": np.zeros(0)}
+            "path": np.zeros((0, 2)), "goal": np.zeros(0),
+            "imu": np.full(2, np.nan)}  # 지금 자세를 정할 때의 IMU (boot, yaw rad) — 다음 회전 짐작의 기준
 
 
 def load() -> dict:
@@ -105,7 +111,8 @@ def load() -> dict:
     try:
         with np.load(MAP) as z:
             for k in s:
-                s[k] = z[k] if z[k].ndim else z[k].item()
+                if k in z.files:          # 옛 지도엔 새 키가 없다 — 없다고 지도 전체를 버리지 않는다
+                    s[k] = z[k] if z[k].ndim else z[k].item()
     except (OSError, KeyError, ValueError):
         pass
     s["pose"] = np.asarray(s["pose"], float)
@@ -116,6 +123,28 @@ def save(s: dict) -> None:
     tmp = MAP + ".tmp.npz"
     np.savez_compressed(tmp, **{k: np.asarray(v) for k, v in s.items()})
     os.replace(tmp, MAP)          # 조작대가 반쯤 쓴 파일을 읽지 않게
+
+
+def imu_now(max_age: float = 1.0):
+    """IMU 발행기의 (boot, yaw rad, 정지?) — 없거나 1초 넘게 낡았거나 영점 전이면 None."""
+    try:
+        d = json.load(open(IMU_FILE))
+    except (OSError, ValueError):
+        return None
+    if not d.get("ready") or time.time() - float(d.get("ts", 0)) > max_age:
+        return None
+    return float(d["boot"]), math.radians(float(d["yaw_deg"])), bool(d.get("still"))
+
+
+def imu_prior(s: dict, prior, win_deg: float, imu):
+    """마지막 자세 이후 IMU가 잰 회전으로 θ 짐작을 바꾸고 탐색 폭을 좁힌다 → (prior, win_deg, 회전 rad|None)."""
+    prior = np.asarray(prior, float).copy()
+    ref = np.asarray(s["imu"], float)
+    if imu is None or not ref[0] == imu[0]:    # nan(기준 없음)이나 발행기가 다시 켜졌으면 못 쓴다
+        return prior, win_deg, None
+    d = imu[1] - ref[1]
+    prior[2] = wrap(float(s["pose"][2]) + d)
+    return prior, min(win_deg, IMU_WIN_DEG), d
 
 
 def to_world(pose, p: np.ndarray) -> np.ndarray:
@@ -344,12 +373,15 @@ def frame(after: float, timeout: float = 40.0):
                        "(60cm 안을 봤다)" % timeout)
 
 
-def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: float) -> float:
-    """새 장 하나로 자세를 맞추고, 믿을 만하면 지도에 넣고 저장한다 → 점수."""
+def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: float) -> bool:
+    """새 장 하나로 자세를 맞추고, 믿을 만하면 지도에 넣고 저장한다 → 지도와 맞춰 받아들였나."""
     dep, meta = frame(after)
+    imu = imu_now()
+    prior, win_deg, d_imu = imu_prior(s, prior, win_deg, imu)
     pts = cloud(dep, meta, m)
     sc = scan2d(pts, m)
     pose, q, hit, amb = match(s, sc, prior, win_xy, win_deg)
+    ok = False
     if amb and (s["lo"] > OCC).sum() >= 20:
         s["pose"] = np.asarray(prior, float)
         print("  ⚠ 모호 — 다른 방향도 거의 똑같이 맞는다(곧은 벽만 보인다). 이 장은 안 넣는다."
@@ -358,33 +390,80 @@ def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: floa
         s["pose"] = pose
         integrate(s, sc, pts, m)
         s["frames"] = int(s["frames"]) + 1
+        ok = (s["lo"] > OCC).sum() >= 20 and q >= Q_MIN and hit >= HIT_MIN
     else:
         s["pose"] = np.asarray(prior, float)
         print("  ⚠ 일치 %.2f(기준 %.2f)·겹친 점 %d(기준 %d) — 이 장은 지도에 안 넣는다(자세는 짐작)" %
               (q, Q_MIN, hit, HIT_MIN))
     s["q"] = q
+    if imu is not None:
+        s["imu"] = np.array(imu[:2])
     save(s)
     x, y, th = s["pose"]
-    print("  자세 x=%.2f y=%.2f θ=%.0f° · 일치 %.2f · 겹친 점 %d/%d · 복셀 %d" %
-          (x, y, math.degrees(th), q, hit, len(sc), len(s["vox"])))
-    return q
+    print("  자세 x=%.2f y=%.2f θ=%.0f° · 일치 %.2f · 겹친 점 %d/%d · 복셀 %d · %s" %
+          (x, y, math.degrees(th), q, hit, len(sc), len(s["vox"]),
+           "IMU 회전 %+.1f°" % math.degrees(d_imu) if d_imu is not None else
+           ("IMU 기준 잡음" if imu is not None else "IMU 없음")))
+    return bool(ok)
+
+
+COAST = 0.7                    # IMU가 목표의 이만큼 돌았다고 하면 지령을 끊는다 — 나머지는 감속 슬루가 민다
+
+
+def turn(link, w: int, secs: float, deg: float) -> float:
+    """회전 넛지. IMU가 있으면 deg만큼 돌 때까지(최대 secs×2.5) 밀고, 없으면 secs 동안 → IMU가 잰 도(없으면 nan).
+
+    정지마찰 때문에 같은 지령이 0°도 40°도 된다(CLAUDE.md 1번 병) — 시간이 아니라 **돈 양**으로 끊는다.
+    """
+    from base_nudge import drive
+    i0 = imu_now()
+    if i0 is None:
+        drive(link, 0, 0, w, secs)
+        return float("nan")
+    t0 = time.monotonic()
+    try:
+        while time.monotonic() - t0 < secs * 2.5:
+            i = imu_now()
+            if i is not None and i[0] == i0[0] and abs(math.degrees(i[1] - i0[1])) >= deg * COAST:
+                break
+            link.set_velocity(0, 0, w)
+            time.sleep(0.03)
+    finally:
+        link.stop()
+    for _ in range(30):                        # 멈출 때까지(감속 슬루) 기다려야 돈 양이 다 잡힌다
+        time.sleep(0.1)
+        i = imu_now()
+        if i is not None and i[2]:
+            break
+    i = imu_now()
+    got = math.degrees(i[1] - i0[1]) if i is not None and i[0] == i0[0] else float("nan")
+    if abs(got) < 0.5:
+        print("  ⚠ 지령은 나갔는데 IMU %.1f° — 안 돌았다(정지마찰·모터 전원·바퀴 걸림)" % got)
+    return got
 
 
 def scan_cmd(a, m) -> int:
-    from base_nudge import drive, open_link
+    from base_nudge import open_link
     s = load()
     localize(s, m, s["pose"], 0.4, 30, time.time())
     link = open_link()
     if link is None:
         return 1
     est, total, stuck = 0.0, 0.0, 0
+    sum_map = sum_gyro = 0.0                   # 지도가 받아들인 걸음만 — IMU 스케일 보정용
     try:
         for i in range(a.steps):
             prev = s["pose"].copy()
-            drive(link, 0, 0, a.w, a.wsecs)
-            localize(s, m, prev + [0, 0, est], 0.15, 60, time.time() + 0.4)
+            gyro = turn(link, a.w, a.wsecs, a.deg)
+            ok = localize(s, m, prev + [0, 0, est], 0.15, 60, time.time() + 0.4)
             d = wrap(s["pose"][2] - prev[2])
-            print("[%d/%d] 넛지 한 번 = %.0f°" % (i + 1, a.steps, math.degrees(d)))
+            print("[%d/%d] 넛지 한 번 = %.0f° (IMU %.1f°)" % (i + 1, a.steps, math.degrees(d), gyro))
+            if ok and abs(gyro) > 3:
+                sum_map, sum_gyro = sum_map + math.degrees(d), sum_gyro + gyro
+                if abs(sum_gyro) > 90:
+                    # ⚠ 맞춤은 IMU ±5° 안에서만 찾으니 스케일이 5%/걸음 넘게 틀리면 여기서도 안 보인다
+                    print("  IMU 스케일: 지도/IMU = %.3f (%.0f° 기준) — 1에서 3%% 넘게 다르면 IMU_SCALE에 곱한다"
+                          % (sum_map / sum_gyro, sum_gyro))
             if abs(d) > math.radians(30):
                 # 화각 58°에서 30° 넘게 돌면 겹치는 곳이 절반이 안 된다 — 맞춤이 위태롭다
                 print("  ⚠ 한 번에 너무 많이 돈다 — 회전 초를 줄여라(20° 안팎이 좋다)")
@@ -413,7 +492,10 @@ def step_cmd(a, m) -> int:
     if link is None:
         return 1
     try:
-        drive(link, a.vx, a.vy, a.w, a.secs)
+        if a.w and not (a.vx or a.vy):
+            print("회전 걸음 — IMU %.1f°" % turn(link, a.w, a.secs, a.deg))
+        else:
+            drive(link, a.vx, a.vy, a.w, a.secs)
     finally:
         link.close()
     # 짐작만 준다 — 실제로 얼마 갔는지는 맞춤이 정한다(넛지 크기는 바닥·배터리마다 다르다).
@@ -468,7 +550,7 @@ def go_cmd(a, m) -> int:
             prev = s["pose"].copy()
             if abs(err) > math.radians(20):
                 sg = 1 if err > 0 else -1              # w=+ 가 반시계(왼쪽) — base_nudge 실측
-                drive(link, 0, 0, sg * a.w, a.wsecs)
+                turn(link, sg * a.w, a.wsecs, min(abs(math.degrees(err)), 30.0))
                 prior = prev + [0, 0, sg * est_w]
                 what = "회전 %s" % ("왼" if sg > 0 else "오른")
             else:
@@ -561,6 +643,17 @@ def selftest() -> int:
     s2 = empty()
     k = integrate_near(s2, np.array([[0.3, 0.0, 0.2], [0.3, 0.0, 0.01]]), m)
     assert k == 1 and s2["lo"][tuple(idx([0.3, 0.0]))] > 0 and len(s2["vox"]) == 2, "바닥 점은 장애물이 아니다"
+    # ⑤ IMU 짐작 — 기준과 같은 boot면 θ = 마지막 θ + 자이로 회전, 폭은 좁힌다. 다시 켜졌으면 안 쓴다.
+    si = empty()
+    si["pose"] = np.array([0.0, 0.0, math.radians(170)])
+    si["imu"] = np.array([5.0, math.radians(10)])
+    pr, wd, d = imu_prior(si, [0.1, 0.0, 0.0], 60, (5.0, math.radians(30), True))
+    assert abs(math.degrees(pr[2]) + 170) < 1e-6 and wd == IMU_WIN_DEG and pr[0] == 0.1, (pr, wd)
+    assert imu_prior(si, [0, 0, 0.3], 60, (6.0, 0.0, True))[2] is None, "다른 boot의 yaw를 이었다"
+    assert imu_prior(empty(), [0, 0, 0.3], 60, (5.0, 0.0, True))[1] == 60, "기준 없이 폭을 좁혔다"
+    # ⑤-1 IMU 폭이면 곧은 벽의 모호함이 없다 — ②-1에서 모호했던 100°를 짐작만으로 찾는다
+    gi, _, _, amb = match(s, _room_scan(t90, m=m), [0.0, 0.0, math.radians(102)], 0.5, IMU_WIN_DEG)
+    assert not amb and abs(wrap(gi[2] - t90[2])) < math.radians(3), gi
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
@@ -571,7 +664,8 @@ def main() -> int:
     ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "clear", "selftest"])
     ap.add_argument("--steps", type=int, default=16)
     ap.add_argument("--w", type=int, default=150, help="회전 넛지 크기(+=왼쪽)")
-    ap.add_argument("--wsecs", type=float, default=0.8)
+    ap.add_argument("--wsecs", type=float, default=0.8, help="회전 넛지 시간(IMU 있으면 최대 ×2.5까지 --deg를 채운다)")
+    ap.add_argument("--deg", type=float, default=20.0, help="IMU 있을 때 회전 넛지 한 번의 목표(도)")
     ap.add_argument("--vx", type=int, default=150, help="전진 넛지 크기")
     ap.add_argument("--vsecs", type=float, default=0.8)   # 0.6은 슬루 램프가 못 올라가 0(2026-10-22 실측)
     ap.add_argument("--vy", type=int, default=0, help="step: 옆걸음(+=왼쪽)")

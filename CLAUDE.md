@@ -69,6 +69,9 @@ behavior the task requires stay in.
   — Astra 깊이 → 3D 복셀 + 2D 점유격자, 자세는 **엔코더 대신 지도와 스캔매칭**, A* 길 → 넛지.
   조작대 왼쪽 카드에서 스캔·바닥 클릭·가기. 한계(바닥 안 보임·60cm 사각·고리닫기 없음) =
   [`docs/space-map.md`](docs/space-map.md). 장착값은 `~/space_mount.json`(CAD 추정값이 기본).
+  **차체 IMU = MPU6050**(2026-10-22~, 젯슨 I²C 버스 7·0x68) → [`tools/imu_yaw.py`](tools/imu_yaw.py)
+  (systemd `imu-yaw`) → `/dev/shm/imu.json`. 회전 짐작·회전 넛지 끊기·조작대 실시간 회전량에 쓴다.
+  ⚠ 그 전엔 로봇에 자이로가 **하나도** 없었다. 배경·STM32 계획 = [`docs/stm32-자세보드-목표.md`](docs/stm32-자세보드-목표.md).
 - **손-눈 보정 수학 = [`hardware/handeye.py`](src/tomato_picker/hardware/handeye.py)**
   — 카메라가 본 3D 점을 팔 좌표로 옮기는 강체 변환 하나를 **실측에서 푼다**(자로 재지 않는다).
   numpy만 쓰며 `fixed`(카메라 고정)와 `on_arm`(손목 장착) 두 식이 있다.
