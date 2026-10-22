@@ -416,6 +416,21 @@ def frame(after: float, timeout: float = 40.0):
                        "(60cm 안을 봤다)" % timeout)
 
 
+def refine(s: dict, pts: np.ndarray, m: dict, pose) -> np.ndarray:
+    """격자 맞춤(5cm·1°, 2D 스캔 100점) 결과를 **지도 전체의 장애물 칸에 대한 점구름 ICP**로 다듬는다.
+    한 장끼리 ICP는 벽 하나만 겹치면 벽을 따라 미끄러졌지만(되돌림), 방의 벽·모서리가 다 든 지도에는 평행이동이 선다.
+    θ는 IMU가 더 낫다 — 격자 결과에서 3°·25cm 넘게 옮기자는 답은 안 쓴다(2026-10-23 실기: 이동 뒤 0.2~0.4m 미끄럼)."""
+    occ = np.argwhere(s["lo"] > OCC)
+    if len(occ) < 50:
+        return pose
+    dst = (occ - N // 2 + 0.5) * RES
+    dst = dst[np.hypot(dst[:, 0] - pose[0], dst[:, 1] - pose[1]) < 4.5]
+    got, frac, res = icp2d(flat(pts, m), dst, pose, iters=30)
+    if frac >= 0.5 and res < 0.04 and np.hypot(*(got[:2] - pose[:2])) < 0.25 and abs(wrap(got[2] - pose[2])) < math.radians(3):
+        return got
+    return pose
+
+
 def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: float) -> bool:
     """새 장 하나로 자세를 맞추고, 믿을 만하면 지도에 넣고 저장한다 → 지도와 맞춰 받아들였나."""
     dep, meta = frame(after)
@@ -424,6 +439,8 @@ def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: floa
     pts = cloud(dep, meta, m)
     sc = scan2d(pts, m)
     pose, q, hit, amb = match(s, sc, prior, win_xy, win_deg)
+    if not amb and q >= Q_MIN and hit >= HIT_MIN:
+        pose = refine(s, pts, m, pose)
     ok = False
     if amb and (s["lo"] > OCC).sum() >= 20:
         s["pose"] = np.asarray(prior, float)
@@ -549,6 +566,28 @@ def icp2d(src: np.ndarray, dst: np.ndarray, pose, iters: int = 40):
     return pose, frac, res
 
 
+def register(base: dict, shots, pose0, k: float, m: dict) -> np.ndarray:
+    """새 자리의 한 바퀴(360°)를 **통째로** 기존 지도에 맞춰 시작 자리를 고친다 → pose0.
+    시작 자리를 한 장(화각 58°)으로 잡으면 벽을 따라 0.2~0.3m 미끄러졌고(2026-10-23 실기: 그 바퀴가 지도와 28%만 맞았다),
+    한 바퀴에는 벽 여러 면과 모서리가 다 들어 있어 미끄러질 데가 없다. 격자 전수 탐색(±0.5m·±10°) → 점구름 ICP 다듬기."""
+    if (base["lo"] > OCC).sum() < 100:
+        return pose0                                   # 첫 바퀴 — 맞출 지도가 없다
+    sc_all = np.concatenate([to_world((0.0, 0.0, r * k), sc_) for r, _, sc_ in shots if len(sc_)])
+    got, q, hit, amb = match(base, sc_all, pose0, 0.5, 10)
+    if amb or q < Q_MIN or hit < 50:
+        print("  ⚠ 새 자리 맞춤 실패(일치 %.2f · 겹친 점 %d · 모호 %s) — 시작 짐작 그대로" % (q, hit, amb))
+        return np.asarray(pose0, float)
+    occ = np.argwhere(base["lo"] > OCC)
+    L = np.concatenate([to_world((0.0, 0.0, r * k), flat(p_, m, 200)) for r, p_, _ in shots])
+    ic, frac, res = icp2d(L, (occ - N // 2 + 0.5) * RES, got, iters=30)
+    if frac >= 0.6 and res < 0.035 and np.hypot(*(ic[:2] - got[:2])) < 0.15 and abs(wrap(ic[2] - got[2])) < math.radians(2):
+        got = ic
+    d = got - np.asarray(pose0, float)
+    print("  새 자리 맞춤(한 바퀴 통째): 일치 %.2f · 겹친 점 %d/%d · 시작 짐작에서 %.2fm %.1f° 고침" % (
+        q, hit, len(sc_all), float(np.hypot(d[0], d[1])), math.degrees(wrap(d[2]))))
+    return got
+
+
 def rebuild(s: dict, base: dict, pose0, shots, k: float, m: dict) -> None:
     """모은 장으로 지도를 다시 짓는다 — θ = IMU × k, 자리 = 제자리.
     ⚠ 걸음마다 바로 앞 장과 ICP로 평행이동을 따라가 봤다(2026-10-22 모의) — 점-점 ICP도 벽 하나만 겹치면 벽을 따라
@@ -556,14 +595,14 @@ def rebuild(s: dict, base: dict, pose0, shots, k: float, m: dict) -> None:
     ponytail: 돌며 옆으로 밀리는 만큼은 못 본다 — 실측 어긋남(고리 닫기가 찍는다)이 크면 회전 중심 모델을 붙인다."""
     for kk, v in base.items():
         s[kk] = v
-    for r, p_, sc_ in shots[1:]:
+    for r, p_, sc_ in shots:
         s["pose"] = pose0 + [0, 0, r * k]
         s["pose"][2] = wrap(s["pose"][2])
         integrate(s, sc_, p_, m)
         s["frames"] = int(s["frames"]) + 1
 
 
-def scan_imu(a, m, s, link) -> int:
+def scan_imu(a, m, s, link, base: dict) -> int:
     """IMU 제자리 한 바퀴 — **걸음마다 맞추지 않는다.** θ=IMU, 자리=그대로로 장을 모으고(화면엔 바로 더해
     보여 준다), 한 바퀴를 넘기면 **첫 장과 마지막 장을 맞춰(고리 닫기) IMU 스케일을 고친 뒤** 지도를 다시 짓는다.
 
@@ -572,7 +611,6 @@ def scan_imu(a, m, s, link) -> int:
     잘 맞춘 자이로보다 거칠다. 남는 오차는 스케일 하나인데, 그건 한 바퀴 돈 뒤 같은 곳을 다시 보면 잴 수 있다.
     ponytail: 제자리라 자리는 0으로 둔다 — 메카넘이 돌며 옆으로 밀리는 만큼(실측 전)은 못 본다. 크면 고리 닫기에서 xy도 나눠 준다.
     """
-    base = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in s.items()}
     pose0 = s["pose"].copy()
     for _ in range(100):                      # 첫 장은 고리 닫기의 기준 — 도는 중에 찍히면 지도 전체가 비뚤어진다
         i = imu_now()
@@ -658,6 +696,7 @@ def close_and_build(s, base, pose0, shots, m, imu_end) -> int:
     if abs(rel) < 2 * math.pi:
         print("걸음을 다 썼다 — IMU %.0f°. 한 바퀴가 안 돼 스케일은 못 고친다(회전은 IMU 그대로)" % math.degrees(rel))
         if len(shots) > 1:
+            pose0 = register(base, shots, pose0, 1.0, m)
             rebuild(s, base, pose0, shots, 1.0, m)
             if imu_end is not None:
                 s["imu"] = np.array(imu_end)
@@ -696,6 +735,7 @@ def close_and_build(s, base, pose0, shots, m, imu_end) -> int:
         k = 1.0
     if abs(k - 1) > 0.005:
         print("  IMU 스케일 %.4f — imu-yaw.service 의 IMU_SCALE 에 곱하면 다음부터 처음부터 맞는다" % k)
+    pose0 = register(base, shots, pose0, k, m)
     rebuild(s, base, pose0, shots, k, m)
     if imu_end is not None:
         s["imu"] = np.array(imu_end)  # 기준 = 마지막 장의 IMU(자세 θ는 고친 값)
@@ -778,25 +818,25 @@ def replay_cmd(f: str, m: dict) -> int:
     s = empty()
     shots = load_shots(f)
     print("장 %d · IMU %.0f°" % (len(shots), math.degrees(shots[-1][0])))
-    integrate(s, shots[0][2], shots[0][1], m)
-    s["frames"] = 1
-    base = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in s.items()}
-    return close_and_build(s, base, np.zeros(3), shots, m, None)
+    return close_and_build(s, empty(), np.zeros(3), shots, m, None)
 
 
 def scan_cmd(a, m) -> int:
     from base_nudge import open_link
     s = load()
+    # 시작 맞춤 **전** 지도 — 한 장(58°)으로 잡은 시작 자리는 벽을 따라 0.2~0.3m 틀릴 수 있어(2026-10-23 실기),
+    # 그 장을 섞지 않은 지도에 한 바퀴를 통째로 맞춘다(register).
+    base0 = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in s.items()}
     localize(s, m, s["pose"], 0.4, 30, time.time())
     if getattr(a, "hand", False):
         if imu_now() is None:
             print("⛔ 손으로 돌리는 스캔은 IMU가 있어야 한다 — systemctl status imu-yaw")
             return 1
-        return scan_imu(a, m, s, None)
+        return scan_imu(a, m, s, None, base0)
     link = open_link()
     if link is not None and imu_now() is not None:
         try:
-            return scan_imu(a, m, s, link)
+            return scan_imu(a, m, s, link, base0)
         finally:
             link.close()
     if link is None:
@@ -854,7 +894,7 @@ def step_cmd(a, m) -> int:
     f, l = 0.10 * np.sign(a.vx), 0.08 * np.sign(a.vy)
     c, sn = math.cos(prev[2]), math.sin(prev[2])
     prior = prev + [f * c - l * sn, f * sn + l * c, math.radians(20) * np.sign(a.w)]
-    localize(s, m, prior, 0.3, 50, time.time() + 0.4)
+    localize(s, m, prior, 0.05 if (a.w and not (a.vx or a.vy)) else 0.3, 50, time.time() + 0.4)
     d = s["pose"] - prev
     print("한 걸음 → %.2fm %.0f°" % (float(np.hypot(d[0], d[1])), math.degrees(wrap(d[2]))))
     return 0
@@ -909,7 +949,8 @@ def go_cmd(a, m) -> int:
                 drive(link, a.vx, 0, 0, a.vsecs)
                 prior = prev + [est_v * math.cos(th), est_v * math.sin(th), 0]
                 what = "전진"
-            localize(s, m, prior, 0.3, 25, time.time() + 0.4)
+            # 제자리 회전이면 자리는 거의 그대로다(장착값이 실제 회전 중심 기준) — 넓게 찾으면 벽을 따라 0.1~0.3m 미끄러졌다
+            localize(s, m, prior, 0.05 if what != "전진" else 0.3, 25, time.time() + 0.4)
             dxy = float(np.hypot(*(s["pose"][:2] - prev[:2])))
             dth = wrap(s["pose"][2] - prev[2])
             print("[%d] %s → %.2fm %.0f° · 목표까지 %.2fm" %

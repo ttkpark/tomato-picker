@@ -204,6 +204,31 @@ if os.environ.get("SIM_GO"):            # 이어서 목표로 가기 — 지도 
     print("=== 가기 rc=%d · 참 자리 (%.2f, %.2f) · 목표까지 %.2fm · 지도 자세 오차 %.2fm %.1f°" % (
         rc2, tm[0], tm[1], float(np.hypot(tm[0] - gx, tm[1] - gy)), float(np.hypot(*(s["pose"][:2] - tm))),
         math.degrees(sm.wrap(s["pose"][2] + start[2] - true[2]))))
+    if os.environ.get("SIM_SCAN2"):    # 새 자리에서 한 바퀴 — 몰래 밀어 놓아(시작 맞춤 미끄럼 흉내) register가 고치는지
+        from scipy.spatial import cKDTree
+        before = s["vox"].astype(int).copy()
+        kick = [float(v) for v in os.environ.get("SIM_KICK", "0,0").split(",")]
+        true[0] += kick[0]; true[1] += kick[1]
+        sm.scan_cmd(args, M)
+        s = sm.load()
+        A = set(map(tuple, before))
+        new = np.array([v for v in map(tuple, s["vox"].astype(int)) if v not in A])
+        dn, _ = cKDTree(before).query(new)
+        pw2 = (new.astype(float) + 0.5) * sm.RES
+        pw2 = np.stack([start[0] + c * pw2[:, 0] - sn * pw2[:, 1], start[1] + sn * pw2[:, 0] + c * pw2[:, 1], pw2[:, 2]], 1)
+        tm = np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2])
+        if os.environ.get("SIM_PLOT"):
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            bad = surf_dist(pw2) >= 0.075
+            fig, ax = plt.subplots(1, 2, figsize=(14, 6))
+            ax[0].scatter(pw2[~bad, 0], pw2[~bad, 1], s=1, c="g"); ax[0].scatter(pw2[bad, 0], pw2[bad, 1], s=1, c="r")
+            ax[1].scatter(np.hypot(pw2[:, 0] - true[0], pw2[:, 1] - true[1]), pw2[:, 2], s=1, c=np.where(bad, "r", "g"))
+            ax[0].plot(true[0], true[1], "k^"); ax[0].set_aspect("equal")
+            plt.savefig(os.environ["SIM_PLOT"], dpi=60)
+        print("=== 새 자리 스캔 · 새 복셀 %d · 첫 지도 8cm 안 %.1f%% · 참 표면 7.5cm 안 %.1f%% · 지도 자세 오차 %.2fm" % (
+            len(new), 100 * (dn <= 1.5).mean(), 100 * (surf_dist(pw2) < 0.075).mean(), float(np.hypot(*(s["pose"][:2] - tm)))))
 if USE_IMU and not os.environ.get("SIM_SCALE") and not os.environ.get("SIM_XY"):
     assert rc == 0 and (dv < 0.075).mean() >= 0.75 and err <= 5.0, ("지도 품질 합격선 미달", rc, (dv < 0.075).mean(), err)
     print("space_map_sim ✅ 합격선(복셀 75%·θ 5°)")
