@@ -11,8 +11,9 @@ SupplementaryGroups=i2c
 WorkingDirectory=/home/server
 Environment=PYTHONUNBUFFERED=1
 Environment=IMU_BUS=7
-# 자이로 스케일 보정 — 지도 앞에서 360° 돌려 실측한 값으로 덮는다(1.0 = 데이터시트).
-Environment=IMU_SCALE=1.0
+# 자이로 스케일 보정 — space_map 고리 닫기(ICP)가 재는 "참 회전 = IMU × k"를 곱한다(1.0 = 데이터시트).
+# 2026-10-22 23:50 실기 두 바퀴가 ×1.0195·×1.0159(장별 1.015~1.021)로 맞았다 → 1.017.
+Environment=IMU_SCALE=1.017
 # stdlib만 쓴다 — venv가 필요 없다.
 ExecStart=/usr/bin/python3 /home/server/tomato-picker/tools/imu_yaw.py
 Restart=always

@@ -49,6 +49,9 @@ behavior the task requires stay in.
   투광기를 끄는데 **스트림 수명 내내 꺼진 채 유지된다**(카메라를 옮겨도 안 풀린다).
   발행기가 30초 무효 시 스스로 재시작하게 해 뒀다(`ASTRA_ZERO_REOPEN_SEC`).
   ⚠ Astra는 ROS 2 계통엔 **아직 안 붙였다**(realsense2_camera만 있다).
+  ⚠ **Astra 깊이는 거울상이다**(OpenNI 기본 미러링, 2026-10-22 실측 — 화면 왼쪽 = 실제 오른쪽). 발행기 meta가
+  `"mirrored": true`를 싣고 3D로 펴는 쪽이 u를 뒤집는다(`space_map.cloud`). 이걸 모르고 지은 공간 지도는 벽이
+  부채꼴로 번졌다. ⚠ 그 전에 찍은 **Astra 손-눈 보정(`cameras.astra`)은 거울상 점으로 푼 것**이라 다시 봐야 한다.
 - **줄기 잡기 조작대 = [`ros2/tools/click_server.py`](ros2/tools/click_server.py)** (2026-09-03~)
   — 젯슨이 직접 띄우는 웹 조작대 + API. **http://<젯슨IP>:8090/** (systemd `click-server`).
   화면을 눌러 **어느 줄기인지 사람이 정하고**(`~/click_target.json`), 자세·조그·집게·
@@ -71,6 +74,8 @@ behavior the task requires stay in.
   [`docs/space-map.md`](docs/space-map.md). 장착값은 `~/space_mount.json`(CAD 추정값이 기본).
   **차체 IMU = MPU6050**(2026-10-22~, 젯슨 I²C 버스 7·0x68) → [`tools/imu_yaw.py`](tools/imu_yaw.py)
   (systemd `imu-yaw`) → `/dev/shm/imu.json`. 회전 짐작·회전 넛지 끊기·조작대 실시간 회전량에 쓴다.
+  ⚠ **`base_nudge.open_link()`는 JetsonBase로 연다**(2026-10-22) — 맨 MotorLink로 열면 보드가 브라운아웃 리셋될 때
+  튜닝(P 4095 등)이 안 들어가 듀티가 컴파일 기본 2000(49%)이 된다 → "255로도 안 돈다". 고친 뒤 정지마찰 문턱 ≈90.
   ⚠ 그 전엔 로봇에 자이로가 **하나도** 없었다. 배경·STM32 계획 = [`docs/stm32-자세보드-목표.md`](docs/stm32-자세보드-목표.md).
 - **손-눈 보정 수학 = [`hardware/handeye.py`](src/tomato_picker/hardware/handeye.py)**
   — 카메라가 본 3D 점을 팔 좌표로 옮기는 강체 변환 하나를 **실측에서 푼다**(자로 재지 않는다).

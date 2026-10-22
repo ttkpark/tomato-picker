@@ -23,7 +23,7 @@ import time
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 sys.path.insert(0, os.path.join(REPO, "src"))
 
-from tomato_picker.hardware.motor_link import MotorLink  # noqa: E402
+from tomato_picker.hardware.jetson import JetsonBase  # noqa: E402
 
 
 def _val(x):
@@ -34,11 +34,14 @@ def _val(x):
 def open_link(boot_wait: float = 8.0):
     """주행 보드를 열고 **첫 하트비트**까지 기다린다 — 못 받으면 None.
 
-    ⚠ `pending_setup`은 on_connect 콜백이 있을 때만 서는 플래그라 여기선 늘 False다 —
-      그걸 믿고 바로 지령을 내면 Uno 부트로더(~2초) 안에서 전부 버려진다(2026-09-09
-      실측: 0.6초 전진 지령이 통째로 사라졌다). **첫 하트비트(hb_age)**를 기다린다.
+    ⚠ 바로 지령을 내면 Uno 부트로더(~2초) 안에서 전부 버려진다(2026-09-09 실측: 0.6초 전진
+      지령이 통째로 사라졌다). **첫 하트비트(hb_age)**를 기다린다.
+    ⚠ 링크는 **JetsonBase로** 연다 — 연결할 때와 보드가 스스로 재부팅할 때마다 현장 튜닝
+      (~/base_tuning.json의 F/P/R)을 다시 민다. 예전엔 MotorLink를 맨손으로 열어 "튜닝 재적용"
+      로그만 찍히고 아무것도 안 밀었다 → 브라운아웃 리셋 한 번이면 듀티 상한이 컴파일 기본값
+      2000(49%)으로 떨어져, 2026-10-22 밤 "한 바퀴 돌고 나면 모터가 죽는다"가 됐다(255로도 0°).
     """
-    link = MotorLink()
+    link = JetsonBase().link
     t0 = time.monotonic()
     while True:
         st = link.stats()

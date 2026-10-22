@@ -79,7 +79,10 @@ def cloud(depth: np.ndarray, meta: dict, m: dict, stride: int = 3) -> np.ndarray
     d = depth[::stride, ::stride].astype(np.float32) * (float(meta["depth_scale_mm"]) / 1000.0)
     v, u = np.nonzero((d >= meta["min_mm"] / 1000.0) & (d <= meta["max_mm"] / 1000.0))
     Z = d[v, u]
-    X = (u * stride - it["ppx"]) * Z / it["fx"]
+    uu = u * stride
+    if meta.get("mirrored"):              # Astra 깊이는 거울상이다(astra_cam meta) — 화면 왼쪽 = 실제 오른쪽
+        uu = int(meta.get("width", depth.shape[1])) - 1 - uu
+    X = (uu - it["ppx"]) * Z / it["fx"]
     Y = (v * stride - it["ppy"]) * Z / it["fy"]
     t = math.radians(m["tilt_deg"])
     c, s = math.cos(t), math.sin(t)
@@ -875,6 +878,10 @@ def selftest() -> int:
     c = p[240 * 640 + 320]
     assert abs(c[0] - (m["x"] + 2.0)) < 1e-3 and abs(c[1]) < 0.01 and abs(c[2] - m["h"]) < 0.01, c
     assert p[240 * 640, 1] > 1.0, "화면 왼쪽(u=0)은 차체 왼쪽(y+)이어야 한다"
+    dep2 = np.zeros((480, 640), np.uint16)
+    dep2[:, :100] = 2000                                   # 화면 왼쪽에만 벽
+    assert cloud(dep2, meta, m, stride=4)[:, 1].mean() > 0.5, "거울 아님: 화면 왼쪽 = 차체 왼쪽"
+    assert cloud(dep2, {**meta, "mirrored": True, "width": 640}, m, stride=4)[:, 1].mean() < -0.5, "거울상: 화면 왼쪽 = 차체 오른쪽"
     assert len(scan2d(p, m)) > 100
     # ② 맞춤 — 돌며 지도를 만든 뒤, 틀린 짐작에서 참 자세를 되찾는가
     s = empty()
