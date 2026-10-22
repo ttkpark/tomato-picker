@@ -38,7 +38,8 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "src"))
 RES = 0.05                     # 칸 5cm
 N = 300                        # 15m × 15m, 원점 = 가운데
 OCC, FREE = 0.6, 0.6           # 로그오즈 문턱
-Q_MIN = 0.3                    # 맞춤 점수(점당 우도 평균) — 이보다 낮으면 그 장은 지도에 안 넣는다
+Q_MIN = 0.6                    # 일치율 = 맞은 점 / (맞은 점 + 빈 곳에 떨어진 점) — 모르는 곳은 안 센다
+HIT_MIN = 20                   # 지도와 겹친 점이 이보다 적으면 자세를 못 믿는다(화면 거의 전부가 처음 보는 곳)
 MAP = os.path.expanduser("~/space_map.npz")
 MOUNT_FILE = os.path.expanduser("~/space_mount.json")
 # 장착값 — 케이스 CAD(tomato_case.scad astra_*) 기준 추정. **실측해서 MOUNT_FILE로 덮어라.**
@@ -222,25 +223,51 @@ def field(lo: np.ndarray) -> np.ndarray:
     return f
 
 
+HIT = 0.36                     # 우도 이 이상 = 장애물 2칸 안에 떨어졌다
+
+
 def match(s: dict, scan: np.ndarray, prior, win_xy: float, win_deg: float):
-    """prior 둘레를 전수 탐색해 (자세, 점수) — 지도가 비었으면 (prior, 0)."""
-    F = field(s["lo"])
+    """prior 둘레를 전수 탐색해 (자세, 일치율, 맞은 점 수, 모호) — 지도가 비었으면 (prior, 0, 0, False).
+
+    ⚠ **처음 보는 곳은 틀린 게 아니다**(2026-10-22 실측). 화각이 58°라 35° 돌면 화면의
+      60%가 지도에 없는 곳인데, 예전엔 전체 평균으로 매겨 그런 장을 전부 버렸다 → 지도가
+      그쪽으로 영영 안 자랐고, 자세는 짐작만으로 263°까지 흘렀다. 이제 **모르는 칸에
+      떨어진 점은 빼고**, 지도가 "빈 곳"이라 아는 칸에 떨어진 점만 모순으로 깎는다.
+    """
+    lo = s["lo"]
+    F = field(lo)
     prior = np.asarray(prior, float)
     if F.max() < 1 or len(scan) < 15:
-        return prior, 0.0
+        return prior, 0.0, 0, False
+    contra = (lo < -FREE) & (F < HIT)
+    S = F - 0.5 * contra                        # 탐색 점수: 맞으면 +, 빈 곳에 장애물을 놓으면 −
     oi = np.arange(-round(win_xy / RES), round(win_xy / RES) + 1)
-    best, bp = -1.0, prior
-    for dth in np.radians(np.arange(-win_deg, win_deg + 1e-9, 1.0)):
+    # 동점이면 짐작에 가까운 쪽 — 벽 하나만 보이면 벽을 따라 미끄러져도 점수가 같다(합성 방에서 0.5m)
+    near = 1e-4 * (oi[:, None] ** 2 + oi[None, :] ** 2)
+    best, bp = -1e9, prior
+    ths = np.radians(np.arange(-win_deg, win_deg + 1e-9, 1.0))
+    per = np.empty(len(ths))
+    for k, dth in enumerate(ths):
         p = idx(to_world((prior[0], prior[1], prior[2] + dth), scan))
         IX = p[:, 0, None, None] + oi[None, :, None]
         IY = p[:, 1, None, None] + oi[None, None, :]
         ok = (IX >= 0) & (IX < N) & (IY >= 0) & (IY < N)
-        sc = np.where(ok, F[IX.clip(0, N - 1), IY.clip(0, N - 1)], 0).sum(0)
+        sc = np.where(ok, S[IX.clip(0, N - 1), IY.clip(0, N - 1)], 0).sum(0) - near - 1e-4 * abs(math.degrees(dth))
         i, j = np.unravel_index(int(sc.argmax()), sc.shape)
+        per[k] = sc[i, j]
         if sc[i, j] > best:
             best = float(sc[i, j])
             bp = np.array([prior[0] + oi[i] * RES, prior[1] + oi[j] * RES, wrap(prior[2] + dth)])
-    return bp, best / len(scan)
+    c = idx(to_world(bp, scan))
+    c = c[((c >= 0) & (c < N)).all(1)]
+    hit = int((F[c[:, 0], c[:, 1]] >= HIT).sum())
+    bad = int(contra[c[:, 0], c[:, 1]].sum())
+    # ⚠ **모호함** — 화각 58°의 한 장은 곧은 벽 한 토막일 때가 많고, 그건 방의 다른 벽에도
+    #   똑같이 맞는다(합성 방에서 참 +100°와 가짜 −170°가 둘 다 일치 1.0). 15° 넘게 떨어진
+    #   다른 방향이 거의 같은 점수면 고르지 않는다 — 틀린 자세로 지도를 더럽히는 것보다 싸다.
+    far = np.abs((ths - wrap(bp[2] - prior[2]) + math.pi) % (2 * math.pi) - math.pi) > math.radians(15)
+    amb = bool(far.any() and per[far].max() >= 0.9 * best)
+    return bp, hit / max(1, hit + bad), hit, amb
 
 
 # ── 길 ─────────────────────────────────────────────────────────────────
@@ -322,19 +349,24 @@ def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: floa
     dep, meta = frame(after)
     pts = cloud(dep, meta, m)
     sc = scan2d(pts, m)
-    pose, q = match(s, sc, prior, win_xy, win_deg)
-    if (s["lo"] > OCC).sum() < 20 or q >= Q_MIN:
+    pose, q, hit, amb = match(s, sc, prior, win_xy, win_deg)
+    if amb and (s["lo"] > OCC).sum() >= 20:
+        s["pose"] = np.asarray(prior, float)
+        print("  ⚠ 모호 — 다른 방향도 거의 똑같이 맞는다(곧은 벽만 보인다). 이 장은 안 넣는다."
+              " 손으로 돌렸으면 돌린 각도를 적어 [한 장 담기]")
+    elif (s["lo"] > OCC).sum() < 20 or (q >= Q_MIN and hit >= HIT_MIN):
         s["pose"] = pose
         integrate(s, sc, pts, m)
         s["frames"] = int(s["frames"]) + 1
     else:
         s["pose"] = np.asarray(prior, float)
-        print("  ⚠ 맞춤 %.2f < %.2f — 이 장은 지도에 안 넣는다(자세는 추정값)" % (q, Q_MIN))
+        print("  ⚠ 일치 %.2f(기준 %.2f)·겹친 점 %d(기준 %d) — 이 장은 지도에 안 넣는다(자세는 짐작)" %
+              (q, Q_MIN, hit, HIT_MIN))
     s["q"] = q
     save(s)
     x, y, th = s["pose"]
-    print("  자세 x=%.2f y=%.2f θ=%.0f° · 맞춤 %.2f · 스캔 %d점 · 복셀 %d" %
-          (x, y, math.degrees(th), q, len(sc), len(s["vox"])))
+    print("  자세 x=%.2f y=%.2f θ=%.0f° · 일치 %.2f · 겹친 점 %d/%d · 복셀 %d" %
+          (x, y, math.degrees(th), q, hit, len(sc), len(s["vox"])))
     return q
 
 
@@ -350,9 +382,12 @@ def scan_cmd(a, m) -> int:
         for i in range(a.steps):
             prev = s["pose"].copy()
             drive(link, 0, 0, a.w, a.wsecs)
-            localize(s, m, prev + [0, 0, est], 0.15, 45, time.time() + 0.4)
+            localize(s, m, prev + [0, 0, est], 0.15, 60, time.time() + 0.4)
             d = wrap(s["pose"][2] - prev[2])
             print("[%d/%d] 넛지 한 번 = %.0f°" % (i + 1, a.steps, math.degrees(d)))
+            if abs(d) > math.radians(30):
+                # 화각 58°에서 30° 넘게 돌면 겹치는 곳이 절반이 안 된다 — 맞춤이 위태롭다
+                print("  ⚠ 한 번에 너무 많이 돈다 — 회전 초를 줄여라(20° 안팎이 좋다)")
             if abs(d) < math.radians(2):
                 stuck += 1
                 if stuck >= 3:
@@ -385,7 +420,7 @@ def step_cmd(a, m) -> int:
     f, l = 0.10 * np.sign(a.vx), 0.08 * np.sign(a.vy)
     c, sn = math.cos(prev[2]), math.sin(prev[2])
     prior = prev + [f * c - l * sn, f * sn + l * c, math.radians(20) * np.sign(a.w)]
-    localize(s, m, prior, 0.3, 30, time.time() + 0.4)
+    localize(s, m, prior, 0.3, 50, time.time() + 0.4)
     d = s["pose"] - prev
     print("한 걸음 → %.2fm %.0f°" % (float(np.hypot(d[0], d[1])), math.degrees(wrap(d[2]))))
     return 0
@@ -496,9 +531,22 @@ def selftest() -> int:
         s["pose"] = np.array([0.0, 0.0, math.radians(25 * k)])
         integrate(s, _room_scan(s["pose"], m=m), np.zeros((0, 3)), m)
     true = np.array([0.12, -0.08, math.radians(40)])
-    got, q = match(s, _room_scan(true, m=m), true + [-0.08, 0.06, math.radians(-12)], 0.15, 25)
+    got, q, hit, _ = match(s, _room_scan(true, m=m), true + [-0.08, 0.06, math.radians(-12)], 0.15, 25)
     assert np.hypot(*(got[:2] - true[:2])) < 0.06 and abs(wrap(got[2] - true[2])) < math.radians(2), (got, true, q)
-    assert q > 0.6, q
+    assert q > 0.9 and hit >= HIT_MIN, (q, hit)
+    # ②-1 손으로 ~100° 돌려 놓고 [한 장 담기] — 각도를 모르면 곧은 벽이 반대쪽에도 맞아
+    #   **모호로 거절**해야 하고(고르면 틀린다), "90° 돌렸다"를 주면 찾아야 한다
+    t90 = np.array([0.05, 0.0, math.radians(100)])
+    g90, _, _, amb = match(s, _room_scan(t90, m=m), [0.0, 0.0, 0.0], 0.5, 180)
+    assert amb or abs(wrap(g90[2] - t90[2])) < math.radians(3), ("모호를 못 알아채고 틀린 답", g90)
+    g90, q90, h90, amb = match(s, _room_scan(t90, m=m), [0.0, 0.0, math.radians(90)], 0.5, 45)
+    assert not amb and np.hypot(*(g90[:2] - t90[:2])) < 0.08 and abs(wrap(g90[2] - t90[2])) < math.radians(3), (g90, q90)
+    # ②-2 처음 보는 쪽으로 35° — 화면 절반이 지도에 없어도 **받아들인다**(예전엔 버렸다)
+    s3 = empty()
+    integrate(s3, _room_scan([0.0, 0.0, 0.0], m=m), np.zeros((0, 3)), m)
+    t35 = np.array([0.0, 0.0, math.radians(35)])
+    g35, q35, h35, _ = match(s3, _room_scan(t35, m=m), [0.0, 0.0, math.radians(20)], 0.15, 60)
+    assert abs(wrap(g35[2] - t35[2])) < math.radians(2) and q35 >= Q_MIN and h35 >= HIT_MIN, (g35, q35, h35)
     # ③ 길 — 상자를 돌아가고, 벽 속 목표는 거절
     path, why = plan(s["lo"], (0, 0), (2.2, 0.6), m["radius"])
     assert path, why
@@ -530,6 +578,7 @@ def main() -> int:
     ap.add_argument("--secs", type=float, default=0.8, help="step: 걸음 시간")
     ap.add_argument("--x", type=float)
     ap.add_argument("--y", type=float)
+    ap.add_argument("--turn", type=float, help="snap: 손으로 돌린 대략 각도(도, +=왼쪽)")
     ap.add_argument("--tol", type=float, default=0.2)
     ap.add_argument("--max-steps", type=int, default=60)
     a = ap.parse_args()
@@ -545,7 +594,11 @@ def main() -> int:
     print("장착", m, "(바꾸려면 %s)" % MOUNT_FILE)
     if a.mode == "snap":
         s = load()
-        localize(s, m, s["pose"], 0.3, 20, time.time())
+        # 사람이 손으로 돌리거나 옮겨 놓고 누르는 버튼이다 — 자리는 ±0.5m 찾는다.
+        # 돌린 각도(--turn)를 주면 그 둘레 ±45°, 안 주면 전 방향 — 전 방향은 곧은 벽만
+        # 보이면 **모호로 거절**된다(match). 그래도 **지도에 있는 쪽을 봐야** 찾는다.
+        prior = s["pose"] + [0, 0, math.radians(a.turn or 0)]
+        localize(s, m, prior, 0.5, 45 if a.turn is not None else 180, time.time())
         return 0
     if a.mode == "scan":
         return scan_cmd(a, m)

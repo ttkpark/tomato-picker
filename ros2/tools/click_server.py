@@ -382,6 +382,8 @@ def build(job, args):
         if mode not in ("snap", "scan", "go", "step", "wrist", "clear"):
             raise ValueError("space mode 는 snap|scan|go|step|wrist|clear")
         a = [PY, T("space_map.py"), mode]
+        if mode == "snap" and str(args.get("turn", "")).strip() != "":
+            a += ["--turn", "%.0f" % num(args, "turn", 0, -180, 180)]
         if mode == "step":
             # 손으로 한 걸음 — 움직인 뒤 지도와 맞춰 자세를 다시 잡는다(넛지와 달리 지도가 따라온다).
             v = {k: int(num(args, k, 0, -255, 255)) for k in ("vx", "vy", "w")}
@@ -511,7 +513,8 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     </div>
     <div class="v" id="spInfo" style="margin-top:5px">지도 없음</div>
     <div class="row" style="margin-top:8px">
-      <button onclick="run('space',{mode:'snap'})">한 장 담기(안 움직임)</button>
+      <button onclick="run('space',{mode:'snap',turn:document.getElementById('sp_turn').value})">한 장 담기(안 움직임)</button>
+      <label title="손으로 돌려 놓았으면 대략 몇 도(+=왼쪽). 비우면 전 방향을 찾되, 곧은 벽만 보이면 모호로 거절한다">손으로 돌린 각도<input id="sp_turn" placeholder="예 90" style="width:56px"></label>
       <button class="go" onclick="run('space',spArgs({mode:'scan'}))">제자리 한 바퀴 스캔</button>
       <button class="go" onclick="spGo()">목표로 가기</button>
       <button onclick="if(confirm('지도를 지울까? 다음 장의 자리가 원점이 된다'))run('space',{mode:'clear'})">지도 지움</button>
