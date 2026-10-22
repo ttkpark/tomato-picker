@@ -109,7 +109,7 @@
       <origin xyz="${x} ${y} ${wr}"/>
     </joint>
   </xacro:macro>
-  <!-- 모터↔바퀴 실측 대응은 CLAUDE.md에 있다: A=FR B=FL C=RR D=RL -->
+  <!-- 모터↔바퀴 실측 대응은 CLAUDE.md에 있다: A=RR B=RL C=FR D=FL -->
   <xacro:wheel name="wheel_fr" x="${ bl/2 - 0.04}" y="${-bw/2 - 0.02}"/>
   <xacro:wheel name="wheel_fl" x="${ bl/2 - 0.04}" y="${ bw/2 + 0.02}"/>
   <xacro:wheel name="wheel_rr" x="${-bl/2 + 0.04}" y="${-bw/2 - 0.02}"/>

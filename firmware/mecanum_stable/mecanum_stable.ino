@@ -20,7 +20,7 @@
 // 프로토콜 (라인 단위, '\n' 종료. 모든 라인에 선택적으로 "*HH" 체크섬을 붙일 수 있다):
 //   V <vx> <vy> <w>   속도지령. vx=전진+, vy=우평행+, w=시계회전+. 각 -255..255. (무응답)
 //   S                 즉시 정지 (슬루 무시, 하드)
-//   T <i> <d>         모터 i(0=A/FR 1=B/FL 2=C/RR 3=D/RL) 방향 d(1/-1) 단독 1초 (캘리브레이션)
+//   T <i> <d>         모터 i(0=A/RR 1=B/RL 2=C/FR 3=D/FL) 방향 d(1/-1) 단독 1초 (캘리브레이션)
 //   P <n>             최대 PWM 스케일 설정 (기본 2000 / 4095)
 //   L <a><b><c><d>    바퀴 극성 (각 1/-1)
 //   R <accel> <decel> 슬루 스텝(틱당 변화량 상한). 기본 6 / 12
@@ -131,11 +131,12 @@ uint16_t i2cErr = 0;    // Wire 타임아웃 횟수 = I2C 버스가 물린 횟�
 #define D1 6
 #define D2 7
 
-// 실측 매핑(2026-07-02): A=FR, B=FL, C=RR, D=RL
+// 실측 매핑(2026-10-22, 케이스 장착 후 — 차체의 앞이 바뀌었다): A=RR, B=RL, C=FR, D=FL
+// (옛 2026-07-02: A=FR B=FL C=RR D=RL). T i 1 로 넷 다 '앞'으로 돌아 POL은 그대로.
 // 각 바퀴 "물리적 전진"이 어느 전기방향인지 부호로 보정 (캘리브레이션으로 확정).
-// idx: 0=A(FR) 1=B(FL) 2=C(RR) 3=D(RL)
+// idx: 0=A(RR) 1=B(RL) 2=C(FR) 3=D(FL)
 // 2026-07-03 실측: V140,0,0에서 좌(B,D)전진/우(A,C)후진 → 우측 반전으로 전진 정합.
-int8_t POL[4] = {-1, 1, -1, 1};   // A(FR)반전 B(FL)정 C(RR)반전 D(RL)정. 런타임 'L'로 변경가능
+int8_t POL[4] = {-1, 1, -1, 1};   // 모터 A반전 B정 C반전 D정(바퀴 자리와 무관 — 모터 배선의 극성). 런타임 'L'로 변경가능
 const uint8_t CH1[4] = {A1, B1, C1, D1};
 const uint8_t CH2[4] = {A2, B2, C2, D2};
 
@@ -182,7 +183,7 @@ void driveWheel(uint8_t w, int s){
 
 // 메카넘 mixing. 표준 X-롤러 가정 (부호는 캘리브레이션으로 확정):
 //  FL = vx - vy - w ; FR = vx + vy + w ; RL = vx + vy - w ; RR = vx - vy + w
-// 바퀴→채널: A=FR, B=FL, C=RR, D=RL
+// 바퀴→채널: A=RR, B=RL, C=FR, D=FL (2026-10-22)
 void applyCurrent(){
   // ★ 흔적을 먼저 남긴다. 여기서 리셋되면 다음 부팅이 last=I2C로 보고하고,
   //   그게 곧 "TWI 버스가 물려 워치독이 물었다"는 증거다.
@@ -191,10 +192,10 @@ void applyCurrent(){
   int FR = curVx + curVy + curW;
   int RL = curVx + curVy - curW;
   int RR = curVx - curVy + curW;
-  driveWheel(0, FR);  // A
-  driveWheel(1, FL);  // B
-  driveWheel(2, RR);  // C
-  driveWheel(3, RL);  // D
+  driveWheel(0, RR);  // A
+  driveWheel(1, RL);  // B
+  driveWheel(2, FR);  // C
+  driveWheel(3, FL);  // D
   // 타임아웃이 걸렸다면 위 8채널 중 일부는 안 써졌다 — 다음 틱이 다시 쓰므로
   // 복구는 저절로 되고, 여기서는 **몇 번 물렸는지**만 센다(하트비트로 보고).
   if(Wire.getWireTimeoutFlag()){ i2cErr++; Wire.clearWireTimeoutFlag(); }

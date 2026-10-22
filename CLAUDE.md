@@ -93,7 +93,7 @@ behavior the task requires stay in.
   현재 기본 700Hz·듀티 2600. ⚠ 포트를 열면 커널 DTR 토글로 **Uno가 리셋**되므로
   설정은 **첫 하트비트 이후**에 넣어야 먹는다(부트로더 ~2초가 다 먹어버림).
   ⚠️ **`firmware/PS2-MOTOR/`는 레거시**(PS2 직접조종, 불안정). `mecanum_serial/`은 폐기. 새 작업은 `mecanum_stable` 기준.
-  모터↔바퀴 실측: A=FR B=FL C=RR D=RL, `POL={-1,1,-1,1}`.
+  모터↔바퀴 실측(2026-10-22 케이스 장착 후): A=RR B=RL C=FR D=FL, `POL={-1,1,-1,1}`.
 - **게임패드 주행 + 팔 프리셋 = [`tools/controller_drive.py`](tools/controller_drive.py)** (젯슨, lerobot venv).
   Switch 프로콘/Xbox360 게임패드(evdev)를 읽어 → 메카넘 `V` 지령 + 팔 프리셋 재생.
   **systemd `controller-drive` 서비스로 부팅 자동실행**([`deploy/`](deploy/)). 조작: **LT(ZL) 데드맨=누르는 동안만 주행**,
