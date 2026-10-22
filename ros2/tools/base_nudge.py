@@ -6,7 +6,8 @@
 
 ⚠ `tomato-voice`는 내린 채로(주행 보드 포트는 한 프로세스).
 ⚠ 포트를 열면 Uno가 리셋된다(DTR) — 첫 하트비트를 기다린 뒤에만 지령을 낸다.
-⚠ 정지마찰 문턱(실측 ≈90)보다 작은 지령은 물리적으로 0이다 — 게인 말고 크기부터.
+⚠ 정지마찰 문턱(옛 실측 ≈90 · 2026-10-22 케이스 장착 후 듀티 37% 정지/58% 주행)보다 작은 지령은 물리적으로 0이다.
+⚠ 옆걸음 부호: 2026-10-22 실측 **vy=+가 왼쪽** (바퀴 배치 재설정 후).
 ⚠ 회전 부호: 2026-09-09 실측 **w=+가 반시계(왼쪽)**, w=−가 시계 — README("시계+")와 반대.
 ⚠ 실측 9/9: w=±160·0.8s는 0, ±255·1.0s는 ~40°이되 **가끔 0**(정지마찰·케이블 장력).
    0.6s는 안 움직인다(슬루 램프가 다 못 올라간다). 안 움직이면 --max-pwm 4095로 한 번.
@@ -33,7 +34,7 @@ def _val(x):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--vx", type=int, default=0, help="전진+ (-255..255)")
-    ap.add_argument("--vy", type=int, default=0, help="우평행+")
+    ap.add_argument("--vy", type=int, default=0, help="좌평행+ (2026-10-22 케이스 장착 후 실측)")
     ap.add_argument("--w", type=int, default=0, help="회전 (README: 시계+, 실기 확인 필요)")
     ap.add_argument("--secs", type=float, default=0.5)
     ap.add_argument("--boot-wait", type=float, default=8.0)

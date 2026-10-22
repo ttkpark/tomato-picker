@@ -576,8 +576,8 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <div class="row" style="margin-top:8px">
       <button onclick="nudge(1,0,0)">▲ 전진</button>
       <button onclick="nudge(-1,0,0)">▼ 후진</button>
-      <button onclick="nudge(0,-1,0)">◀ 좌평행</button>
-      <button onclick="nudge(0,1,0)">▶ 우평행</button>
+      <button onclick="nudge(0,1,0)">◀ 좌평행</button>
+      <button onclick="nudge(0,-1,0)">▶ 우평행</button>
     </div>
     <div class="row" style="margin-top:6px">
       <button onclick="nudge(0,0,1)">↺ 좌회전</button>
