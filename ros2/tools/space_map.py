@@ -465,6 +465,22 @@ def turn(link, w: int, secs: float, deg: float) -> float:
     return got
 
 
+def hand_turn(deg: float, timeout: float = 60.0) -> float:
+    """사람이 손으로 돌리는 한 걸음 — IMU가 deg×COAST 넘게 돌았고 **멈췄으면** 돈 도(못 기다리면 nan).
+    모터 전원이 없어도 IMU만 있으면 한 바퀴 지도를 만든다(2026-10-22: 바퀴가 안 돌던 날 만든 길)."""
+    i0 = imu_now()
+    if i0 is None:
+        return float("nan")
+    print("  손으로 %.0f° 남짓 돌리고 멈춘다…" % deg)
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        i = imu_now()
+        if i is not None and i[0] == i0[0] and abs(math.degrees(i[1] - i0[1])) >= deg * COAST and i[2]:
+            return math.degrees(i[1] - i0[1])
+        time.sleep(0.1)
+    return float("nan")
+
+
 def scan_imu(a, m, s, link) -> int:
     """IMU 제자리 한 바퀴 — **걸음마다 맞추지 않는다.** θ=IMU, 자리=그대로로 장을 모으고(화면엔 바로 더해
     보여 준다), 한 바퀴를 넘기면 **첫 장과 마지막 장을 맞춰(고리 닫기) IMU 스케일을 고친 뒤** 지도를 다시 짓는다.
@@ -476,6 +492,11 @@ def scan_imu(a, m, s, link) -> int:
     """
     base = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in s.items()}
     pose0 = s["pose"].copy()
+    for _ in range(100):                      # 첫 장은 고리 닫기의 기준 — 도는 중에 찍히면 지도 전체가 비뚤어진다
+        i = imu_now()
+        if i is not None and i[2]:
+            break
+        time.sleep(0.1)
     dep, meta = frame(time.time())
     i0 = imu_now()
     pts = cloud(dep, meta, m)
@@ -483,11 +504,11 @@ def scan_imu(a, m, s, link) -> int:
     stuck, rel = 0, 0.0
     steps = max(a.steps, int(math.ceil(400.0 / (a.deg * COAST))))   # 걸음 수가 아니라 한 바퀴가 목표다
     for i in range(steps):
-        g = turn(link, a.w, a.wsecs, a.deg)
+        g = hand_turn(a.deg) if link is None else turn(link, a.w, a.wsecs, a.deg)
         if not abs(g) >= 0.5:                       # nan(IMU 끊김) 포함
             stuck += 1
             if stuck >= 3:
-                print("⛔ 세 번 연속 안 돌았다 — 회전 크기·시간을 올리거나 모터 전원을 본다")
+                print("⛔ 세 번 연속 안 돌았다 — 회전 크기·시간을 올리거나 모터 전원을 본다(손 스캔이면 60초 안에 돌린다)")
                 return 1
             continue
         stuck = 0
@@ -550,6 +571,11 @@ def scan_cmd(a, m) -> int:
     from base_nudge import open_link
     s = load()
     localize(s, m, s["pose"], 0.4, 30, time.time())
+    if getattr(a, "hand", False):
+        if imu_now() is None:
+            print("⛔ 손으로 돌리는 스캔은 IMU가 있어야 한다 — systemctl status imu-yaw")
+            return 1
+        return scan_imu(a, m, s, None)
     link = open_link()
     if link is not None and imu_now() is not None:
         try:
@@ -782,6 +808,7 @@ def main() -> int:
     ap.add_argument("--w", type=int, default=150, help="회전 넛지 크기(+=왼쪽)")
     ap.add_argument("--wsecs", type=float, default=0.8, help="회전 넛지 시간(IMU 있으면 최대 ×2.5까지 --deg를 채운다)")
     ap.add_argument("--deg", type=float, default=20.0, help="IMU 있을 때 회전 넛지 한 번의 목표(도)")
+    ap.add_argument("--hand", action="store_true", help="scan: 바퀴 대신 사람이 손으로 돌린다(IMU 필요, 멈출 때마다 한 장)")
     ap.add_argument("--vx", type=int, default=150, help="전진 넛지 크기")
     ap.add_argument("--vsecs", type=float, default=0.8)   # 0.6은 슬루 램프가 못 올라가 0(2026-10-22 실측)
     ap.add_argument("--vy", type=int, default=0, help="step: 옆걸음(+=왼쪽)")

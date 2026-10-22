@@ -141,6 +141,18 @@ def surf_dist(p):
 
 
 start = true.copy()
+HAND = bool(os.environ.get("SIM_HAND"))
+if HAND:                                  # 사람이 손으로: 0.45초 돌리고 1.2초 멈추기를 되풀이(모터 지령 없음)
+    import threading
+
+    def _hand():
+        time.sleep(3.0)                   # 버튼을 누르고 나서 돌리기 시작한다
+        while True:
+            T["w"] = 255
+            time.sleep(0.45)
+            T["w"] = 0
+            time.sleep(1.2)
+    threading.Thread(target=_hand, daemon=True).start()
 if os.environ.get("SIM_XY"):           # 맞춤 탐색 폭 강제(xy m, θ °)
     _m = sm.match
     _xy, _th = float(os.environ["SIM_XY"]), float(os.environ["SIM_TH"])
@@ -151,7 +163,7 @@ if os.environ.get("SIM_ORACLE"):        # 천장: 맞춤 대신 참 자세(지�
         d = true - start
         return np.array([c0 * d[0] - s0 * d[1], s0 * d[0] + c0 * d[1], sm.wrap(d[2])]), 1.0, 99, False
     sm.match = oracle
-args = types.SimpleNamespace(steps=int(os.environ.get("SIM_STEPS", 24)), w=int(os.environ.get("SIM_W", 150)), wsecs=float(os.environ.get("SIM_WSECS", 0.8)), deg=20.0)
+args = types.SimpleNamespace(steps=int(os.environ.get("SIM_STEPS", 24)), w=int(os.environ.get("SIM_W", 150)), wsecs=float(os.environ.get("SIM_WSECS", 0.8)), deg=20.0, hand=HAND)
 t0 = time.time()
 rc = sm.scan_cmd(args, M)
 s = sm.load()

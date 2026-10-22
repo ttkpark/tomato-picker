@@ -400,6 +400,8 @@ def build(job, args):
                   "--wsecs", "%.2f" % num(args, "wsecs", 0.8, 0.2, 2.0)]
         if mode == "scan":
             a += ["--steps", "%d" % int(num(args, "steps", 16, 1, 40))]
+            if args.get("hand"):
+                a += ["--hand"]                 # 바퀴 대신 사람이 돌린다 — IMU가 멈출 때마다 한 장씩 담는다
         if mode == "go":
             if "x" not in args or "y" not in args:
                 raise ValueError("go 는 목표 x,y(m)가 있어야 한다 — 지도 바닥을 먼저 누른다")
@@ -523,6 +525,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button onclick="run('space',{mode:'snap',turn:document.getElementById('sp_turn').value})">한 장 담기(안 움직임)</button>
       <label title="손으로 돌려 놓았으면 대략 몇 도(+=왼쪽). 비우면 전 방향을 찾되, 곧은 벽만 보이면 모호로 거절한다">손으로 돌린 각도<input id="sp_turn" placeholder="예 90" style="width:56px"></label>
       <button class="go" onclick="run('space',spArgs({mode:'scan'}))">제자리 한 바퀴 스캔</button>
+      <button title="모터 없이 — 차체를 손으로 15~20°씩 돌리고 멈추기를 한 바퀴 넘게(+50°). IMU가 멈출 때마다 한 장 담고, 끝에 고리 닫기로 지도를 다시 짓는다" onclick="run('space',spArgs({mode:'scan',hand:true}))">손으로 돌리며 스캔</button>
       <button class="go" onclick="spGo()">목표로 가기</button>
       <button onclick="if(confirm('지도를 지울까? 다음 장의 자리가 원점이 된다'))run('space',{mode:'clear'})">지도 지움</button>
     </div>
