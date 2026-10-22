@@ -50,7 +50,7 @@ IMU_WIN_DEG = 5.0              # IMU가 있으면 θ는 IMU 짐작 ±이만큼�
 # 장착값 — 케이스 CAD(tomato_case.scad astra_*) 기준 추정. **실측해서 MOUNT_FILE로 덮어라.**
 # x=회전 중심→렌즈(앞+), h=바닥→렌즈, tilt=위로+, floor_cut/top=장애물로 칠 높이 띠, radius=차체 반지름
 # y=렌즈가 회전 중심에서 왼쪽(+)으로, yaw_deg=카메라가 정면에서 왼쪽(+)으로 돈 각 — 제자리 회전의 **실제 회전 중심**
-#   기준이다(메카넘은 기하 중심이 아니라 미끄러지며 돈다). 2026-10-22 실기 두 바퀴 자기 보정: x 0.345·y −0.10·yaw +1°
+#   기준이다(메카넘은 기하 중심이 아니라 미끄러지며 돈다). 2026-10-22 실기 두 바퀴 자기 보정: x 0.345·y −0.10(yaw는 안 보여 0)
 #   (이웃 장 겹침 10.4→5.7cm, 한 바퀴로 맞춰 다른 바퀴에 써도 10.5→5.6·9.9→7.9cm) — 젯슨 ~/space_mount.json에 있다.
 MOUNT = {"x": 0.12, "y": 0.0, "yaw_deg": 0.0, "h": 0.15, "tilt_deg": 0.0, "floor_cut": 0.05, "top": 0.9, "radius": 0.22,
          # 손목 D405용: 회전판 축이 차체 원점에서 얼마나 앞(arm_x)·바닥에서 얼마나 위(arm_z)인가.
@@ -616,14 +616,14 @@ def scan_imu(a, m, s, link) -> int:
         print("[%d/%d] IMU 누적 %.1f° (이번 %.1f°) · 복셀 %d" % (i + 1, steps, math.degrees(rel), g, len(s["vox"])))
         if abs(rel) >= 2 * math.pi + math.radians(CLOSE_DEG):
             break
-    record(shots)
+    record(shots, m)
     return close_and_build(s, base, pose0, shots, m, (i0[0], i0[1] + rel))
 
 
 SCANS = os.path.expanduser("~/space_scans")
 
 
-def record(shots) -> None:
+def record(shots, m: dict) -> None:
     """한 바퀴의 장(IMU 각·점구름)을 남긴다 — PC에서 `replay`로 고리 닫기·다시 짓기를 실기 데이터로 되돌려 본다.
     (2026-10-22: 실기 장이 지도에 녹아 사라져 고리 닫기를 실제 방에서 조정할 수 없었다)"""
     try:
@@ -633,7 +633,8 @@ def record(shots) -> None:
                             n=np.array([len(p_) for _, p_, _ in shots]),
                             pts=np.concatenate([p_ for _, p_, _ in shots]).astype(np.float32),
                             ns=np.array([len(sc_) for _, _, sc_ in shots]),
-                            sc=np.concatenate([sc_ for _, _, sc_ in shots]).astype(np.float32))
+                            sc=np.concatenate([sc_ for _, _, sc_ in shots]).astype(np.float32),
+                            mount=json.dumps(m))          # 점을 편 장착값 — selfcal이 이 위에 더한다
         print("  장 기록 → %s" % f)
     except OSError as e:
         print("  ⚠ 장 기록 실패: %s" % e)
@@ -698,6 +699,73 @@ def close_and_build(s, base, pose0, shots, m, imu_end) -> int:
     return 0
 
 
+
+
+def overlap(shots, dx: float, dy: float, dyaw: float, k: float, pairs, m0: dict) -> float:
+    """장들을 θ = IMU × k로 겹쳤을 때 이웃 장 점끼리의 평균 거리(m, 25cm 넘는 것은 안 겹치는 곳이라 뺀다).
+    렌즈를 (m0.x+dx, m0.y+dy)·yaw+dyaw로 옮겨 다시 편 것처럼 점을 고친다(기록 점은 m0로 편 차체 좌표)."""
+    c, s_ = math.cos(dyaw), math.sin(dyaw)
+    W = []
+    for r, q in shots:
+        v = q - [m0["x"], m0["y"]]
+        W.append(to_world((0.0, 0.0, r * k), np.c_[m0["x"] + dx + c * v[:, 0] - s_ * v[:, 1],
+                                                   m0["y"] + dy + s_ * v[:, 0] + c * v[:, 1]]))
+    tot = cnt = 0
+    for i, j in pairs:
+        d = np.sqrt(((W[j][:, None] - W[i][None]) ** 2).sum(-1).min(1))
+        d = d[d < 0.25]
+        if len(d) > 30:
+            tot, cnt = tot + d.mean(), cnt + 1
+    return tot / max(cnt, 1)
+
+
+def selfcal_cmd(files, write: bool) -> int:
+    """기록한 제자리 한 바퀴들로 **장착값(렌즈 x·y)을 자기 보정**한다 — 이웃 장 겹침이 가장 작게.
+    값은 회전 중심 기준이다(메카넘이 실제로 도는 축). 2026-10-23 실기: x 0.345·y −0.10(CAD x 0.12),
+    두 바퀴 일관성 52→80%. 바퀴마다 k(IMU 스케일)는 따로 푼다. 격자 좌표하강이라 PC에서 바퀴당 수십 초."""
+    data = []
+    for f in files:
+        z = np.load(f)
+        m0 = {**MOUNT, **json.loads(str(z["mount"]))} if "mount" in z.files else dict(MOUNT)
+        sh = [(r, flat(p_, m0, 500)) for r, p_, _ in load_shots(f)]
+        rs = np.array([r for r, _ in sh])
+        n = len(sh)
+        pairs = [(i, i + 1) for i in range(n - 1)] + [(i, i + 2) for i in range(n - 2)]
+        pairs += [(i, j) for i in range(n) for j in range(i + 1, n) if abs(rs[j] - rs[i] - 2 * math.pi) < math.radians(15)]
+        data.append((sh, pairs, m0))
+    if len({json.dumps({k: d[2][k] for k in ("x", "y", "yaw_deg")}) for d in data}) != 1:
+        print("⛔ 기록마다 장착값이 다르다 — 같은 장착값으로 찍은 기록끼리만 넣는다")
+        return 2
+    m0 = data[0][2]
+    p = {"dx": 0.0, "dy": 0.0, "dyaw": 0.0, **{"k%d" % i: 1.0 for i in range(len(data))}}
+    J = lambda q: sum(overlap(sh, q["dx"], q["dy"], q["dyaw"], q["k%d" % i], pr, m0)   # noqa: E731
+                      for i, (sh, pr, _) in enumerate(data)) / len(data)
+    # ⚠ 카메라 yaw는 풀지 않는다 — 제자리 회전에선 거의 안 보인다(실기: ±3°에 겹침 0.057~0.061m, 모의: 참 0°를 −3°로).
+    grid = {"dx": np.arange(-0.15, 0.301, 0.025), "dy": np.arange(-0.15, 0.151, 0.025),
+            **{"k%d" % i: np.arange(0.97, 1.031, 0.005) for i in range(len(data))}}
+    j0 = J(p)
+    for _ in range(3):
+        for key, vals in grid.items():
+            p[key] = float(vals[int(np.argmin([J({**p, key: v}) for v in vals]))])
+    j1 = J(p)
+    new = {"x": round(m0["x"] + p["dx"], 3), "y": round(m0["y"] + p["dy"], 3),
+           "yaw_deg": round(m0["yaw_deg"] + math.degrees(p["dyaw"]), 1)}
+    print("이웃 장 겹침 %.3f → %.3f m · IMU k %s" % (j0, j1, [round(p["k%d" % i], 3) for i in range(len(data))]))
+    print("장착값 %s → %s" % ({k: m0[k] for k in new}, new))
+    if j1 > 0.9 * j0:
+        print("  ⚠ 10%도 안 줄었다 — 장착값 탓이 아니다. 안 쓴다")
+        return 0
+    if write:
+        cur = {}
+        try:
+            cur = json.load(open(MOUNT_FILE))
+        except (OSError, ValueError):
+            pass
+        cur.update(new)
+        with open(MOUNT_FILE, "w") as fh:
+            json.dump(cur, fh, ensure_ascii=False)
+        print("  → %s 에 썼다(다음 스캔부터)" % MOUNT_FILE)
+    return 0
 
 
 def replay_cmd(f: str, m: dict) -> int:
@@ -967,8 +1035,9 @@ def selftest() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "clear", "selftest", "replay"])
-    ap.add_argument("file", nargs="?", help="replay: ~/space_scans/scan-*.npz")
+    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "clear", "selftest", "replay", "selfcal"])
+    ap.add_argument("file", nargs="*", help="replay·selfcal: ~/space_scans/scan-*.npz")
+    ap.add_argument("--write", action="store_true", help="selfcal: 찾은 장착값을 ~/space_mount.json에 쓴다")
     ap.add_argument("--steps", type=int, default=16)
     ap.add_argument("--w", type=int, default=150, help="회전 넛지 크기(+=왼쪽)")
     ap.add_argument("--wsecs", type=float, default=0.8, help="회전 넛지 시간(IMU 있으면 최대 ×2.5까지 --deg를 채운다)")
@@ -995,7 +1064,9 @@ def main() -> int:
     m = mount()
     print("장착", m, "(바꾸려면 %s)" % MOUNT_FILE)
     if a.mode == "replay":
-        return replay_cmd(a.file, m)
+        return replay_cmd(a.file[0], m)
+    if a.mode == "selfcal":
+        return selfcal_cmd(a.file, a.write)
     if a.mode == "snap":
         s = load()
         # 사람이 손으로 돌리거나 옮겨 놓고 누르는 버튼이다 — 자리는 ±0.5m 찾는다.

@@ -96,7 +96,8 @@ def render():
     c, s = math.cos(true[2]), math.sin(true[2])
     db = np.stack([np.ones_like(X), -X, -Y], -1)                      # 차체 좌표 방향(Z=1 기준)
     d = np.stack([c * db[..., 0] - s * db[..., 1], s * db[..., 0] + c * db[..., 1], db[..., 2]], -1)
-    o = np.array([true[0] + M["x"] * c, true[1] + M["x"] * s, M["h"]])
+    lx = float(os.environ.get("SIM_TRUE_X", M["x"]))     # 실제 렌즈 위치(코드는 M["x"]로 믿는다) — selfcal 시험용
+    o = np.array([true[0] + lx * c, true[1] + lx * s, M["h"]])
     with np.errstate(divide="ignore", invalid="ignore"):
         lo = (np.array(ROOM[0::2]) - o) / d
         hi = (np.array(ROOM[1::2]) - o) / d
