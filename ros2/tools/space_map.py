@@ -268,6 +268,18 @@ def match(s: dict, scan: np.ndarray, prior, win_xy: float, win_deg: float):
     prior = np.asarray(prior, float)
     if F.max() < 1 or len(scan) < 15:
         return prior, 0.0, 0, False
+    # ⚠ **조리개 문제**(2026-10-22 모의로 잡음) — 처음 보는 쪽 벽의 점은 지도에 없어 0점인데, 차체를
+    #   이미 아는 쪽으로 밀면 그 점들이 벽선을 따라 아는 칸에 얹혀 점수가 오른다. 잡음·미끄럼 0, θ 정확인데도
+    #   걸음마다 탐색 한계(15cm)까지 미끄러졌다(반시계로 돌면 늘 오른쪽으로). **짐작 자리에서 지도가 모르는
+    #   칸에 떨어지는 점은 처음부터 빼고** 맞춘다 — 지도에 더하기는 전부 다 한다(integrate).
+    pk = idx(to_world(prior, scan))
+    inb = ((pk >= 0) & (pk < N)).all(1)
+    known = dilate(lo != 0, 1)
+    sel = np.zeros(len(scan), bool)
+    sel[inb] = known[pk[inb, 0], pk[inb, 1]]
+    if sel.sum() < 15:
+        return prior, 0.0, 0, False
+    scan = scan[sel]
     contra = (lo < -FREE) & (F < HIT)
     S = F - 0.5 * contra                        # 탐색 점수: 맞으면 +, 빈 곳에 장애물을 놓으면 −
     oi = np.arange(-round(win_xy / RES), round(win_xy / RES) + 1)
@@ -407,6 +419,7 @@ def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: floa
     return bool(ok)
 
 
+CLOSE_DEG = 50.0               # 고리 닫기: 처음 이만큼의 장이 기준, 한 바퀴 뒤 이만큼 더 돌며 다시 본다
 COAST = 0.7                    # IMU가 목표의 이만큼 돌았다고 하면 지령을 끊는다 — 나머지는 감속 슬루가 민다
 
 
@@ -452,11 +465,97 @@ def turn(link, w: int, secs: float, deg: float) -> float:
     return got
 
 
+def scan_imu(a, m, s, link) -> int:
+    """IMU 제자리 한 바퀴 — **걸음마다 맞추지 않는다.** θ=IMU, 자리=그대로로 장을 모으고(화면엔 바로 더해
+    보여 준다), 한 바퀴를 넘기면 **첫 장과 마지막 장을 맞춰(고리 닫기) IMU 스케일을 고친 뒤** 지도를 다시 짓는다.
+
+    왜(2026-10-22 모의, 방 5×3.5m·상자 둘·깊이 잡음·미끄럼·IMU 스케일 2% 틀림): 복셀이 표면 7.5cm 안에 든 비율이
+    걸음마다 맞춤 37~43% · θ만 맞춤 53~74% · **스케일 맞는 IMU만 84~88%** · 참 자세 97%. 5cm·1° 격자 맞춤이
+    잘 맞춘 자이로보다 거칠다. 남는 오차는 스케일 하나인데, 그건 한 바퀴 돈 뒤 같은 곳을 다시 보면 잴 수 있다.
+    ponytail: 제자리라 자리는 0으로 둔다 — 메카넘이 돌며 옆으로 밀리는 만큼(실측 전)은 못 본다. 크면 고리 닫기에서 xy도 나눠 준다.
+    """
+    base = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in s.items()}
+    pose0 = s["pose"].copy()
+    dep, meta = frame(time.time())
+    i0 = imu_now()
+    pts = cloud(dep, meta, m)
+    shots = [(0.0, pts, scan2d(pts, m))]
+    stuck, rel = 0, 0.0
+    steps = max(a.steps, int(math.ceil(400.0 / (a.deg * COAST))))   # 걸음 수가 아니라 한 바퀴가 목표다
+    for i in range(steps):
+        g = turn(link, a.w, a.wsecs, a.deg)
+        if not abs(g) >= 0.5:                       # nan(IMU 끊김) 포함
+            stuck += 1
+            if stuck >= 3:
+                print("⛔ 세 번 연속 안 돌았다 — 회전 크기·시간을 올리거나 모터 전원을 본다")
+                return 1
+            continue
+        stuck = 0
+        dep, meta = frame(time.time() + 0.4)
+        im = imu_now()
+        if im is None or im[0] != i0[0]:
+            print("⛔ IMU가 끊겼거나 다시 켜졌다 — 이 스캔은 버린다")
+            return 1
+        rel = im[1] - i0[1]
+        pts = cloud(dep, meta, m)
+        sc = scan2d(pts, m)
+        shots.append((rel, pts, sc))
+        s["pose"] = pose0 + [0, 0, rel]
+        s["pose"][2] = wrap(s["pose"][2])
+        integrate(s, sc, pts, m)
+        s["frames"] = int(s["frames"]) + 1
+        s["imu"] = np.array(im[:2])
+        save(s)
+        print("[%d/%d] IMU 누적 %.1f° (이번 %.1f°) · 복셀 %d" % (i + 1, steps, math.degrees(rel), g, len(s["vox"])))
+        if abs(rel) >= 2 * math.pi + math.radians(CLOSE_DEG):
+            break
+    if abs(rel) < 2 * math.pi:
+        print("걸음을 다 썼다 — IMU %.0f°. 한 바퀴가 안 돼 스케일은 못 고친다(지도는 IMU 그대로)" % math.degrees(rel))
+        return 0
+    # 고리 닫기 — 처음 CLOSE_DEG까지의 장으로 지은 깨끗한 지도에, 한 바퀴 뒤 같은 곳을 다시 본 장들을 맞춘다.
+    #   (첫 장 하나 대 마지막 장 하나는 겹침이 작아 겹친 점 0~23 — 모의에서 셋 중 둘을 못 믿었다)
+    t = empty()
+    for r, p_, sc_ in shots:
+        if abs(r) <= math.radians(CLOSE_DEG):
+            t["pose"] = np.array([0.0, 0.0, r])
+            integrate(t, sc_, p_, m)
+    ks = []
+    for r, p_, sc_ in shots:
+        if abs(r) >= 2 * math.pi - math.radians(10):
+            prior = np.array([0.0, 0.0, wrap(r)])
+            got, q, hit, amb = match(t, sc_, prior, 0.1, 15)
+            if not amb and q >= Q_MIN and hit >= HIT_MIN:
+                ks.append((r + wrap(got[2] - prior[2])) / r)
+    k = float(np.median(ks)) if ks else 1.0
+    print("고리 닫기: 맞춘 장 %d · 참 회전 = IMU × %.4f %s" % (len(ks), k, np.round(ks, 4).tolist()))
+    if not ks or abs(k - 1) > 0.06:
+        print("  ⚠ 고리 닫기를 못 믿는다 — 지도는 IMU 그대로 둔다")
+        return 0
+    if abs(k - 1) > 0.005:
+        print("  IMU 스케일 %.4f — imu-yaw.service 의 IMU_SCALE 에 곱하면 다음부터 처음부터 맞는다" % k)
+    for kk, v in base.items():
+        s[kk] = v
+    for r, p_, sc_ in shots[1:]:
+        s["pose"] = pose0 + [0, 0, r * k]
+        s["pose"][2] = wrap(s["pose"][2])
+        integrate(s, sc_, p_, m)
+        s["frames"] = int(s["frames"]) + 1
+    s["imu"] = np.array([i0[0], i0[1] + rel])  # 기준 = 마지막 장의 IMU(자세 θ는 고친 값)
+    save(s)
+    print("✅ 한 바퀴 — 고친 회전 %.1f°로 지도를 다시 지었다 · 복셀 %d" % (math.degrees(rel * k), len(s["vox"])))
+    return 0
+
+
 def scan_cmd(a, m) -> int:
     from base_nudge import open_link
     s = load()
     localize(s, m, s["pose"], 0.4, 30, time.time())
     link = open_link()
+    if link is not None and imu_now() is not None:
+        try:
+            return scan_imu(a, m, s, link)
+        finally:
+            link.close()
     if link is None:
         return 1
     est, total, stuck = 0.0, 0.0, 0
@@ -664,6 +763,13 @@ def selftest() -> int:
     # ⑤-1 IMU 폭이면 곧은 벽의 모호함이 없다 — ②-1에서 모호했던 100°를 짐작만으로 찾는다
     gi, _, _, amb = match(s, _room_scan(t90, m=m), [0.0, 0.0, math.radians(102)], 0.5, IMU_WIN_DEG)
     assert not amb and abs(wrap(gi[2] - t90[2])) < math.radians(3), gi
+    # ⑥ 조리개 — 지도에 한 장만 있고 15° 돌린 장을 맞추면, 처음 보는 쪽 벽 점을 아는 벽에 얹으려고
+    #   미끄러지면 안 된다(옛 코드 0.21m, 모의 스캔에서 걸음마다 15cm씩 흘렀다)
+    s6 = empty()
+    integrate(s6, _room_scan([0.3, 0.2, 0.0], m=m), np.zeros((0, 3)), m)
+    t6 = np.array([0.3, 0.2, math.radians(15)])
+    g6 = match(s6, _room_scan(t6, m=m), t6, 0.15, 0)[0]
+    assert np.hypot(*(g6[:2] - t6[:2])) < 0.06, ("조리개 미끄럼", g6)
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0

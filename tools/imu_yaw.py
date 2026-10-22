@@ -134,10 +134,16 @@ class Mpu:
 
 
 def publish(st: dict) -> None:
+    """⚠ /dev/shm 파일이 쓰는 도중 사라질 수 있다(2026-10-22 19:48 실측: tmp→replace 사이 FileNotFoundError로
+    발행기가 죽고 yaw가 0부터 다시 — 스캔 중이면 그 스캔이 버려진다). server 사용자의 마지막 SSH가 끊기면
+    logind RemoveIPC가 그 사용자의 /dev/shm 파일을 지우는 것으로 본다(Linger=no). 한 번 거르고 다음 20ms에 다시 쓴다."""
     tmp = OUT + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(st, f)
-    os.replace(tmp, OUT)
+    try:
+        with open(tmp, "w") as f:
+            json.dump(st, f)
+        os.replace(tmp, OUT)
+    except FileNotFoundError:
+        pass
 
 
 def run() -> int:
