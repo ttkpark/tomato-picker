@@ -1002,6 +1002,13 @@ def tomato_bearings(st: dict, m: dict) -> list:
             for cx, _ in st.get("positions", [])]
 
 
+def tomato_elevations(st: dict, m: dict) -> list:
+    """tomato-vision 상태 → 렌즈에서 본 높이각(rad, 위 +). 화소는 정사각이라 가로 화각의 f를 그대로 쓴다."""
+    w, h = float(st.get("w", 1280)), float(st.get("h", 720))
+    f = (w / 2) / math.tan(math.radians(m["tcam_hfov"]) / 2)
+    return [math.atan2(h / 2 - float(cy), f) for _, cy in st.get("positions", [])]
+
+
 def tomato_fresh(after: float, timeout: float = 4.0):
     """after 뒤에 쓰인 tomato-vision 상태(없으면 None). 옛 발행기는 ts가 없다 — 그러면 못 믿는다."""
     t0 = time.time()
@@ -1047,9 +1054,11 @@ def clearance(lo: np.ndarray, xy, rmax: float = 1.0) -> float:
 TOMATO_SAME = 0.3              # 이 거리 안의 자리는 같은 나무로 묶는다(m)
 
 
-def slice_valid(dep: np.ndarray, meta: dict, m: dict, b: float, half: float = math.radians(2)) -> float:
-    """차체 기준 방위 b(±half)에 드는 깊이 열들 가운데(위아래 1/4 뺀) 유효 깊이의 비율.
-    가까운(60cm 안) 물체는 깊이가 0이라 띠에 **뒤쪽 배경만** 남는다 — 그걸 거리로 쓰면 1m 넘게 틀린다(10/23)."""
+def slice_valid(dep: np.ndarray, meta: dict, m: dict, b: float, half: float = math.radians(2),
+                e: float | None = None) -> float:
+    """차체 기준 방위 b(±half)에 드는 깊이 열들 가운데 유효 깊이의 비율. 행은 높이각 e(±ELEV_HALF)가 있으면
+    그 줄, 없으면 위아래 1/4 뺀 가운데. 가까운(60cm 안) 물체는 깊이가 0이라 띠에 **뒤쪽 배경만** 남는다 —
+    그걸 거리로 쓰면 1m 넘게 틀린다(10/23)."""
     it, w = meta["intrinsics"], dep.shape[1]
     u = np.arange(w)
     uu = (int(meta.get("width", w)) - 1 - u) if meta.get("mirrored") else u   # cloud()와 같은 거울 처리
@@ -1058,16 +1067,26 @@ def slice_valid(dep: np.ndarray, meta: dict, m: dict, b: float, half: float = ma
     if not len(cols):
         return 0.0
     h = dep.shape[0]
-    d = dep[h // 4: 3 * h // 4, cols].astype(np.float32) * float(meta["depth_scale_mm"])
+    if e is None:
+        r0, r1 = h // 4, 3 * h // 4
+    else:                                   # cloud()와 같은 기울기 규약: 행 v의 높이각 = tilt − atan((v−ppy)/fy)
+        t = math.radians(m["tilt_deg"])
+        r0, r1 = (int(np.clip(it["ppy"] + it["fy"] * math.tan(t - e + k * ELEV_HALF), 0, h)) for k in (-1, 1))
+        if r1 <= r0:
+            return 0.0
+    d = dep[r0:r1, cols].astype(np.float32) * float(meta["depth_scale_mm"])
     return float(((d >= meta["min_mm"]) & (d <= meta["max_mm"])).mean())
 
 
 SLICE_MIN = 0.3                # 그 방위 띠의 유효 깊이가 이보다 적으면 거리를 모르는 것으로(가깝거나 가려짐)
+# 토마토 높이각 ±이만큼의 줄만 본다. 세로 띠 전체를 보면 바닥·흰 화분(깊이 0)과 뒤 벽이 섞여
+# 1.13m 토마토를 1.83m로 쟀다 — 10/24 큰 방에서 찾기 7번이 전부 '?'였던 원인.
+ELEV_HALF = math.radians(3)
 
 
-def tomato_ranges(m: dict, bearings, ts: float) -> list:
-    """같은 순간 Astra 깊이에서 각 방위(차체 기준)의 거리를 **렌즈에서** 잰다 — 그 방위 ±2° 띠의 가까운 20%.
-    컬러와 깊이는 정렬돼 있지 않지만 방위는 같은 쪽이다. 띠 유효 깊이가 SLICE_MIN 밑이면(60cm 안) nan."""
+def tomato_ranges(m: dict, bearings, ts: float, elevs=None) -> list:
+    """같은 순간 Astra 깊이에서 각 방위(차체 기준)의 거리를 **렌즈에서** 잰다 — 그 방위 ±2°(높이각을 주면
+    그 ±ELEV_HALF 줄) 띠의 가까운 20%. 컬러와 깊이는 정렬돼 있지 않지만 방향은 같다. 유효 깊이가 SLICE_MIN 밑이면 nan."""
     try:
         dep, meta = frame(ts - 0.3, timeout=2.0)
     except RuntimeError:
@@ -1076,12 +1095,15 @@ def tomato_ranges(m: dict, bearings, ts: float) -> list:
     rel = pts[:, :2] - [m["x"], m["y"]]
     d, ang = np.hypot(rel[:, 0], rel[:, 1]), np.arctan2(rel[:, 1], rel[:, 0])
     band = (pts[:, 2] > m["floor_cut"]) & (pts[:, 2] < m["top"])
+    elv = np.arctan2(pts[:, 2] - m["h"], d)
     out = []
-    for b in bearings:
-        if slice_valid(dep, meta, m, b) < SLICE_MIN:
+    for b, e in zip(bearings, elevs if elevs is not None else [None] * len(bearings)):
+        if slice_valid(dep, meta, m, b, e=e) < SLICE_MIN:
             out.append(float("nan"))
             continue
         sel = band & (np.abs((ang - b + math.pi) % (2 * math.pi) - math.pi) < math.radians(2))
+        if e is not None:
+            sel &= np.abs(elv - e) < ELEV_HALF
         out.append(float(np.percentile(d[sel], 20)) if sel.sum() >= 5 else float("nan"))
     return out
 
@@ -1152,7 +1174,7 @@ def find_cmd(a, m) -> int:
             th = wrap(th0 + i[1] - i0[1])
             bs = tomato_bearings(st, m)
             lens = to_world([s["pose"][0], s["pose"][1], th], np.array([[m["x"], m["y"]]]))[0]
-            rs = tomato_ranges(m, bs, float(st["ts"])) if bs else []
+            rs = tomato_ranges(m, bs, float(st["ts"]), tomato_elevations(st, m)) if bs else []
             seen += [(lens[0], lens[1], wrap(th + b), r) for b, r in zip(bs, rs)]
             if bs:
                 print("    거리(렌즈) %s" % ["%.2fm" % r if r == r else "?" for r in rs])
@@ -1542,6 +1564,13 @@ def selftest() -> int:
     dp2 = np.full((480, 640), 2000, np.uint16); dp2[:, :100] = 0     # 화면 왼쪽 끝이 빔
     assert slice_valid(dp2, mt8, dict(m, yaw_deg=0.0), math.radians(25)) < 0.1      # 거울 아님: 왼쪽 = 차체 왼쪽(+)
     assert slice_valid(dp2, dict(mt8, mirrored=True), dict(m, yaw_deg=0.0), math.radians(-25)) < 0.1
+    # ⑨ 토마토 높이 줄만 — 나머지(바닥·흰 화분 0, 4m 넘는 배경)가 비어도 토마토 높이(위 10°) 줄이 차 있으면 잰다(10/24)
+    m9 = dict(m, yaw_deg=0.0, tilt_deg=0.0)
+    e9 = tomato_elevations({"w": 1280, "h": 720, "positions": [[640, 360 - 985.3 * math.tan(math.radians(10))]]}, m9)[0]
+    assert abs(e9 - math.radians(10)) < 1e-3, e9
+    dp9 = np.zeros((480, 640), np.uint16); dp9[110:170] = 1130      # 토마토 줄(행 ≈139)만 차 있다
+    assert slice_valid(dp9, mt8, m9, 0.0) < SLICE_MIN <= slice_valid(dp9, mt8, m9, 0.0, e=e9)
+    assert slice_valid(dp9, mt8, m9, 0.0, e=math.radians(-15)) == 0.0                 # 바닥 줄은 비었다
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
