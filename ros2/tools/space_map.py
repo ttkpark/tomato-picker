@@ -934,7 +934,6 @@ def wrist_cmd(m) -> int:
 
 
 TOMATO_STATUS = "/dev/shm/tomato_status"
-TOMATO_TOL = math.radians(8)   # 이 각 안의 방위는 같은 나무로 묶는다
 TOMATO_GUESS = 1.5             # 지도에 벽이 없어 거리를 모르면 이만큼 앞에 둔다(화면에 '거리 모름'으로)
 
 
@@ -972,7 +971,9 @@ def ray_hit(lo: np.ndarray, xy, th: float, rmin: float = 0.4, rmax: float = 4.0)
     return float("nan")
 
 
-SPIN_MARGIN = 0.12              # 제자리 회전 여유 — 차체 반지름에 더한다(회전 중 밀림·케이스 모서리)
+# 제자리 회전에 비워 둘 반지름. 실측 회전 중심이 차체 **뒤쪽**이라(렌즈가 중심에서 0.345m 앞, 렌즈 ≈ 맨 앞)
+# 앞 모서리가 √(0.36²+0.14²) ≈ 0.39m를 그린다 — 차체 반지름 0.22+0.12로는 모자라 10/23 세 번 가구에 걸렸다.
+SPIN_R = 0.45
 
 
 def clearance(lo: np.ndarray, xy, rmax: float = 1.0) -> float:
@@ -986,28 +987,49 @@ def clearance(lo: np.ndarray, xy, rmax: float = 1.0) -> float:
     return float(min(rmax, np.hypot(ii + lo_[0] - c[0], jj + lo_[1] - c[1]).min() * RES))
 
 
-def cluster_bearings(bs, tol: float = TOMATO_TOL) -> list:
-    """방위 목록 → [(평균 방위, 개수)], 많이 본 순. 원형이라 ±π 경계를 넘어 묶는다."""
-    left, out = sorted(wrap(b) for b in bs), []
-    while left:
-        best = max(left, key=lambda b: sum(abs(wrap(x - b)) < tol for x in left))
-        grp = [x for x in left if abs(wrap(x - best)) < tol]
-        out.append((wrap(best + float(np.mean([wrap(x - best) for x in grp]))), len(grp)))
-        left = [x for x in left if abs(wrap(x - best)) >= tol]
-    return sorted(out, key=lambda t: -t[1])
+TOMATO_SAME = 0.3              # 이 거리 안의 자리는 같은 나무로 묶는다(m)
 
 
-def place_tomatoes(s: dict, bearings, min_count: int = 2) -> np.ndarray:
-    """세계 방위들 → 지도 위 토마토 자리. 한 번만 본 방위는 오검출로 보고 버린다."""
-    xy, out = s["pose"][:2], []
-    for b, k in cluster_bearings(bearings):
-        if k < min_count:
-            continue
-        r = ray_hit(s["lo"], xy, b)
+def tomato_ranges(m: dict, bearings, ts: float) -> list:
+    """같은 순간 Astra 깊이에서 각 방위(차체 기준)의 거리를 **렌즈에서** 잰다 — 그 방위 ±2° 띠의 가까운 20%.
+    컬러와 깊이는 정렬돼 있지 않지만 방위는 같은 쪽이다. 못 재면 nan."""
+    try:
+        dep, meta = frame(ts - 0.3, timeout=2.0)
+    except RuntimeError:
+        return [float("nan")] * len(bearings)
+    pts = cloud(dep, meta, m)
+    rel = pts[:, :2] - [m["x"], m["y"]]
+    d, ang = np.hypot(rel[:, 0], rel[:, 1]), np.arctan2(rel[:, 1], rel[:, 0])
+    band = (pts[:, 2] > m["floor_cut"]) & (pts[:, 2] < m["top"])
+    out = []
+    for b in bearings:
+        sel = band & (np.abs((ang - b + math.pi) % (2 * math.pi) - math.pi) < math.radians(2))
+        out.append(float(np.percentile(d[sel], 20)) if sel.sum() >= 5 else float("nan"))
+    return out
+
+
+def place_tomatoes(s: dict, seen, min_count: int = 2) -> np.ndarray:
+    """본 것들 [(렌즈 x, y, 세계 방위, 렌즈→거리|nan)] → 지도 위 토마토 자리 [(x, y, 본 횟수, 거리 아는가)].
+
+    카메라는 회전 중심에서 0.36m 떨어져 같이 돈다 — 방위를 중심에서 쏘면 자리가 0.3m씩 흩어졌다(10/23 세 번).
+    거리를 못 잰 것은 지도 벽까지 광선, 그것도 없으면 1.5m. 한 번만 본 자리는 오검출로 버린다."""
+    pts = []
+    for ox, oy, b, r in seen:
         known = not math.isnan(r)
-        r = r if known else TOMATO_GUESS
-        out.append([xy[0] + r * math.cos(b), xy[1] + r * math.sin(b), k, 1.0 if known else 0.0])
-    return np.array(out).reshape(-1, 4)
+        if not known:
+            r = ray_hit(s["lo"], (ox, oy), b)
+            known = not math.isnan(r)
+            r = r if known else TOMATO_GUESS
+        pts.append((ox + r * math.cos(b), oy + r * math.sin(b), known))
+    out, left = [], list(range(len(pts)))
+    while left:
+        near = lambda i: [j for j in left if math.hypot(pts[j][0] - pts[i][0], pts[j][1] - pts[i][1]) < TOMATO_SAME]  # noqa: E731
+        grp = near(max(left, key=lambda i: len(near(i))))
+        left = [j for j in left if j not in grp]
+        if len(grp) >= min_count:
+            out.append([float(np.mean([pts[j][0] for j in grp])), float(np.mean([pts[j][1] for j in grp])),
+                        len(grp), 1.0 if any(pts[j][2] for j in grp) else 0.0])
+    return np.array(sorted(out, key=lambda t: -t[2])).reshape(-1, 4)
 
 
 def find_cmd(a, m) -> int:
@@ -1025,9 +1047,9 @@ def find_cmd(a, m) -> int:
     if not localize(s, m, s["pose"], 0.4, 30, time.time()):
         print("⛔ 지금 자리를 지도로 못 맞췄다(60cm 안을 보고 있거나 지도 밖) — 넓은 곳으로 옮기고 [제자리 한 바퀴 스캔]부터")
         return 1
-    gap = clearance(s["lo"], s["pose"][:2])
-    if gap < m["radius"] + SPIN_MARGIN:
-        print("⛔ 둘레 %.2fm 안에 장애물 — 돌면 부딪힌다(%.2fm 이상 띄운다)" % (gap, m["radius"] + SPIN_MARGIN))
+    gap, need = clearance(s["lo"], s["pose"][:2]), m.get("spin_r", SPIN_R)
+    if gap < need:
+        print("⛔ 둘레 %.2fm 안에 장애물 — 돌면 부딪힌다(%.2fm 이상 띄운다, 회전판은 정면에)" % (gap, need))
         return 1
     th0, i0, seen, total, stuck = float(s["pose"][2]), imu_now(), [], 0.0, 0
     link = None if a.hand else open_link()
@@ -1042,7 +1064,11 @@ def find_cmd(a, m) -> int:
                 return 1
             th = wrap(th0 + i[1] - i0[1])
             bs = tomato_bearings(st, m)
-            seen += [wrap(th + b) for b in bs]
+            lens = to_world([s["pose"][0], s["pose"][1], th], np.array([[m["x"], m["y"]]]))[0]
+            rs = tomato_ranges(m, bs, float(st["ts"])) if bs else []
+            seen += [(lens[0], lens[1], wrap(th + b), r) for b, r in zip(bs, rs)]
+            if bs:
+                print("    거리(렌즈) %s" % ["%.2fm" % r if r == r else "?" for r in rs])
             print("[%d] 방향 %.0f° · 토마토 %d (cx %s)" % (k + 1, math.degrees(th), len(bs),
                                                     [int(c) for c, _ in st.get("positions", [])]))
             if total >= 360:
@@ -1265,14 +1291,19 @@ def selftest() -> int:
     mt = dict(m, tcam_hfov=60.0, tcam_yaw_deg=0.0)
     b = tomato_bearings({"w": 1280, "positions": [[640, 300], [1280, 300]]}, mt)
     assert abs(b[0]) < 1e-9 and abs(b[1] + math.radians(30)) < 1e-9, b
-    cl = cluster_bearings([math.radians(179), math.radians(-179), math.radians(178), math.radians(90)])
-    assert cl[0][1] == 3 and abs(abs(cl[0][0]) - math.radians(179.3)) < math.radians(1), cl
     st = empty()
     st["lo"][tuple(idx([2.0, 0.0]))] = 2.0           # 2m 앞 장애물 한 칸
-    t = place_tomatoes(st, [0.0, 0.01, math.radians(90)])
+    nan = float("nan")
+    t = place_tomatoes(st, [(0, 0, 0.0, nan), (0, 0, 0.01, nan), (0, 0, math.radians(90), nan)])
     assert len(t) == 1 and abs(t[0][0] - 2.0) < 0.06 and t[0][2] == 2 and t[0][3] == 1, t
-    t2 = place_tomatoes(st, [math.radians(-90)] * 2)
+    t2 = place_tomatoes(st, [(0, 0, math.radians(-90), nan)] * 2)
     assert t2[0][3] == 0 and abs(t2[0][1] + TOMATO_GUESS) < 1e-9, "벽이 없으면 거리 모름"
+    # 렌즈가 돌며 다른 자리에서 같은 나무를 보면(방위는 달라도) 한 자리로 묶인다
+    tgt = (1.0, 1.0)
+    obs = [(ox, oy, math.atan2(tgt[1] - oy, tgt[0] - ox), math.hypot(tgt[0] - ox, tgt[1] - oy))
+           for ox, oy in ((0.36, 0.0), (0.25, 0.25), (0.0, 0.36))]
+    t3 = place_tomatoes(st, obs)
+    assert len(t3) == 1 and t3[0][2] == 3 and math.hypot(t3[0][0] - 1, t3[0][1] - 1) < 1e-6, t3
     assert abs(clearance(st["lo"], [0.0, 0.0]) - 1.0) < 1e-9 and abs(clearance(st["lo"], [1.7, 0.0]) - 0.3) < 0.06
     # ⑥ 근접 정지 — 새 장이 거의 다 무효면 막고, 낡은 장(발행기 멈춤)으로는 막지 않는다
     import tempfile
