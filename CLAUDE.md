@@ -132,7 +132,7 @@ behavior the task requires stay in.
   팔 범위 캘리브레이션을 다시 하면 **영점도 다시** 잡아야 한다(정규화값의 뜻이 바뀐다).
 
 ## 젯슨 접속
-- `ssh server@192.168.0.8` (IP는 DHCP라 바뀔 수 있음 / 공개키 등록·passwordless sudo).
+- `ssh server@100.85.187.87`(Tailscale, 고정) — LAN은 DHCP라 바뀐다(2026-10-23 = 192.168.0.19, 예전 .8). 공개키 등록·passwordless sudo.
   Bash 툴은 `-i /c/Users/parkg/.ssh/id_ed25519` 명시 필요(HOME 다름).
 - 장치: `/dev/ttyUSB0`=모터보드, `/dev/ttyACM0`=팔로버(ID 1~6 팔 + ID 7 회전판).
 - **IP를 모를 때는 블루투스로 물어본다** ([`docs/bluetooth-console.md`](docs/bluetooth-console.md), 2026-08-22 추가).

@@ -398,7 +398,9 @@ def build(job, args):
         if mode == "find" and args.get("hand"):
             a += ["--hand"]                     # 바퀴 대신 사람이 돌린다
         if mode in ("scan", "go", "find"):
-            a += ["--w", "%d" % int(num(args, "w", 150, 60, 255)),
+            # find만 시계 방향을 고를 수 있다 — 한쪽이 막힌 자리(10/23 케이블)에서 반대로 돈다
+            sign = -1 if (mode == "find" and args.get("cw")) else 1
+            a += ["--w", "%d" % (sign * int(num(args, "w", 150, 60, 255))),
                   "--wsecs", "%.2f" % num(args, "wsecs", 0.8, 0.2, 2.0)]
         if mode == "scan":
             a += ["--steps", "%d" % int(num(args, "steps", 16, 1, 40))]
@@ -531,6 +533,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button title="모터 없이 — 차체를 손으로 15~20°씩 돌리고 멈추기를 한 바퀴 넘게(+50°). IMU가 멈출 때마다 한 장 담고, 끝에 고리 닫기로 지도를 다시 짓는다" onclick="run('space',spArgs({mode:'scan',hand:true}))">손으로 돌리며 스캔</button>
       <button class="go" onclick="spGo()">목표로 가기</button>
       <button class="go" title="제자리에서 한 바퀴 돌며 tomato-vision이 본 토마토의 방향을 모아, 지도 벽까지 거리로 자리를 정한다. 먼저 [제자리 한 바퀴 스캔]으로 지도를 만들어 둔다" onclick="run('space',spArgs({mode:'find'}))">🍅 토마토 찾기</button>
+      <button title="시계 방향으로 돌며 찾는다 — 반시계 쪽이 막혔을 때" onclick="run('space',spArgs({mode:'find',cw:1}))">🍅 찾기(시계)</button>
       <button onclick="spToTomato()">🍅 토마토로 가기</button>
       <button onclick="if(confirm('지도를 지울까? 다음 장의 자리가 원점이 된다'))run('space',{mode:'clear'})">지도 지움</button>
     </div>
