@@ -420,6 +420,20 @@ def frame(after: float, timeout: float = 40.0):
                        "(60cm 안을 봤다)" % timeout)
 
 
+NEAR_VALID = 0.08              # Astra 유효 깊이 비율이 이보다 낮으면 정면 60cm 안에 뭔가 있다(투광기가 꺼진다, 10/23 실기 0.00)
+
+
+def astra_blocked(wait: float = 0.4) -> bool:
+    """움직인 뒤 wait초 기다린 새 장이 '거의 다 무효'인가 — 그러면 frame()은 40초를 헛기다린다."""
+    from tomato_picker.config import DEPTH_CAMERAS
+    time.sleep(wait)
+    try:
+        meta = json.load(open(DEPTH_CAMERAS["astra"]["meta"]))
+    except (OSError, ValueError):
+        return False
+    return time.time() - float(meta.get("ts", 0)) < 2 and float(meta.get("valid_frac", 1)) < NEAR_VALID
+
+
 def refine(s: dict, pts: np.ndarray, m: dict, pose) -> np.ndarray:
     """격자 맞춤(5cm·1°, 2D 스캔 100점) 결과를 **지도 전체의 장애물 칸에 대한 점구름 ICP**로 다듬는다.
     한 장끼리 ICP는 벽 하나만 겹치면 벽을 따라 미끄러졌지만(되돌림), 방의 벽·모서리가 다 든 지도에는 평행이동이 선다.
@@ -885,6 +899,9 @@ def step_cmd(a, m) -> int:
     from base_nudge import drive, open_link
     s = load()
     prev = s["pose"].copy()
+    if a.vx > 0 and astra_blocked(0):
+        print("⛔ 정면 60cm 안에 물체 — 앞으로는 안 간다(뒤·옆·회전은 된다)")
+        return 1
     link = open_link()
     if link is None:
         return 1
@@ -899,6 +916,9 @@ def step_cmd(a, m) -> int:
     f, l = 0.10 * np.sign(a.vx), 0.08 * np.sign(a.vy)
     c, sn = math.cos(prev[2]), math.sin(prev[2])
     prior = prev + [f * c - l * sn, f * sn + l * c, math.radians(20) * np.sign(a.w)]
+    if astra_blocked():
+        print("⚠ 움직인 뒤 정면 60cm 안에 물체 — 자세를 못 맞춘다(지도는 그대로). 뒤로 한 걸음 빼라")
+        return 1
     localize(s, m, prior, 0.05 if (a.w and not (a.vx or a.vy)) else 0.3, 50, time.time() + 0.4)
     d = s["pose"] - prev
     print("한 걸음 → %.2fm %.0f°" % (float(np.hypot(d[0], d[1])), math.degrees(wrap(d[2]))))
@@ -1060,6 +1080,9 @@ def go_cmd(a, m) -> int:
     from base_nudge import drive, open_link
     s = load()
     goal = np.array([a.x, a.y])
+    if astra_blocked(0):
+        print("⛔ 정면 60cm 안에 물체(Astra 깊이가 꺼졌다) — 뒤로 빼고 다시")
+        return 1
     # 사람이 손으로 옮겼을 수 있다 — 처음엔 넓게 찾는다
     localize(s, m, s["pose"], 0.5, 40, time.time())
     link = open_link()
@@ -1103,6 +1126,9 @@ def go_cmd(a, m) -> int:
                         return 1
                 else:
                     veer = 0
+            if astra_blocked():
+                print("⛔ %s 뒤 정면 60cm 안에 물체 — 멈춘다(10/23 실기: 목표 0.23m 앞 회전에서 서랍장에 붙음)" % what)
+                return 1
             # 제자리 회전이면 자리는 거의 그대로다(장착값이 실제 회전 중심 기준) — 넓게 찾으면 벽을 따라 0.1~0.3m 미끄러졌다
             localize(s, m, prior, 0.05 if what != "전진" else 0.3, 25, time.time() + 0.4)
             dxy = float(np.hypot(*(s["pose"][:2] - prev[:2])))
@@ -1241,6 +1267,17 @@ def selftest() -> int:
     t2 = place_tomatoes(st, [math.radians(-90)] * 2)
     assert t2[0][3] == 0 and abs(t2[0][1] + TOMATO_GUESS) < 1e-9, "벽이 없으면 거리 모름"
     assert abs(clearance(st["lo"], [0.0, 0.0]) - 1.0) < 1e-9 and abs(clearance(st["lo"], [1.7, 0.0]) - 0.3) < 0.06
+    # ⑥ 근접 정지 — 새 장이 거의 다 무효면 막고, 낡은 장(발행기 멈춤)으로는 막지 않는다
+    import tempfile
+    from tomato_picker.config import DEPTH_CAMERAS
+    keep, f = DEPTH_CAMERAS["astra"]["meta"], os.path.join(tempfile.mkdtemp(), "astra_meta.json")
+    DEPTH_CAMERAS["astra"]["meta"] = f
+    try:
+        for v, age, want in ((0.0, 0, True), (0.5, 0, False), (0.0, 10, False)):
+            json.dump({"valid_frac": v, "ts": time.time() - age}, open(f, "w"))
+            assert astra_blocked(0) == want, (v, age, want)
+    finally:
+        DEPTH_CAMERAS["astra"]["meta"] = keep
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
