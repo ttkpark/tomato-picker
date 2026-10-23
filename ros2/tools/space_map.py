@@ -1014,6 +1014,10 @@ def place_tomatoes(s: dict, seen, min_count: int = 2) -> np.ndarray:
     카메라는 회전 중심에서 0.36m 떨어져 같이 돈다 — 방위를 중심에서 쏘면 자리가 0.3m씩 흩어졌다(10/23 세 번).
     거리를 못 잰 것은 지도 벽까지 광선, 그것도 없으면 1.5m. 한 번만 본 자리는 오검출로 버린다."""
     pts = []
+    # 깊이로 잰 것이 하나라도 있으면 못 잰 것은 버린다 — 화면 가장자리(컬러 66° > 깊이 58°)에서 본 것이
+    # 광선으로 먼 벽에 떨어져 가짜 토마토가 됐다(10/23: (1.38, 1.93))
+    if any(not math.isnan(r) for *_, r in seen):
+        seen = [q for q in seen if not math.isnan(q[3])]
     for ox, oy, b, r in seen:
         known = not math.isnan(r)
         if not known:
@@ -1090,7 +1094,7 @@ def find_cmd(a, m) -> int:
         print("토마토를 못 찾았다(두 번 넘게 본 방향이 없다) — 본 방위 %d개, %.0f° 돌았다" % (len(seen), total))
         return 0
     for x, y, k, known in s["tomato"]:
-        print("🍅 (%.2f, %.2f) · %d번 봄 · %s" % (x, y, k, "지도 벽까지 거리" if known else
+        print("🍅 (%.2f, %.2f) · %d번 봄 · %s" % (x, y, k, "거리 잼(Astra 깊이, 없으면 지도 벽)" if known else
                                                  "거리 모름(지도에 그 방향 벽이 없다 — 1.5m로 둠)"))
     return 0
 
@@ -1304,6 +1308,8 @@ def selftest() -> int:
            for ox, oy in ((0.36, 0.0), (0.25, 0.25), (0.0, 0.36))]
     t3 = place_tomatoes(st, obs)
     assert len(t3) == 1 and t3[0][2] == 3 and math.hypot(t3[0][0] - 1, t3[0][1] - 1) < 1e-6, t3
+    t4 = place_tomatoes(st, obs + [(0, 0, 0.0, nan)] * 2)            # 못 잰 둘은 벽(2m)으로 가지 않는다
+    assert len(t4) == 1 and t4[0][2] == 3, t4
     assert abs(clearance(st["lo"], [0.0, 0.0]) - 1.0) < 1e-9 and abs(clearance(st["lo"], [1.7, 0.0]) - 0.3) < 0.06
     # ⑥ 근접 정지 — 새 장이 거의 다 무효면 막고, 낡은 장(발행기 멈춤)으로는 막지 않는다
     import tempfile
