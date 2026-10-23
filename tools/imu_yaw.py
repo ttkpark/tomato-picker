@@ -45,6 +45,7 @@ DEAD = 0.5                                         # 정지 중 이보다 작은
 CREEP = 0.15                                       # 영점에서 이만큼(°/s) 넘게 벗어난 창은 정지가 아니다(기어가는 회전)
 REBIAS_SEC = 8.0                                   # 조용한데 영점 밖이 이만큼 이어지면 영점이 옮겨 간 것
 BIAS_TOL = 0.05                                    # 영점은 이만큼 안에서만 옮긴다(창 평균 잡음 ≈0.01°/s)
+HOT, HOT_N = 2.0, 3                                # 정지 중 이보다 큰 각속도가 연달아 이만큼 = 진짜 회전(튐은 한 표본)
 JUMP = 60.0                                        # 한 샘플(5ms)에 이보다 크게 바뀌면 깨진 샘플(°/s)
 
 
@@ -59,6 +60,7 @@ class Yaw:
         self.still = False
         self.k = 0
         self.quiet_n = 0
+        self.hot, self.pend = 0, 0.0    # 정지 중 연속 큰 표본 수와 그동안의 회전(진짜면 더한다)
         self.last, self.rej, self.glitch = None, 0, 0
         self.g, self.a = deque(maxlen=WIN), deque(maxlen=WIN)
 
@@ -73,10 +75,17 @@ class Yaw:
         self.g.append(gyro)
         self.a.append(acc)
         self.k += 1
-        if len(self.g) == WIN and self.k % 10 == 0:     # 창 통계는 10샘플마다(파이썬 부하) — 판정은 그 사이 유지
+        if len(self.g) == WIN and self.k % 10 == 0 and not self.hot:   # 창 통계는 10샘플마다 — 판정은 그 사이 유지
             self.still = False
-            m = [sum(v[i] for v in self.g) / WIN for i in range(3)]
-            sd = [math.sqrt(sum((v[i] - m[i]) ** 2 for v in self.g) / WIN) for i in range(3)]
+            # **중앙값·MAD**(튀는 값에 강한 통계). 평균·표준편차는 창에 1.5~4.5°/s짜리 튐 하나만 있어도
+            #   sd 0.25~0.74로 정지 기준을 넘었다 — 바탕 잡음은 0.045인데 '정지'가 한 번도 안 나와 영점을 못 고치고
+            #   1분에 2.8°씩 흘렀다(2026-10-23 16:30 실측, 원시 400샘플: sd 0.53 vs MAD 0.045).
+            m, sd = [], []
+            for i in range(3):
+                col = sorted(v[i] for v in self.g)
+                med = col[WIN // 2]
+                m.append(med)
+                sd.append(1.4826 * sorted(abs(x - med) for x in col)[WIN // 2])
             # 천천히 도는 꼬리를 영점으로 삼키지 않게 — 첫 영점 뒤엔 CREEP 넘게 다르면 정지가 아니다.
             # ⚠ 예전 1°/s: 정지마찰 문턱 근처(지령 90~100)에서 0.5°/s로 기어가는 회전을 "정지"로 보고 적분에서 빼고
             #   영점에 삼켰다 → 고리 닫기가 바퀴마다 ×0.997~1.015로 흔들렸다(2026-10-23, 모의 0.4°/s×10초 4°→0°).
@@ -101,7 +110,15 @@ class Yaw:
             return
         r = SCALE * sum((gyro[i] - self.bias[i]) * self.up[i] for i in range(3))
         self.rate = r
-        if self.still and abs(r) < DEAD:
+        if self.still:
+            # 정지 판정 중엔 적분하지 않는다 — 튀는 표본(>DEAD)이 쌓여 흘렀다. 다만 중앙값 창은 회전이 반을 채워야
+            # (0.25초) 움직이니, 큰 표본이 HOT_N번 연달아 오면 바로 정지를 풀고 그동안의 회전까지 더한다(모의 90°→81° 막음)
+            if abs(r) > HOT:
+                self.hot, self.pend = self.hot + 1, self.pend + r * dt
+                if self.hot >= HOT_N:
+                    self.still, self.yaw, self.hot, self.pend = False, self.yaw + self.pend, 0, 0.0
+                return
+            self.hot, self.pend = 0, 0.0
             return
         self.yaw += r * dt
 
@@ -222,6 +239,15 @@ def selftest() -> int:
     y.yaw = y_b
     feed(60.0, 0)
     assert abs(y.yaw - 60.0) < 1.0, ("1분 정지 뒤", y.yaw)
+    # 정지 중 튀는 표본(초당 2개꼴, ±4°/s) — 정지 판정이 유지되고 1분에 0.5° 안으로만 흘러야(실측 10/23)
+    y_s = y.yaw
+    for k in range(int(60 / dt)):
+        g = [bias[i] + random.gauss(0, 0.05) for i in range(3)]
+        if k % 100 == 50:
+            g[k % 3] += random.choice((-4.0, 4.0))
+        y.step(g, [0.0, 0.0, -1.0], dt)
+    assert abs(y.yaw - y_s) < 0.5, ("튀는 표본에 흘렀다", y.yaw - y_s)
+    assert y.still, "튀는 표본 하나에 정지 판정이 무너졌다"
     print("imu_yaw selftest ✅ yaw %.2f° (참 60°)" % y.yaw)
     return 0
 
