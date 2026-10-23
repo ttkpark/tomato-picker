@@ -852,6 +852,8 @@ def scan_cmd(a, m) -> int:
             print("⛔ 손으로 돌리는 스캔은 IMU가 있어야 한다 — systemctl status imu-yaw")
             return 1
         return scan_imu(a, m, s, None, base0)
+    if not yaw_front_ok():
+        return 1
     link = open_link()
     if link is not None and imu_now() is not None:
         try:
@@ -931,6 +933,42 @@ def wrist_cmd(m) -> int:
     save(s)
     print("손목 D405를 지도에 더했다 — 장애물 칸 %d · 복셀 %d" % (k, len(s["vox"])))
     return 0
+
+
+YAW_FRONT_DEG = 15.0           # 회전판이 이보다 돌아가 있으면 팔이 차체 옆으로 나온다 — 돌거나 다니지 않는다
+
+
+def turntable_deg():
+    """회전판 각(도, 왼쪽 +) — 팔 버스에서 ID 7만 읽는다(팔 관절 토크는 안 건드린다). 못 읽으면 None."""
+    try:
+        sys.path.insert(0, os.path.join(HERE, "..", "src", "tomato_bridge"))
+        from tomato_bridge.follower_io import BASE_YAW_ID, FollowerIO, yaw_deg_from_raw
+        FollowerIO._find_lerobot()                                  # noqa: SLF001 - 컨테이너 밖에선 venv
+        from lerobot.motors import Motor, MotorNormMode
+        from lerobot.motors.feetech import FeetechMotorsBus
+        from tomato_picker.config import ARM_FOLLOWER_SERIAL, ARM_LEADER_SERIAL, ARM_SERIAL_PORT
+        from tomato_picker.hardware.ports import resolve_arm_port
+        port = resolve_arm_port(ARM_SERIAL_PORT, follower_serial=ARM_FOLLOWER_SERIAL,
+                                leader_serial=ARM_LEADER_SERIAL)
+        bus = FeetechMotorsBus(port, {"y": Motor(BASE_YAW_ID, "sts3215", MotorNormMode.DEGREES)})
+        bus.connect(handshake=False)
+        try:
+            raw, _, _ = bus._read(56, 2, BASE_YAW_ID, num_retry=2)   # noqa: SLF001 - Present_Position
+        finally:
+            bus.disconnect(disable_torque=False)
+        return yaw_deg_from_raw(raw)
+    except Exception as exc:                                         # noqa: BLE001
+        print("  ⚠ 회전판을 못 읽었다(%s) — 정면이라고 믿고 간다" % str(exc)[:60])
+        return None
+
+
+def yaw_front_ok() -> bool:
+    y = turntable_deg()
+    if y is not None and abs(y) > YAW_FRONT_DEG:
+        print("⛔ 회전판이 %.0f° 돌아가 있다 — 팔이 차체 옆으로 나와 돌거나 다니면 걸린다(10/23 −88°에서 걸림). "
+              "[회전판 정면]부터" % y)
+        return False
+    return True
 
 
 TOMATO_STATUS = "/dev/shm/tomato_status"
@@ -1055,6 +1093,8 @@ def find_cmd(a, m) -> int:
     if gap < need:
         print("⛔ 둘레 %.2fm 안에 장애물 — 돌면 부딪힌다(%.2fm 이상 띄운다, 회전판은 정면에)" % (gap, need))
         return 1
+    if not yaw_front_ok():
+        return 1
     th0, i0, seen, total, stuck = float(s["pose"][2]), imu_now(), [], 0.0, 0
     link = None if a.hand else open_link()
     if not a.hand and link is None:
@@ -1112,6 +1152,8 @@ def go_cmd(a, m) -> int:
     goal = np.array([a.x, a.y])
     if astra_blocked(0):
         print("⛔ 정면 60cm 안에 물체(Astra 깊이가 꺼졌다) — 뒤로 빼고 다시")
+        return 1
+    if not yaw_front_ok():
         return 1
     # 사람이 손으로 옮겼을 수 있다 — 처음엔 넓게 찾는다
     if not localize(s, m, s["pose"], 0.5, 40, time.time()):
