@@ -45,6 +45,7 @@ import json
 import math
 import os
 import posixpath
+import shlex
 import signal
 import subprocess
 import sys
@@ -130,7 +131,9 @@ ARM_POSE_VIEW = os.path.expanduser("~/arm_pose_view.json")
 # 잡기(stem_grasp.py)가 매 걸음 남기는 **살아 있는 겨냥 상태** — 화면에 겹쳐 그린다.
 SERVO_VIEW = os.path.expanduser("~/servo_view.json")
 GRIP_UV = (471, 395)              # 집게를 여닫아 실측한 기본값
-PARK = "60,65,0,-100,6"           # 열매가 보이던 대기 자세(도)
+# 대기 자세(도) — 팔을 뒤로 접어 손목 D405가 바로 선 채 주행 정면을 본다. 회전판은 따로
+# BASE_YAW_HOME_DEG로 간다(2026-10-24 사람이 정함. 옛 값 60,65,0,-100,6은 D405가 거꾸로였다).
+PARK = "0.6,22,78,81,6"
 
 
 def voice_active():
@@ -241,7 +244,9 @@ def build(job, args):
     """job 이름 + 인자 → 실제로 돌릴 argv. **여기서만** 명령이 정해진다."""
     T = lambda n: os.path.join(HERE, n)                     # noqa: E731
     if job == "park":
-        return [PY, T("arm_stage.py"), "--target=" + PARK]
+        # 팔을 먼저 접고 나서 판을 돌린다 — 편 채로 돌면 가구에 걸린다(10/23). 한 프로세스 그룹이라 [멈춤]이 둘 다 끊는다.
+        return ["/bin/sh", "-c", "%s %s --target=%s && %s %s home" % (
+            PY, shlex.quote(T("arm_stage.py")), PARK, PY, shlex.quote(T("base_yaw.py")))]
     if job == "stage":
         t = str(args.get("target", PARK))
         parts = t.replace(" ", "").split(",")
@@ -283,6 +288,8 @@ def build(job, args):
         # 버튼과 터미널이 서로 다른 한계를 갖게 된다.
         if args.get("read"):
             return [PY, T("base_yaw.py"), "--read"]
+        if args.get("home"):
+            return [PY, T("base_yaw.py"), "home"]
         return [PY, T("base_yaw.py"), "%.1f" % float(args.get("deg", 0))]
     if job == "jog":
         a = [PY, T("tool_jog.py")]
@@ -712,7 +719,8 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <span class="k">회전판</span>
       <button onclick="run('yaw',{deg:90})">◀ 왼쪽 90°</button>
       <button onclick="run('yaw',{deg:45})">◀ 45°</button>
-      <button onclick="run('yaw',{deg:0})">정면</button>
+      <button onclick="run('yaw',{home:1})">주행 정면(기본)</button>
+      <button onclick="run('yaw',{deg:0})">0°</button>
       <button onclick="run('yaw',{deg:-45})">45° ▶</button>
       <button onclick="run('yaw',{deg:-90})">오른쪽 90° ▶</button>
       <input id="y_d" style="width:60px" placeholder="도">

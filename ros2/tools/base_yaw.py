@@ -2,7 +2,8 @@
 """케이스 회전판(base_yaw, 팔 버스 ID 7)만 돌린다 — 팔 관절은 안 건드린다.
 
     ~/lerobot/.venv/bin/python ros2/tools/base_yaw.py 45      # 왼쪽 45°
-    ~/lerobot/.venv/bin/python ros2/tools/base_yaw.py 0       # 정면
+    ~/lerobot/.venv/bin/python ros2/tools/base_yaw.py home    # 기본 자리(주행 정면, config.BASE_YAW_HOME_DEG)
+    ~/lerobot/.venv/bin/python ros2/tools/base_yaw.py 0       # 영점 2048(차체 오른쪽을 본다)
     ~/lerobot/.venv/bin/python ros2/tools/base_yaw.py --read
 
 각도 규약·한계는 config.BASE_YAW_* 와 follower_io.yaw_raw_from_deg 가 정한다.
@@ -21,14 +22,14 @@ sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 
 def main() -> int:
-    from tomato_bridge.follower_io import FollowerIO, yaw_raw_from_deg
+    from tomato_bridge.follower_io import BASE_YAW_HOME_DEG, FollowerIO, yaw_raw_from_deg
     read_only = sys.argv[1:2] == ["--read"]
     if not read_only:
         try:
-            deg = float(sys.argv[1])
+            deg = BASE_YAW_HOME_DEG if sys.argv[1:2] == ["home"] else float(sys.argv[1])
             yaw_raw_from_deg(deg)               # 포트 열기 전에 한계부터 거절
         except (IndexError, ValueError) as exc:
-            print("쓰기: base_yaw.py <도> | base_yaw.py --read  —", exc)
+            print("쓰기: base_yaw.py <도>|home | base_yaw.py --read  —", exc)
             return 2
     io = FollowerIO(hold_torque=True)
     try:

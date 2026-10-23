@@ -952,7 +952,7 @@ def wrist_cmd(m) -> int:
     return 0
 
 
-YAW_FRONT_DEG = 15.0           # 회전판이 이보다 돌아가 있으면 팔이 차체 옆으로 나온다 — 돌거나 다니지 않는다
+YAW_FRONT_DEG = 15.0           # 회전판이 기본 자리(BASE_YAW_HOME_DEG)에서 이보다 벗어나면 팔이 차체 옆으로 나온다 — 돌거나 다니지 않는다
 
 
 def turntable_deg():
@@ -980,10 +980,12 @@ def turntable_deg():
 
 
 def yaw_front_ok() -> bool:
+    sys.path.insert(0, os.path.join(HERE, "..", "src", "tomato_bridge"))
+    from tomato_bridge.follower_io import BASE_YAW_HOME_DEG
     y = turntable_deg()
-    if y is not None and abs(y) > YAW_FRONT_DEG:
-        print("⛔ 회전판이 %.0f° 돌아가 있다 — 팔이 차체 옆으로 나와 돌거나 다니면 걸린다(10/23 −88°에서 걸림). "
-              "[회전판 정면]부터" % y)
+    if y is not None and abs(y - BASE_YAW_HOME_DEG) > YAW_FRONT_DEG:
+        print("⛔ 회전판이 %.0f°(기본 %.0f°) — 팔이 차체 옆으로 나와 돌거나 다니면 걸린다(10/23에 걸림). "
+              "[대기 자세]부터" % (y, BASE_YAW_HOME_DEG))
         return False
     return True
 

@@ -42,6 +42,7 @@ try:
         ARM_MOVE_FPS,
         ARM_SERIAL_PORT,
         BASE_YAW_DEG_PER_SEC,
+        BASE_YAW_HOME_DEG,
         BASE_YAW_ID,
         BASE_YAW_LIMIT_DEG,
     )
@@ -53,7 +54,8 @@ except ImportError:  # pragma: no cover - PC에서 상수만으로도 이 파일
     ARM_ID = "tomato_follower"
     ARM_MOVE_FPS = 30
     ARM_SERIAL_PORT = "/dev/ttyACM0"
-    BASE_YAW_ID, BASE_YAW_LIMIT_DEG, BASE_YAW_DEG_PER_SEC = 7, 85.0, 30.0
+    BASE_YAW_ID, BASE_YAW_LIMIT_DEG, BASE_YAW_DEG_PER_SEC = 7, 90.0, 30.0
+    BASE_YAW_HOME_DEG = -88.9
     DEG_PER_TICK = 360.0 / 4096.0
 
 # STS3215 레지스터(lerobot feetech/tables.py와 같은 값). base_yaw는 lerobot 모터
