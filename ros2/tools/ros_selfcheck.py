@@ -623,13 +623,13 @@ def test_urdf_matches_kinematics() -> None:
           and abs(yaw_deg_from_raw(yaw_raw_from_deg(45)) - 45) < 0.1
           and abs(yaw_deg_from_raw(0x8000 | 10) - (2048 + 10) * 360 / 4096) < 1e-9)
     bad = []
-    for d in (86.0, -86.0, float("nan")):
+    for d in (91.0, -91.0, float("nan")):
         try:
             yaw_raw_from_deg(d)
             bad.append(d)
         except ValueError:
             pass
-    check("회전판 한계 밖(±85° 초과·NaN)은 거절한다(자르지 않는다)", not bad, f"통과해 버린 값 {bad}")
+    check("회전판 한계 밖(±90° 초과·NaN)은 거절한다(자르지 않는다)", not bad, f"통과해 버린 값 {bad}")
 
     # 자세를 여러 개 넣어 본다. 기준 자세(전부 0)만 맞춰 놓고 축 부호가 틀린
     # 경우가 실제로 흔하다 — 그래서 **꺾인 자세**를 반드시 섞는다.
