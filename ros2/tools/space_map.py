@@ -1221,7 +1221,11 @@ def face_cmd(a, m) -> int:
         return 1
     try:
         print("지도 방위 %.0f° (자세 θ %.0f°, 토마토 (%.2f, %.2f))" % (b, math.degrees(s["pose"][2]), t[0], t[1]))
-        if abs(b) > 5:
+        cx0, _ = tomato_cx(1.5)
+        if cx0 is not None:
+            # 이미 보이면 지도 방위로 돌지 않는다 — 가까이선 토마토 자리 오차 0.1~0.2m가 방위로 16°까지 커졌다(10/23)
+            print("  지금 화면에 토마토가 있다(cx %.0f) — 검출로만 다듬는다" % cx0)
+        elif abs(b) > 5:
             print("  → IMU %.1f° 돌았다" % turn(link, int(math.copysign(a.w, b)), a.wsecs, abs(b)))
         for k in range(8):
             cx, w = tomato_cx()
