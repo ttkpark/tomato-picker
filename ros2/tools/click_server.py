@@ -410,8 +410,8 @@ def build(job, args):
             half = space_map.N * space_map.RES / 2
             a += ["--x", "%.3f" % num(args, "x", 0, -half, half),
                   "--y", "%.3f" % num(args, "y", 0, -half, half),
-                  "--vx", "%d" % int(num(args, "vx", 150, 60, 255)),
-                  "--vsecs", "%.2f" % num(args, "vsecs", 0.8, 0.2, 2.0)]
+                  "--vx", "%d" % int(num(args, "vx", 200, 60, 255)),
+                  "--vsecs", "%.2f" % num(args, "vsecs", 1.0, 0.2, 2.0)]
         return a
     raise ValueError("모르는 일: %s" % job)
 
@@ -546,7 +546,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     </div>
     <div class="row" style="margin-top:6px">
       <label>회전<input id="sp_w" value="150"></label><label>초<input id="sp_ws" value="0.8" style="width:50px"></label>
-      <label>전진<input id="sp_v" value="150"></label><label>초<input id="sp_vs" value="0.8" style="width:50px"></label>
+      <label>전진<input id="sp_v" value="200"></label><label>초<input id="sp_vs" value="1.0" style="width:50px"></label>
       <label title="IMU가 있으면 회전 넛지 한 번을 이 각도까지 민다(초는 상한의 1/2.5)">회전 목표°<input id="sp_deg" value="20" style="width:44px"></label>
     </div>
     <div class="k" style="margin-top:4px">자세는 바퀴가 아니라 <b>지도와 맞춰서</b> 안다(엔코더 없음) — 넛지마다 다시 맞춘다.
@@ -1178,7 +1178,7 @@ k3dInit(); k3dInitRows();
 // ── 공간 지도 (space_map.py) — 좌표는 지도 그대로(m, z 위) ─────────────
 var sp={az:-2.4,el:0.85,dist:6,tgt:new THREE.Vector3(0,0,0.3),mt:'0',goalXY:null};
 function b64buf(t){var b=atob(t),u=new Uint8Array(b.length);for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u.buffer;}
-function spArgs(o){o.w=val('sp_w',150);o.wsecs=val('sp_ws',0.8);o.vx=val('sp_v',150);o.vsecs=val('sp_vs',0.8);o.deg=val('sp_deg',20);return o;}
+function spArgs(o){o.w=val('sp_w',150);o.wsecs=val('sp_ws',0.8);o.vx=val('sp_v',200);o.vsecs=val('sp_vs',1.0);o.deg=val('sp_deg',20);return o;}
 function spInfo(t){document.getElementById('spInfo').textContent=t;}
 function spRender(){ if(!sp.r) return; var c=Math.cos(sp.el);
   sp.cam.position.set(sp.tgt.x+sp.dist*c*Math.cos(sp.az),sp.tgt.y+sp.dist*c*Math.sin(sp.az),sp.tgt.z+sp.dist*Math.sin(sp.el));
@@ -1229,8 +1229,8 @@ function spPick(e){
     spInfo(j.ok?('목표 ('+p.x.toFixed(2)+', '+p.y.toFixed(2)+') · 길 '+j.len.toFixed(2)+'m — [목표로 가기]')
                :('⛔ '+j.why));});
 }
-function spStep(sx,sy,sw){ var v=val('sp_v',150), w=val('sp_w',150);
-  run('space',{mode:'step',vx:sx*v,vy:sy*v,w:sw*w,deg:val('sp_deg',20),secs:sw?val('sp_ws',0.8):val('sp_vs',0.8)});}
+function spStep(sx,sy,sw){ var v=val('sp_v',200), w=val('sp_w',150);
+  run('space',{mode:'step',vx:sx*v,vy:sy*v,w:sw*w,deg:val('sp_deg',20),secs:sw?val('sp_ws',0.8):val('sp_vs',1.0)});}
 function spDrawTomato(t){
   (sp.tom||[]).forEach(function(o){sp.scene.remove(o);}); sp.tom=[]; sp.tomList=t||[];
   sp.tomList.forEach(function(q){
