@@ -1321,6 +1321,91 @@ def approach_cmd(a, m) -> int:
     return 1
 
 
+NEAR_MM = 450.0                # 🍅 손목 근접: 손목 D405에서 토마토가 이 거리(mm)가 되면 멈춘다(D405 근거리 ≤500)
+NEAR_STOP_MM = 200.0           # 화면 가운데 아래(화분 쪽)에 이보다 가까운 것이 보이면 멈춘다
+NEAR_TURN_DEG = 6.0            # 토마토가 손목 화면 가운데에서 이보다 벗어나면 먼저 돈다
+
+
+def wrist_tomato():
+    """손목 D405(컬러=깊이 정렬)의 열매 → (u, 거리 mm, 가로 각 °, DepthView) | None.
+    깊이가 잡히는(유효 거리 안) 것 가운데 가장 큰 것, 없으면 가장 큰 것(거리 nan). **익음으로 거르지 않는다** —
+    가까이선 조명에 주황으로 보여 '안 익음'이 되고, 그 사이 2m 뒤 빨간 의자가 '익은 열매'로 뽑혔다(10/24).
+    대기 자세(팔을 뒤로 접음)에서만 화면이 바로 서고 주행 정면을 본다 — 화면 오른쪽 = 차체 오른쪽."""
+    from tomato_picker.hardware.depth_camera import DepthError, DepthView
+    from tomato_picker.vision.color_detect import detect_fruits
+    v = DepthView(camera="d405")
+    v.require_color_aligned()
+    fr = []
+    for f in detect_fruits(v.color_bgr()):
+        try:
+            mm = v.depth_mm_at(*f.position)
+        except DepthError:
+            mm = float("nan")
+        fr.append((mm == mm, f.area, f.position[0], mm))
+    if not fr:
+        return None
+    _, _, u, mm = max(fr)
+    it = v.intrinsics()
+    return u, mm, math.degrees(math.atan2(it.ppx - u, it.fx)), v
+
+
+def wrist_front_mm(v) -> float:
+    """손목 화면 가운데 아래 칸(가로 25~75%, 세로 40~70%)의 가까운 5% 깊이(mm). 집게 손가락(아래 70% 밑)은 뺀다."""
+    meta = v.meta()
+    dep = v.depth_raw().astype(np.float32) * float(meta["depth_scale_mm"])
+    h, w = dep.shape
+    d = dep[int(h * 0.4):int(h * 0.7), int(w * 0.25):int(w * 0.75)]
+    d = d[(d >= meta["min_mm"]) & (d <= meta["max_mm"])]
+    return float(np.percentile(d, 5)) if d.size > 50 else float("inf")
+
+
+def near_cmd(a, m) -> int:
+    """🍅 손목 근접 — 토마토 앞(Astra 60cm 사각)에서 손목 D405 거리로 조금씩 다가가 NEAR_MM에 선다."""
+    from base_nudge import drive, open_link
+    if not yaw_front_ok():
+        return 1
+    link = open_link()
+    if link is None:
+        return 1
+    try:
+        last = None
+        for k in range(10):
+            got = wrist_tomato()
+            if got is None:
+                print("⛔ 손목 D405에 익은 토마토가 안 보인다 — [🍅 토마토 앞으로]로 정면에 선 뒤 다시")
+                return 1
+            u, mm, ang, v = got
+            front = wrist_front_mm(v)
+            print("[%d] 손목 토마토 u %.0f · %s · 가로 %+.1f° · 앞 아래 %.0fmm" % (
+                k, u, "%.0fmm" % mm if mm == mm else "거리 ?", ang, front))
+            if mm == mm and mm <= a.near_mm:
+                print("✅ 손목 D405에서 토마토 %.0fmm — 근접 끝" % mm)
+                return 0
+            if front < NEAR_STOP_MM:
+                print("⛔ 손목 화면 아래 %.0fmm에 물체(화분?) — 더 안 간다" % front)
+                return 1
+            if abs(ang) > NEAR_TURN_DEG:
+                turn(link, int(math.copysign(a.w, ang)), a.wsecs, abs(ang))
+                continue
+            if mm != mm:
+                print("⛔ 토마토 거리를 못 잰다(D405 유효 %s) — 더 안 간다" % v.meta().get("valid_frac"))
+                return 1
+            # 걸음을 더 줄일 수 없다(정지마찰: 0.6초는 0) — 남은 게 직전 걸음의 절반 밑이면 한 걸음 더가 더 크게 넘친다.
+            # 10/24 실기: 484mm에서 34mm 남기고 한 걸음 → 349mm(135mm 넘침)
+            if last is not None and mm - a.near_mm < 0.5 * (last - mm):
+                print("✅ 손목 D405에서 토마토 %.0fmm — 한 걸음(%.0fmm)이 남은 %.0fmm보다 커서 여기서 멈춘다" % (
+                    mm, last - mm, mm - a.near_mm))
+                return 0
+            # 정지마찰: 200·1.0초 = 7~12cm. 안 움직였으면(10mm 미만) 0.3초 늘린다
+            secs = a.vsecs if (last is None or last - mm > 10) else a.vsecs + 0.3
+            drive(link, a.vx, 0, 0, secs if mm - a.near_mm > 120 else max(0.7, secs * 0.7))
+            last = mm
+        print("⛔ 열 번 다가가도 %.0fmm에 못 닿았다" % a.near_mm)
+        return 1
+    finally:
+        link.close()
+
+
 def lookahead(path, xy, dist: float):
     for p in path:
         if math.hypot(p[0] - xy[0], p[1] - xy[1]) >= dist:
@@ -1578,7 +1663,7 @@ def selftest() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "approach", "clear", "selftest", "replay", "selfcal"])
+    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "clear", "selftest", "replay", "selfcal"])
     ap.add_argument("file", nargs="*", help="replay·selfcal: ~/space_scans/scan-*.npz")
     ap.add_argument("--write", action="store_true", help="selfcal: 찾은 장착값을 ~/space_mount.json에 쓴다")
     ap.add_argument("--steps", type=int, default=16)
@@ -1595,6 +1680,7 @@ def main() -> int:
     ap.add_argument("--turn", type=float, help="snap: 손으로 돌린 대략 각도(도, +=왼쪽)")
     ap.add_argument("--tol", type=float, default=0.2)
     ap.add_argument("--max-steps", type=int, default=60)
+    ap.add_argument("--near-mm", type=float, default=NEAR_MM, help="near: 손목 D405에서 토마토까지 이 거리(mm)에 선다")
     a = ap.parse_args()
     if a.mode == "selftest":
         return selftest()
@@ -1633,6 +1719,8 @@ def main() -> int:
         return face_cmd(a, m)
     if a.mode == "approach":
         return approach_cmd(a, m)
+    if a.mode == "near":
+        return near_cmd(a, m)
     if a.x is None or a.y is None:
         print("go 는 --x --y (지도 좌표, m)가 있어야 한다")
         return 2
