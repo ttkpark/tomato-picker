@@ -852,7 +852,12 @@ def selfcal_cmd(files, write: bool) -> int:
 
 
 def replay_cmd(f: str, m: dict) -> int:
-    """기록한 한 바퀴를 빈 지도에 다시 짓는다(장치 없이) — ~/space_map.npz를 덮으니 PC에서 쓴다."""
+    """기록한 한 바퀴를 빈 지도에 다시 짓는다(장치 없이) → ~/space_map-replay.npz.
+    ⚠ 예전엔 살아 있는 지도(~/space_map.npz)를 덮었다 — 10/24 젯슨에서 원인 조사로 돌렸다가 찾아 둔 토마토와
+      그 뒤 장들이 날아가 다음 '토마토 앞으로'가 '토마토 없음'·자리 맞춤 실패로 끝났다."""
+    global MAP
+    MAP = os.path.splitext(MAP)[0] + "-replay.npz"
+    print("다시 지은 지도 → %s (살아 있는 지도는 안 건드린다)" % MAP)
     s = empty()
     shots = load_shots(f)
     print("장 %d · IMU %.0f°" % (len(shots), math.degrees(shots[-1][0])))
