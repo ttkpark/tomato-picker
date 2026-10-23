@@ -1084,7 +1084,10 @@ def go_cmd(a, m) -> int:
         print("⛔ 정면 60cm 안에 물체(Astra 깊이가 꺼졌다) — 뒤로 빼고 다시")
         return 1
     # 사람이 손으로 옮겼을 수 있다 — 처음엔 넓게 찾는다
-    localize(s, m, s["pose"], 0.5, 40, time.time())
+    if not localize(s, m, s["pose"], 0.5, 40, time.time()):
+        # 짐작 자세로 길을 짜면 엉뚱한 데로 간다(10/23: 서랍장을 보고 출발 — 겹친 점 0/5)
+        print("⛔ 출발 자리를 지도로 못 맞췄다 — 트인 쪽을 보게 돌리거나 [한 장 담기] 뒤 다시")
+        return 1
     link = open_link()
     if link is None:
         return 1
