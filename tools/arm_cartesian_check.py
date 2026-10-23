@@ -820,6 +820,23 @@ def fresh_arm(degrees: dict[str, float] | None = None) -> CartesianArm:
     return arm
 
 
+def test_folded_axes(geom) -> None:
+    """뒤로 접은 자세(집게가 pan 축 뒤, r<0)에서도 집게 축은 **관절이 정한 쪽**을 본다(2026-10-24).
+    (x,y) 방위로 세우면 180° 뒤집혀 손목 카메라 점이 반대편 바닥으로 갔다."""
+    print("\n[접힌 자세 집게 축]")
+    folded = {"shoulder_pan": 1.0, "shoulder_lift": 20.4, "elbow_flex": 79.7,
+              "wrist_flex": 80.8, "wrist_roll": 5.7}           # 대기 자세 실측
+    p = kin.forward(folded, geom)
+    a, _, up = kin.tool_axes(p)
+    check("대기 자세는 집게가 pan 축 뒤(r<0)다", kin.signed_radius(folded, geom) < 0, f"r={kin.signed_radius(folded, geom):.0f}")
+    check("뒤로 접은 집게는 −x(어깨 너머)를 본다", a[0] < -0.9, f"approach={tuple(round(v, 2) for v in a)}")
+    check("그때 집게 위는 아래(−z)를 향한다(손목 카메라가 뒤집힌다)", up[2] < -0.9, f"up={tuple(round(v, 2) for v in up)}")
+    q = kin.forward(dict(folded, shoulder_lift=60.0, elbow_flex=0.0, wrist_flex=0.0), geom)
+    check("앞으로 편 자세는 예전과 같다(pan 유무 무관)",
+          all(abs(u - v) < 1e-9 for u, v in zip(kin.tool_axes(q)[0], kin.tool_axes(q.replace(z=q.z))[0])))
+    check("자리를 옮긴 replace는 옛 방위를 버린다", p.replace(x=10.0).pan is None and p.replace(z=1.0).pan == p.pan)
+
+
 def main() -> int:
     geom = ArmGeometry()
     print(f"링크 길이: z0={geom.z0} d0={geom.d0} l1={geom.l1} l2={geom.l2} l3={geom.l3} "
@@ -837,6 +854,7 @@ def main() -> int:
     test_travel()
     test_travel_path()
     test_settle()
+    test_folded_axes(geom)
 
     print()
     if FAILED:

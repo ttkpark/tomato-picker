@@ -102,6 +102,10 @@ class ToolPose:
     z: float
     pitch: float
     roll: float = 0.0
+    # FK가 아는 어깨 방위(도). 팔을 몸통 위로 접어 집게가 pan 축 **뒤로** 넘어가면(r<0) (x,y)의 방위가
+    # 180° 뒤집혀 tool_axes가 집게 축을 거꾸로 세운다 — 2026-10-24 대기 자세(뒤로 접기)에서 손-눈 보정이
+    # 앞 0.95m 토마토를 뒤쪽 바닥으로 보냈다. None이면 (x,y)에서 구한다(위치만 아는 목표 자세).
+    pan: float | None = None
 
     @property
     def r(self) -> float:
@@ -109,9 +113,11 @@ class ToolPose:
         return math.hypot(self.x, self.y)
 
     def replace(self, **kw) -> "ToolPose":
+        moved = "x" in kw or "y" in kw          # 자리를 옮기면 옛 방위는 남의 것이다
         return ToolPose(
             x=kw.get("x", self.x), y=kw.get("y", self.y), z=kw.get("z", self.z),
             pitch=kw.get("pitch", self.pitch), roll=kw.get("roll", self.roll),
+            pan=kw.get("pan", None if moved else self.pan),
         )
 
     def as_dict(self) -> dict[str, float]:
@@ -136,6 +142,7 @@ def forward(joints: Mapping[str, float], geom: ArmGeometry = ArmGeometry()) -> T
     return ToolPose(
         x=r * math.cos(pan), y=r * math.sin(pan), z=z,
         pitch=math.degrees(a3), roll=float(joints.get("wrist_roll", 0.0)),
+        pan=math.degrees(pan),
     )
 
 
@@ -236,7 +243,7 @@ def tool_axes(pose: ToolPose) -> tuple[tuple[float, float, float], ...]:
 
     pitch=0, pan=0이면 각각 +x, +y, +z가 되어 base 좌표와 일치한다.
     """
-    th = math.atan2(pose.y, pose.x)
+    th = math.radians(pose.pan) if pose.pan is not None else math.atan2(pose.y, pose.x)
     ph = math.radians(pose.pitch)
     approach = (math.cos(ph) * math.cos(th), math.cos(ph) * math.sin(th), math.sin(ph))
     lateral = (-math.sin(th), math.cos(th), 0.0)
