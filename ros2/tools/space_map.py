@@ -856,6 +856,9 @@ def replay_cmd(f: str, m: dict) -> int:
 
 def scan_cmd(a, m) -> int:
     from base_nudge import open_link
+    if astra_blocked(0):
+        print("⛔ 정면 60cm 안에 물체(Astra 깊이가 꺼졌다) — 트인 쪽을 보게 돌리고 다시(첫 장을 40초 헛기다린다)")
+        return 1
     s = load()
     # 시작 맞춤 **전** 지도 — 한 장(58°)으로 잡은 시작 자리는 벽을 따라 0.2~0.3m 틀릴 수 있어(2026-10-23 실기),
     # 그 장을 섞지 않은 지도에 한 바퀴를 통째로 맞춘다(register).
@@ -1042,9 +1045,27 @@ def clearance(lo: np.ndarray, xy, rmax: float = 1.0) -> float:
 TOMATO_SAME = 0.3              # 이 거리 안의 자리는 같은 나무로 묶는다(m)
 
 
+def slice_valid(dep: np.ndarray, meta: dict, m: dict, b: float, half: float = math.radians(2)) -> float:
+    """차체 기준 방위 b(±half)에 드는 깊이 열들 가운데(위아래 1/4 뺀) 유효 깊이의 비율.
+    가까운(60cm 안) 물체는 깊이가 0이라 띠에 **뒤쪽 배경만** 남는다 — 그걸 거리로 쓰면 1m 넘게 틀린다(10/23)."""
+    it, w = meta["intrinsics"], dep.shape[1]
+    u = np.arange(w)
+    uu = (int(meta.get("width", w)) - 1 - u) if meta.get("mirrored") else u   # cloud()와 같은 거울 처리
+    ang = np.arctan2(-(uu - it["ppx"]), it["fx"]) + math.radians(m["yaw_deg"])   # 화면 오른쪽 = 차체 오른쪽(−)
+    cols = np.nonzero(np.abs((ang - b + math.pi) % (2 * math.pi) - math.pi) < half)[0]
+    if not len(cols):
+        return 0.0
+    h = dep.shape[0]
+    d = dep[h // 4: 3 * h // 4, cols].astype(np.float32) * float(meta["depth_scale_mm"])
+    return float(((d >= meta["min_mm"]) & (d <= meta["max_mm"])).mean())
+
+
+SLICE_MIN = 0.3                # 그 방위 띠의 유효 깊이가 이보다 적으면 거리를 모르는 것으로(가깝거나 가려짐)
+
+
 def tomato_ranges(m: dict, bearings, ts: float) -> list:
     """같은 순간 Astra 깊이에서 각 방위(차체 기준)의 거리를 **렌즈에서** 잰다 — 그 방위 ±2° 띠의 가까운 20%.
-    컬러와 깊이는 정렬돼 있지 않지만 방위는 같은 쪽이다. 못 재면 nan."""
+    컬러와 깊이는 정렬돼 있지 않지만 방위는 같은 쪽이다. 띠 유효 깊이가 SLICE_MIN 밑이면(60cm 안) nan."""
     try:
         dep, meta = frame(ts - 0.3, timeout=2.0)
     except RuntimeError:
@@ -1055,6 +1076,9 @@ def tomato_ranges(m: dict, bearings, ts: float) -> list:
     band = (pts[:, 2] > m["floor_cut"]) & (pts[:, 2] < m["top"])
     out = []
     for b in bearings:
+        if slice_valid(dep, meta, m, b) < SLICE_MIN:
+            out.append(float("nan"))
+            continue
         sel = band & (np.abs((ang - b + math.pi) % (2 * math.pi) - math.pi) < math.radians(2))
         out.append(float(np.percentile(d[sel], 20)) if sel.sum() >= 5 else float("nan"))
     return out
@@ -1217,7 +1241,12 @@ def face_cmd(a, m) -> int:
         return 1
     finally:
         link.close()
-        localize(s, m, s["pose"], 0.1, 90, time.time() + 0.4)    # 돈 만큼 지도 자세를 맞춰 둔다(다음 일이 짐작으로 시작하지 않게)
+        # 돈 만큼 지도 자세를 맞춰 둔다(다음 일이 짐작으로 시작하지 않게). 끝에 가구를 보고 섰으면 건너뛴다 —
+        # 안 그러면 40초 헛기다리다 예외로 끝났다(10/23 서랍장 앞)
+        if astra_blocked():
+            print("  ⚠ 끝 자리에서 정면 60cm 안이 막혀 자세를 못 맞췄다 — 다음 일 전에 뒤로 빼라")
+        else:
+            localize(s, m, s["pose"], 0.1, 90, time.time() + 0.4)
 
 
 APPROACH_STANDOFF = 0.7        # 토마토에서 이만큼 앞에 선다 — 도착 허용 0.2 + 차체 앞 0.2 + 여유
@@ -1497,6 +1526,16 @@ def selftest() -> int:
     assert np.allclose(approach_goal(sa), (0.5, 0.0))
     sa["pose"] = np.array([0.8, 0.0, 0.0])
     assert np.allclose(approach_goal(sa), (0.8, 0.0))
+    # ⑧ 방위 띠 유효 비율 — 가운데가 비면(가까운 물체) 0, 차 있으면 1, 거울상이면 방위가 좌우 뒤집힌다
+    mt8 = {"intrinsics": {"fx": 570.0, "fy": 570.0, "ppx": 319.5, "ppy": 239.5},
+           "depth_scale_mm": 1.0, "min_mm": 600.0, "max_mm": 4000.0, "width": 640}
+    dp = np.full((480, 640), 2000, np.uint16)
+    dp[:, 300:340] = 0                                  # 정면이 가까워서 0
+    assert slice_valid(dp, mt8, dict(m, yaw_deg=0.0), 0.0) < 0.1
+    assert slice_valid(dp, mt8, dict(m, yaw_deg=0.0), math.radians(20)) > 0.9
+    dp2 = np.full((480, 640), 2000, np.uint16); dp2[:, :100] = 0     # 화면 왼쪽 끝이 빔
+    assert slice_valid(dp2, mt8, dict(m, yaw_deg=0.0), math.radians(25)) < 0.1      # 거울 아님: 왼쪽 = 차체 왼쪽(+)
+    assert slice_valid(dp2, dict(mt8, mirrored=True), dict(m, yaw_deg=0.0), math.radians(-25)) < 0.1
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
