@@ -1104,6 +1104,10 @@ def go_cmd(a, m) -> int:
             la = lookahead(path, xy, 0.35)
             err = wrap(math.atan2(la[1] - xy[1], la[0] - xy[0]) - th)
             prev = s["pose"].copy()
+            if abs(err) > math.radians(20) and left < a.tol * 1.5:
+                # 허용 바로 바깥에서 방향만 틀어진 것 — 돌면 엉뚱한 쪽(10/23: 0.23m에서 26° 돌아 서랍장에 붙음)을 본다
+                print("✅ 도착(허용 근처 %.2fm — 마지막 회전은 생략)" % left)
+                return 0
             if abs(err) > math.radians(20):
                 sg = 1 if err > 0 else -1              # w=+ 가 반시계(왼쪽) — base_nudge 실측
                 turn(link, sg * a.w, a.wsecs, min(abs(math.degrees(err)), 30.0))
