@@ -1234,18 +1234,19 @@ def approach_cmd(a, m) -> int:
     if not s["tomato"][0][3]:
         print("⛔ 이 토마토는 거리를 모른다(1.5m 짐작) — 넓은 곳에서 [🍅 토마토 찾기]를 다시")
         return 1
+    # 먼저 정면 보기 — 자리 맞춤을 두 번(시작·끝) 하고 토마토를 정면에 둔다. 그 **뒤의** 자세로 거리를 잰다.
+    # 첫 맞춤만 믿었더니 겹친 점 40/115짜리 자세가 0.36m 앞이라 '이미 도착'으로 보고 안 갔다(10/23).
+    if face_cmd(a, m) != 0:
+        print("  (정면 맞추기 실패 — 그래도 지도 길로 간다)")
+    s = load()
     gx, gy = approach_goal(s)
     if math.hypot(gx - s["pose"][0], gy - s["pose"][1]) > a.tol:
-        # 먼 자리(둘레가 트인 곳)에서 먼저 정면을 맞추고 곧게 다가간다 — 도착하면 화분·가구가 0.45m 안이라
-        # 회전 여유 검사가 정면 보기를 막았다(10/23 실기: 둘레 0.41m)
-        if face_cmd(a, m) != 0:
-            print("  (정면 맞추기 실패 — 그래도 지도 길로 간다)")
-        s = load()
-        gx, gy = approach_goal(s)
         print("가기 → (%.2f, %.2f)" % (gx, gy))
         a.x, a.y = gx, gy
         if go_cmd(a, m) != 0:
             return 1
+    else:
+        print("이미 토마토 %.1fm 앞이다" % APPROACH_STANDOFF)
     s = load()
     if clearance(s["lo"], s["pose"][:2]) >= m.get("spin_r", SPIN_R):
         return face_cmd(a, m)
@@ -1297,11 +1298,14 @@ def go_cmd(a, m) -> int:
             la = lookahead(path, xy, 0.35)
             err = wrap(math.atan2(la[1] - xy[1], la[0] - xy[0]) - th)
             prev = s["pose"].copy()
-            if abs(err) > math.radians(20) and left < a.tol * 1.5:
+            # 전진마다 4~5°씩 틀어진다(10/23 실기) — 멀리선 20°까지 두지만 0.5m 안에선 10°에서 고친다
+            # (안 그러면 도착할 때 표적이 화면 끝으로 밀린다)
+            turn_th = math.radians(10 if left < 0.5 else 20)
+            if abs(err) > turn_th and left < a.tol * 1.5:
                 # 허용 바로 바깥에서 방향만 틀어진 것 — 돌면 엉뚱한 쪽(10/23: 0.23m에서 26° 돌아 서랍장에 붙음)을 본다
                 print("✅ 도착(허용 근처 %.2fm — 마지막 회전은 생략)" % left)
                 return 0
-            if abs(err) > math.radians(20):
+            if abs(err) > turn_th:
                 sg = 1 if err > 0 else -1              # w=+ 가 반시계(왼쪽) — base_nudge 실측
                 turn(link, sg * a.w, a.wsecs, min(abs(math.degrees(err)), 30.0))
                 prior = prev + [0, 0, sg * est_w]
