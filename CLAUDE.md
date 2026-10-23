@@ -70,7 +70,7 @@ behavior the task requires stay in.
   **인수인계·함정 목록 = [`docs/인수인계-2026-09-03.md`](docs/인수인계-2026-09-03.md)** — 만지기 전에 읽어라.
 - **공간 지도·집 안 다니기 = [`ros2/tools/space_map.py`](ros2/tools/space_map.py)** (2026-10-22~)
   — Astra 깊이 → 3D 복셀 + 2D 점유격자, 자세는 **엔코더 대신 지도와 스캔매칭**, A* 길 → 넛지.
-  조작대 왼쪽 카드에서 스캔·바닥 클릭·가기. 한계(바닥 안 보임·60cm 사각·고리닫기 없음) =
+  조작대 왼쪽 카드에서 스캔·바닥 클릭·가기·**🍅 토마토 찾기/정면 보기**(2026-10-23). 안전장치(근접 정지·회전 여유 0.45m·회전판 정면)도 거기. 한계(바닥 안 보임·60cm 사각) =
   [`docs/space-map.md`](docs/space-map.md). 장착값은 `~/space_mount.json`(CAD 추정값이 기본).
   **차체 IMU = MPU6050**(2026-10-22~, 젯슨 I²C 버스 7·0x68) → [`tools/imu_yaw.py`](tools/imu_yaw.py)
   (systemd `imu-yaw`) → `/dev/shm/imu.json`. 회전 짐작·회전 넛지 끊기·조작대 실시간 회전량에 쓴다.
