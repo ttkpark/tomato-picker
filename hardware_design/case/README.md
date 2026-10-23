@@ -81,6 +81,7 @@
   - 정면 = **2048**(Homing_Offset 1690, 사용자가 정면에 맞춘 자리 — 신뢰 기준). 경계 0/4095는 뒤쪽 180°.
   - 손으로 잰 끝: raw 581(왼쪽 +129°, 여유 있음) · raw 3138(오른쪽 −96°, 끝). **Min/Max_Position_Limit = 1024/3072 (±90°)**.
   - **raw가 늘면 위에서 봐 시계방향(오른쪽)** — 소프트웨어 각은 pan과 같게 왼쪽 +라 부호를 뒤집는다(`follower_io._YAW_SIGN`).
+  - ⚠ **2048(사용자가 정한 '정면')의 팔은 주행 정면(Astra 쪽)이 아니라 차체 오른쪽 ≈−90°를 본다**(2026-10-23 손목 화면 9각도 실측, docs/작업판-2026-10-23.md). 주행 정면은 회전판 ≈+90°(한계 끝).
   - ⚠ **스토퍼 핀은 조립 전에 부러져 없다** — 기계식 멈춤이 없으므로 서보 한계(EEPROM)가 유일한 하드 리밋이다.
 - 출처: [RobotShop STS3215 12V 30kg](https://www.robotshop.com/products/feetech-12v-30kgcm-magnetic-encoding-servo-sts3215) ·
   [Robo9 백래시·반복정밀도 실측](https://robonine.com/testing-of-feetech-sts3215-servomotor-backlash-repeatability-and-torque/)
