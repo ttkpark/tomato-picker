@@ -179,7 +179,9 @@ def main() -> None:
                 _atomic_write(JPEG_PATH, buf.tobytes())
             # 위치는 매 프레임 갱신(상태 파일), 개수는 변할 때만 로그
             _atomic_write(STATUS_PATH, json.dumps(
-                {"air": count, "fallen": len(ground), "positions": positions}).encode("utf-8"))
+                {"air": count, "fallen": len(ground), "positions": positions,
+                 # 읽는 쪽(space_map 토마토 찾기)이 "멈춘 뒤에 찍힌 판정"인지, 화면 폭이 얼마인지 알아야 한다
+                 "ts": time.time(), "w": int(frame.shape[1]), "h": int(frame.shape[0])}).encode("utf-8"))
             if count != last_count:
                 last_count = count
                 _atomic_write(COUNT_PATH, str(count).encode("ascii"))

@@ -55,7 +55,10 @@ IMU_WIN_DEG = 5.0              # IMU가 있으면 θ는 IMU 짐작 ±이만큼�
 MOUNT = {"x": 0.12, "y": 0.0, "yaw_deg": 0.0, "h": 0.15, "tilt_deg": 0.0, "floor_cut": 0.05, "top": 0.9, "radius": 0.22,
          # 손목 D405용: 회전판 축이 차체 원점에서 얼마나 앞(arm_x)·바닥에서 얼마나 위(arm_z)인가.
          # so101_geometry.yaml mount(60·76.5mm)와 같은 값 — ⚠ 케이스 장착 전 값이라 실측해서 덮어라.
-         "arm_x": 0.06, "arm_z": 0.0765}
+         "arm_x": 0.06, "arm_z": 0.0765,
+         # 토마토 검출 카메라(tomato-vision): 가로 화각과 정면 대비 방향(왼쪽 +). ⚠ 실측 전 추정값 —
+         # 정면에 토마토를 두고 [토마토 찾기]의 cx가 화면 가운데인지, 옆에 두고 각이 맞는지로 맞춘다.
+         "tcam_hfov": 66.0, "tcam_yaw_deg": 0.0}
 
 
 def mount() -> dict:
@@ -112,7 +115,8 @@ def empty() -> dict:
             "vn": np.zeros(0, np.uint16),   # 복셀마다 본 장 수 — 한 번만 본 칸은 대개 깊이 잡음이다
             "pose": np.zeros(3), "q": 0.0, "frames": 0,
             "path": np.zeros((0, 2)), "goal": np.zeros(0),
-            "imu": np.full(2, np.nan)}  # 지금 자세를 정할 때의 IMU (boot, yaw rad) — 다음 회전 짐작의 기준
+            "imu": np.full(2, np.nan),
+            "tomato": np.zeros((0, 4))}   # 찾은 토마토 (x, y, 본 횟수, 거리 아는가 1/0)  # 지금 자세를 정할 때의 IMU (boot, yaw rad) — 다음 회전 짐작의 기준
 
 
 def load() -> dict:
@@ -909,6 +913,120 @@ def wrist_cmd(m) -> int:
     return 0
 
 
+TOMATO_STATUS = "/dev/shm/tomato_status"
+TOMATO_TOL = math.radians(8)   # 이 각 안의 방위는 같은 나무로 묶는다
+TOMATO_GUESS = 1.5             # 지도에 벽이 없어 거리를 모르면 이만큼 앞에 둔다(화면에 '거리 모름'으로)
+
+
+def tomato_bearings(st: dict, m: dict) -> list:
+    """tomato-vision 상태 → 차체 기준 방위(rad, 왼쪽 +). 화면 오른쪽 = 로봇 오른쪽(−)."""
+    w = float(st.get("w", 1280))
+    f = (w / 2) / math.tan(math.radians(m["tcam_hfov"]) / 2)
+    return [math.radians(m["tcam_yaw_deg"]) + math.atan2(w / 2 - float(cx), f)
+            for cx, _ in st.get("positions", [])]
+
+
+def tomato_fresh(after: float, timeout: float = 4.0):
+    """after 뒤에 쓰인 tomato-vision 상태(없으면 None). 옛 발행기는 ts가 없다 — 그러면 못 믿는다."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            st = json.load(open(TOMATO_STATUS))
+            if float(st.get("ts", 0)) > after:
+                return st
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.1)
+    return None
+
+
+def ray_hit(lo: np.ndarray, xy, th: float, rmin: float = 0.4, rmax: float = 4.0) -> float:
+    """xy에서 th 방향으로 처음 만나는 장애물 칸까지 거리(m). 없으면 nan."""
+    c, s_ = math.cos(th), math.sin(th)
+    for r in np.arange(rmin, rmax, RES / 2):
+        i = idx([xy[0] + r * c, xy[1] + r * s_])
+        if not ((i >= 0) & (i < N)).all():
+            break
+        if lo[i[0], i[1]] > OCC:
+            return float(r)
+    return float("nan")
+
+
+def cluster_bearings(bs, tol: float = TOMATO_TOL) -> list:
+    """방위 목록 → [(평균 방위, 개수)], 많이 본 순. 원형이라 ±π 경계를 넘어 묶는다."""
+    left, out = sorted(wrap(b) for b in bs), []
+    while left:
+        best = max(left, key=lambda b: sum(abs(wrap(x - b)) < tol for x in left))
+        grp = [x for x in left if abs(wrap(x - best)) < tol]
+        out.append((wrap(best + float(np.mean([wrap(x - best) for x in grp]))), len(grp)))
+        left = [x for x in left if abs(wrap(x - best)) >= tol]
+    return sorted(out, key=lambda t: -t[1])
+
+
+def place_tomatoes(s: dict, bearings, min_count: int = 2) -> np.ndarray:
+    """세계 방위들 → 지도 위 토마토 자리. 한 번만 본 방위는 오검출로 보고 버린다."""
+    xy, out = s["pose"][:2], []
+    for b, k in cluster_bearings(bearings):
+        if k < min_count:
+            continue
+        r = ray_hit(s["lo"], xy, b)
+        known = not math.isnan(r)
+        r = r if known else TOMATO_GUESS
+        out.append([xy[0] + r * math.cos(b), xy[1] + r * math.sin(b), k, 1.0 if known else 0.0])
+    return np.array(out).reshape(-1, 4)
+
+
+def find_cmd(a, m) -> int:
+    """제자리에서 한 바퀴 돌며 tomato-vision이 본 토마토의 방위를 모아, 지도 벽에 쏴서 자리를 정한다."""
+    from base_nudge import open_link
+    if imu_now() is None:
+        print("⛔ IMU가 없다 — systemctl status imu-yaw (방위를 IMU로 잰다)")
+        return 1
+    if tomato_fresh(time.time() - 3) is None:
+        print("⛔ tomato-vision 상태가 3초째 안 바뀐다(또는 옛 발행기라 ts가 없다) — systemctl status tomato-vision")
+        return 1
+    s = load()
+    localize(s, m, s["pose"], 0.4, 30, time.time())
+    th0, i0, seen, total, stuck = float(s["pose"][2]), imu_now(), [], 0.0, 0
+    link = None if a.hand else open_link()
+    if not a.hand and link is None:
+        return 1
+    try:
+        for k in range(max(a.steps, int(400 / a.deg) + 2)):   # 한 바퀴를 넘게 — 16걸음×20°는 모자란다
+            st = tomato_fresh(time.time() + 0.3)         # 멈춘 뒤에 찍힌 판정
+            i = imu_now()
+            if st is None or i is None or i[0] != i0[0]:
+                print("⛔ 검출이나 IMU가 끊겼다")
+                return 1
+            th = wrap(th0 + i[1] - i0[1])
+            bs = tomato_bearings(st, m)
+            seen += [wrap(th + b) for b in bs]
+            print("[%d] 방향 %.0f° · 토마토 %d (cx %s)" % (k + 1, math.degrees(th), len(bs),
+                                                    [int(c) for c, _ in st.get("positions", [])]))
+            if total >= 360:
+                break
+            got = hand_turn(a.deg) if a.hand else turn(link, a.w, a.wsecs, a.deg)
+            if math.isnan(got) or abs(got) < 2:
+                stuck += 1
+                if stuck >= 3:
+                    print("⛔ 세 번 연속 안 돌았다 — 회전 크기를 올려라(정지마찰)")
+                    break
+                continue
+            stuck, total = 0, total + abs(got)
+    finally:
+        if link is not None:
+            link.close()
+    s["tomato"] = place_tomatoes(s, seen)
+    save(s)
+    if not len(s["tomato"]):
+        print("토마토를 못 찾았다(두 번 넘게 본 방향이 없다) — 본 방위 %d개, %.0f° 돌았다" % (len(seen), total))
+        return 0
+    for x, y, k, known in s["tomato"]:
+        print("🍅 (%.2f, %.2f) · %d번 봄 · %s" % (x, y, k, "지도 벽까지 거리" if known else
+                                                 "거리 모름(지도에 그 방향 벽이 없다 — 1.5m로 둠)"))
+    return 0
+
+
 def lookahead(path, xy, dist: float):
     for p in path:
         if math.hypot(p[0] - xy[0], p[1] - xy[1]) >= dist:
@@ -1088,6 +1206,18 @@ def selftest() -> int:
                 -s7 * (dst[:, 0] - t7[0]) + c7 * (dst[:, 1] - t7[1])] + rg.normal(0, 0.01, dst.shape)
     g7, f7, _ = icp2d(src, dst, (0, 0, math.radians(3)))
     assert np.hypot(*(g7[:2] - t7[:2])) < 0.01 and abs(wrap(g7[2] - t7[2])) < math.radians(0.3) and f7 > 0.9, g7
+    # ⑤ 토마토 찾기 — 화면 가운데=정면, 오른쪽 끝=−화각/2, ±180° 경계를 넘어 묶고, 지도 벽에 쏴서 자리를 정한다
+    mt = dict(m, tcam_hfov=60.0, tcam_yaw_deg=0.0)
+    b = tomato_bearings({"w": 1280, "positions": [[640, 300], [1280, 300]]}, mt)
+    assert abs(b[0]) < 1e-9 and abs(b[1] + math.radians(30)) < 1e-9, b
+    cl = cluster_bearings([math.radians(179), math.radians(-179), math.radians(178), math.radians(90)])
+    assert cl[0][1] == 3 and abs(abs(cl[0][0]) - math.radians(179.3)) < math.radians(1), cl
+    st = empty()
+    st["lo"][tuple(idx([2.0, 0.0]))] = 2.0           # 2m 앞 장애물 한 칸
+    t = place_tomatoes(st, [0.0, 0.01, math.radians(90)])
+    assert len(t) == 1 and abs(t[0][0] - 2.0) < 0.06 and t[0][2] == 2 and t[0][3] == 1, t
+    t2 = place_tomatoes(st, [math.radians(-90)] * 2)
+    assert t2[0][3] == 0 and abs(t2[0][1] + TOMATO_GUESS) < 1e-9, "벽이 없으면 거리 모름"
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
@@ -1095,7 +1225,7 @@ def selftest() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "clear", "selftest", "replay", "selfcal"])
+    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "clear", "selftest", "replay", "selfcal"])
     ap.add_argument("file", nargs="*", help="replay·selfcal: ~/space_scans/scan-*.npz")
     ap.add_argument("--write", action="store_true", help="selfcal: 찾은 장착값을 ~/space_mount.json에 쓴다")
     ap.add_argument("--steps", type=int, default=16)
@@ -1144,6 +1274,8 @@ def main() -> int:
         return step_cmd(a, m)
     if a.mode == "wrist":
         return wrist_cmd(m)
+    if a.mode == "find":
+        return find_cmd(a, m)
     if a.x is None or a.y is None:
         print("go 는 --x --y (지도 좌표, m)가 있어야 한다")
         return 2

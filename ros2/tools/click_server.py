@@ -380,8 +380,8 @@ def build(job, args):
         # **집 안 공간 지도**(space_map.py) — 한 장 담기·제자리 스캔·목표로 가기·지우기.
         # 주행 포트를 쥐는 일이라 넛지와 같이 한 번에 하나만 돈다.
         mode = str(args.get("mode", ""))
-        if mode not in ("snap", "scan", "go", "step", "wrist", "clear"):
-            raise ValueError("space mode 는 snap|scan|go|step|wrist|clear")
+        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "clear"):
+            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|clear")
         a = [PY, T("space_map.py"), mode]
         if mode == "snap" and str(args.get("turn", "")).strip() != "":
             a += ["--turn", "%.0f" % num(args, "turn", 0, -180, 180)]
@@ -392,10 +392,12 @@ def build(job, args):
                 raise ValueError("걸음 지령이 전부 0이다")
             a += ["--vx", str(v["vx"]), "--vy", str(v["vy"]), "--w", str(v["w"]),
                   "--secs", "%.2f" % num(args, "secs", 0.8, 0.2, 2.0)]
-        if mode in ("step", "scan", "go"):
+        if mode in ("step", "scan", "go", "find"):
             # IMU가 있으면 회전 넛지는 시간이 아니라 이 각도까지 민다(정지마찰에 안 속는다)
             a += ["--deg", "%.0f" % num(args, "deg", 20, 3, 45)]
-        if mode in ("scan", "go"):
+        if mode == "find" and args.get("hand"):
+            a += ["--hand"]                     # 바퀴 대신 사람이 돌린다
+        if mode in ("scan", "go", "find"):
             a += ["--w", "%d" % int(num(args, "w", 150, 60, 255)),
                   "--wsecs", "%.2f" % num(args, "wsecs", 0.8, 0.2, 2.0)]
         if mode == "scan":
@@ -435,7 +437,8 @@ def space_payload(have: str) -> str:
                        "path": np.asarray(s["path"], float).tolist(),
                        "goal": np.asarray(s["goal"], float).tolist(),
                        # 자세를 정할 때의 IMU (boot, yaw rad) — 화면이 그 뒤의 회전을 실시간으로 더한다
-                       "imu": [None if np.isnan(v) else float(v) for v in np.asarray(s["imu"], float)]})
+                       "imu": [None if np.isnan(v) else float(v) for v in np.asarray(s["imu"], float)],
+                       "tomato": np.asarray(s["tomato"], float).tolist()})   # (x, y, 본 횟수, 거리 아는가)
 
 
 PAGE = r"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
@@ -527,6 +530,8 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button class="go" onclick="run('space',spArgs({mode:'scan'}))">제자리 한 바퀴 스캔</button>
       <button title="모터 없이 — 차체를 손으로 15~20°씩 돌리고 멈추기를 한 바퀴 넘게(+50°). IMU가 멈출 때마다 한 장 담고, 끝에 고리 닫기로 지도를 다시 짓는다" onclick="run('space',spArgs({mode:'scan',hand:true}))">손으로 돌리며 스캔</button>
       <button class="go" onclick="spGo()">목표로 가기</button>
+      <button class="go" title="제자리에서 한 바퀴 돌며 tomato-vision이 본 토마토의 방향을 모아, 지도 벽까지 거리로 자리를 정한다. 먼저 [제자리 한 바퀴 스캔]으로 지도를 만들어 둔다" onclick="run('space',spArgs({mode:'find'}))">🍅 토마토 찾기</button>
+      <button onclick="spToTomato()">🍅 토마토로 가기</button>
       <button onclick="if(confirm('지도를 지울까? 다음 장의 자리가 원점이 된다'))run('space',{mode:'clear'})">지도 지움</button>
     </div>
     <div class="row" style="margin-top:6px">
@@ -1226,6 +1231,18 @@ function spPick(e){
 }
 function spStep(sx,sy,sw){ var v=val('sp_v',150), w=val('sp_w',150);
   run('space',{mode:'step',vx:sx*v,vy:sy*v,w:sw*w,deg:val('sp_deg',20),secs:sw?val('sp_ws',0.8):val('sp_vs',0.8)});}
+function spDrawTomato(t){
+  (sp.tom||[]).forEach(function(o){sp.scene.remove(o);}); sp.tom=[]; sp.tomList=t||[];
+  sp.tomList.forEach(function(q){
+    var o=new THREE.Mesh(new THREE.SphereGeometry(0.09,14,10),
+      new THREE.MeshBasicMaterial({color:0xe23b2e,transparent:!q[3],opacity:q[3]?1:0.45}));
+    o.position.set(q[0],q[1],0.5); sp.scene.add(o); sp.tom.push(o);});
+  spRender();}
+function spToTomato(){ var t=sp.tomList||[]; if(!t.length){alert('찾은 토마토가 없다 — [🍅 토마토 찾기]부터');return;}
+  var q=t[0], p=sp.pose||[0,0,0], dx=q[0]-p[0], dy=q[1]-p[1], d=Math.hypot(dx,dy), k=Math.max(0,(d-0.5)/d);
+  if(!q[3]&&!confirm('이 토마토는 거리를 모른다(지도에 그 방향 벽이 없음) — 1.5m로 짐작한 자리로 갈까?')) return;
+  sp.goalXY=[p[0]+dx*k,p[1]+dy*k];   // 50cm 앞에 선다 — 그다음은 팔·손목 카메라 몫
+  run('space',spArgs({mode:'go',x:sp.goalXY[0],y:sp.goalXY[1]}));}
 function spGo(){ if(!sp.goalXY){alert('지도 바닥을 먼저 눌러 목표를 정한다');return;}
   run('space',spArgs({mode:'go',x:sp.goalXY[0],y:sp.goalXY[1]}));}
 function spBuild(j){
@@ -1251,7 +1268,7 @@ function spBuild(j){
   sp.pose=j.pose; sp.imuRef=j.imu||[null,null];
   if(!sp.framed){sp.tgt.set(j.pose[0],j.pose[1],0.3); sp.framed=true;}
   if(j.goal&&j.goal.length===2) sp.goalXY=j.goal;
-  spDrawPath(j.path,sp.goalXY);
+  spDrawPath(j.path,sp.goalXY); spDrawTomato(j.tomato);
   spInfo('장 '+j.frames+' · 점 '+K+' · 자세 ('+j.pose[0].toFixed(2)+', '+j.pose[1].toFixed(2)+') '
     +Math.round(j.pose[2]*180/Math.PI)+'° · 맞춤 '+j.q.toFixed(2));
 }
