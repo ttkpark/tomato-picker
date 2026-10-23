@@ -420,6 +420,7 @@ def frame(after: float, timeout: float = 40.0):
                        "(60cm 안을 봤다)" % timeout)
 
 
+START_COVER = 0.5              # 출발 맞춤의 겹침 하한(겹친 점/스캔 점) — localize 주석
 NEAR_VALID = 0.08              # Astra 유효 깊이 비율이 이보다 낮으면 정면 60cm 안에 뭔가 있다(투광기가 꺼진다, 10/23 실기 0.00)
 
 
@@ -457,30 +458,35 @@ def refine(s: dict, pts: np.ndarray, m: dict, pose) -> np.ndarray:
     return pose
 
 
-def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: float) -> bool:
-    """새 장 하나로 자세를 맞추고, 믿을 만하면 지도에 넣고 저장한다 → 지도와 맞춰 받아들였나."""
+def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: float,
+             min_cover: float = 0.0) -> bool:
+    """새 장 하나로 자세를 맞추고, 믿을 만하면 지도에 넣고 저장한다 → 지도와 맞춰 받아들였나.
+    min_cover = 겹친 점 / 스캔 점의 하한. 출발 맞춤은 0.5를 쓴다 — 40/115(0.35)·일치 0.87짜리가
+    0.36m 틀렸다(10/23). 기본 0은 예전 그대로(스캔처럼 처음 보는 곳이 많은 장을 버리지 않게)."""
     dep, meta = frame(after)
     imu = imu_now()
     prior, win_deg, d_imu = imu_prior(s, prior, win_deg, imu)
     pts = cloud(dep, meta, m)
     sc = scan2d(pts, m)
     pose, q, hit, amb = match(s, sc, prior, win_xy, win_deg)
-    if not amb and q >= Q_MIN and hit >= HIT_MIN:
+    cover = hit / max(1, len(sc))
+    strong = q >= Q_MIN and hit >= HIT_MIN and cover >= min_cover
+    if not amb and strong:
         pose = refine(s, pts, m, pose)
     ok = False
     if amb and (s["lo"] > OCC).sum() >= 20:
         s["pose"] = np.asarray(prior, float)
         print("  ⚠ 모호 — 다른 방향도 거의 똑같이 맞는다(곧은 벽만 보인다). 이 장은 안 넣는다."
               " 손으로 돌렸으면 돌린 각도를 적어 [한 장 담기]")
-    elif (s["lo"] > OCC).sum() < 20 or (q >= Q_MIN and hit >= HIT_MIN):
+    elif (s["lo"] > OCC).sum() < 20 or strong:
         s["pose"] = pose
         integrate(s, sc, pts, m)
         s["frames"] = int(s["frames"]) + 1
-        ok = (s["lo"] > OCC).sum() >= 20 and q >= Q_MIN and hit >= HIT_MIN
+        ok = (s["lo"] > OCC).sum() >= 20 and strong
     else:
         s["pose"] = np.asarray(prior, float)
-        print("  ⚠ 일치 %.2f(기준 %.2f)·겹친 점 %d(기준 %d) — 이 장은 지도에 안 넣는다(자세는 짐작)" %
-              (q, Q_MIN, hit, HIT_MIN))
+        print("  ⚠ 일치 %.2f(기준 %.2f)·겹친 점 %d(기준 %d)·겹침 %.0f%%(기준 %.0f%%) — 이 장은 지도에 안 넣는다(자세는 짐작)" %
+              (q, Q_MIN, hit, HIT_MIN, 100 * cover, 100 * min_cover))
     s["q"] = q
     if imu is not None:
         s["imu"] = np.array(imu[:2])
@@ -1097,7 +1103,7 @@ def find_cmd(a, m) -> int:
     s = load()
     # 제자리에서 돌면 한 바퀴에 0.1m쯤 밀린다(메카넘) — 스캔·찾기를 거듭하다 서랍장·화분에 닿았다(10/23).
     # 자리를 모르거나 둘레에 장애물이 있으면 돌지 않는다.
-    if not localize(s, m, s["pose"], 0.4, 30, time.time()):
+    if not localize(s, m, s["pose"], 0.4, 30, time.time(), min_cover=START_COVER):
         print("⛔ 지금 자리를 지도로 못 맞췄다(60cm 안을 보고 있거나 지도 밖) — 넓은 곳으로 옮기고 [제자리 한 바퀴 스캔]부터")
         return 1
     gap, need = clearance(s["lo"], s["pose"][:2]), m.get("spin_r", SPIN_R)
@@ -1175,7 +1181,7 @@ def face_cmd(a, m) -> int:
     if astra_blocked(0):
         print("⛔ 정면 60cm 안에 물체(Astra 깊이가 꺼졌다) — 트인 쪽으로 돌리거나 뒤로 빼고 다시")
         return 1
-    if not localize(s, m, s["pose"], 0.4, 30, time.time()):
+    if not localize(s, m, s["pose"], 0.4, 30, time.time(), min_cover=START_COVER):
         print("⛔ 지금 자리를 지도로 못 맞췄다 — 트인 쪽을 보게 돌리거나 [한 장 담기] 뒤 다시")
         return 1
     gap, need = clearance(s["lo"], s["pose"][:2]), m.get("spin_r", SPIN_R)
@@ -1275,7 +1281,7 @@ def go_cmd(a, m) -> int:
     if not yaw_front_ok():
         return 1
     # 사람이 손으로 옮겼을 수 있다 — 처음엔 넓게 찾는다
-    if not localize(s, m, s["pose"], 0.5, 40, time.time()):
+    if not localize(s, m, s["pose"], 0.5, 40, time.time(), min_cover=START_COVER):
         # 짐작 자세로 길을 짜면 엉뚱한 데로 간다(10/23: 서랍장을 보고 출발 — 겹친 점 0/5)
         print("⛔ 출발 자리를 지도로 못 맞췄다 — 트인 쪽을 보게 돌리거나 [한 장 담기] 뒤 다시")
         return 1
