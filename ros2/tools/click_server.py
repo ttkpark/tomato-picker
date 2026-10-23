@@ -26,7 +26,7 @@
 
 API 요약 (전부 JSON)
     GET  /state                      상태 한 줌
-    GET  /log?since=N                로그 이어받기
+    GET  /log?since=N | ?tail=N      로그 이어받기 | 마지막 N줄(≤400)
     GET  /frame.jpg                  손목 화면
     POST /click   {u,v,mode}         mode=target(줄기) | grip(십자)
     POST /clear                      표적 지움
@@ -1404,8 +1404,12 @@ class Handler(BaseHTTPRequestHandler):
             q = parse_qs(urlparse(self.path).query)
             try:
                 since = max(0, int(q.get("since", ["0"])[0]))
+                # tail=N: 마지막 N줄 — since=0은 앞 400줄만 줘서 에이전트가 낡은 줄을 '최신'으로 읽었다(10/23)
+                tail = int(q.get("tail", ["0"])[0])
             except ValueError:
-                since = 0
+                since, tail = 0, 0
+            if tail > 0:
+                since = max(0, len(JOB.lines) - min(tail, 400))
             lines = JOB.lines[since:since + 400]
             self._send(200, json.dumps({"lines": lines, "next": since + len(lines)}))
         else:
