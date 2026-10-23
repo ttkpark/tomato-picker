@@ -750,6 +750,11 @@ def close_and_build(s, base, pose0, shots, m, imu_end) -> int:
             if frac >= 0.5 and res < 0.05 and np.hypot(*got[:2]) < 0.3:   # 제자리인데 30cm 넘게 밀렸다 = 엉뚱한 답
                 ks.append((r + wrap(got[2] - wrap(r))) / r)
                 xy.append(got[:2])
+            elif frac >= 0.5 and res < 0.05:
+                # 잘 맞았는데 밀림만 크다 — 10/24 큰 방(매끈한 마루)에서 다섯 장 모두 0.30~0.45m로 버려졌다.
+                # 각도에 따라 꾸준히 커져 진짜 밀림이다. 밀림을 넣어 다시 지어도 장애물 칸 3%만 줄어 안 넣었다.
+                print("  고리 닫기 %.0f°: 잘 맞았지만(겹침 %.2f · 잔차 %.3f) 밀림 %.2fm라 버린다 — 회전 중 차체가 밀렸다" % (
+                    math.degrees(r), frac, res, float(np.hypot(*got[:2]))))
     # 엉뚱한 답이 섞여도 끌려가지 않게 — **서로 0.75% 안에 가장 많이 모인 무리**만 쓴다. (중앙값 기준으로 거르면
     #   2026-10-23 실기처럼 0.8955·0.973이 중앙값을 끌어내려 좋은 답 0.997·0.9996까지 버렸다)
     if ks:
