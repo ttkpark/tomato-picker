@@ -1214,6 +1214,49 @@ def face_cmd(a, m) -> int:
         localize(s, m, s["pose"], 0.1, 90, time.time() + 0.4)    # 돈 만큼 지도 자세를 맞춰 둔다(다음 일이 짐작으로 시작하지 않게)
 
 
+APPROACH_STANDOFF = 0.7        # 토마토에서 이만큼 앞에 선다 — 도착 허용 0.2 + 차체 앞 0.2 + 여유
+
+
+def approach_goal(s: dict, standoff: float = APPROACH_STANDOFF):
+    """지금 자리 → 첫 토마토로 가는 선 위, 토마토에서 standoff 앞의 점. 이미 그 안이면 지금 자리."""
+    t, p = s["tomato"][0], s["pose"]
+    d = math.hypot(t[0] - p[0], t[1] - p[1])
+    k = max(0.0, (d - standoff) / d) if d > 1e-6 else 0.0
+    return p[0] + (t[0] - p[0]) * k, p[1] + (t[1] - p[1]) * k
+
+
+def approach_cmd(a, m) -> int:
+    """🍅 토마토 앞으로 — 가기(70cm 앞) → 정면 보기. 거리를 모르는 토마토(지도 벽도 없음)로는 안 간다."""
+    s = load()
+    if not len(s["tomato"]):
+        print("⛔ 찾아 둔 토마토가 없다 — [🍅 토마토 찾기]부터")
+        return 1
+    if not s["tomato"][0][3]:
+        print("⛔ 이 토마토는 거리를 모른다(1.5m 짐작) — 넓은 곳에서 [🍅 토마토 찾기]를 다시")
+        return 1
+    gx, gy = approach_goal(s)
+    if math.hypot(gx - s["pose"][0], gy - s["pose"][1]) > a.tol:
+        # 먼 자리(둘레가 트인 곳)에서 먼저 정면을 맞추고 곧게 다가간다 — 도착하면 화분·가구가 0.45m 안이라
+        # 회전 여유 검사가 정면 보기를 막았다(10/23 실기: 둘레 0.41m)
+        if face_cmd(a, m) != 0:
+            print("  (정면 맞추기 실패 — 그래도 지도 길로 간다)")
+        s = load()
+        gx, gy = approach_goal(s)
+        print("가기 → (%.2f, %.2f)" % (gx, gy))
+        a.x, a.y = gx, gy
+        if go_cmd(a, m) != 0:
+            return 1
+    s = load()
+    if clearance(s["lo"], s["pose"][:2]) >= m.get("spin_r", SPIN_R):
+        return face_cmd(a, m)
+    cx, w = tomato_cx()
+    if cx is not None and abs(w / 2 - cx) < FACE_TOL_PX:
+        print("✅ 토마토 앞이고 정면이다(cx %.0f) — 둘레가 좁아 더 돌지 않는다" % cx)
+        return 0
+    print("⚠ 토마토 앞에 왔지만 둘레가 좁아 돌지 않는다 — 토마토 cx %s" % ("못 봄" if cx is None else "%.0f" % cx))
+    return 1
+
+
 def lookahead(path, xy, dist: float):
     for p in path:
         if math.hypot(p[0] - xy[0], p[1] - xy[1]) >= dist:
@@ -1439,6 +1482,11 @@ def selftest() -> int:
             assert astra_blocked(0) == want, (v, age, want)
     finally:
         DEPTH_CAMERAS["astra"]["meta"] = keep
+    # ⑦ 토마토 앞 목표 — 1.2m 떨어진 토마토면 0.5m 가서 0.7m 앞에, 이미 가까우면 제자리
+    sa = empty(); sa["tomato"] = np.array([[1.2, 0.0, 3, 1.0]])
+    assert np.allclose(approach_goal(sa), (0.5, 0.0))
+    sa["pose"] = np.array([0.8, 0.0, 0.0])
+    assert np.allclose(approach_goal(sa), (0.8, 0.0))
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
@@ -1446,7 +1494,7 @@ def selftest() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "clear", "selftest", "replay", "selfcal"])
+    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "approach", "clear", "selftest", "replay", "selfcal"])
     ap.add_argument("file", nargs="*", help="replay·selfcal: ~/space_scans/scan-*.npz")
     ap.add_argument("--write", action="store_true", help="selfcal: 찾은 장착값을 ~/space_mount.json에 쓴다")
     ap.add_argument("--steps", type=int, default=16)
@@ -1499,6 +1547,8 @@ def main() -> int:
         return find_cmd(a, m)
     if a.mode == "face":
         return face_cmd(a, m)
+    if a.mode == "approach":
+        return approach_cmd(a, m)
     if a.x is None or a.y is None:
         print("go 는 --x --y (지도 좌표, m)가 있어야 한다")
         return 2

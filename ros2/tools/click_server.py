@@ -380,8 +380,8 @@ def build(job, args):
         # **집 안 공간 지도**(space_map.py) — 한 장 담기·제자리 스캔·목표로 가기·지우기.
         # 주행 포트를 쥐는 일이라 넛지와 같이 한 번에 하나만 돈다.
         mode = str(args.get("mode", ""))
-        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "face", "clear"):
-            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|face|clear")
+        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "face", "approach", "clear"):
+            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|face|approach|clear")
         a = [PY, T("space_map.py"), mode]
         if mode == "snap" and str(args.get("turn", "")).strip() != "":
             a += ["--turn", "%.0f" % num(args, "turn", 0, -180, 180)]
@@ -392,12 +392,12 @@ def build(job, args):
                 raise ValueError("걸음 지령이 전부 0이다")
             a += ["--vx", str(v["vx"]), "--vy", str(v["vy"]), "--w", str(v["w"]),
                   "--secs", "%.2f" % num(args, "secs", 0.8, 0.2, 2.0)]
-        if mode in ("step", "scan", "go", "find"):
+        if mode in ("step", "scan", "go", "find", "approach"):
             # IMU가 있으면 회전 넛지는 시간이 아니라 이 각도까지 민다(정지마찰에 안 속는다)
             a += ["--deg", "%.0f" % num(args, "deg", 20, 3, 45)]
         if mode == "find" and args.get("hand"):
             a += ["--hand"]                     # 바퀴 대신 사람이 돌린다
-        if mode in ("scan", "go", "find", "face"):
+        if mode in ("scan", "go", "find", "face", "approach"):
             # find만 시계 방향을 고를 수 있다 — 한쪽이 막힌 자리(10/23 케이블)에서 반대로 돈다
             sign = -1 if (mode == "find" and args.get("cw")) else 1
             a += ["--w", "%d" % (sign * int(num(args, "w", 150, 60, 255))),
@@ -406,6 +406,9 @@ def build(job, args):
             a += ["--steps", "%d" % int(num(args, "steps", 16, 1, 40))]
             if args.get("hand"):
                 a += ["--hand"]                 # 바퀴 대신 사람이 돌린다 — IMU가 멈출 때마다 한 장씩 담는다
+        if mode == "approach":
+            a += ["--vx", "%d" % int(num(args, "vx", 200, 60, 255)),
+                  "--vsecs", "%.2f" % num(args, "vsecs", 1.0, 0.2, 2.0)]
         if mode == "go":
             if "x" not in args or "y" not in args:
                 raise ValueError("go 는 목표 x,y(m)가 있어야 한다 — 지도 바닥을 먼저 누른다")
@@ -534,7 +537,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button class="go" onclick="spGo()">목표로 가기</button>
       <button class="go" title="제자리에서 한 바퀴 돌며 tomato-vision이 본 토마토의 방향을 모아, 지도 벽까지 거리로 자리를 정한다. 먼저 [제자리 한 바퀴 스캔]으로 지도를 만들어 둔다" onclick="run('space',spArgs({mode:'find'}))">🍅 토마토 찾기</button>
       <button title="시계 방향으로 돌며 찾는다 — 반시계 쪽이 막혔을 때" onclick="run('space',spArgs({mode:'find',cw:1}))">🍅 찾기(시계)</button>
-      <button onclick="spToTomato()">🍅 토마토로 가기</button>
+      <button title="첫 토마토 70cm 앞까지 가서 앞 카메라 정면에 맞춘다(거리를 모르는 토마토로는 안 간다)" onclick="run('space',spArgs({mode:'approach'}))">🍅 토마토 앞으로</button>
       <button title="찾아 둔 토마토 쪽으로 차체를 돌려 앞 카메라 정면에 둔다(지도 방위 → 검출로 다듬기)" onclick="run('space',spArgs({mode:'face'}))">🍅 정면 보기</button>
       <button onclick="if(confirm('지도를 지울까? 다음 장의 자리가 원점이 된다'))run('space',{mode:'clear'})">지도 지움</button>
     </div>
@@ -1242,11 +1245,6 @@ function spDrawTomato(t){
       new THREE.MeshBasicMaterial({color:0xe23b2e,transparent:!q[3],opacity:q[3]?1:0.45}));
     o.position.set(q[0],q[1],0.5); sp.scene.add(o); sp.tom.push(o);});
   spRender();}
-function spToTomato(){ var t=sp.tomList||[]; if(!t.length){alert('찾은 토마토가 없다 — [🍅 토마토 찾기]부터');return;}
-  var q=t[0], p=sp.pose||[0,0,0], dx=q[0]-p[0], dy=q[1]-p[1], d=Math.hypot(dx,dy), k=Math.max(0,(d-0.7)/d);
-  if(!q[3]&&!confirm('이 토마토는 거리를 모른다(지도에 그 방향 벽이 없음) — 1.5m로 짐작한 자리로 갈까?')) return;
-  sp.goalXY=[p[0]+dx*k,p[1]+dy*k];   // 70cm 앞에 선다(도착 허용 20cm + 차체 앞 20cm) — 그다음은 팔·손목 카메라 몫
-  run('space',spArgs({mode:'go',x:sp.goalXY[0],y:sp.goalXY[1]}));}
 function spGo(){ if(!sp.goalXY){alert('지도 바닥을 먼저 눌러 목표를 정한다');return;}
   run('space',spArgs({mode:'go',x:sp.goalXY[0],y:sp.goalXY[1]}));}
 function spBuild(j){
