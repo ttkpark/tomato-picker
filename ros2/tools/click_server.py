@@ -1239,9 +1239,9 @@ function spDrawTomato(t){
     o.position.set(q[0],q[1],0.5); sp.scene.add(o); sp.tom.push(o);});
   spRender();}
 function spToTomato(){ var t=sp.tomList||[]; if(!t.length){alert('찾은 토마토가 없다 — [🍅 토마토 찾기]부터');return;}
-  var q=t[0], p=sp.pose||[0,0,0], dx=q[0]-p[0], dy=q[1]-p[1], d=Math.hypot(dx,dy), k=Math.max(0,(d-0.5)/d);
+  var q=t[0], p=sp.pose||[0,0,0], dx=q[0]-p[0], dy=q[1]-p[1], d=Math.hypot(dx,dy), k=Math.max(0,(d-0.7)/d);
   if(!q[3]&&!confirm('이 토마토는 거리를 모른다(지도에 그 방향 벽이 없음) — 1.5m로 짐작한 자리로 갈까?')) return;
-  sp.goalXY=[p[0]+dx*k,p[1]+dy*k];   // 50cm 앞에 선다 — 그다음은 팔·손목 카메라 몫
+  sp.goalXY=[p[0]+dx*k,p[1]+dy*k];   // 70cm 앞에 선다(도착 허용 20cm + 차체 앞 20cm) — 그다음은 팔·손목 카메라 몫
   run('space',spArgs({mode:'go',x:sp.goalXY[0],y:sp.goalXY[1]}));}
 function spGo(){ if(!sp.goalXY){alert('지도 바닥을 먼저 눌러 목표를 정한다');return;}
   run('space',spArgs({mode:'go',x:sp.goalXY[0],y:sp.goalXY[1]}));}

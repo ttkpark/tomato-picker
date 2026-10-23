@@ -952,6 +952,20 @@ def ray_hit(lo: np.ndarray, xy, th: float, rmin: float = 0.4, rmax: float = 4.0)
     return float("nan")
 
 
+SPIN_MARGIN = 0.12              # 제자리 회전 여유 — 차체 반지름에 더한다(회전 중 밀림·케이스 모서리)
+
+
+def clearance(lo: np.ndarray, xy, rmax: float = 1.0) -> float:
+    """xy에서 가장 가까운 장애물 칸까지 거리(m). rmax 안에 없으면 rmax."""
+    c, r = idx(xy), int(rmax / RES)
+    lo_ = np.clip(c - r, 0, N)
+    win = lo[lo_[0]:min(N, c[0] + r + 1), lo_[1]:min(N, c[1] + r + 1)] > OCC
+    if not win.any():
+        return rmax
+    ii, jj = np.nonzero(win)
+    return float(min(rmax, np.hypot(ii + lo_[0] - c[0], jj + lo_[1] - c[1]).min() * RES))
+
+
 def cluster_bearings(bs, tol: float = TOMATO_TOL) -> list:
     """방위 목록 → [(평균 방위, 개수)], 많이 본 순. 원형이라 ±π 경계를 넘어 묶는다."""
     left, out = sorted(wrap(b) for b in bs), []
@@ -986,13 +1000,21 @@ def find_cmd(a, m) -> int:
         print("⛔ tomato-vision 상태가 3초째 안 바뀐다(또는 옛 발행기라 ts가 없다) — systemctl status tomato-vision")
         return 1
     s = load()
-    localize(s, m, s["pose"], 0.4, 30, time.time())
+    # 제자리에서 돌면 한 바퀴에 0.1m쯤 밀린다(메카넘) — 스캔·찾기를 거듭하다 서랍장·화분에 닿았다(10/23).
+    # 자리를 모르거나 둘레에 장애물이 있으면 돌지 않는다.
+    if not localize(s, m, s["pose"], 0.4, 30, time.time()):
+        print("⛔ 지금 자리를 지도로 못 맞췄다(60cm 안을 보고 있거나 지도 밖) — 넓은 곳으로 옮기고 [제자리 한 바퀴 스캔]부터")
+        return 1
+    gap = clearance(s["lo"], s["pose"][:2])
+    if gap < m["radius"] + SPIN_MARGIN:
+        print("⛔ 둘레 %.2fm 안에 장애물 — 돌면 부딪힌다(%.2fm 이상 띄운다)" % (gap, m["radius"] + SPIN_MARGIN))
+        return 1
     th0, i0, seen, total, stuck = float(s["pose"][2]), imu_now(), [], 0.0, 0
     link = None if a.hand else open_link()
     if not a.hand and link is None:
         return 1
     try:
-        for k in range(max(a.steps, int(400 / a.deg) + 2)):   # 한 바퀴를 넘게 — 16걸음×20°는 모자란다
+        for k in range(max(a.steps, int(3 * 360 / a.deg))):   # 360°를 채울 때까지 — 걸음이 1~4°로 끝나는 일이 잦다(10/23 실기 22걸음에 247°)
             st = tomato_fresh(time.time() + 0.3)         # 멈춘 뒤에 찍힌 판정
             i = imu_now()
             if st is None or i is None or i[0] != i0[0]:
@@ -1218,6 +1240,7 @@ def selftest() -> int:
     assert len(t) == 1 and abs(t[0][0] - 2.0) < 0.06 and t[0][2] == 2 and t[0][3] == 1, t
     t2 = place_tomatoes(st, [math.radians(-90)] * 2)
     assert t2[0][3] == 0 and abs(t2[0][1] + TOMATO_GUESS) < 1e-9, "벽이 없으면 거리 모름"
+    assert abs(clearance(st["lo"], [0.0, 0.0]) - 1.0) < 1e-9 and abs(clearance(st["lo"], [1.7, 0.0]) - 0.3) < 0.06
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
