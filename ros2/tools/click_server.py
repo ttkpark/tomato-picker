@@ -380,8 +380,8 @@ def build(job, args):
         # **집 안 공간 지도**(space_map.py) — 한 장 담기·제자리 스캔·목표로 가기·지우기.
         # 주행 포트를 쥐는 일이라 넛지와 같이 한 번에 하나만 돈다.
         mode = str(args.get("mode", ""))
-        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "clear"):
-            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|clear")
+        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "face", "clear"):
+            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|face|clear")
         a = [PY, T("space_map.py"), mode]
         if mode == "snap" and str(args.get("turn", "")).strip() != "":
             a += ["--turn", "%.0f" % num(args, "turn", 0, -180, 180)]
@@ -397,7 +397,7 @@ def build(job, args):
             a += ["--deg", "%.0f" % num(args, "deg", 20, 3, 45)]
         if mode == "find" and args.get("hand"):
             a += ["--hand"]                     # 바퀴 대신 사람이 돌린다
-        if mode in ("scan", "go", "find"):
+        if mode in ("scan", "go", "find", "face"):
             # find만 시계 방향을 고를 수 있다 — 한쪽이 막힌 자리(10/23 케이블)에서 반대로 돈다
             sign = -1 if (mode == "find" and args.get("cw")) else 1
             a += ["--w", "%d" % (sign * int(num(args, "w", 150, 60, 255))),
@@ -535,6 +535,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button class="go" title="제자리에서 한 바퀴 돌며 tomato-vision이 본 토마토의 방향을 모아, 지도 벽까지 거리로 자리를 정한다. 먼저 [제자리 한 바퀴 스캔]으로 지도를 만들어 둔다" onclick="run('space',spArgs({mode:'find'}))">🍅 토마토 찾기</button>
       <button title="시계 방향으로 돌며 찾는다 — 반시계 쪽이 막혔을 때" onclick="run('space',spArgs({mode:'find',cw:1}))">🍅 찾기(시계)</button>
       <button onclick="spToTomato()">🍅 토마토로 가기</button>
+      <button title="찾아 둔 토마토 쪽으로 차체를 돌려 앞 카메라 정면에 둔다(지도 방위 → 검출로 다듬기)" onclick="run('space',spArgs({mode:'face'}))">🍅 정면 보기</button>
       <button onclick="if(confirm('지도를 지울까? 다음 장의 자리가 원점이 된다'))run('space',{mode:'clear'})">지도 지움</button>
     </div>
     <div class="row" style="margin-top:6px">

@@ -424,14 +424,22 @@ NEAR_VALID = 0.08              # Astra 유효 깊이 비율이 이보다 낮으�
 
 
 def astra_blocked(wait: float = 0.4) -> bool:
-    """움직인 뒤 wait초 기다린 새 장이 '거의 다 무효'인가 — 그러면 frame()은 40초를 헛기다린다."""
+    """움직인 뒤 wait초 기다린 장이 '거의 다 무효'이거나 **아예 안 오는가** — 그러면 frame()은 40초를 헛기다린다.
+    ⚠ 60cm 안을 30초 보면 발행기가 스스로 다시 열고, 그동안 meta가 멈춘다 — 낡은 meta를 '안 막힘'으로 보면
+    40초 헛기다렸다(10/23). 3초 안에 새 장이 없으면 막힌 것으로 본다."""
     from tomato_picker.config import DEPTH_CAMERAS
     time.sleep(wait)
-    try:
-        meta = json.load(open(DEPTH_CAMERAS["astra"]["meta"]))
-    except (OSError, ValueError):
-        return False
-    return time.time() - float(meta.get("ts", 0)) < 2 and float(meta.get("valid_frac", 1)) < NEAR_VALID
+    t0 = time.time()
+    while True:
+        try:
+            meta = json.load(open(DEPTH_CAMERAS["astra"]["meta"]))
+            if time.time() - float(meta.get("ts", 0)) < 2:
+                return float(meta.get("valid_frac", 1)) < NEAR_VALID
+        except (OSError, ValueError):
+            pass
+        if time.time() - t0 > 3:
+            return True
+        time.sleep(0.2)
 
 
 def refine(s: dict, pts: np.ndarray, m: dict, pose) -> np.ndarray:
@@ -1083,6 +1091,9 @@ def find_cmd(a, m) -> int:
     if tomato_fresh(time.time() - 3) is None:
         print("⛔ tomato-vision 상태가 3초째 안 바뀐다(또는 옛 발행기라 ts가 없다) — systemctl status tomato-vision")
         return 1
+    if astra_blocked(0):
+        print("⛔ 정면 60cm 안에 물체(Astra 깊이가 꺼졌다) — 트인 쪽으로 돌리거나 뒤로 빼고 다시")
+        return 1
     s = load()
     # 제자리에서 돌면 한 바퀴에 0.1m쯤 밀린다(메카넘) — 스캔·찾기를 거듭하다 서랍장·화분에 닿았다(10/23).
     # 자리를 모르거나 둘레에 장애물이 있으면 돌지 않는다.
@@ -1137,6 +1148,70 @@ def find_cmd(a, m) -> int:
         print("🍅 (%.2f, %.2f) · %d번 봄 · %s" % (x, y, k, "거리 잼(Astra 깊이, 없으면 지도 벽)" if known else
                                                  "거리 모름(지도에 그 방향 벽이 없다 — 1.5m로 둠)"))
     return 0
+
+
+FACE_TOL_PX = 100               # 토마토 검출 cx가 화면 가운데에서 이만큼(≈6°) 안이면 정면 — 80은 557(오차 83)에서 헛돌았다
+
+
+def tomato_cx(sec: float = 2.0):
+    """sec 동안 tomato-vision 판정을 모아 cx 중앙값(없으면 None) — 검출이 프레임마다 깜빡인다(10/23)."""
+    t0, cs, w = time.time(), [], 1280
+    while time.time() - t0 < sec:
+        st = tomato_fresh(time.time())
+        if st:
+            w = int(st.get("w", w))
+            cs += [float(p[0]) for p in st.get("positions", [])]
+    return (float(np.median(cs)), w) if cs else (None, w)
+
+
+def face_cmd(a, m) -> int:
+    """찾아 둔 토마토 쪽으로 차체를 돌려 앞 카메라 정면에 둔다 — 지도 방위로 한 번에 돌고(IMU), 검출로 다듬는다.
+    10/23 실기: 지도 방위만으로 −57.5° 돌아 cx 670(정면)."""
+    from base_nudge import open_link
+    s = load()
+    if not len(s["tomato"]):
+        print("⛔ 찾아 둔 토마토가 없다 — [🍅 토마토 찾기]부터")
+        return 1
+    if astra_blocked(0):
+        print("⛔ 정면 60cm 안에 물체(Astra 깊이가 꺼졌다) — 트인 쪽으로 돌리거나 뒤로 빼고 다시")
+        return 1
+    if not localize(s, m, s["pose"], 0.4, 30, time.time()):
+        print("⛔ 지금 자리를 지도로 못 맞췄다 — 트인 쪽을 보게 돌리거나 [한 장 담기] 뒤 다시")
+        return 1
+    gap, need = clearance(s["lo"], s["pose"][:2]), m.get("spin_r", SPIN_R)
+    if gap < need or not yaw_front_ok():
+        if gap < need:
+            print("⛔ 둘레 %.2fm 안에 장애물 — 돌면 부딪힌다" % gap)
+        return 1
+    t = s["tomato"][0]
+    lens = to_world(s["pose"], np.array([[m["x"], m["y"]]]))[0]
+    b = math.degrees(wrap(math.atan2(t[1] - lens[1], t[0] - lens[0]) - s["pose"][2]))
+    link = open_link()
+    if link is None:
+        return 1
+    try:
+        print("지도 방위 %.0f° (자세 θ %.0f°, 토마토 (%.2f, %.2f))" % (b, math.degrees(s["pose"][2]), t[0], t[1]))
+        if abs(b) > 5:
+            print("  → IMU %.1f° 돌았다" % turn(link, int(math.copysign(a.w, b)), a.wsecs, abs(b)))
+        for k in range(8):
+            cx, w = tomato_cx()
+            if cx is None:
+                print("[%d] 2초 동안 안 보인다 — 지도 방위 쪽으로 8° 더" % k)
+                turn(link, int(math.copysign(a.w, b)), a.wsecs, 8)
+                continue
+            err = w / 2 - cx
+            print("[%d] cx 중앙값 %.0f (오차 %+.0f)" % (k, cx, err))
+            if abs(err) < FACE_TOL_PX:
+                print("✅ 토마토가 정면이다")
+                return 0
+            f = (w / 2) / math.tan(math.radians(m["tcam_hfov"]) / 2)
+            d = math.degrees(math.atan2(err, f))
+            turn(link, int(math.copysign(a.w, d)), a.wsecs, max(5.0, abs(d)))
+        print("⛔ 여덟 번 다듬어도 정면에 안 왔다")
+        return 1
+    finally:
+        link.close()
+        localize(s, m, s["pose"], 0.1, 90, time.time() + 0.4)    # 돈 만큼 지도 자세를 맞춰 둔다(다음 일이 짐작으로 시작하지 않게)
 
 
 def lookahead(path, xy, dist: float):
@@ -1359,7 +1434,7 @@ def selftest() -> int:
     keep, f = DEPTH_CAMERAS["astra"]["meta"], os.path.join(tempfile.mkdtemp(), "astra_meta.json")
     DEPTH_CAMERAS["astra"]["meta"] = f
     try:
-        for v, age, want in ((0.0, 0, True), (0.5, 0, False), (0.0, 10, False)):
+        for v, age, want in ((0.0, 0, True), (0.5, 0, False), (0.5, 10, True)):   # 낡은 장 = 발행기 재시작 중 = 막힘
             json.dump({"valid_frac": v, "ts": time.time() - age}, open(f, "w"))
             assert astra_blocked(0) == want, (v, age, want)
     finally:
@@ -1371,7 +1446,7 @@ def selftest() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "clear", "selftest", "replay", "selfcal"])
+    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "clear", "selftest", "replay", "selfcal"])
     ap.add_argument("file", nargs="*", help="replay·selfcal: ~/space_scans/scan-*.npz")
     ap.add_argument("--write", action="store_true", help="selfcal: 찾은 장착값을 ~/space_mount.json에 쓴다")
     ap.add_argument("--steps", type=int, default=16)
@@ -1422,6 +1497,8 @@ def main() -> int:
         return wrist_cmd(m)
     if a.mode == "find":
         return find_cmd(a, m)
+    if a.mode == "face":
+        return face_cmd(a, m)
     if a.x is None or a.y is None:
         print("go 는 --x --y (지도 좌표, m)가 있어야 한다")
         return 2
