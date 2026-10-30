@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import itertools
 import math
 import os
 import sys
@@ -74,6 +75,16 @@ BASE_RESYNC_DEG = 8.0    # 직전 지령과 실측이 이보다 벌어지면 막
 
 
 ADV_SLACK_MM = 30.0      # 자동 상한: 잰 깊이보다 이만큼만 더 간다(가는 줄기 깊이는 ±30mm 튄다)
+
+
+def nearer_depth(*vals, floor=NEAR_FLOOR + 10.0):
+    """표적까지의 거리 = 후보 중 **가까운 것**(집게 손가락 75~85mm는 뺀다).
+
+    ⚠ 겨눈 자리(십자)의 광선 깊이만 믿으면 가는 줄기는 뒤 벽을 잰다 — 2026-10-30: 줄기 412mm인데
+      십자 광선은 624mm라, 상한이 566mm로 잡히고 100mm를 가도 '아직 600mm'였다. 쫓는 표적 덩이의
+      깊이와 광선 깊이 중 가까운 쪽이 실제로 앞에 있는 것이다(덩이가 배경으로 미끄러지면 광선이 이긴다)."""
+    ok = [float(v) for v in vals if v is not None and v == v and v > floor]
+    return min(ok) if ok else None
 
 
 def advance_cap(max_adv, gone, z, stop_z):
@@ -1046,7 +1057,10 @@ def main() -> int:
         planz = [None]           # 계획을 세운 순간의 깊이(mm) — 띠를 여기 맞춰 끌고 간다
         best_dir = [None, None]      # 실측으로 고른 전진 방향과 그 효과
         print("\n 걸음   겨냥       화소   깊이    나아감   한 일")
-        for step in range(args.steps):
+        budget = [args.steps]    # 걸음 예산 — 나아갈 거리가 정해지면 그만큼 늘린다(16걸음 × 8mm로는 326mm를 못 간다)
+        for step in itertools.count():
+            if step >= budget[0]:
+                break
             if args.aim == "click":
                 c = read_click()
                 if c is not None and c[2] != click_stamp[0]:
@@ -1070,9 +1084,7 @@ def main() -> int:
             elif locked:
                 miss_streak += 1
             if locked:
-                zr = ray_depth_med(tu, tv)
-                if zr is not None:
-                    z = zr
+                z = nearer_depth(z_track, ray_depth_med(tu, tv)) or z
             print("  %3d  (%4.0f,%4.0f) %5.0f  %5.0f  %6.1f  " % (step, u, v, en, z, gone),
                   end="")
 
@@ -1217,6 +1229,8 @@ def main() -> int:
                 return 0
             if cap[0] is None:
                 cap[0] = advance_cap(args.max_adv, gone, z, args.stop_z)
+                budget[0] = max(budget[0], step + args.steps
+                                + int(math.ceil((cap[0] - gone) / max(args.adv, 1.0))))
                 print("(나아가기 상한 %.0fmm%s) " % (cap[0], "" if args.max_adv > 0 else " — 잰 거리로 자동"), end="")
             if gone >= cap[0]:
                 print("⚠ %.0fmm까지 갔다 — 더 안 간다" % gone)
@@ -1288,19 +1302,19 @@ def main() -> int:
             got, terr = go(nxt, 1.0)
             base = dict(nxt)
             time.sleep(0.35)
-            z2 = ray_depth_med(tu, tv) if locked else None
+            r = see2(prev)
+            z2 = nearer_depth(r[2] if r is not None else None,
+                              ray_depth_med(tu, tv) if locked else None)
+            if r is not None:
+                prev = (r[0], r[1])
             if z2 is None:
-                r = see2(prev)
-                if r is None:
-                    if locked:
-                        print("나아감 %.0fmm → 겨눈 자리에 깊이가 없다 "
-                              "(70mm보다 가깝다) — **닿았다고 본다**" % want)
-                        z2 = 0.0
-                    else:
-                        print("나아감 %.0fmm — 그리고 놓쳤다" % want)
-                        break
+                if locked:
+                    print("나아감 %.0fmm → 겨눈 자리에 깊이가 없다 "
+                          "(70mm보다 가깝다) — **닿았다고 본다**" % want)
+                    z2 = 0.0
                 else:
-                    z2 = r[2]
+                    print("나아감 %.0fmm — 그리고 놓쳤다" % want)
+                    break
             dz = z - z2
             gone += want
             print("나아감 %.0fmm → 깊이 %.0f→%.0f (%+.0f)" % (want, z, z2, -dz))
@@ -1338,7 +1352,7 @@ def main() -> int:
             if stall >= 2:
                 print("\n🍅 **닿았다** — %.0fmm를 명령했는데 깊이는 %.0fmm밖에 안 줄었다."
                       % (want, dz))
-                print("   ⇒ 카메라에서 손끝까지 = **%.0f mm** (이번 실측)" % r[2])
+                print("   ⇒ 카메라에서 손끝까지 = **%.0f mm** (이번 실측)" % z2)
                 ok_red, frac = (True, 1.0) if args.no_red_check else red_nearby(tu, tv)
                 if not ok_red:
                     print("⚠ 물기 직전 확인 — 그 자리 둘레가 빨갛지 않다(빨간 비율 %.0f%%,"

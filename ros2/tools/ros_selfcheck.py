@@ -1482,6 +1482,10 @@ def test_board_contract() -> None:
           v_far.startswith("❌ 팔이 거기까지 못 뻗는다") and "126mm 더 가까이" in v_far and v_ok.startswith("✅")
           and "깊이가 없다" in v_nz and sg.dry_verdict(414, 37, 28, 88, 340).startswith("✅"),
           f"{v_far} | {v_ok} | {v_nz}")
+    check("stem_grasp 표적 거리 = 덩이·광선 중 가까운 것(줄기 412 vs 뒤 벽 624 → 412), 손가락(≤85mm)·없음은 뺀다",
+          sg.nearer_depth(412, 624) == 412 and sg.nearer_depth(None, 300) == 300 and sg.nearer_depth(80, 300) == 300
+          and sg.nearer_depth(None, None) is None and sg.nearer_depth(float("nan"), 200) == 200,
+          f"{sg.nearer_depth(412, 624)}")
     check("stem_grasp 나아가기 상한: 0=잰 거리+여유(414mm → 356), 숫자를 주면 그 값",
           sg.advance_cap(0, 0, 414, 88) == 326 + sg.ADV_SLACK_MM and sg.advance_cap(200, 0, 414, 88) == 200
           and sg.advance_cap(0, 10, 50, 88) == 10 + sg.ADV_SLACK_MM,
