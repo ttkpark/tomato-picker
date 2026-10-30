@@ -260,7 +260,9 @@ def build(job, args):
             float(p)
         return [PY, T("arm_stage.py"), "--target=" + ",".join(parts)]
     if job == "pose":
-        return [PY, T("arm_stage.py"), "--dry", "--target=0,0,0,0,0"]
+        # 지금 자세만 읽는다 — 예전 '--dry --target=0,0,0,0,0'은 "목표 0…" 줄을 찍어
+        #   미리보기 목표 칸을 0으로 덮었다(2026-10-30).
+        return [PY, T("arm_stage.py"), "--read"]
     if job == "roll0":
         # **손목 롤만 0으로.** 손-눈 실측(TCP → D405 렌즈 중심)의 lateral·up 축은
         # wrist_roll과 함께 돈다 — 그래서 자로 재는 자세는 반드시 roll=0이어야 하고,
@@ -1152,6 +1154,7 @@ function k3dParseLog(text){
   if(lastTgt){tgtJ.shoulder_pan=parseFloat(lastTgt[2]);tgtJ.shoulder_lift=parseFloat(lastTgt[3]);
     tgtJ.elbow_flex=parseFloat(lastTgt[4]);tgtJ.wrist_flex=parseFloat(lastTgt[5]);tgtJ.wrist_roll=parseFloat(lastTgt[6]);
     JNAMES.forEach(function(n){var el=document.getElementById('tj_'+n); if(el) el.value=tgtJ[n].toFixed(1);});}
+  if(lastCur && loadAfterPose){ loadAfterPose=false; k3dCopyCurrent(); }
   if(lastCur||lastTgt) k3dRenderOnce();
 }
 function k3dInitRows(){
@@ -1168,10 +1171,18 @@ function k3dInitRows(){
       tgtJ[n]=parseFloat(this.value)||0; k3dRenderOnce();});
   });
 }
-function k3dLoadCurrent(){
+var loadAfterPose=false;
+function k3dCopyCurrent(){
   JNAMES.forEach(function(n){tgtJ[n]=curJ[n];
     var el=document.getElementById('tj_'+n); if(el) el.value=curJ[n].toFixed(1);});
   k3dRenderOnce();
+}
+function k3dLoadCurrent(){
+  // ⚠ curJ는 일의 로그에서만 배운다 — 조작대를 다시 띄운 뒤엔 화면 기본값뿐이다(10/30).
+  //   팔이 놀고 있으면 직접 읽게 하고, 그 '지금' 줄이 들어오면 칸에 싣는다.
+  post('/run',{job:'pose',args:{}}).then(function(j){
+    if(j.ok) loadAfterPose=true; else k3dCopyCurrent();   // 다른 일이 도는 중 = 로그의 curJ가 살아 있다
+  });
 }
 function k3dSend(){
   var t=[tgtJ.shoulder_pan,tgtJ.shoulder_lift,tgtJ.elbow_flex,tgtJ.wrist_flex,tgtJ.wrist_roll]

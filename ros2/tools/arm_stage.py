@@ -78,6 +78,8 @@ def main() -> int:
                     help="관절 일부만 목표로 준다(나머지는 지금 자리 그대로). "
                          "예: --set wrist_roll=0")
     ap.add_argument("--dry", action="store_true")
+    ap.add_argument("--read", action="store_true",
+                    help="지금 자세만 읽어 '지금' 한 줄을 찍고 끝낸다(지령 없음 — 조작대 [지금 값 불러오기])")
     ap.add_argument("--order", default="",
                     help="관절 순서를 손으로 지정한다(쉼표). 비우면 |r|이 작은 쪽부터 자동. "
                          "자동이 바닥에 걸릴 때 쓴다 — 접힌 관절을 먼저 돌리면 "
@@ -96,6 +98,14 @@ def main() -> int:
     from tomato_bridge.follower_io import FollowerIO
     io = FollowerIO(hold_torque=True)
     now = to_deg(io.read())
+    if args.read:
+        # ⚠ 여기선 아무것도 안 보낸다 — 처진 실측을 지령으로 보내면 그만큼 또 처진다(래칫).
+        p = kin.forward(now, geom)
+        print("  지금  " + " ".join(f"{j.split('_')[0]}={now[j]:7.1f}" for j in kin.JOINTS)
+              + f"   TCP({p.x:6.1f},{p.y:6.1f},{p.z:6.1f}) pitch{p.pitch:7.1f} "
+                f"r{kin.signed_radius(now, geom):7.1f}")
+        io.hold_close()
+        return 0
     io.write(to_norm(now), 0.4)          # 붙자마자 지금 자리를 붙든다 (안 그러면 처진다)
 
     if bool(args.target) == bool(args.set_joints):
