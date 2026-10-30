@@ -218,7 +218,8 @@ def main() -> int:
                     help="겨냥에 쓰는 관절(쉼표). 어깨가 뜨거우면 shoulder_pan,elbow_flex,wrist_flex "
                          "— 손목은 카메라를 직접 기울여 부하가 작다(한계에 박혀 있지 않을 때만)")
     ap.add_argument("--skip-aim-px", type=float, default=0.0,
-                    help="시작할 때 겨냥 오차가 이 화소 안이면 겨냥을 건너뛰고 곧장 나아간다(0=끔, --trust-first-z와 함께)")
+                    help="시작할 때 겨냥 오차가 이 화소 안이면 겨냥을 건너뛰고 곧장 나아간다(0=끔, --trust-first-z와 함께). "
+                         "밖이면 먼저 평행이동으로 맞춘다(align_start)")
     ap.add_argument("--grip-shut", type=float, default=4.0,
                     help="닫을 때 보낼 집게 값 — 작을수록 더 세게 문다")
     ap.add_argument("--aim-only", action="store_true",
@@ -254,6 +255,10 @@ def main() -> int:
     args = ap.parse_args()
     if args.depth_pct is None:
         args.depth_pct = 10.0 if args.thin else 25.0
+    if args.aim == "click":
+        # 사람이 찍은 표적이니 '둘레가 빨간가'는 묻지 않는다 — 줄기 위쪽을 물면 열매가 확인 창 밖이라
+        #   물 자리에서 안 닫았다(10/30 (b) 7%<8%). 닫은 뒤 집게값(grip_check)이 물었는지를 대신 판정한다.
+        args.no_red_check = True
 
     grip_z = None            # 십자를 찍은 깊이(mm) — 있으면 겨냥점을 표적 깊이로 옮긴다
     by_z = None              # 깊이별 겨냥점 실측표 — 있으면 이게 이긴다(uv_at_depth)
@@ -1230,6 +1235,87 @@ def main() -> int:
                 if r is not None:
                     return r
             return None
+
+        def scene_shift(c, e, mm=8.0):
+            """base로 e방향 mm 갔다 오며 **화면 통째**가 밀린 화소/mm와 그 장면의 깊이(mm).
+            점 하나를 쫓다 잎·고리·손가락에 무너진 (a)와 달리 표식이 필요 없다(위상상관, 10/30)."""
+            import cv2
+
+            def grab():
+                for _ in range(4):
+                    time.sleep(0.4)
+                    g = cv2.imread(vs.COLOR, cv2.IMREAD_GRAYSCALE)
+                    try:
+                        dep = np.load(vs.DEPTH).astype(float) * float(
+                            json.load(open(vs.META)).get("depth_scale_mm", 1.0))
+                    except Exception:                              # noqa: BLE001
+                        continue
+                    if g is not None:
+                        return g, dep
+                return None, None
+            dd, res, big = move_base(c, e * mm)
+            trial = {j: c[j] + float(dd.get(j, 0.0)) for j in kin.JOINTS}
+            if res > 1.0 or big > 9.0 or not legal(trial, c)[0]:
+                return None
+            g0, dep = grab()
+            go(trial, 0.8)
+            g1, _ = grab()
+            go(c, 0.8)
+            if g0 is None or g1 is None:
+                return None
+            # 아래쪽은 손가락 — 카메라와 같이 움직여 이동량을 0으로 끌어당긴다
+            a0, a1 = np.float32(g0[:int(g0.shape[0] * 0.6)]), np.float32(g1[:int(g1.shape[0] * 0.6)])
+            win = cv2.createHanningWindow((a0.shape[1], a0.shape[0]), cv2.CV_32F)
+            (sx, sy), resp = cv2.phaseCorrelate(a0, a1, win)
+            d = dep[:int(dep.shape[0] * 0.6)]
+            d = d[d > 0]
+            if resp < 0.05 or d.size < 500:
+                return None
+            return np.array([sx, sy]) / mm, float(np.median(d))
+
+        def align_start(u, v, z):
+            """(b) 시작 맞춤 — **피치 지킨 평행이동만으로** 줄기를 겨냥점 근처에 데려온다(10/30엔 사람이
+            `--dz 30`을 줬다). 회전이 없으니 화면↔base 방향만 알면 되고, 그건 옆·위로 8mm씩 흔들어 잰다.
+            세로는 세로 줄기에서 안 보이므로(창문 문제) 예측으로 두고, 가로는 다시 본 값을 쓴다."""
+            c = to_deg(io.read())
+            h = gp.approach_dir(c, geom) * np.array([1.0, 1.0, 0.0])
+            h = h / max(float(np.linalg.norm(h)), 1e-6)
+            axes = (np.array([-h[1], h[0], 0.0]), np.array([0.0, 0.0, 1.0]))    # 옆, 위
+            cols = []
+            for e in axes:
+                r = scene_shift(c, e)
+                if r is None:
+                    print("  시작 맞춤: 화면 이동을 못 쟀다 — 지금 자리에서 그대로")
+                    return u, v, z
+                cols.append(r[0] * r[1] / z)      # 장면 깊이 → 줄기 깊이로(평행이동은 1/깊이)
+            J = np.array(cols).T                  # 화소 / base mm
+            for it in range(3):
+                tu_, tv_ = aim_uv(z)
+                d = np.array([tu_ - u, tv_ - v])
+                if float(np.linalg.norm(d)) <= 0.6 * args.skip_aim_px:
+                    break
+                m = np.clip(np.linalg.lstsq(J, d, rcond=None)[0], -40.0, 40.0)
+                c = to_deg(io.read())
+                dd, res, big = move_base(c, axes[0] * m[0] + axes[1] * m[1])
+                nxt = {j: c[j] + float(dd.get(j, 0.0)) for j in kin.JOINTS}
+                if res > 1.0 or big > 12.0 or not legal(nxt, c)[0]:
+                    print("  시작 맞춤: 옆 %+.0f 위 %+.0fmm는 못 간다 — 여기까지" % (m[0], m[1]))
+                    break
+                go(nxt, 1.0)
+                pu, pv = u + float(J[0] @ m), v + float(J[1] @ m)
+                r = see2((pu, pv))
+                u, v = (r[0], r[1]) if r is not None else (pu, pv)
+                if r is not None and r[2] > 0:
+                    z = r[2]
+                print("  시작 맞춤 %d: 옆 %+.0f 위 %+.0fmm → 줄기 (%.0f,%.0f) %.0fmm, 겨냥점까지 %.0fpx"
+                      % (it + 1, m[0], m[1], u, v, z, math.hypot(aim_uv(z)[0] - u, aim_uv(z)[1] - v)))
+            return u, v, z
+
+        if args.skip_aim_px > 0 and z > 0 and math.hypot(u - tu, v - tv) > args.skip_aim_px:
+            u, v, z = align_start(u, v, z)
+            cur = to_deg(io.read())
+            base = dict(cur)
+            tu, tv = aim_uv(z)
 
         gone, JI, prev, locked, stall, miss_streak = 0.0, None, (u, v), False, 0, 0
         cap = [None]             # 나아가기 상한 — 처음 나아갈 때 잰 거리로 정한다(advance_cap)

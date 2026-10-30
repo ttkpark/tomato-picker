@@ -305,6 +305,8 @@ def build(job, args):
             v = num(args, k, 0, lo, hi)
             if abs(v) > 1e-6:
                 a += ["--" + k, "%.1f" % v]
+        if str(args.get("grip", "")).strip() != "":
+            a += ["--grip", "%.0f" % num(args, "grip", 35, 4, 100)]
         if len(a) == 2:
             raise ValueError("옮길 양이 없다")
         a += ["--piece", "%.0f" % num(args, "piece", 25, 5, 60)]
@@ -631,7 +633,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <div class="row" style="margin-top:6px">
       <label>게인<input id="g_gain" value="0.35"></label>
       <label>문턱px<input id="g_tol" value="28"></label>
-      <label>무는거리<input id="g_stop" value="88"></label>
+      <label>무는거리<input id="g_stop" value="70"></label>
     </div>
     <div class="row" style="margin-top:6px">
       <label>믿는거리(mm, 0=자동)<input id="g_maxadv" value="0"></label>
@@ -651,6 +653,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <label class="k"><input type="checkbox" id="g_nolift"> 어깨 안 쓰고 겨냥(팔돌림·팔꿈치·손목)</label>
       <label class="k"><input type="checkbox" id="g_trust" checked> 처음 잰 거리만큼 간다(가까이선 줄기가 손가락에 가린다)</label>
       <label class="k"><input type="checkbox" id="g_nored"> 빨강 확인 생략(면봉·테이프)</label>
+      <label class="k"><input type="checkbox" id="g_skip" checked> 겨냥 건너뛰기(옆·위 평행이동으로 맞춘 뒤 곧장 — 10/30 물린 방식)</label>
     </div>
     <div class="row" style="margin-top:6px">
       <button class="go" onclick="run('grasp',grasp(false))">잡으러 간다</button>
@@ -741,6 +744,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <div class="row">
       <button onclick="run('grip',{value:78})">집게 연다</button>
       <button onclick="run('grip',{value:4})">집게 닫는다</button>
+      <button onclick="run('jog',{grip:35,along:-30})" title="반쯤 천천히 연 뒤 30mm 물러난다 — 확 열면 턱이 줄기를 쓸어 토마토가 빠졌다(10/30)">놓기</button>
       <button onclick="run('pose',{})">자세 읽기</button>
       <button onclick="run('park',{})">대기 자세</button>
       <button onclick="run('roll0',{})">손목 롤 0</button>
@@ -874,7 +878,8 @@ function grasp(nc){
   return {steps:val('g_steps',16),adv:val('g_adv',8),max_turn:val('g_turn',2),
     gain:val('g_gain',0.35),tol:val('g_tol',28),stop_z:val('g_stop',88),max_adv:val('g_maxadv',0),
     aim:aimVal,no_close:nc?1:0,no_lift:(document.getElementById('g_nolift')||{}).checked?1:0,
-    trust:(document.getElementById('g_trust')||{}).checked?1:0,no_red:(document.getElementById('g_nored')||{}).checked?1:0};}
+    trust:(document.getElementById('g_trust')||{}).checked?1:0,no_red:(document.getElementById('g_nored')||{}).checked?1:0,
+    skip_aim:(document.getElementById('g_skip')||{}).checked?50:0};}
 function jog(k,s){
   var amt=s*val('j_mm',20), free=document.getElementById('j_free').checked;
   tgtJ=jogPreviewTarget(curJ,k,amt,free);

@@ -55,6 +55,8 @@ def main() -> int:
                     help="자세를 묶지 않는다 — 올릴 여유가 없을 때만")
     ap.add_argument("--pitch", type=float, default=0.0,
                     help="집게 피치를 이만큼 바꾼다(도, +위) — wrist_flex로만")
+    ap.add_argument("--grip", type=float, default=None,
+                    help="옮기기 전에 집게를 이 값으로 **천천히**(2초) — 놓기: --grip 35 --along -30")
     ap.add_argument("--dry", action="store_true")
     args = ap.parse_args()
 
@@ -94,6 +96,13 @@ def main() -> int:
         return to_deg(io.read())
 
     try:
+        if args.grip is not None and not args.dry:
+            # ⚠ 놓기는 **조금만, 천천히 연 뒤 물러난다** — 10/30: 문 줄기에서 집게를 확 열자(78, 0.9초)
+            #   움직이는 턱이 줄기를 쓸고 가 토마토가 고리에서 빠졌다. 반쯤 열면 줄기는 풀리고 턱은 덜 쓴다.
+            g = max(4.0, min(100.0, args.grip))           # grip_set.GRIP_MIN과 같은 이유(브라운아웃)
+            io.write(dict(io.read(), gripper=g), 2.0)
+            time.sleep(0.4)
+            print("집게 %.0f → 지금 %.1f" % (g, float(io.read().get("gripper", -1))))
         cur = to_deg(io.read())
         p0 = kin.forward(cur, geom)
         if args.pitch:
