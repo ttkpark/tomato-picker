@@ -330,6 +330,8 @@ def build(job, args):
               "--max-adv", "%.0f" % num(args, "max_adv", 200, 20, 500)]
         if args.get("no_close"):
             a += ["--no-close"]
+        if args.get("no_lift"):       # 어깨를 겨냥에서 뺀다 — 뜨거울 때(10/30)
+            a += ["--aim-joints", "shoulder_pan,elbow_flex,wrist_flex"]
         if args.get("dry"):
             a += ["--dry"]
         return a
@@ -637,6 +639,9 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <div class="k" style="margin-top:2px">깊이는 못 믿을 수 있다 — 다 합쳐 이 거리 이상은
       절대 안 나아간다(닿을 때까지가 아니라).</div>
     <div class="row" style="margin-top:8px">
+      <label class="k"><input type="checkbox" id="g_nolift"> 어깨 안 쓰고 겨냥(팔돌림·팔꿈치·손목)</label>
+    </div>
+    <div class="row" style="margin-top:6px">
       <button class="go" onclick="run('grasp',grasp(false))">잡으러 간다</button>
       <button onclick="run('grasp',grasp(true))">안 닫고 가기</button>
       <button onclick="run('grasp',Object.assign(grasp(true),{dry:1}))">겨냥만 본다</button>
@@ -857,7 +862,7 @@ function grasp(nc){
   var aimVal=aimEl?aimEl.value:'click';
   return {steps:val('g_steps',16),adv:val('g_adv',8),max_turn:val('g_turn',2),
     gain:val('g_gain',0.35),tol:val('g_tol',28),stop_z:val('g_stop',88),max_adv:val('g_maxadv',200),
-    aim:aimVal,no_close:nc?1:0};}
+    aim:aimVal,no_close:nc?1:0,no_lift:(document.getElementById('g_nolift')||{}).checked?1:0};}
 function jog(k,s){
   var amt=s*val('j_mm',20), free=document.getElementById('j_free').checked;
   tgtJ=jogPreviewTarget(curJ,k,amt,free);

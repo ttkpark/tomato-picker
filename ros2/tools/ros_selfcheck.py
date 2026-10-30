@@ -2418,6 +2418,19 @@ def test_arm_extend_escape() -> None:
     sys.path.insert(0, os.path.join(REPO, "ros2", "tools"))
     import arm_extend as ax  # noqa: E402
 
+    # 2026-10-30: 팔을 뒤쪽(signed_r<0)으로 뻗은 자세에서 '사거리밖'으로 갇혔다 — 앞 사거리로 뒤를 쟀다.
+    from tomato_picker.hardware import escape as es  # noqa: E402
+    g = kin.ArmGeometry()
+    check("뒤쪽 사거리(reach_back)는 앞(reach_max)보다 d0 두 배만큼 길다",
+          abs(g.reach_back - g.reach_max + 2 * g.d0) < 1e-9 and g.reach_for(-1.0) == g.reach_back
+          and g.reach_for(1.0) == g.reach_max, f"앞 {g.reach_max:.1f} 뒤 {g.reach_back:.1f}")
+    j1030 = {"shoulder_pan": 13.8, "shoulder_lift": 129.2, "elbow_flex": 71.6, "wrist_flex": 1.1, "wrist_roll": 6.2}
+    t1030 = {"shoulder_pan": 13.8, "shoulder_lift": 80.0, "elbow_flex": -38.9, "wrist_flex": 0.0, "wrist_roll": 6.2}
+    p1030 = es.plan(j1030, t1030, {j: 0.0 for j in kin.JOINTS}, lambda d: {j: 0.0 for j in d}, g)
+    check("뒤로 뻗은 자세(10/30)에서 빠져나오는 길이 '사거리밖'으로 막히지 않는다",
+          not any("사거리밖" in st["notes"] for st in p1030),
+          f"r0={kin.signed_radius(j1030, g):.1f} notes={[st['notes'] for st in p1030 if st['notes']]}")
+
     now = ESCAPE_NORM_2026_09_18
 
     check("이미 범위 밖인 관절이 그대로 있으면 막지 않는다",

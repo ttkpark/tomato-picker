@@ -130,7 +130,8 @@ def plan(now_deg: dict[str, float], target_deg: dict[str, float],
         notes = []
         if pose.z < floor_z():
             notes.append("바닥아래")
-        if math.hypot(pose.x, pose.y) > geom.reach_max + 1e-6:
+        sr = kin.signed_radius(degs, geom)
+        if abs(sr) > geom.reach_for(sr) + 1e-6:     # ⚠ 뒤쪽은 앞보다 길다(reach_back)
             notes.append("사거리밖")
         for j in worsening_limits(now_norm, to_norm(degs), limit):
             notes.append(f"{j}한계")

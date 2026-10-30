@@ -85,6 +85,16 @@ class ArmGeometry:
         return self.d0 + self.l1 + self.l2 + self.l3
 
     @property
+    def reach_back(self) -> float:
+        """pan 축 **뒤로**(signed_r<0) 잰 최대 수평 사거리(mm). d0가 음수(축 뒤)라 앞보다 길다
+        — 앞 사거리(reach_max)로 뒤를 재면 멀쩡한 자세가 '사거리밖'이 된다(2026-10-30)."""
+        return self.l1 + self.l2 + self.l3 - self.d0
+
+    def reach_for(self, signed_r: float) -> float:
+        """그 부호 쪽의 최대 수평 사거리(mm)."""
+        return self.reach_max if signed_r >= 0 else self.reach_back
+
+    @property
     def wrist_reach(self) -> float:
         return self.l1 + self.l2
 

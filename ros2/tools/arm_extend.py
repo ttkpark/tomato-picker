@@ -207,7 +207,7 @@ def main() -> int:
         out = to_deg({**now_norms, **norms})
         pose = kin.forward(out, geom)
         if (pose.z < -MOUNT_Z_MM + FLOOR_MARGIN_MM
-                or math.hypot(pose.x, pose.y) > geom.reach_max + 1e-6):
+                or abs(sr := kin.signed_radius(out, geom)) > geom.reach_for(sr) + 1e-6):
             print("     ⚠ 보정 자세가 바닥/사거리를 어긴다 — 되먹임을 버린다.")
             return dict(target)
         return {j: out[j] for j in cmd}

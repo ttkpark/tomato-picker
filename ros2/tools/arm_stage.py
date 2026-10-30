@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
+from tomato_picker.hardware import escape as es       # noqa: E402
 import arm_calib                                        # noqa: E402
 
 # ⚠ 경로·상수는 arm_calib.py 하나에서 가져온다(자세한 이유는 그 파일 머리말) —
@@ -219,7 +220,22 @@ def main() -> int:
 
     print(f"\n경로 전체 최대 |r| = {worst:.0f}mm "
           f"(선형 보간이었다면 277mm에서 서보가 놓았다)")
-    if any(q[3] for _, pts in stages for q in pts):
+    stuck = any(q[3] for _, pts in stages for q in pts)
+    if stuck:
+        # ⚠ 관절 하나씩은 막혀도 **함께** 움직이면 빠져나올 때가 있다 — 팔을 앞으로 뻗은
+        #   자세에서는 팔꿈치만 접어도, 어깨만 들어도 손끝이 바닥을 쓴다(2026-10-30: 대기
+        #   자세로 못 돌아오고 갇혔다). arm_extend와 같은 검사(escape.plan — 바닥·사거리·
+        #   한계는 '더 나빠지지만 않으면')를 통과하면 그 길로 간다.
+        both = es.plan(now, target, now_norm, to_norm, geom, step_deg=STEP_DEG)
+        bad = es.blocked(both)
+        if not bad:
+            print(f"↪ 관절 하나씩은 막힌다 — 함께 움직이는 길({len(both)}구간)은 검사를 통과한다. 그 길로 간다.")
+            stages = [("함께(탈출)", [(s["degs"], s["pose"], abs(s["signed_r"]), []) for s in both])]
+            stuck = False
+        else:
+            print("  함께 움직이는 길도 막힌다: "
+                  + ", ".join(f"{s['i']}/{s['of']} {' '.join(s['notes'])}" for s in both if s["notes"]))
+    if stuck:
         print("❌ 안전 검사에 걸린 구간이 있다 — 움직이지 않는다.")
         io.hold_close()
         return 1

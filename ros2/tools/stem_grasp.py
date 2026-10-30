@@ -130,6 +130,9 @@ def main() -> int:
     ap.add_argument("--near-top", type=float, default=0.0,
                     help="--aim near: 표적 덩이의 **윗부분** 이 비율만 보고 겨눈다"
                          "(면봉은 위쪽 솜 머리가 굵고 눌려서 잘 물린다. 0=덩이 전체 중심)")
+    ap.add_argument("--aim-joints", default=",".join(AIM),
+                    help="겨냥에 쓰는 관절(쉼표). 어깨가 뜨거우면 shoulder_pan,elbow_flex,wrist_flex "
+                         "— 손목은 카메라를 직접 기울여 부하가 작다(한계에 박혀 있지 않을 때만)")
     ap.add_argument("--grip-shut", type=float, default=4.0,
                     help="닫을 때 보낼 집게 값 — 작을수록 더 세게 문다")
     ap.add_argument("--aim-only", action="store_true",
@@ -866,6 +869,10 @@ def main() -> int:
         if not args.dry:    # ⚠ go()는 처짐을 갚으며 밀어 올리고 집게도 연다 — '겨냥만'이 팔을 움직였다(10/30)
             go(cur, 0.6)
         base = dict(cur)    # 직전 지령 — command_base() 참고
+        aim_joints = [j.strip() for j in args.aim_joints.split(",") if j.strip()]
+        if not aim_joints or any(j not in kin.JOINTS for j in aim_joints):
+            print("❌ --aim-joints 에 모르는 관절: %s (있는 것: %s)" % (args.aim_joints, ",".join(kin.JOINTS)))
+            return 2
         s = see(None)
         if s is None:
             print("❌ 겨눌 것을 못 찾았다 — 열매가 보이는 자세에서 시작하라.")
@@ -1032,7 +1039,7 @@ def main() -> int:
             elif en > args.tol:
                 if JI is None or step % args.rejacobian == 0:
                     cols, J = [], []
-                    for j in AIM:
+                    for j in aim_joints:
                         p = dict(cur)
                         p[j] += args.probe
                         ok, why = legal(p, cur)
