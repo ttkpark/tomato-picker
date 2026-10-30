@@ -885,6 +885,15 @@ def main() -> int:
                 tgt = dict(cur)
                 for j, w in dd.items():
                     tgt[j] += float(w)
+                # ⚠ 한계 밖 목표는 "목표" 줄로 찍지 않는다 — 조작대가 그 줄을 3D 미리보기와
+                #   [이 목표로 보내기] 칸에 그대로 싣는다(2026-10-30: 9/3 cam_frame으로
+                #   lift −300°·elbow 213°가 떠 사람이 헷갈렸다). 낡은 R이면 이렇게 된다.
+                bad = [j for j in kin.JOINTS
+                       if (lim := calib.joint_range(j)) and not lim[0] <= tgt[j] <= lim[1]]
+                if bad:
+                    print("  ⚠ 미리보기 못 믿음 — %s 한계 밖 (cam_frame.json %s 값이 지금 자세와 "
+                          "안 맞는다, cam_frame.py를 다시 돌려라)" % (",".join(bad), cf.get("when", "?")))
+                    return 0
                 print("  목표  " + " ".join("%s=%7.1f" % (j.split("_")[0], tgt[j])
                                             for j in kin.JOINTS))
                 print("  base로 %.0fmm 옮기면 그 자리 (cam_frame.json은 %s 근처에서 잰 값)"
