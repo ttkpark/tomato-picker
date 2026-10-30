@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
 from tomato_picker.hardware import escape as es       # noqa: E402
+from tomato_picker.config import ARM_LOAD_R_MAX       # noqa: E402
 import arm_calib                                        # noqa: E402
 
 # ⚠ 경로·상수는 arm_calib.py 하나에서 가져온다(자세한 이유는 그 파일 머리말) —
@@ -230,6 +231,16 @@ def main() -> int:
 
     print(f"\n경로 전체 최대 |r| = {worst:.0f}mm "
           f"(선형 보간이었다면 277mm에서 서보가 놓았다)")
+    # ⚠ 관절을 하나씩 옮기는 건 도중에 팔이 멀리 뻗어 어깨가 못 버티는 걸 막으려는 것뿐이다
+    #   (선형 보간 277mm에서 서보가 놓았다). 함께 움직여도 부하 한계(|r|) 안이면 그게 몇 배
+    #   빠르다 — 하나씩은 "너무 느리고 답답하다"(2026-10-30 사람). --order를 주면 하나씩.
+    if not args.order:
+        both = es.plan(now, target, now_norm, to_norm, geom)
+        if es.combined_ok(both, kin.signed_radius(now, geom), kin.signed_radius(target, geom),
+                          ARM_LOAD_R_MAX):
+            peak = max(abs(s_["signed_r"]) for s_ in both)
+            print(f"↪ 함께 움직인다 — {len(both)}구간 · 최대 |r| {peak:.0f}mm (부하 한계 {ARM_LOAD_R_MAX:.0f}mm)")
+            stages = [("함께", [(s_["degs"], s_["pose"], abs(s_["signed_r"]), []) for s_ in both])]
     stuck = any(q[3] for _, pts in stages for q in pts)
     if stuck:
         # ⚠ 관절 하나씩은 막혀도 **함께** 움직이면 빠져나올 때가 있다 — 팔을 앞으로 뻗은

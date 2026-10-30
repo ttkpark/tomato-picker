@@ -2447,6 +2447,11 @@ def test_arm_extend_escape() -> None:
     j1030 = {"shoulder_pan": 13.8, "shoulder_lift": 129.2, "elbow_flex": 71.6, "wrist_flex": 1.1, "wrist_roll": 6.2}
     t1030 = {"shoulder_pan": 13.8, "shoulder_lift": 80.0, "elbow_flex": -38.9, "wrist_flex": 0.0, "wrist_roll": 6.2}
     p1030 = es.plan(j1030, t1030, {j: 0.0 for j in kin.JOINTS}, lambda d: {j: 0.0 for j in d}, g)
+    check("함께 보간: 검사 통과·도중 |r|≤부하 한계면 쓰고, 한계를 넘어 더 뻗으면 하나씩으로 돌린다",
+          es.combined_ok([{"i": 1, "notes": [], "signed_r": 250.0}], 200, 220, 310)
+          and not es.combined_ok([{"i": 1, "notes": [], "signed_r": 380.0}], 200, 220, 310)
+          and es.combined_ok([{"i": 1, "notes": [], "signed_r": -392.0}], -390, -215, 310)
+          and not es.combined_ok([{"i": 1, "notes": ["바닥아래"], "signed_r": 100.0}], 100, 100, 310))
     check("뒤로 뻗은 자세(10/30)에서 빠져나오는 길이 '사거리밖'으로 막히지 않는다",
           not any("사거리밖" in st["notes"] for st in p1030),
           f"r0={kin.signed_radius(j1030, g):.1f} notes={[st['notes'] for st in p1030 if st['notes']]}")

@@ -145,6 +145,19 @@ def blocked(steps: list[dict]) -> list[int]:
     return [s["i"] for s in steps if s["notes"]]
 
 
+def combined_ok(steps: list[dict], r_now: float, r_target: float, r_max: float,
+                slack: float = 5.0) -> bool:
+    """관절을 **함께** 보간하는 길을 써도 되나 — 검사 통과 + 도중 |r|이 부하 한계를 안 넘는다.
+
+    관절을 하나씩 옮기는 이유는 도중에 팔이 멀리 뻗어 어깨가 못 버티는 것(선형 보간 277mm에서
+    서보가 놓았다)뿐이다. 그게 아니면 함께 움직이는 편이 몇 배 빠르다(2026-10-30 사람 요청).
+    시작·목표 자체가 한계 밖이면 그보다 더 나빠지지만 않으면 된다."""
+    if blocked(steps):
+        return False
+    peak = max((abs(s["signed_r"]) for s in steps), default=0.0)
+    return peak <= max(r_max, abs(r_now), abs(r_target)) + slack
+
+
 # 한 걸음을 보낸 뒤 실제가 지령에 **못 미치는 것은 정상이다** — 중력이 누른 만큼
 # 처진다(2026-09-18 실측: A자세 1.1~1.3°, 팔을 뻗은 B자세 4.0~4.9°). 그래서
 # "다 왔다"의 기준을 0으로 두면 영원히 안 끝나고, 처짐을 "안 움직였다"로 읽으면
