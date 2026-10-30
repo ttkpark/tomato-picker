@@ -333,6 +333,8 @@ def build(job, args):
               "--max-dz", "%.0f" % num(args, "max_dz", 25, 10, 300)]   # 겨냥 걸음(≤2°)에 70은 너무 컸다(10/30)
         if args.get("no_close"):
             a += ["--no-close"]
+        if num(args, "skip_aim", 0, 0, 200) > 0:   # 시작 오차가 이 화소 안이면 겨냥 건너뜀(10/30 (b))
+            a += ["--skip-aim-px", "%.0f" % num(args, "skip_aim", 0, 0, 200)]
         if args.get("no_red"):        # 닫기 직전 빨강 확인 생략(면봉·테이프 연습)
             a += ["--no-red-check"]
         if args.get("trust"):         # 처음 잰 줄기 깊이만큼 기구학으로 간다 — 십자가 손가락 끝이라 광선 깊이는 손가락이다(10/30)

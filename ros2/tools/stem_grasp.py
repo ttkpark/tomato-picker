@@ -217,6 +217,8 @@ def main() -> int:
     ap.add_argument("--aim-joints", default=",".join(AIM),
                     help="겨냥에 쓰는 관절(쉼표). 어깨가 뜨거우면 shoulder_pan,elbow_flex,wrist_flex "
                          "— 손목은 카메라를 직접 기울여 부하가 작다(한계에 박혀 있지 않을 때만)")
+    ap.add_argument("--skip-aim-px", type=float, default=0.0,
+                    help="시작할 때 겨냥 오차가 이 화소 안이면 겨냥을 건너뛰고 곧장 나아간다(0=끔, --trust-first-z와 함께)")
     ap.add_argument("--grip-shut", type=float, default=4.0,
                     help="닫을 때 보낼 집게 값 — 작을수록 더 세게 문다")
     ap.add_argument("--aim-only", action="store_true",
@@ -1235,6 +1237,7 @@ def main() -> int:
         planz = [None]           # 계획을 세운 순간의 깊이(mm) — 띠를 여기 맞춰 끌고 간다
         best_dir = [None, None]      # 실측으로 고른 전진 방향과 그 효과
         print("\n 걸음   겨냥       화소   깊이    나아감   한 일")
+        no_aim = [False]         # --skip-aim-px로 겨냥을 건너뛰었나
         en_hist = []             # 겨냥 걸음의 화소 오차 — 2걸음 연속 안 줄면 야코비안을 다시 잰다
         budget = [args.steps]    # 걸음 예산 — 나아갈 거리가 정해지면 그만큼 늘린다(16걸음 × 8mm로는 326mm를 못 간다)
         for step in itertools.count():
@@ -1265,7 +1268,12 @@ def main() -> int:
             tu, tv = aim_uv(z_track if z_track > 0 else (markz[0] or 0.0))
             err = np.array([tu - u, tv - v])
             en = float(np.linalg.norm(err))
-            if en <= args.tol:
+            if step == 0 and args.skip_aim_px > 0 and en <= args.skip_aim_px:
+                # (b) 시작부터 겨냥점 근처면 **겨냥을 통째로 건너뛴다** — 오늘(10/30) 실기는 매번 겨냥
+                #   단계(야코비안 탐침)에서 무너졌다. 처음 잰 거리만큼 집게 축으로 곧장 간다(--trust-first-z와 함께).
+                no_aim[0] = True
+                print("(겨냥 건너뜀 — 시작 오차 %.0fpx ≤ %.0f) " % (en, args.skip_aim_px), end="")
+            if en <= args.tol or no_aim[0]:
                 locked, miss_streak = True, 0
             elif locked:
                 miss_streak += 1
