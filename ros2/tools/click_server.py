@@ -28,6 +28,7 @@ API 요약 (전부 JSON)
     GET  /state                      상태 한 줌
     GET  /log?since=N | ?tail=N      로그 이어받기 | 마지막 N줄(≤400)
     GET  /frame.jpg                  손목 화면
+    GET  /cam/<이름>.jpg             카메라 넷(d405_color|d405_depth|astra_color|astra_depth)
     POST /click   {u,v,mode}         mode=target(줄기) | grip(십자)
     POST /clear                      표적 지움
     POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge|space(snap|scan|go|step|wrist|clear)
@@ -120,6 +121,9 @@ PY = os.environ.get("TOMATO_PY", "/home/server/lerobot/.venv/bin/python")
 COLOR = "/dev/shm/d405_color.jpg"
 DEPTH = "/dev/shm/d405_depth.npy"
 META = "/dev/shm/d405_meta.json"
+# 카메라 넷 보기 — 발행기들이 /dev/shm에 쓰는 그림 그대로(astra_color = tomato-vision이 그린 앞 카메라)
+CAMS = {"d405_color": COLOR, "d405_depth": "/dev/shm/d405_depth.jpg",
+        "astra_color": "/dev/shm/tomato_vision.jpg", "astra_depth": "/dev/shm/astra_depth.jpg"}
 TARGET = os.path.expanduser("~/click_target.json")
 GRIPF = os.path.expanduser("~/grip_uv.json")
 # target_check.py(손-눈 보정용 4점 표적 인식)가 매번 남기는 실시간 상태 —
@@ -525,6 +529,15 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <img id="im" alt="손목 카메라">
     <svg id="ov" viewBox="0 0 848 480" preserveAspectRatio="none"></svg>
   </div>
+  <div class="card"><h2>카메라 넷 — 광학 + 깊이</h2>
+    <div class="k">D405 = 손목(7~50cm) · Astra = 앞(60~400cm, 깊이는 거울상·컬러와 정렬 안 됨). 깊이는 가까울수록 밝다/색은 발행기 기준.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+      <figure style="margin:0"><img class="cam4" data-n="d405_color" style="width:100%"><figcaption class="k">D405 컬러</figcaption></figure>
+      <figure style="margin:0"><img class="cam4" data-n="d405_depth" style="width:100%"><figcaption class="k">D405 깊이</figcaption></figure>
+      <figure style="margin:0"><img class="cam4" data-n="astra_color" style="width:100%"><figcaption class="k">Astra 컬러(앞 카메라)</figcaption></figure>
+      <figure style="margin:0"><img class="cam4" data-n="astra_depth" style="width:100%"><figcaption class="k">Astra 깊이</figcaption></figure>
+    </div>
+  </div>
   <div class="card"><h2>공간 지도 — Astra 3D (집 안 다니기)</h2>
     <canvas class="k3d" id="sp3d" style="height:380px"></canvas>
     <div class="legend">
@@ -811,6 +824,7 @@ function swab(o){ o=o||{};
   if(document.getElementById('w_nofind').checked) o.no_find=1;
   return o; }
 function tick(){ if(live) im.src='/frame.jpg?t='+Date.now(); }
+function tick4(){ if(!live) return; document.querySelectorAll('img.cam4').forEach(function(e){ e.src='/cam/'+e.dataset.n+'.jpg?t='+Date.now(); }); }
 function post(p,b){return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify(b||{})}).then(function(r){return r.json();});}
 stage.addEventListener('click',function(e){
@@ -1303,7 +1317,7 @@ function spImu(){ fetch('/imu').then(function(r){return r.json();}).then(functio
 spInit(); spLoad(); setInterval(spLoad,1500); spImu(); setInterval(spImu,300);
 
 // ⚠ 잡기가 도는 동안엔 더 자주 본다 — 걸음이 1초 안쪽이라 1.2초로는 건너뛴다.
-setInterval(tick,400); setInterval(function(){ if(servo) state(); },400);
+setInterval(tick,400); setInterval(tick4,700); tick4(); setInterval(function(){ if(servo) state(); },400);
 setInterval(state,1200); setInterval(log,900); tick(); state(); log();
 </script></body></html>"""
 PAGE = PAGE.replace("__KIN_JSON__", json.dumps(KIN))
@@ -1333,6 +1347,12 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/frame.jpg":
             try:
                 with open(COLOR, "rb") as fh:
+                    self._send(200, fh.read(), "image/jpeg")
+            except Exception:                              # noqa: BLE001
+                self._send(503, b"no frame", "text/plain")
+        elif p.startswith("/cam/") and p[5:-4] in CAMS and p.endswith(".jpg"):
+            try:
+                with open(CAMS[p[5:-4]], "rb") as fh:
                     self._send(200, fh.read(), "image/jpeg")
             except Exception:                              # noqa: BLE001
                 self._send(503, b"no frame", "text/plain")
