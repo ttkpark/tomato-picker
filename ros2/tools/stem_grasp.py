@@ -63,6 +63,8 @@ MOUNT_Z_MM = gp.MOUNT_Z_MM
 FLOOR_MARGIN_MM = gp.FLOOR_MARGIN_MM
 FRUIT_MM = 70.0          # 실측: 134.6mm에서 폭 227화소, fx 438 → 69.8mm
 FAR_MM = 600.0           # 이보다 먼 빨간 덩이는 열매 후보에서 뺀다 (팔 사거리 420mm)
+FRUIT_JUMP_MM = 80.0     # top 모드: 잡은 열매 거리에서 이보다 다른 빨간 덩이는 버린다(나아가는 한 걸음은 ≤8mm)
+FINGER_MM = 90.0         # 집게 손가락 끝은 카메라에서 76~78mm(10/30 실측) — 이보다 가까운 '표적'은 손가락일 수 있다
 NEAR_FLOOR = 75.0        # D405 유효 하한(70mm) 아래 값은 못 믿는다 — 표적으로 안 본다
 
 # 조작대(click_server.py)가 읽어 화면에 겹쳐 그리는 **살아 있는 겨냥 상태**.
@@ -246,6 +248,8 @@ def main() -> int:
     geom = calib.geom
     to_deg, to_norm, legal = calib.to_deg, calib.to_norm, calib.legal
 
+    fruit_z = [None]             # 처음 잡은 열매 거리(mm) — 다른 빨간 것으로 건너뛰지 않게
+
     def fruit_box(prev):
         """빨간 열매의 (넓이, 중심u, 윗변v, 너비, 깊이) — 테두리까지 필요하다."""
         import cv2
@@ -300,6 +304,11 @@ def main() -> int:
             else:
                 continue
             u, v = float(cen[i][0]), float(cen[i][1])
+            # ⚠ **처음 잡은 열매와 거리가 크게 다르면 다른 빨간 것이다.** 놓친 뒤 다시 찾을 땐
+            #   prev 없이 "가장 큰 빨간 덩이"를 고르는데, 10/30엔 그게 바닥 매트 무늬(448mm)였다
+            #   — 열매는 125mm. 겨냥하는 동안 팔은 몇 도만 도니 열매 거리는 그만큼 못 변한다.
+            if fruit_z[0] is not None and abs(z - fruit_z[0]) > FRUIT_JUMP_MM:
+                continue
             if prev is not None and math.hypot(u - prev[0], v - prev[1]) > 220.0:
                 continue
             score = a if prev is None else -math.hypot(u - prev[0], v - prev[1])
@@ -311,6 +320,8 @@ def main() -> int:
                 #   열매 **윗변 위**에 있다.
                 top = float(st[i, cv2.CC_STAT_TOP])
                 best = (score, a, u, top, w, z, top <= 2.0)
+        if best is not None:
+            fruit_z[0] = best[5]
         return None if best is None else best[1:]
 
     def tape_point(prev):
@@ -565,6 +576,13 @@ def main() -> int:
         #   보이는 실패**가 된다. 걸음 사이 팔은 몇 도만 움직이니 깊이는 그만큼 못 뛴다 —
         #   MAX_DZ를 넘으면 놓친 것으로 치고(None) 재탐색 경로로 보낸다. 가는 표적일수록
         #   ray_depth의 19×19 창에 배경이 섞여서 이 미끄러짐이 잘 난다.
+        if markz[0] > FINGER_MM + 20.0 and 0 < z2 < FINGER_MM:
+            # ⚠ **집게 손가락으로 미끄러졌다.** 손가락은 화면에 늘 같은 자리·같은 깊이(76~78mm)라
+            #   조각 정합이 아주 잘 맞는다 — 10/30: 줄기 141mm를 쫓다 손가락 74mm를 잡고 "5mm만 가면
+            #   문다"고 계획했다(빨간색 확인이 막았다). 한 걸음에 줄기가 손가락 깊이까지 올 수는 없다.
+            print("   ⚠ 집게 손가락을 잡았다(%.0fmm) — 버리고 다시 찾는다" % z2)
+            tpl[0] = None
+            return None
         if markz[0] > 0 and z2 > 0 and abs(z2 - markz[0]) > MAX_DZ:
             print("   ⚠ 깊이가 %.0f→%.0fmm로 뛰었다 — 조각이 미끄러졌다, 다시 찾는다"
                   % (markz[0], z2))
@@ -1091,6 +1109,12 @@ def main() -> int:
                     prev, locked, markz[0], tpl[0] = (c[0], c[1]), False, 0.0, None
                     print("  ↻ 사람이 다시 찍었다 → (%.0f, %.0f)" % (c[0], c[1]))
             s = see2(prev)
+            if s is None and args.trust_first_z and plan[0] is not None:   # 다 간 뒤에도 — 아래 '다 갔다'로 간다
+                # ⚠ 계획 전진 중에 화면에서 놓치는 건 **정상**이다 — 손가락 바로 앞에선 줄기가 손가락에
+                #   가린다(10/30: 101mm 계획 중 64mm에서 놓치고 멈췄다). 계획은 기구학이라 그대로 마저 간다.
+                print("  %3d    (화면에서 놓쳤다 — 계획한 %.0fmm 중 %.0fmm 남았다, 마저 간다)"
+                      % (step, plan[0], plan[0] - gone))
+                s = (tu, tv, max(NEAR_FLOOR, planz[0] - gone), 0, False)
             if s is None:
                 publish_view(step=step, aim=args.aim, lost=True, tu=tu, tv=tv,
                              gone=gone, u=(prev[0] if prev else None),

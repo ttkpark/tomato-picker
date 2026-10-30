@@ -332,6 +332,8 @@ def build(job, args):
               "--max-adv", "%.0f" % num(args, "max_adv", 0, 0, 500)]   # 0=자동(잰 거리)
         if args.get("no_close"):
             a += ["--no-close"]
+        if args.get("trust"):         # 처음 잰 줄기 깊이만큼 기구학으로 간다 — 십자가 손가락 끝이라 광선 깊이는 손가락이다(10/30)
+            a += ["--trust-first-z"]
         if args.get("no_lift"):       # 어깨를 겨냥에서 뺀다 — 뜨거울 때(10/30)
             a += ["--aim-joints", "shoulder_pan,elbow_flex,wrist_flex"]
         if args.get("dry"):
