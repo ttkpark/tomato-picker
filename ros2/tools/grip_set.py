@@ -20,6 +20,9 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 sys.path.insert(0, os.path.join(REPO, "ros2", "src", "tomato_bridge"))
 
 
+GRIP_MIN = 4.0     # stem_grasp GRIP_SHUT과 같은 값 — 이보다 세게 쥐라는 지령은 브라운아웃을 부른다
+
+
 def main() -> int:
     # `--read`: 움직이지 않고 지금 집게 자리만 읽는다 — 무엇을 들고 있는지 먼저 알아야
     #   다음 일을 시작할 수 있다(swab_trials의 손 비우기).
@@ -36,7 +39,10 @@ def main() -> int:
     except (IndexError, ValueError):
         print("쓰기: grip_set.py <0~100> [--torque N] | grip_set.py --read")
         return 2
-    v = max(0.0, min(100.0, v))
+    # ⚠ 4 아래로는 안 보낸다 — 2026-10-30: 줄기를 이미 문(6.3에서 멈춤) 집게에 0을 주자 전류가 튀어
+    #   팔 버스가 브라운아웃, 서보가 재시작하는 동안 팔이 통째로 떨어졌다(줄기를 문 채 토마토를 뽑음).
+    #   더 세게 물려면 값이 아니라 --torque로(그것도 짧게).
+    v = max(GRIP_MIN, min(100.0, v))
     # ⚠ 집게 토크 상한을 그 순간만 올릴 수 있게 한다 — lerobot이 50%(500)로 낮춰 두는데
     #   그 힘으로는 면봉을 물고도 들지 못했다(2026-09-10). `grip_set.py 0 --torque 900`.
     torque = 0
