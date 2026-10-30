@@ -1470,6 +1470,16 @@ def test_board_contract() -> None:
           "--aim" in grasp_invalid_cmd and "click" in grasp_invalid_cmd,
           f"fallback_cmd={' '.join(grasp_invalid_cmd[1:])}")
 
+    # 7. stem_grasp 겨냥 기준 = 직전 지령(처짐 누적 방지), 크게 벌어지면 실측으로 복귀 (2026-10-30)
+    import stem_grasp as sg
+    J0 = {"shoulder_lift": 126.5, "elbow_flex": 67.6}
+    b1, off1, rs1 = sg.command_base(J0, {"shoulder_lift": 127.7, "elbow_flex": 68.3})
+    b2, off2, rs2 = sg.command_base(J0, {"shoulder_lift": 126.5 + sg.BASE_RESYNC_DEG + 1, "elbow_flex": 67.6})
+    check("stem_grasp: 처진 실측이 아니라 직전 지령을 다음 걸음의 기준으로 쓴다",
+          b1 == J0 and not rs1 and abs(off1 - 1.2) < 1e-9, f"base={b1} off={off1}")
+    check("stem_grasp: 지령과 실측이 문턱보다 벌어지면(막힘) 실측으로 다시 맞춘다",
+          rs2 and b2["shoulder_lift"] == 126.5 + sg.BASE_RESYNC_DEG + 1, f"base={b2} rs={rs2}")
+
 
     # 6. UnoAdapterBase가 set_velocity 시점에 AxisSigns(vy=-1, w=-1)를 반영하여 cmd.physical과 일치하는 telemetry().tgt를 유지한다 (T86)
     uno_signs_base = bc.UnoAdapterBase(signs=bc.AxisSigns(vx=1, vy=-1, w=-1))
@@ -2013,6 +2023,14 @@ def test_fruit3d() -> None:
           "T_base_cam = T_base_tool.compose(self.T_tool_cam)" in s05_body and
           'traj["stages"][0]["tcp"]' in s05_body,
           "autonomous_harvester 실전 가이드 기구학/손-눈 합성 무결성")
+    check("study 05: autonomous_harvester가 transform_cut_pose_to_arm_base 및 6-DoF 절단 포즈(cut_pose_base)를 온전히 합성한다",
+          "from tomato_perception.stem_cut import (" in s05_body and
+          "transform_cut_pose," in s05_body and
+          "CutPose3D," in s05_body and
+          "def transform_cut_pose_to_arm_base(" in s05_body and
+          "transform_cut_pose(cut_pose_cam, T_base_cam)" in s05_body and
+          "'cut_pose_base': cut_pose_base" in s05_body,
+          "autonomous_harvester 6-DoF 절단 포즈 Eye-in-Hand 강체 합성 무결성")
 
 # ⑥ TF 수학
 # ----------------------------------------------------------------------

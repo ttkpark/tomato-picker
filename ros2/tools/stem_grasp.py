@@ -70,6 +70,20 @@ NEAR_FLOOR = 75.0        # D405 유효 하한(70mm) 아래 값은 못 믿는다 
 #   끝나고 사진을 봐야 알았다(2026-09-10에 그 때문에 화분을 두 번 넘어뜨렸다).
 SERVO_VIEW = os.path.expanduser("~/servo_view.json")
 
+BASE_RESYNC_DEG = 8.0    # 직전 지령과 실측이 이보다 벌어지면 막힌 것으로 보고 실측으로 다시 맞춘다
+
+
+def command_base(base, meas, resync_deg=BASE_RESYNC_DEG):
+    """다음 걸음 지령의 기준 자세 → (기준, 벌어진 도수, 다시 맞췄나).
+
+    ⚠ 기준은 **직전 지령**이다. 처진 실측을 기준으로 삼으면 처짐이 걸음마다 쌓인다 —
+      2026-10-30: 어깨 지령 합 −1.7°(올려라)인데 4걸음에 +4.1° 주저앉아 화면이 떨어졌다.
+      다만 무엇에 막혀 크게 벌어지면 지령만 계속 쌓이므로 그때는 실측으로 돌아온다."""
+    off = max(abs(meas[j] - base[j]) for j in base)
+    if off > resync_deg:
+        return dict(meas), off, True
+    return dict(base), off, False
+
 
 def publish_view(**kw):
     """겨냥 한 걸음의 상태를 파일 하나로 — 실패해도 잡기를 막지 않는다."""
@@ -851,6 +865,7 @@ def main() -> int:
         cur = to_deg(io.read())
         if not args.dry:    # ⚠ go()는 처짐을 갚으며 밀어 올리고 집게도 연다 — '겨냥만'이 팔을 움직였다(10/30)
             go(cur, 0.6)
+        base = dict(cur)    # 직전 지령 — command_base() 참고
         s = see(None)
         if s is None:
             print("❌ 겨눌 것을 못 찾았다 — 열매가 보이는 자세에서 시작하라.")
@@ -988,11 +1003,15 @@ def main() -> int:
             print("  %3d  (%4.0f,%4.0f) %5.0f  %5.0f  %6.1f  " % (step, u, v, en, z, gone),
                   end="")
 
-            cur = to_deg(io.read())
+            meas = to_deg(io.read())
+            base, off, resynced = command_base(base, meas)
+            if resynced:
+                print("(지령과 실측이 %.1f° 벌어졌다 — 실측으로 다시 맞춘다) " % off, end="")
+            cur = dict(base)     # ⚠ 아래 지령은 전부 이 기준에서 만든다(실측 아님)
             publish_view(step=step, aim=args.aim, lost=False, u=u, v=v, z=z,
                          tu=tu, tv=tv, err=en, gone=gone, locked=locked,
                          stop_z=args.stop_z, max_adv=args.max_adv,
-                         pose={j: round(cur[j], 1) for j in kin.JOINTS})
+                         pose={j: round(meas[j], 1) for j in kin.JOINTS})
 
             # ⚠ **한 번 놓친 프레임에 잘 가던 접근을 통째로 버리지 않는다.**
             #   2026-09-03: 깊이 351→136mm까지 순조롭게 좁혀 놓고, 딱 한 프레임
@@ -1045,6 +1064,7 @@ def main() -> int:
                     print("겨냥 못함(바닥)")
                     continue
                 go(nxt, 0.9)
+                base = dict(nxt)
                 # ⚠ 추적창을 **예측 자리로 미리 옮긴다.** 야코비안이 이미 "이
                 #   걸음이면 화면이 몇 px 움직인다"를 말해 준다 — 그걸 안 쓰고
                 #   제자리에서 찾으면 큰 걸음마다 표적을 잃는다.
@@ -1214,6 +1234,7 @@ def main() -> int:
                 print("나아갈 수 없다(%s)" % why)
                 break
             got, terr = go(nxt, 1.0)
+            base = dict(nxt)
             time.sleep(0.35)
             z2 = ray_depth_med(tu, tv) if locked else None
             if z2 is None:
