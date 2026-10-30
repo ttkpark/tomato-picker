@@ -77,6 +77,25 @@ BASE_RESYNC_DEG = 8.0    # 직전 지령과 실측이 이보다 벌어지면 막
 ADV_SLACK_MM = 30.0      # 자동 상한: 잰 깊이보다 이만큼만 더 간다(가는 줄기 깊이는 ±30mm 튄다)
 
 
+ELBOW_STRAIGHT_DEG = 8.0     # 팔꿈치가 이보다 곧으면 다 뻗은 것(특이점) — 더 펴는 걸음은 안 낸다
+MAX_DEG_PER_MM = 2.5         # 1mm 나아가는 데 한 관절이 이보다 많이 돌면 특이점 근처다
+REACH_END = "팔이 다 뻗었다"
+
+
+def reach_guard(cur, cand, mm):
+    """나아가는 한 걸음이 **팔 끝(특이점)**으로 들어가는가 → 이유 문자열 또는 None.
+
+    ⚠ 2026-10-30: 줄기 160mm 앞에서 팔꿈치가 15.8→1.5°로 펴지고 어깨가 13.6° 튀었는데 손끝은 안 나아가,
+      깊이가 그대로인 것을 '닿았다'로 읽었다(실제로는 72mm 남음). 다 편 팔은 더 못 간다 — 그렇게 말해야 한다."""
+    e0, e1 = abs(cur["elbow_flex"]), abs(cand["elbow_flex"])
+    if e1 < ELBOW_STRAIGHT_DEG and e1 < e0:
+        return REACH_END
+    big = max(abs(cand[j] - cur[j]) for j in cand)
+    if big > MAX_DEG_PER_MM * max(mm, 1.0) + 1.0:
+        return REACH_END + "(특이점 근처 %.1f°/mm)" % (big / max(mm, 1.0))
+    return None
+
+
 def nearer_depth(*vals, floor=NEAR_FLOOR + 10.0):
     """표적까지의 거리 = 후보 중 **가까운 것**(집게 손가락 75~85mm는 뺀다).
 
@@ -930,6 +949,10 @@ def main() -> int:
                     cand = dict(cur)
                     for j, w in dd.items():
                         cand[j] += float(w)
+                    end = reach_guard(cur, cand, want * k)
+                    if end:
+                        why = end
+                        continue
                     ok, why = legal(cand, cur)
                     if ok:
                         return cand, want * k, why
@@ -1251,6 +1274,10 @@ def main() -> int:
             # 근처면 그것만 고집하다 한 발도 못 뗀다(2026-09-03). 피치가 조금
             # 도는 건 다음 걸음에서 겨냥으로 갚으면 된다.
             nxt, want, why = advance_step(cur, want)
+            if nxt is None and why.startswith(REACH_END):
+                print("%s — 줄기까지 %.0fmm, 무는 거리까지 %.0fmm 남았다. 로봇을 그만큼 앞으로 옮기고 다시"
+                      % (why, z, max(0.0, z - args.stop_z)))
+                break
             if nxt is None and best_dir[0] is None:
                 # ⚠ **접근축이라는 가정을 버린다.** 카메라 광축과 집게 축이
                 #   다르고, 한계에 걸리면 그 축으론 한 발도 못 뗀다. 그러면

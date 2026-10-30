@@ -1486,6 +1486,13 @@ def test_board_contract() -> None:
           sg.nearer_depth(412, 624) == 412 and sg.nearer_depth(None, 300) == 300 and sg.nearer_depth(80, 300) == 300
           and sg.nearer_depth(None, None) is None and sg.nearer_depth(float("nan"), 200) == 200,
           f"{sg.nearer_depth(412, 624)}")
+    c21 = {"shoulder_pan": 12.1, "shoulder_lift": 160.3, "elbow_flex": 15.8, "wrist_flex": 1.0, "wrist_roll": 5.8}
+    c22 = {"shoulder_pan": 12.1, "shoulder_lift": 173.9, "elbow_flex": 1.5, "wrist_flex": -7.9, "wrist_roll": 5.8}
+    c08 = {"shoulder_pan": 11.9, "shoulder_lift": 126.0, "elbow_flex": 70.7, "wrist_flex": -21.9, "wrist_roll": 5.8}
+    c09 = {"shoulder_pan": 11.9, "shoulder_lift": 130.0, "elbow_flex": 64.4, "wrist_flex": -19.6, "wrist_roll": 5.8}
+    check("stem_grasp: 팔이 다 펴지는 걸음(10/30 걸음22, 팔꿈치 15.8→1.5°)은 막고 보통 걸음은 둔다",
+          (sg.reach_guard(c21, c22, 8) or "").startswith(sg.REACH_END) and sg.reach_guard(c08, c09, 8) is None
+          and sg.reach_guard(c22, c21, 8) is None, f"{sg.reach_guard(c21, c22, 8)}")
     check("stem_grasp 나아가기 상한: 0=잰 거리+여유(414mm → 356), 숫자를 주면 그 값",
           sg.advance_cap(0, 0, 414, 88) == 326 + sg.ADV_SLACK_MM and sg.advance_cap(200, 0, 414, 88) == 200
           and sg.advance_cap(0, 10, 50, 88) == 10 + sg.ADV_SLACK_MM,
