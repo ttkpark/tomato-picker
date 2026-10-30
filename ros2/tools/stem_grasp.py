@@ -73,6 +73,21 @@ SERVO_VIEW = os.path.expanduser("~/servo_view.json")
 BASE_RESYNC_DEG = 8.0    # 직전 지령과 실측이 이보다 벌어지면 막힌 것으로 보고 실측으로 다시 맞춘다
 
 
+def dry_verdict(z, err_px, tol, stop_z, max_adv):
+    """[겨냥만 본다]의 판정 한 줄 — 이대로 [안 닫고 가기]를 누르면 닿겠는가.
+
+    ⚠ 3D 미리보기는 cam_frame이 낡으면 못 낸다(10/30). 그래도 사람이 알아야 할 것은
+      남는다: 깊이가 있나, 무는 거리까지 몇 mm를 가야 하나, 그게 상한 안인가."""
+    aim = "겨냥 이미 맞음" if err_px <= tol else "겨냥 %.0f화소 먼저" % err_px
+    if not z or z <= 0:
+        return "❌ 그 자리에 깊이가 없다 — 줄기를 다시 찍어라 (%s)" % aim
+    need = max(0.0, z - stop_z)
+    if need > max_adv:
+        return ("❌ 못 닿는다 — 줄기까지 %.0fmm, 무는 거리(%.0f)까지 %.0fmm를 가야 하는데 상한(믿는거리) %.0fmm. "
+                "화분을 %.0fmm 더 가까이 (%s)" % (z, stop_z, need, max_adv, need - max_adv, aim))
+    return "✅ 해 볼 만하다 — 줄기까지 %.0fmm, %.0fmm 나아가면 문다 (상한 %.0f, %s)" % (z, need, max_adv, aim)
+
+
 def command_base(base, meas, resync_deg=BASE_RESYNC_DEG):
     """다음 걸음 지령의 기준 자세 → (기준, 벌어진 도수, 다시 맞췄나).
 
@@ -881,6 +896,7 @@ def main() -> int:
         print("지금: %s 화면(%.0f,%.0f) 깊이 %.0fmm 넓이%d  → 남은 화소 %.0f"
               % (args.aim, u, v, z, a, math.hypot(u - tu, v - tv)))
         if args.dry:
+            print("  판정: " + dry_verdict(z, math.hypot(u - tu, v - tv), args.tol, args.stop_z, args.max_adv))
             # ⚠ **여기서만 깊이를 믿는다.** 실제로 무는 동안엔 깊이를 목표로
             #   안 쓴다(이 파일 머리말 — 조기접촉에 오염된다). 하지만 여긴
             #   팔을 안 움직이니 잘못돼도 미리보기 한 줄이 틀릴 뿐이다.

@@ -1477,6 +1477,10 @@ def test_board_contract() -> None:
     b2, off2, rs2 = sg.command_base(J0, {"shoulder_lift": 126.5 + sg.BASE_RESYNC_DEG + 1, "elbow_flex": 67.6})
     check("stem_grasp: 처진 실측이 아니라 직전 지령을 다음 걸음의 기준으로 쓴다",
           b1 == J0 and not rs1 and abs(off1 - 1.2) < 1e-9, f"base={b1} off={off1}")
+    v_far, v_ok, v_nz = sg.dry_verdict(414, 37, 28, 88, 200), sg.dry_verdict(180, 10, 28, 88, 200), sg.dry_verdict(0, 5, 28, 88, 200)
+    check("stem_grasp --dry 판정: 414mm(10/30)는 못 닿는다·180mm는 해 볼 만하다·깊이 0은 다시 찍어라",
+          v_far.startswith("❌ 못 닿는다") and "126mm 더 가까이" in v_far and v_ok.startswith("✅")
+          and "깊이가 없다" in v_nz, f"{v_far} | {v_ok} | {v_nz}")
     check("stem_grasp: 지령과 실측이 문턱보다 벌어지면(막힘) 실측으로 다시 맞춘다",
           rs2 and b2["shoulder_lift"] == 126.5 + sg.BASE_RESYNC_DEG + 1, f"base={b2} rs={rs2}")
 
