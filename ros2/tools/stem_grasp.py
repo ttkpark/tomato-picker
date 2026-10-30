@@ -73,19 +73,30 @@ SERVO_VIEW = os.path.expanduser("~/servo_view.json")
 BASE_RESYNC_DEG = 8.0    # 직전 지령과 실측이 이보다 벌어지면 막힌 것으로 보고 실측으로 다시 맞춘다
 
 
-def dry_verdict(z, err_px, tol, stop_z, max_adv):
+ADV_SLACK_MM = 30.0      # 자동 상한: 잰 깊이보다 이만큼만 더 간다(가는 줄기 깊이는 ±30mm 튄다)
+
+
+def advance_cap(max_adv, gone, z, stop_z):
+    """나아가기 상한(mm, 누적). max_adv>0이면 그 값. 0이면 **잰 거리에서** 정한다 —
+    고정 200mm는 팔이 접혀 있어도 '못 닿는다'고 했다(10/30). 줄기까지 남은 거리 + 여유."""
+    if max_adv > 0:
+        return float(max_adv)
+    return gone + max(0.0, z - stop_z) + ADV_SLACK_MM
+
+
+def dry_verdict(z, err_px, tol, stop_z, reach_mm):
     """[겨냥만 본다]의 판정 한 줄 — 이대로 [안 닫고 가기]를 누르면 닿겠는가.
 
-    ⚠ 3D 미리보기는 cam_frame이 낡으면 못 낸다(10/30). 그래도 사람이 알아야 할 것은
-      남는다: 깊이가 있나, 무는 거리까지 몇 mm를 가야 하나, 그게 상한 안인가."""
+    reach_mm = 지금 자세에서 팔이 접근축으로 **실제로** 뻗을 수 있는 거리(기구학·한계·바닥으로
+    걸음을 흉내 내 잰 값). 고정 상한이 아니라 팔이 판단 기준이다."""
     aim = "겨냥 이미 맞음" if err_px <= tol else "겨냥 %.0f화소 먼저" % err_px
     if not z or z <= 0:
         return "❌ 그 자리에 깊이가 없다 — 줄기를 다시 찍어라 (%s)" % aim
     need = max(0.0, z - stop_z)
-    if need > max_adv:
-        return ("❌ 못 닿는다 — 줄기까지 %.0fmm, 무는 거리(%.0f)까지 %.0fmm를 가야 하는데 상한(믿는거리) %.0fmm. "
-                "화분을 %.0fmm 더 가까이 (%s)" % (z, stop_z, need, max_adv, need - max_adv, aim))
-    return "✅ 해 볼 만하다 — 줄기까지 %.0fmm, %.0fmm 나아가면 문다 (상한 %.0f, %s)" % (z, need, max_adv, aim)
+    if need > reach_mm + 1e-6:
+        return ("❌ 팔이 거기까지 못 뻗는다 — 줄기까지 %.0fmm, %.0fmm를 가야 하는데 팔은 %.0fmm까지. "
+                "로봇(또는 화분)을 %.0fmm 더 가까이 (%s)" % (z, need, reach_mm, need - reach_mm, aim))
+    return "✅ 닿는다 — 줄기까지 %.0fmm, %.0fmm 나아가면 문다 (팔 여유 %.0fmm, %s)" % (z, need, reach_mm, aim)
 
 
 def command_base(base, meas, resync_deg=BASE_RESYNC_DEG):
@@ -125,7 +136,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="움직이지 않고 지금 겨냥만 본다")
     ap.add_argument("--adv", type=float, default=14.0, help="한 걸음에 나아갈 mm")
-    ap.add_argument("--max-adv", type=float, default=200.0, help="다 합쳐 이 이상은 안 간다")
+    ap.add_argument("--max-adv", type=float, default=0.0,
+                    help="다 합쳐 이 이상은 안 간다(mm). 0=자동(잰 줄기 거리+%.0fmm, 팔이 갈 수 있는 데까지)" % ADV_SLACK_MM)
     ap.add_argument("--steps", type=int, default=22)
     ap.add_argument("--tol", type=float, default=28.0, help="이 화소 안이면 겨냥은 됐다")
     ap.add_argument("--gain", type=float, default=0.55)
@@ -884,6 +896,43 @@ def main() -> int:
         if not args.dry:    # ⚠ go()는 처짐을 갚으며 밀어 올리고 집게도 연다 — '겨냥만'이 팔을 움직였다(10/30)
             go(cur, 0.6)
         base = dict(cur)    # 직전 지령 — command_base() 참고
+
+        def advance_step(cur, want):
+            """접근축으로 want(mm) 한 걸음 → (관절, 실제 걸음, 못 간 이유). 세 갈래를 차례로 —
+            자세를 지키는 병진이 가장 낫지만 한계 근처면 그것만 고집하다 한 발도 못 뗀다(2026-09-03)."""
+            why = "한계"
+            for mode in ("keep", "free4", "free3"):
+                for k in (1.0, 0.6, 0.3):
+                    if mode == "keep":
+                        dd, res, big = step_keep(cur, want * k)
+                        if res > 0.06 * max(want * k, 1.0) or big > 8.0:
+                            why = "자세를 지키며 갈 수 없다"
+                            continue
+                    else:
+                        js = (("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex")
+                              if mode == "free4"
+                              else ("shoulder_lift", "elbow_flex", "wrist_flex"))
+                        dd, res = gp.step_along(cur, geom, want * k, joints=js)
+                        if res > 0.06 * max(want * k, 1.0):
+                            why = "병진을 못 만든다"
+                            continue
+                    cand = dict(cur)
+                    for j, w in dd.items():
+                        cand[j] += float(w)
+                    ok, why = legal(cand, cur)
+                    if ok:
+                        return cand, want * k, why
+            return None, want, why
+
+        def arm_reach(start, need):
+            """지금 자세에서 접근축으로 **실제로** 몇 mm 갈 수 있나 — 걸음을 기구학으로만 흉내 낸다(팔 안 움직임)."""
+            pose, total = dict(start), 0.0
+            while total < need - 0.5:
+                nxt, w, _ = advance_step(pose, min(args.adv, need - total))
+                if nxt is None or w < 0.5:
+                    break
+                pose, total = nxt, total + w
+            return total
         aim_joints = [j.strip() for j in args.aim_joints.split(",") if j.strip()]
         if not aim_joints or any(j not in kin.JOINTS for j in aim_joints):
             print("❌ --aim-joints 에 모르는 관절: %s (있는 것: %s)" % (args.aim_joints, ",".join(kin.JOINTS)))
@@ -896,7 +945,9 @@ def main() -> int:
         print("지금: %s 화면(%.0f,%.0f) 깊이 %.0fmm 넓이%d  → 남은 화소 %.0f"
               % (args.aim, u, v, z, a, math.hypot(u - tu, v - tv)))
         if args.dry:
-            print("  판정: " + dry_verdict(z, math.hypot(u - tu, v - tv), args.tol, args.stop_z, args.max_adv))
+            need = max(0.0, z - args.stop_z) if z and z > 0 else 0.0
+            print("  판정: " + dry_verdict(z, math.hypot(u - tu, v - tv), args.tol, args.stop_z,
+                                          arm_reach(cur, need)))
             # ⚠ **여기서만 깊이를 믿는다.** 실제로 무는 동안엔 깊이를 목표로
             #   안 쓴다(이 파일 머리말 — 조기접촉에 오염된다). 하지만 여긴
             #   팔을 안 움직이니 잘못돼도 미리보기 한 줄이 틀릴 뿐이다.
@@ -914,9 +965,7 @@ def main() -> int:
                 # ⚠ R은 잰 자세 근처에서만 맞다 — 먼 자세에서 쓰면 '뻗으라'가 '접으라'로 나온다(10/30).
                 far = max(abs(cur[j] - cf["pose_deg"][j]) for j in kin.JOINTS)
                 if far > CAM_FRAME_NEAR_DEG:
-                    print("  ⚠ 미리보기 못 냄 — cam_frame.json(%s)은 지금 자세에서 %.0f° 떨어진 데서 잰 값이다"
-                          " (cam_frame.py를 이 자세에서 다시 돌려라)" % (cf.get("when", "?"), far))
-                    return 0
+                    return 0     # 판정 줄이 이미 답했다 — 못 믿을 3D 미리보기는 조용히 뺀다
                 meta = json.load(open(vs.META))
                 intr = Intrinsics.from_dict(meta["intrinsics"])
                 S = np.array(intr.deproject(u, v, z))
@@ -992,6 +1041,7 @@ def main() -> int:
             return None
 
         gone, JI, prev, locked, stall, miss_streak = 0.0, None, (u, v), False, 0, 0
+        cap = [None]             # 나아가기 상한 — 처음 나아갈 때 잰 거리로 정한다(advance_cap)
         plan = [None]            # --trust-first-z: 나아갈 총 거리(mm)
         planz = [None]           # 계획을 세운 순간의 깊이(mm) — 띠를 여기 맞춰 끌고 간다
         best_dir = [None, None]      # 실측으로 고른 전진 방향과 그 효과
@@ -1033,7 +1083,7 @@ def main() -> int:
             cur = dict(base)     # ⚠ 아래 지령은 전부 이 기준에서 만든다(실측 아님)
             publish_view(step=step, aim=args.aim, lost=False, u=u, v=v, z=z,
                          tu=tu, tv=tv, err=en, gone=gone, locked=locked,
-                         stop_z=args.stop_z, max_adv=args.max_adv,
+                         stop_z=args.stop_z, max_adv=cap[0] or 0.0,
                          pose={j: round(meas[j], 1) for j in kin.JOINTS})
 
             # ⚠ **한 번 놓친 프레임에 잘 가던 접근을 통째로 버리지 않는다.**
@@ -1165,10 +1215,13 @@ def main() -> int:
                            "when": time.strftime("%Y-%m-%d %H:%M:%S")},
                           open(os.path.expanduser("~/tip_depth.json"), "w"), indent=1)
                 return 0
-            if gone >= args.max_adv:
+            if cap[0] is None:
+                cap[0] = advance_cap(args.max_adv, gone, z, args.stop_z)
+                print("(나아가기 상한 %.0fmm%s) " % (cap[0], "" if args.max_adv > 0 else " — 잰 거리로 자동"), end="")
+            if gone >= cap[0]:
                 print("⚠ %.0fmm까지 갔다 — 더 안 간다" % gone)
                 break
-            want = min(args.adv, args.max_adv - gone)
+            want = min(args.adv, cap[0] - gone)
             if args.trust_first_z and plan[0] is not None:
                 want = min(want, max(2.0, plan[0] - gone))
             elif args.stop_z and locked and z > args.stop_z:
@@ -1183,31 +1236,7 @@ def main() -> int:
             # 세 갈래를 차례로 — 자세를 지키는 병진이 가장 낫지만, 팔이 한계
             # 근처면 그것만 고집하다 한 발도 못 뗀다(2026-09-03). 피치가 조금
             # 도는 건 다음 걸음에서 겨냥으로 갚으면 된다.
-            nxt, why = None, "한계"
-            for mode in ("keep", "free4", "free3"):
-                for k in (1.0, 0.6, 0.3):
-                    if mode == "keep":
-                        dd, res, big = step_keep(cur, want * k)
-                        if res > 0.06 * max(want * k, 1.0) or big > 8.0:
-                            why = "자세를 지키며 갈 수 없다"
-                            continue
-                    else:
-                        js = (("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex")
-                              if mode == "free4"
-                              else ("shoulder_lift", "elbow_flex", "wrist_flex"))
-                        dd, res = gp.step_along(cur, geom, want * k, joints=js)
-                        if res > 0.06 * max(want * k, 1.0):
-                            why = "병진을 못 만든다"
-                            continue
-                    cand = dict(cur)
-                    for j, w in dd.items():
-                        cand[j] += float(w)
-                    ok, why = legal(cand, cur)
-                    if ok:
-                        nxt, want = cand, want * k
-                        break
-                if nxt is not None:
-                    break
+            nxt, want, why = advance_step(cur, want)
             if nxt is None and best_dir[0] is None:
                 # ⚠ **접근축이라는 가정을 버린다.** 카메라 광축과 집게 축이
                 #   다르고, 한계에 걸리면 그 축으론 한 발도 못 뗀다. 그러면

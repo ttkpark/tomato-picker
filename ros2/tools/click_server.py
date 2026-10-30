@@ -329,7 +329,7 @@ def build(job, args):
               "--tol", "%.0f" % num(args, "tol", 28, 5, 120),
               "--rejacobian", "%d" % int(num(args, "rejacobian", 6, 1, 20)),
               "--stop-z", "%.0f" % num(args, "stop_z", 88, 0, 400),
-              "--max-adv", "%.0f" % num(args, "max_adv", 200, 20, 500)]
+              "--max-adv", "%.0f" % num(args, "max_adv", 0, 0, 500)]   # 0=자동(잰 거리)
         if args.get("no_close"):
             a += ["--no-close"]
         if args.get("no_lift"):       # 어깨를 겨냥에서 뺀다 — 뜨거울 때(10/30)
@@ -627,7 +627,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <label>무는거리<input id="g_stop" value="88"></label>
     </div>
     <div class="row" style="margin-top:6px">
-      <label>믿는거리(mm)<input id="g_maxadv" value="200"></label>
+      <label>믿는거리(mm, 0=자동)<input id="g_maxadv" value="0"></label>
       <label>표적모드
         <select id="g_aim" style="font:inherit;padding:5px 6px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--ink)">
           <option value="click" selected>클릭(화면)</option>
@@ -863,7 +863,7 @@ function grasp(nc){
   var aimEl=document.getElementById('g_aim');
   var aimVal=aimEl?aimEl.value:'click';
   return {steps:val('g_steps',16),adv:val('g_adv',8),max_turn:val('g_turn',2),
-    gain:val('g_gain',0.35),tol:val('g_tol',28),stop_z:val('g_stop',88),max_adv:val('g_maxadv',200),
+    gain:val('g_gain',0.35),tol:val('g_tol',28),stop_z:val('g_stop',88),max_adv:val('g_maxadv',0),
     aim:aimVal,no_close:nc?1:0,no_lift:(document.getElementById('g_nolift')||{}).checked?1:0};}
 function jog(k,s){
   var amt=s*val('j_mm',20), free=document.getElementById('j_free').checked;

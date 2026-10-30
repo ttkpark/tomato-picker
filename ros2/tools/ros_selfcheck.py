@@ -1478,9 +1478,14 @@ def test_board_contract() -> None:
     check("stem_grasp: 처진 실측이 아니라 직전 지령을 다음 걸음의 기준으로 쓴다",
           b1 == J0 and not rs1 and abs(off1 - 1.2) < 1e-9, f"base={b1} off={off1}")
     v_far, v_ok, v_nz = sg.dry_verdict(414, 37, 28, 88, 200), sg.dry_verdict(180, 10, 28, 88, 200), sg.dry_verdict(0, 5, 28, 88, 200)
-    check("stem_grasp --dry 판정: 414mm(10/30)는 못 닿는다·180mm는 해 볼 만하다·깊이 0은 다시 찍어라",
-          v_far.startswith("❌ 못 닿는다") and "126mm 더 가까이" in v_far and v_ok.startswith("✅")
-          and "깊이가 없다" in v_nz, f"{v_far} | {v_ok} | {v_nz}")
+    check("stem_grasp --dry 판정은 팔이 실제로 뻗는 거리로 가른다(326mm 필요·팔 200 → 126mm 모자람)",
+          v_far.startswith("❌ 팔이 거기까지 못 뻗는다") and "126mm 더 가까이" in v_far and v_ok.startswith("✅")
+          and "깊이가 없다" in v_nz and sg.dry_verdict(414, 37, 28, 88, 340).startswith("✅"),
+          f"{v_far} | {v_ok} | {v_nz}")
+    check("stem_grasp 나아가기 상한: 0=잰 거리+여유(414mm → 356), 숫자를 주면 그 값",
+          sg.advance_cap(0, 0, 414, 88) == 326 + sg.ADV_SLACK_MM and sg.advance_cap(200, 0, 414, 88) == 200
+          and sg.advance_cap(0, 10, 50, 88) == 10 + sg.ADV_SLACK_MM,
+          f"auto={sg.advance_cap(0, 0, 414, 88)}")
     check("stem_grasp: 지령과 실측이 문턱보다 벌어지면(막힘) 실측으로 다시 맞춘다",
           rs2 and b2["shoulder_lift"] == 126.5 + sg.BASE_RESYNC_DEG + 1, f"base={b2} rs={rs2}")
 
