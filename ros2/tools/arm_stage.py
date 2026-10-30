@@ -280,6 +280,20 @@ def main() -> int:
                 io.hold_close()
                 return 1
 
+    # ⚠ 마지막 자리에서 **처짐만큼 더** 민다 — 구간마다 지령만 쓰고 끝내면 팔을 뻗은 자세는
+    #   목표보다 4~6° 아래에 선다(10/30: 어깨 127 지령 → 131). tool_jog.press_to와 같은 규칙.
+    cmd = dict(target)
+    for _ in range(5):
+        got = to_deg(io.read())
+        miss = {j: target[j] - got[j] for j in kin.JOINTS}
+        if max(abs(v) for v in miss.values()) <= 0.6:
+            break
+        nxt = {j: max(min(cmd[j] + miss[j], target[j] + 8.0), target[j] - 8.0) for j in kin.JOINTS}
+        if not calib.legal(nxt, got)[0]:
+            break
+        cmd = nxt
+        io.write(to_norm(cmd), 0.6)
+        time.sleep(0.5)
     final = to_deg(io.read())
     show("끝", final)
     print("\n⚠ 토크를 켠 채로 둔다.")

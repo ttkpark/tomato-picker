@@ -889,7 +889,7 @@ def main() -> int:
             print("   ⚠ 집게 토크 상한을 못 바꿨다: %s" % str(exc)[:60])
             return False
 
-    def go(d, secs=0.9, tries=3, tol=0.6, cap=5.0):
+    def go(d, secs=0.9, tries=5, tol=0.6, cap=8.0):     # 처짐 5°↑ — cap 5로는 못 갚았다(10/30)
         """**도착할 때까지 밀어 넣는다** — 중력 처짐을 적분으로 갚는다.
 
         ⚠ 이 팔은 명령한 자리보다 2~3° 아래에 선다(실측 2026-09-02: 어깨

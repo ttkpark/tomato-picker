@@ -37,6 +37,7 @@ import time
 try:
     from tomato_picker.config import (
         ARM_FOLLOWER_SERIAL,
+        ARM_HOLD_P_GAIN,
         ARM_ID,
         ARM_LEADER_SERIAL,
         ARM_MOVE_FPS,
@@ -52,6 +53,7 @@ try:
 except ImportError:  # pragma: no cover - PC에서 상수만으로도 이 파일이 읽혀야 한다
     ARM_FOLLOWER_SERIAL = ARM_LEADER_SERIAL = ""
     ARM_ID = "tomato_follower"
+    ARM_HOLD_P_GAIN = {}
     ARM_MOVE_FPS = 30
     ARM_SERIAL_PORT = "/dev/ttyACM0"
     BASE_YAW_ID, BASE_YAW_LIMIT_DEG, BASE_YAW_DEG_PER_SEC = 7, 90.0, 30.0
@@ -219,6 +221,9 @@ class FollowerIO:
             follower.configure()
             follower.bus.enable_torque()
             follower.bus.sync_write("Goal_Position", before)
+            # configure()가 P를 16으로 되돌린 직후 — 토크를 켠 채 써도 먹는다(10/30 되읽기 확인).
+            for m, p in ARM_HOLD_P_GAIN.items():
+                follower.bus.write("P_Coefficient", m, int(p), normalize=False)
         self._follower = follower
         self._port = port
 

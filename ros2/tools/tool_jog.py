@@ -70,7 +70,7 @@ def main() -> int:
     from tomato_bridge.follower_io import FollowerIO
     io = FollowerIO(hold_torque=True)
 
-    def press_to(target, tries=3, tol=0.6, cap=5.0):
+    def press_to(target, tries=5, tol=0.6, cap=8.0):    # 처짐이 5°를 넘어 cap 5로는 못 갚았다(10/30: 25mm→11mm)
         """**도착할 때까지 밀어 넣는다** — 중력 처짐을 적분으로 갚는다.
 
         ⚠ 이 팔은 명령한 자리보다 2~3° 아래에 선다(어깨 -2.5°, 팔꿈치 -1.8°
@@ -167,11 +167,19 @@ def main() -> int:
         #   그걸로 끝이기 쉽다(직접 관절 편집으로는 더 갈 수 있는데 조그는
         #   한 발짝도 못 뗐다). 살짝의 피치 드리프트는 감수해도
         #   된다고 확인했다(2026-09-03) — 자세를 꼭 지켜야 하면 --hold-pitch.
-        mode = "keep" if args.hold_pitch else "free"
+        # ⚠ 2026-10-30: 기본을 **피치 지키기**로 되돌렸다. 화면을 보며 줄기에 맞추는 조그인데
+        #   카메라가 같이 숙여지면 23mm 올려도 화면 속 줄기가 거의 안 움직였다. 조작대 '자세 안
+        #   지킴' 칸도 원래 그 뜻이었다(비어 있으면 지킨다). 지키며 못 가는 걸음만 free로 간다.
+        mode = "free" if args.free_pitch else "keep"
         for k in range(n):
             cur = to_deg(io.read())
             nxt, resid = solve(cur, unit, mode)
             ok, why = legal(nxt, cur)
+            if not ok and mode == "keep":
+                nxt, resid = solve(cur, unit, "free")
+                ok, why = legal(nxt, cur)
+                if ok:
+                    print("  %d/%d  피치를 지키며는 못 간다 — 이 걸음만 피치를 푼다" % (k + 1, n))
             if not ok:
                 print("  %d/%d  갈 수 없다 (%s) — 멈춘다" % (k + 1, n, why))
                 break
