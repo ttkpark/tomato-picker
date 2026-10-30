@@ -63,6 +63,9 @@ MOUNT_Z_MM = gp.MOUNT_Z_MM
 FLOOR_MARGIN_MM = gp.FLOOR_MARGIN_MM
 FRUIT_MM = 70.0          # 실측: 134.6mm에서 폭 227화소, fx 438 → 69.8mm
 FAR_MM = 600.0           # 이보다 먼 빨간 덩이는 열매 후보에서 뺀다 (팔 사거리 420mm)
+BAND_MM = 15.0           # click 재검출: 클릭한 깊이 ±이 띠 안만 표적이다(배경은 멀어 자동 배제) — 시도 5
+BAND_JUMP_PX = 25.0      # click 재검출: 직전 자리에서 이보다 먼 기둥은 다른 물체(지지대)로 본다
+GRIP_HELD_OVER = 1.9     # 닫은 뒤 집게 정규값이 (grip_shut + 이것) 이상이면 물었다 — 10/30 실측 빈손 5.3~5.4 · 줄기 6.3 (shut 4)
 FRUIT_JUMP_MM = 80.0     # top 모드: 잡은 열매 거리에서 이보다 다른 빨간 덩이는 버린다(나아가는 한 걸음은 ≤8mm)
 FINGER_MM = 90.0         # 집게 손가락 끝은 카메라에서 76~78mm(10/30 실측) — 이보다 가까운 '표적'은 손가락일 수 있다
 NEAR_FLOOR = 75.0        # D405 유효 하한(70mm) 아래 값은 못 믿는다 — 표적으로 안 본다
@@ -96,6 +99,28 @@ def reach_guard(cur, cand, mm):
     if big > MAX_DEG_PER_MM * max(mm, 1.0) + 1.0:
         return REACH_END + "(특이점 근처 %.1f°/mm)" % (big / max(mm, 1.0))
     return None
+
+
+def uv_at_depth(table, z):
+    """깊이별 겨냥점 실측표 [[z, u, v], ...]를 z로 보간 — 양 끝 밖은 끝 구간 기울기로 늘인다.
+
+    ⚠ 2026-10-30 실측(줄기를 물린 자리에서 20mm씩 물러나며): 86mm (433,360) → 116 (423,345) →
+      135 (416,330) → 149 (415,315) → 175 (419,295). 카메라 광축 ∥ 집게 축 가정의 1/z 모델은
+      v가 최대 17px 어긋났다 — 모델 대신 표를 쓴다."""
+    t = sorted((float(a), float(b), float(c)) for a, b, c in table)
+    if not t:
+        return None
+    if len(t) == 1 or z is None:
+        return t[0][1], t[0][2]
+    if z <= t[0][0]:
+        (z0, u0, v0), (z1, u1, v1) = t[0], t[1]
+    elif z >= t[-1][0]:
+        (z0, u0, v0), (z1, u1, v1) = t[-2], t[-1]
+    else:
+        k = next(i for i in range(len(t) - 1) if t[i][0] <= z <= t[i + 1][0])
+        (z0, u0, v0), (z1, u1, v1) = t[k], t[k + 1]
+    f = (z - z0) / (z1 - z0) if z1 != z0 else 0.0
+    return u0 + f * (u1 - u0), v0 + f * (v1 - v0)
 
 
 def nearer_depth(*vals, floor=NEAR_FLOOR + 10.0):
@@ -228,6 +253,8 @@ def main() -> int:
     if args.depth_pct is None:
         args.depth_pct = 10.0 if args.thin else 25.0
 
+    grip_z = None            # 십자를 찍은 깊이(mm) — 있으면 겨냥점을 표적 깊이로 옮긴다
+    by_z = None              # 깊이별 겨냥점 실측표 — 있으면 이게 이긴다(uv_at_depth)
     if args.target:
         tu, tv = (float(x) for x in args.target.split(","))
     else:
@@ -235,10 +262,38 @@ def main() -> int:
         try:                                   # 페이지에서 고쳐 찍은 십자가 이긴다
             g = json.load(open(os.path.expanduser("~/grip_uv.json")))
             tu, tv = float(g["u"]), float(g["v"])
+            grip_z = float(g["z"]) if g.get("z") else None
+            by_z = g.get("by_z") or None
             print("십자를 사람이 고쳐 찍었다 [%s]" % g.get("when", ""))
         except Exception:                                  # noqa: BLE001
             pass
-    print("겨눌 자리 = 화면 (%.0f, %.0f)  [집게가 무는 자리, 여닫아 실측]" % (tu, tv))
+    tu0, tv0 = tu, tv
+    print("겨눌 자리 = 화면 (%.0f, %.0f)  [집게가 무는 자리, 여닫아 실측%s]"
+          % (tu, tv, (" · 깊이별 실측표 %d점" % len(by_z)) if by_z else
+             ((" · %.0fmm에서 — 표적 깊이에 맞춰 옮긴다" % grip_z) if grip_z else "")))
+    _intr = [None]
+
+    def aim_uv(z):
+        """집게 축 위, 카메라에서 z(mm)인 점의 화소 — **시차**.
+
+        십자(tu0,tv0)는 무는 자리(grip_z≈86mm)에서 찍은 것이다. 카메라가 집게 축 옆에 있어서
+        같은 축 위의 점도 깊이마다 다른 화소에 찍힌다: 2026-10-30 실측(줄기를 물려 두고 20mm씩
+        물러남) 86mm (433,360) → 175mm (419,295). 140mm 줄기를 86mm용 화소에 맞춰 직진하면
+        줄기는 축 옆 ~50화소를 지나간다 — 전진할수록 표적이 십자에서 **멀어진** 5번 실기가 그것.
+        실측표(by_z)가 있으면 그걸 보간하고, 없을 때만 광축 ∥ 집게 축 모델(오프셋을 깊이로 나눔)을 쓴다."""
+        if by_z and z and z > 0:
+            return uv_at_depth(by_z, z)
+        if grip_z is None or not z or z <= 0:
+            return tu0, tv0
+        if _intr[0] is None:
+            try:
+                _intr[0] = json.load(open(vs.META))["intrinsics"]
+            except Exception:                              # noqa: BLE001
+                return tu0, tv0
+        it = _intr[0]
+        xm = (tu0 - it["ppx"]) / it["fx"] * grip_z
+        ym = (tv0 - it["ppy"]) / it["fy"] * grip_z
+        return it["ppx"] + it["fx"] * xm / z, it["ppy"] + it["fy"] * ym / z
 
     # ⚠ 한계 판정은 arm_calib.Calib 하나뿐이다(자세한 이유는 arm_calib.py
     #   머리말) — 정규값 ±98 같은 임의 숫자 대신 서보 캘리브레이션에서 나온
@@ -391,10 +446,17 @@ def main() -> int:
         x0, x1 = max(0, int(uu) - radius), min(w, int(uu) + radius)
         if y1 <= y0 or x1 <= x0:
             return True, 1.0
-        hsv = cv2.cvtColor(bgr[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
-        m = ((hsv[:, :, 1] > 80) & (hsv[:, :, 2] > 50)
-             & ((hsv[:, :, 0] < 14) | (hsv[:, :, 0] > 165)))
-        frac = float(m.mean())
+        def red_frac(ya, yb, xa, xb):
+            hsv = cv2.cvtColor(bgr[ya:yb, xa:xb], cv2.COLOR_BGR2HSV)
+            m = ((hsv[:, :, 1] > 80) & (hsv[:, :, 2] > 50)
+                 & ((hsv[:, :, 0] < 14) | (hsv[:, :, 0] > 165)))
+            return float(m.mean())
+        frac = red_frac(y0, y1, x0, x1)
+        # ⚠ 줄기를 열매 **위쪽**에서 물면 겨냥점 둘레는 초록·배경이고 열매는 그 아래 있다 —
+        #   정상 잡기도 0%로 막혔다(10/30 시도 9). 아래 창(+10~+120px)도 본다.
+        yb0, yb1 = min(h - 1, int(vv) + 10), min(h, int(vv) + 120)
+        if yb1 > yb0 + 5:
+            frac = max(frac, red_frac(yb0, yb1, x0, x1))
         return frac >= min_frac, frac
 
     def clamp(d, cur):
@@ -590,6 +652,62 @@ def main() -> int:
             return None
         markz[0] = z2
         return u2, v2, z2, int(score * 1000), False
+
+    def band_point(prev, R=70):
+        """click 표적을 **클릭한 깊이 띠(±BAND_MM)로 매 걸음 새로** 오려낸다 — 조각 정합이 손가락·배경·
+        매트로 미끄러지던 것(10/30 시도 2·3·4). 배경은 띠 밖이라 저절로 빠진다.
+        가는 줄기는 열매 어깨와 같은 띠에 붙어 있으니 덩이 중심을 쓰지 않고 **직전 자리 둘레 가로
+        띠(±18px)** 안의 띠 화소로 u를, 그 행들의 평균으로 v를 낸다(위아래로 흐르지 않게)."""
+        if prev is None or not (markz[0] > 0):
+            return None
+        try:
+            dep = np.load(vs.DEPTH).astype(float)
+            meta = json.load(open(vs.META))
+        except Exception:                              # noqa: BLE001
+            return None
+        d = dep * float(meta.get("depth_scale_mm", 1.0))
+        h, w = d.shape[:2]
+        zc = markz[0]
+        uu, vv = int(prev[0]), int(prev[1])
+        y0, y1 = max(0, vv - 18), min(h, vv + 19)
+        x0, x1 = max(0, uu - R), min(w, uu + R)
+        if y1 - y0 < 8 or x1 - x0 < 8:
+            return None
+        win = d[y0:y1, x0:x1]
+        m = (win > zc - BAND_MM) & (win < zc + BAND_MM)
+        ys, xs = np.nonzero(m)
+        if len(xs) < 12:
+            return None
+        cols = np.bincount(xs, minlength=win.shape[1])
+        # 직전 u에 가장 가까운 '기둥'(연속 열 묶음)을 고른다 — 옆의 지지대로 건너뛰지 않게
+        on = cols >= max(3, int(0.4 * cols.max()))
+        best = None
+        i = 0
+        while i < len(on):
+            if on[i]:
+                j = i
+                while j + 1 < len(on) and on[j + 1]:
+                    j += 1
+                cu = (i + j) / 2.0 + x0
+                dd = abs(cu - prev[0])
+                if best is None or dd < best[0]:
+                    best = (dd, i, j)
+                i = j + 1
+            else:
+                i += 1
+        # ⚠ 한 걸음에 25px 넘게 옆 기둥으로 건너뛰지 않는다 — 10/30 13:24: 줄기(412)에서 지지대(465)로
+        #   넘어가 겨냥이 카메라를 바닥까지 숙였다. 같은 깊이 띠에 기둥이 여럿이면 가까운 것만 같은 물체다.
+        if best is None or best[0] > BAND_JUMP_PX:
+            return None
+        _, i, j = best
+        sel = (xs >= i) & (xs <= j)
+        cu = float(xs[sel].mean()) + x0
+        cv_ = float(ys[sel].mean()) + y0
+        zz = float(np.median(win[m][sel]))
+        if zc > FINGER_MM + 20.0 and zz < FINGER_MM:
+            return None
+        markz[0] = zz
+        return cu, cv_, zz, int(sel.sum()), False
 
     def white_point(prev, R=110):
         """**흰 덩이를 매 걸음 다시 찾는다** — 조각을 안 쓴다.
@@ -802,6 +920,9 @@ def main() -> int:
         if args.aim == "white":
             return white_point(prev)
         if args.aim in ("mark", "click"):
+            r = band_point(prev if prev is not None else mark0)
+            if r is not None:
+                return r
             return track_mark(prev if prev is not None else mark0)
         if args.aim == "top":
             fb = fruit_box(prev)
@@ -888,6 +1009,21 @@ def main() -> int:
     io = FollowerIO(hold_torque=True)
     grip = [GRIP_OPEN]
     grip_torque_was = [None]
+
+    def grip_check():
+        """닫은 뒤 **물었는지** — 빈손이면 집게가 grip_shut 근처까지 닫히고, 줄기가 있으면 거기서 멈춘다.
+        9/11 '들어 올려 확인'의 자동판 — 오늘(10/30) 5회는 전부 --no-close라 성공 여부 자체를 몰랐다."""
+        time.sleep(0.4)
+        gnorm = float(io.read().get("gripper", -1.0))
+        load = None
+        try:
+            load = int(io._follower.bus.read("Present_Load", "gripper", normalize=False))  # noqa: SLF001
+        except Exception:                                  # noqa: BLE001
+            pass
+        held = gnorm >= args.grip_shut + GRIP_HELD_OVER
+        print("   집게 %.1f (빈손이면 <%.1f) 부하 %s → %s"
+              % (gnorm, args.grip_shut + GRIP_HELD_OVER, load, "**물었다**" if held else "빈손"))
+        return held, gnorm, load
 
     def set_grip_torque(v):
         """집게 토크 상한을 잠깐 올린다 — 되돌릴 수 있게 옛 값을 기억한다.
@@ -994,6 +1130,7 @@ def main() -> int:
             print("❌ 겨눌 것을 못 찾았다 — 열매가 보이는 자세에서 시작하라.")
             return 1
         u, v, z, a, _clip = s
+        tu, tv = aim_uv(z)
         print("지금: %s 화면(%.0f,%.0f) 깊이 %.0fmm 넓이%d  → 남은 화소 %.0f"
               % (args.aim, u, v, z, a, math.hypot(u - tu, v - tv)))
         if args.dry:
@@ -1098,6 +1235,7 @@ def main() -> int:
         planz = [None]           # 계획을 세운 순간의 깊이(mm) — 띠를 여기 맞춰 끌고 간다
         best_dir = [None, None]      # 실측으로 고른 전진 방향과 그 효과
         print("\n 걸음   겨냥       화소   깊이    나아감   한 일")
+        en_hist = []             # 겨냥 걸음의 화소 오차 — 2걸음 연속 안 줄면 야코비안을 다시 잰다
         budget = [args.steps]    # 걸음 예산 — 나아갈 거리가 정해지면 그만큼 늘린다(16걸음 × 8mm로는 326mm를 못 간다)
         for step in itertools.count():
             if step >= budget[0]:
@@ -1124,6 +1262,7 @@ def main() -> int:
             u, v, z, a, clipped = s
             z_track = z          # 표적 **덩이**에서 잰 깊이 — 아래에서 덮이기 전 값
             prev = (u, v)
+            tu, tv = aim_uv(z_track if z_track > 0 else (markz[0] or 0.0))
             err = np.array([tu - u, tv - v])
             en = float(np.linalg.norm(err))
             if en <= args.tol:
@@ -1162,7 +1301,12 @@ def main() -> int:
                 # 여기서 다시 겨누면 없는 오차를 쫓는다. 나아가기만 한다.
                 print("(윗변 잘림 — 겨냥 보류) ", end="")
             elif en > args.tol:
-                if JI is None or step % args.rejacobian == 0:
+                # ⚠ 매 6걸음 탐침(관절마다 2번 왕복 ≈ 10초·발열)을 **멈출 때만** 한다 — 가까워지면
+                #   같은 각이 더 많은 화소를 움직이니 깊이비로 스케일하면 된다(10/30 시도 10).
+                stalled = len(en_hist) >= 3 and en_hist[-1] >= en_hist[-2] >= en_hist[-3]
+                if stalled:
+                    en_hist.clear()
+                if JI is None or stalled or step - JI[3] >= 2 * args.rejacobian:
                     cols, J = [], []
                     for j in aim_joints:
                         p = dict(cur)
@@ -1184,10 +1328,20 @@ def main() -> int:
                     if len(cols) < 1:
                         print("⚠ 야코비안을 못 쟀다")
                         break
-                    JI = (np.array(J).T, cols)
-                A, cols = JI
+                    JI = (np.array(J).T, cols, float(z) if z and z > 0 else 0.0, step)
+                A, cols, zJ, _ = JI
+                if zJ > 0 and z and z > 0:
+                    A = A * min(2.0, max(0.5, zJ / z))
+                # ⚠ 성분별 clip은 방향을 틀어 버린다(10/30 1번 실기: lift −2/elbow +2 포화 6걸음, 화소 악화).
+                #   상한은 **벡터 전체**를 줄여 방향은 지킨다.
+                # ⚠ ridge(rcond=0.1)는 넣지 마라 — 세로 화소를 움직이는 축이 가로(pan)보다 약해서 그 성분을
+                #   통째로 버렸고, 세로 41px를 16걸음 동안 0°로 '겨냥'했다(10/30 13:19). 악조건은 겨냥 관절을
+                #   pan·elbow·wrist로 바꿔 푼다(--aim-joints, 조작대 '어깨 안 쓰고 겨냥').
                 sol, *_ = np.linalg.lstsq(A, err * args.gain, rcond=None)
-                sol = np.clip(sol, -args.max_turn, args.max_turn)
+                big = float(np.max(np.abs(sol))) if len(sol) else 0.0
+                if big > args.max_turn:
+                    sol = sol * (args.max_turn / big)
+                en_hist.append(en)
                 nxt = dict(cur)
                 for j, w in zip(cols, sol):
                     nxt[j] += float(w)
@@ -1269,11 +1423,14 @@ def main() -> int:
                     io.write(n, 1.2)
                     time.sleep(1.2)
                     print("🍅 집게를 닫았다.")
+                    held, gnorm, load = grip_check()
+                else:
+                    held, gnorm, load = None, None, None
                 json.dump({"cam_to_tip_mm": float(z), "tip_uv": [tu, tv],
-                           "aim": args.aim, "how": "stop_z",
+                           "aim": args.aim, "how": "stop_z", "held": held, "grip": gnorm, "grip_load": load,
                            "when": time.strftime("%Y-%m-%d %H:%M:%S")},
                           open(os.path.expanduser("~/tip_depth.json"), "w"), indent=1)
-                return 0
+                return 0 if held is not False else 1
             if cap[0] is None:
                 cap[0] = advance_cap(args.max_adv, gone, z, args.stop_z)
                 budget[0] = max(budget[0], step + args.steps
@@ -1417,11 +1574,14 @@ def main() -> int:
                     io.write(n, 1.2)
                     time.sleep(1.2)
                     print("   집게를 닫았다.")
+                    held, gnorm, load = grip_check()
+                else:
+                    held, gnorm, load = None, None, None
                 json.dump({"cam_to_tip_mm": float(z2),
-                           "tip_uv": [tu, tv], "aim": args.aim,
+                           "tip_uv": [tu, tv], "aim": args.aim, "held": held, "grip": gnorm, "grip_load": load,
                            "when": time.strftime("%Y-%m-%d %H:%M:%S")},
                           open(os.path.expanduser("~/tip_depth.json"), "w"), indent=1)
-                return 0
+                return 0 if held is not False else 1
         print("\n(다 썼다 — 안 닿았다)")
         return 1
     finally:

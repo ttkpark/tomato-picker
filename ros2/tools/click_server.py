@@ -329,9 +329,12 @@ def build(job, args):
               "--tol", "%.0f" % num(args, "tol", 28, 5, 120),
               "--rejacobian", "%d" % int(num(args, "rejacobian", 6, 1, 20)),
               "--stop-z", "%.0f" % num(args, "stop_z", 88, 0, 400),
-              "--max-adv", "%.0f" % num(args, "max_adv", 0, 0, 500)]   # 0=자동(잰 거리)
+              "--max-adv", "%.0f" % num(args, "max_adv", 0, 0, 500),   # 0=자동(잰 거리)
+              "--max-dz", "%.0f" % num(args, "max_dz", 25, 10, 300)]   # 겨냥 걸음(≤2°)에 70은 너무 컸다(10/30)
         if args.get("no_close"):
             a += ["--no-close"]
+        if args.get("no_red"):        # 닫기 직전 빨강 확인 생략(면봉·테이프 연습)
+            a += ["--no-red-check"]
         if args.get("trust"):         # 처음 잰 줄기 깊이만큼 기구학으로 간다 — 십자가 손가락 끝이라 광선 깊이는 손가락이다(10/30)
             a += ["--trust-first-z"]
         if args.get("no_lift"):       # 어깨를 겨냥에서 뺀다 — 뜨거울 때(10/30)
@@ -644,6 +647,8 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       절대 안 나아간다(닿을 때까지가 아니라).</div>
     <div class="row" style="margin-top:8px">
       <label class="k"><input type="checkbox" id="g_nolift"> 어깨 안 쓰고 겨냥(팔돌림·팔꿈치·손목)</label>
+      <label class="k"><input type="checkbox" id="g_trust" checked> 처음 잰 거리만큼 간다(가까이선 줄기가 손가락에 가린다)</label>
+      <label class="k"><input type="checkbox" id="g_nored"> 빨강 확인 생략(면봉·테이프)</label>
     </div>
     <div class="row" style="margin-top:6px">
       <button class="go" onclick="run('grasp',grasp(false))">잡으러 간다</button>
@@ -866,7 +871,8 @@ function grasp(nc){
   var aimVal=aimEl?aimEl.value:'click';
   return {steps:val('g_steps',16),adv:val('g_adv',8),max_turn:val('g_turn',2),
     gain:val('g_gain',0.35),tol:val('g_tol',28),stop_z:val('g_stop',88),max_adv:val('g_maxadv',0),
-    aim:aimVal,no_close:nc?1:0,no_lift:(document.getElementById('g_nolift')||{}).checked?1:0};}
+    aim:aimVal,no_close:nc?1:0,no_lift:(document.getElementById('g_nolift')||{}).checked?1:0,
+    trust:(document.getElementById('g_trust')||{}).checked?1:0,no_red:(document.getElementById('g_nored')||{}).checked?1:0};}
 function jog(k,s){
   var amt=s*val('j_mm',20), free=document.getElementById('j_free').checked;
   tgtJ=jogPreviewTarget(curJ,k,amt,free);

@@ -1493,6 +1493,12 @@ def test_board_contract() -> None:
     check("stem_grasp: 팔이 다 펴지는 걸음(10/30 걸음22, 팔꿈치 15.8→1.5°)은 막고 보통 걸음은 둔다",
           (sg.reach_guard(c21, c22, 8) or "").startswith(sg.REACH_END) and sg.reach_guard(c08, c09, 8) is None
           and sg.reach_guard(c22, c21, 8) is None, f"{sg.reach_guard(c21, c22, 8)}")
+    T1030 = [[86, 433, 360], [116, 423, 345], [135, 416, 330], [149, 415, 315], [175, 419, 295]]
+    uvm = sg.uv_at_depth(T1030, 125.5)
+    uvf = sg.uv_at_depth(T1030, 195)
+    check("stem_grasp 깊이별 겨냥점: 실측표 보간(125.5mm → 두 점 사이) · 끝 밖은 끝 구간 기울기로",
+          abs(uvm[0] - 419.5) < 0.6 and abs(uvm[1] - 337.5) < 0.6 and sg.uv_at_depth(T1030, 86) == (433.0, 360.0)
+          and abs(uvf[1] - (295 - 20 * 20 / 26)) < 0.6, f"125.5→{uvm} 195→{uvf}")
     check("stem_grasp 나아가기 상한: 0=잰 거리+여유(414mm → 356), 숫자를 주면 그 값",
           sg.advance_cap(0, 0, 414, 88) == 326 + sg.ADV_SLACK_MM and sg.advance_cap(200, 0, 414, 88) == 200
           and sg.advance_cap(0, 10, 50, 88) == 10 + sg.ADV_SLACK_MM,
