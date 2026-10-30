@@ -82,6 +82,7 @@ def publish_view(**kw):
     except Exception:                                      # noqa: BLE001
         pass
 SETTLE = 0.8
+CAM_FRAME_NEAR_DEG = 15.0   # --dry 미리보기: cam_frame.json을 잰 자세에서 이보다 멀면 R을 안 믿는다
 
 # ⚠ 겨냥에 wrist_flex를 쓰지 않는다 — 이 자세에서 −97(한계 −98)로 박혀 있고,
 #   화면을 아래로 내리려면 **더 음수**가 필요해서 14걸음 내내 한 발도 못 뗐다
@@ -848,7 +849,8 @@ def main() -> int:
 
     try:
         cur = to_deg(io.read())
-        go(cur, 0.6)
+        if not args.dry:    # ⚠ go()는 처짐을 갚으며 밀어 올리고 집게도 연다 — '겨냥만'이 팔을 움직였다(10/30)
+            go(cur, 0.6)
         s = see(None)
         if s is None:
             print("❌ 겨눌 것을 못 찾았다 — 열매가 보이는 자세에서 시작하라.")
@@ -871,6 +873,12 @@ def main() -> int:
             try:
                 cf = json.load(open(os.path.expanduser("~/cam_frame.json")))
                 R = np.array(cf["R_cam_from_base"])
+                # ⚠ R은 잰 자세 근처에서만 맞다 — 먼 자세에서 쓰면 '뻗으라'가 '접으라'로 나온다(10/30).
+                far = max(abs(cur[j] - cf["pose_deg"][j]) for j in kin.JOINTS)
+                if far > CAM_FRAME_NEAR_DEG:
+                    print("  ⚠ 미리보기 못 냄 — cam_frame.json(%s)은 지금 자세에서 %.0f° 떨어진 데서 잰 값이다"
+                          " (cam_frame.py를 이 자세에서 다시 돌려라)" % (cf.get("when", "?"), far))
+                    return 0
                 meta = json.load(open(vs.META))
                 intr = Intrinsics.from_dict(meta["intrinsics"])
                 S = np.array(intr.deproject(u, v, z))
