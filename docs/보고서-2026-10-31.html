@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1031 줄기 잡기 보고서</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* 줄기 초록 + 열매 빨강, 중립은 초록 기운 회색. 한 단 읽기 + 표·사진은 넓게 */
+  --bg: #f6f7f5;
+  --surface: #ffffff;
+  --ink: #1d2420;
+  --muted: #5d6862;
+  --line: #dde2de;
+  --stem: #2f6b45;
+  --stem-soft: #e3efe7;
+  --fruit: #c8392b;
+  --fruit-soft: #f8e4e1;
+  --warn: #9a6a00;
+  --warn-soft: #f6edd6;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #131815; --surface: #1b211d; --ink: #e5ebe7; --muted: #9aa69f; --line: #2d3530;
+    --stem: #6fbf8a; --stem-soft: #1f3327; --fruit: #f07a6c; --fruit-soft: #3a2220;
+    --warn: #e2b44c; --warn-soft: #362c14;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #131815; --surface: #1b211d; --ink: #e5ebe7; --muted: #9aa69f; --line: #2d3530;
+  --stem: #6fbf8a; --stem-soft: #1f3327; --fruit: #f07a6c; --fruit-soft: #3a2220;
+  --warn: #e2b44c; --warn-soft: #362c14;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body);
+  font-size: 16px; line-height: 1.7; }
+main { max-width: 980px; margin: 0 auto; padding: 40px 16px 80px; display: grid; gap: 48px; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: 30px; font-weight: 700; }
+h2 { font-size: 22px; font-weight: 700; padding-bottom: 8px; border-bottom: 2px solid var(--ink); }
+h3 { font-size: 17px; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+section { display: grid; gap: 18px; }
+.meta { color: var(--muted); font-size: 14px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
+code { background: var(--stem-soft); padding: 1px 5px; border-radius: 4px; }
+.num { font-variant-numeric: tabular-nums; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 2px; }
+.tile b { font-size: 28px; font-variant-numeric: tabular-nums; }
+.tile.ok b { color: var(--stem); }
+.tile.bad b { color: var(--fruit); }
+.tile span { color: var(--muted); font-size: 14px; }
+
+.lede { background: var(--surface); border-left: 4px solid var(--stem); padding: 14px 18px; border-radius: 0 8px 8px 0; max-width: none; }
+
+.chip { display: inline-block; font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 99px; white-space: nowrap; }
+.chip.ok { background: var(--stem-soft); color: var(--stem); }
+.chip.bad { background: var(--fruit-soft); color: var(--fruit); }
+.chip.warn { background: var(--warn-soft); color: var(--warn); }
+
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: s; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 36px 1fr; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.steps li::before { content: counter(s); font-family: var(--font-mono); font-weight: 500; width: 28px; height: 28px; border-radius: 50%; background: var(--stem); color: var(--surface); display: grid; place-items: center; font-size: 14px; }
+.steps li.fail::before { background: var(--fruit); }
+.steps li div { display: grid; gap: 4px; }
+.steps .who { font-size: 13px; color: var(--muted); }
+
+.photos { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: grid; }
+figure img { width: 100%; height: auto; display: block; }
+figcaption { padding: 8px 12px 10px; font-size: 13px; color: var(--muted); }
+figcaption b { color: var(--ink); }
+
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); background: var(--bg); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.r, th.r { text-align: right; }
+
+.chart { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow-x: auto; }
+.chart svg { display: block; width: 100%; min-width: 520px; height: auto; }
+.chart text { font-family: var(--font-mono); font-size: 11px; fill: var(--muted); }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .tol { stroke: var(--warn); stroke-dasharray: 5 4; stroke-width: 1.5; }
+.chart .t1 { stroke: var(--stem); stroke-width: 2.5; fill: none; }
+.chart .t1p { fill: var(--stem); }
+.chart .am { stroke: var(--fruit); stroke-width: 2.5; fill: none; stroke-dasharray: 2 0; }
+.chart .amp { fill: var(--fruit); }
+.chart .lab-stem { fill: var(--stem); font-weight: 500; }
+.chart .lab-fruit { fill: var(--fruit); font-weight: 500; }
+.chart .lab-warn { fill: var(--warn); }
+.chart .ink { stroke: var(--ink); fill: none; stroke-width: 1.5; }
+.chart .ray { stroke: var(--muted); stroke-dasharray: 4 3; stroke-width: 1.2; }
+.chart .axis { stroke: var(--stem); stroke-width: 3; }
+
+.cards { display: grid; gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; display: grid; gap: 10px; border-top: 4px solid var(--stem); }
+.card.now { border-top-color: var(--fruit); }
+.card.later { border-top-color: var(--line); }
+.card header { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+.card header .id { font-family: var(--font-mono); font-weight: 500; color: var(--muted); }
+.card dl { margin: 0; display: grid; grid-template-columns: 96px 1fr; gap: 6px 12px; font-size: 15px; }
+.card dt { color: var(--muted); font-size: 14px; }
+.card dd { margin: 0; }
+.card ul { margin: 0; padding-left: 18px; }
+
+.flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; }
+.flow span.n { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); }
+.flow span.n.ok { border-color: var(--stem); background: var(--stem-soft); }
+.flow span.n.part { border-color: var(--warn); background: var(--warn-soft); }
+.flow span.n.no { border-style: dashed; color: var(--muted); }
+.flow i { color: var(--muted); font-style: normal; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); }
+
+.rules { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.rules li { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; display: grid; gap: 2px; }
+.rules li b { font-weight: 700; }
+.rules li span { color: var(--muted); font-size: 14px; }
+
+footer { color: var(--muted); font-size: 13px; display: grid; gap: 4px; }
+@media (max-width: 480px) {
+  h1 { font-size: 24px; }
+  .card dl { grid-template-columns: 1fr; gap: 2px; }
+  .card dt { margin-top: 6px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<main>
+
+<header style="display:grid;gap:10px">
+  <p class="meta">토마토 따기 로봇 · 손목 카메라 줄기 잡기 · 2026-10-31 보고 (실기 2026-10-30)</p>
+  <h1>1031 보고서 — 팔이 줄기를 물었다, 놓을 때 토마토가 떨어졌다</h1>
+  <div class="tiles">
+    <div class="tile ok"><b>2 / 2</b><span>줄기 물림 (집게 6.5 · 6.8, 빈손 5.3~5.4)</span></div>
+    <div class="tile bad"><b>0 / 2</b><span>놓기 — 두 번 다 토마토가 고리에서 빠짐</span></div>
+    <div class="tile"><b>클릭 1번</b><span>2회차에 사람이 한 일 (줄기 자리 찍기)</span></div>
+    <div class="tile bad"><b>0 / 5</b><span>같은 날 오전, 이전 방식(겨냥 흔들기)</span></div>
+  </div>
+  <p class="lede">시연 필수 항목인 <b>"팔이 토마토 줄기를 실제로 잡는다"</b>를 처음으로 기계가 주도해 해냈다.
+    두 번째에는 사람이 조작대 화면에서 줄기를 한 번 찍은 것 말고는 맞추기·나아가기·닫기·물림 판정까지 전부 스스로 했다.
+    남은 큰 문제는 <b>놓는 순간 토마토가 떨어지는 것</b>과 <b>반복 시험을 할 수 없는 무대</b>다.
+    성공률이라 부르기엔 아직 두 번뿐이다.</p>
+</header>
+
+<section id="how">
+  <h2>1. 어떻게 물리적으로 물었나</h2>
+  <p>로봇은 정지해 있고, 화분 받침의 둥근 고리에 토마토가 꼭지 줄기로 걸려 있다. 팔은 SO-101(5축+집게),
+    눈은 집게 손목에 단 RealSense D405(7~50cm용 깊이 카메라)다. 손-눈 보정값은 쓰지 않는다.
+    화면에서 본 것과 팔의 움직임만으로 맞춘다.</p>
+
+  <ol class="steps">
+    <li><div><h3>시작 자세로 간다</h3>
+      <p>어깨 94° · 팔꿈치 116° · 손목 −35° · 롤 6°. 손목 카메라가 줄기를 13~15cm 앞에서 내려다보는 자세다.
+        조작대 [자세 보내기] 한 번.</p><span class="who">기계 · <code>arm_stage.py</code></span></div></li>
+    <li><div><h3>사람이 줄기 자리를 화면에서 찍는다</h3>
+      <p>조작대의 D405 화면에서 고리 아래 줄기를 한 번 누른다. 어느 줄기를 물지는 사람이 정한다(설계 원칙).
+        찍은 자리의 깊이 ±15mm 띠만 오려내 줄기를 쫓으므로 뒤쪽 벽·바닥은 저절로 빠진다.</p>
+      <span class="who">사람 · 조작대 → <code>~/click_target.json</code></span></div></li>
+    <li><div><h3>깊이별 "무는 자리" 화소를 고른다 (시차 보정)</h3>
+      <p>카메라는 집게 축 옆에 붙어 있어서, 집게가 무는 자리가 화면에서 어디에 보이는지는 줄기까지의 거리에 따라 달라진다.
+        줄기를 물려 놓고 20mm씩 물러나며 잰 표로 그때그때의 깊이에 맞는 화소를 보간한다(아래 표).</p>
+      <span class="who">기계 · <code>grip_uv.json</code>의 <code>by_z</code> → <code>uv_at_depth</code></span></div></li>
+    <li><div><h3>평행이동으로 시작점을 맞춘다</h3>
+      <p>줄기가 무는 자리 화소에서 50px보다 멀면, 손끝을 옆·위로 8mm씩 움직였다 돌아오며 <b>화면 전체가 어느 쪽으로 밀리는지</b>를 잰다.
+        그 방향으로 손끝을 옮긴다. 집게 각도는 그대로 둔다(카메라가 안 돈다).
+        2회차: 찍은 자리가 59px → 옆 −2mm·위 +8mm 한 번에 14px.</p>
+      <span class="who">기계 · <code>stem_grasp --skip-aim-px 50</code> 안의 <code>align_start</code> (1회차는 사람이 조그 +30mm)</span></div></li>
+    <li><div><h3>겨냥 단계를 건너뛰고 곧장 나아간다</h3>
+      <p>처음 잰 줄기 깊이에서 무는 거리(70mm)를 뺀 만큼만, 집게 각도를 지키며 8mm씩 나아간다.
+        가까워지면 줄기가 손가락에 가려 깊이가 사라지지만, 이미 계산한 거리라 마저 간다.
+        2회차: 143mm에서 73mm 계획, 10걸음.</p>
+      <span class="who">기계 · <code>--trust-first-z --stop-z 70</code></span></div></li>
+    <li><div><h3>닫고, 물었는지 집게 값으로 판정한다</h3>
+      <p>집게에 4를 보낸다. 빈손이면 5.3~5.4까지 닫히고, 줄기가 있으면 그 굵기에서 멈춘다.
+        5.9 이상이면 "물었다". 2회차 6.8, 사진으로도 확인했다.</p>
+      <span class="who">기계 · <code>grip_check</code> → <code>~/tip_depth.json</code> 의 <code>held</code></span></div></li>
+    <li class="fail"><div><h3>놓는다 — 여기서 실패</h3>
+      <p>1회차: 집게를 한 번에 활짝 열었다. 2회차: 반만 2초에 걸쳐 열고 30mm 물러났다. 두 번 다 토마토가 고리에서 빠져 떨어졌다.</p>
+      <span class="who">기계 · 조작대 [놓기] = <code>tool_jog --grip 35 --along -30</code></span></div></li>
+  </ol>
+
+  <div class="photos">
+    <figure><img src="img/1031/start.jpg" alt="시작 자세에서 본 손목 카메라 화면. 고리에 걸린 토마토와 꼭지 줄기, 화면 아래에 보라색 집게 손가락."><figcaption><b>① 시작 자세</b> — 줄기 u≈412, 깊이 132~142mm</figcaption></figure>
+    <figure><img src="img/1031/start_depth.jpg" alt="같은 순간의 깊이 영상. 줄기와 열매가 주황, 뒤 벽이 초록으로 구분된다."><figcaption><b>② 같은 순간 깊이</b> — 줄기·열매가 한 띠, 벽은 띠 밖</figcaption></figure>
+    <figure><img src="img/1031/grip2.jpg" alt="집게를 닫은 직후 손목 카메라 화면. 고리 손잡이 바로 아래 줄기가 두 보라색 턱 사이에 있다."><figcaption><b>③ 2회차 물림</b> — 고리 바로 아래 줄기가 턱 사이, 집게 6.8</figcaption></figure>
+    <figure><img src="img/1031/released.jpg" alt="놓기 후 화면. 고리 손잡이 아래에 토마토가 없다."><figcaption><b>④ 놓은 뒤</b> — 고리 아래가 비었다(토마토 낙하)</figcaption></figure>
+    <figure><img src="img/1031/grip1.jpg" alt="10월 30일 첫 물림 순간의 손목 카메라 화면. 줄기가 턱 사이에 있고 아래에 주황 열매가 보인다."><figcaption><b>⑤ 1회차 물림 (10/30 13:58)</b> — 집게 6.5, 사람이 눈으로 확인</figcaption></figure>
+  </div>
+
+  <h3>시차 — 같은 집게 축 위의 점이 깊이마다 다른 화소에 찍힌다</h3>
+  <div class="chart" role="img" aria-label="카메라가 집게 축 위에 떨어져 있어, 86mm 점과 175mm 점이 서로 다른 화면 높이에 찍히는 그림">
+    <svg viewBox="0 0 620 170">
+      <rect x="20" y="22" width="44" height="26" rx="4" class="ink"/>
+      <text x="20" y="16">D405</text>
+      <line x1="40" y1="118" x2="600" y2="118" class="axis"/>
+      <text x="420" y="138" class="lab-stem">집게 축 (손가락이 만나는 선)</text>
+      <rect x="28" y="108" width="24" height="20" rx="3" class="ink"/>
+      <text x="8" y="156">집게</text>
+      <line x1="64" y1="35" x2="264" y2="118" class="ray"/>
+      <line x1="64" y1="35" x2="495" y2="118" class="ray"/>
+      <circle cx="264" cy="118" r="6" class="amp"/>
+      <circle cx="495" cy="118" r="6" class="amp"/>
+      <text x="208" y="100">86mm → 화면 v=360</text>
+      <text x="444" y="100">175mm → v=295</text>
+      <text x="90" y="72">시선 각이 달라 65px 차이</text>
+    </svg>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>카메라→줄기 깊이</th><th class="r">86mm</th><th class="r">116</th><th class="r">135</th><th class="r">149</th><th class="r">175</th></tr></thead>
+    <tbody><tr><td>무는 자리 화소 (u, v)</td><td class="r">433, 360</td><td class="r">423, 345</td><td class="r">416, 330</td><td class="r">415, 315</td><td class="r">419, 295</td></tr></tbody>
+  </table></div>
+  <p>이 보정이 없던 오전에는 140mm 떨어진 줄기를 86mm용 화소에 맞춘 채 직진해서, 나아갈수록 줄기가 무는 자리에서 <b>멀어졌다</b>(24→57px).
+    보정 뒤에는 나아가는 동안 4~34px 안에 머물렀다.</p>
+
+  <h3>2회차 나아가기 기록 — 화소 오차</h3>
+  <div class="chart" role="img" aria-label="나아간 거리에 따른 화소 오차. 2회차는 0에서 72mm까지 10~34px, 오전 5번은 16mm 만에 24에서 57px로 벌어졌다.">
+    <svg viewBox="0 0 600 230">
+      <line x1="40" y1="190" x2="560" y2="190" class="grid"/>
+      <line x1="40" y1="133.3" x2="560" y2="133.3" class="grid"/>
+      <line x1="40" y1="76.7" x2="560" y2="76.7" class="grid"/>
+      <line x1="40" y1="20" x2="560" y2="20" class="grid"/>
+      <text x="10" y="194">0</text><text x="10" y="137">20</text><text x="10" y="80">40</text><text x="10" y="24">60px</text>
+      <text x="36" y="210">0</text><text x="192" y="210">24</text><text x="354" y="210">48</text><text x="510" y="210">72mm 나아감</text>
+      <line x1="40" y1="110.7" x2="560" y2="110.7" class="tol"/>
+      <text x="470" y="105" class="lab-warn">겨냥 허용 28px</text>
+      <polyline class="am" points="40,122 148,28.5"/>
+      <circle class="amp" cx="40" cy="122" r="4"/><circle class="amp" cx="148" cy="28.5" r="4"/>
+      <text x="156" y="32" class="lab-fruit">오전 5번 (보정 전): 16mm에 24→57px</text>
+      <polyline class="t1" points="40,136.2 94,161.7 148,153.2 202,156 256,139 310,147.5 364,127.7 418,93.7 472,116.3 526,122"/>
+      <g class="t1p"><circle cx="40" cy="136.2" r="3.5"/><circle cx="94" cy="161.7" r="3.5"/><circle cx="148" cy="153.2" r="3.5"/><circle cx="202" cy="156" r="3.5"/><circle cx="256" cy="139" r="3.5"/><circle cx="310" cy="147.5" r="3.5"/><circle cx="364" cy="127.7" r="3.5"/><circle cx="418" cy="93.7" r="3.5"/><circle cx="472" cy="116.3" r="3.5"/><circle cx="526" cy="122" r="5"/></g>
+      <text x="300" y="178" class="lab-stem">2회차 (보정 후)</text>
+      <text x="380" y="86">56mm: 손가락에 가림</text>
+      <text x="470" y="150">72mm 닫기</text>
+    </svg>
+  </div>
+</section>
+
+<section id="problems">
+  <h2>2. 어디가 문제였나</h2>
+  <p>10/30 오전 다섯 번은 전부 실패했다. 실패 원인은 게인 같은 조절값이 아니었다. 셋 중 하나였다. 어디를 겨눌지가 틀렸거나, 쫓던 표적이 다른 것으로 바뀌었거나, 확인 장치가 정상 동작까지 막았다.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>문제</th><th>증상 (실측)</th><th>상태</th></tr></thead>
+    <tbody>
+      <tr><td><b>A. 시차</b> — 무는 자리 화소를 깊이와 상관없이 하나로 썼다</td><td>나아갈수록 줄기가 무는 자리에서 멀어짐 24→57px, 결국 화면 밖</td><td><span class="chip ok">해결</span> 깊이별 실측표</td></tr>
+      <tr><td><b>B. 겨냥 흔들기</b> — 관절을 2.5°씩 흔들어 화면 반응을 잰 뒤 맞춤</td><td>흔드는 동안 가는 줄기가 같은 깊이의 고리·지지대·손가락으로 건너뜀 → 잘못 잰 값으로 카메라가 바닥까지 숙여짐</td><td><span class="chip ok">우회</span> 겨냥 자체를 건너뜀</td></tr>
+      <tr><td><b>C. 표적 바뀜</b> — 작은 조각 그림을 쫓았다</td><td>손가락(74mm)·배경(198mm)·바닥 매트(448mm)를 표적으로 착각</td><td><span class="chip ok">해결</span> 깊이 띠로 매번 다시 찾기 + 건너뛰기 거절</td></tr>
+      <tr><td><b>D. 가림</b> — 가까워지면 줄기가 손가락 뒤로</td><td>마지막 20~30mm에서 깊이가 사라짐</td><td><span class="chip ok">우회</span> 처음 잰 거리만큼 마저 감</td></tr>
+      <tr><td><b>E. 빨간색 확인</b> — 닫기 전 "둘레가 빨간가"</td><td>줄기 위쪽을 물면 열매가 확인 창 밖 → 7% &lt; 8%로 안 닫음</td><td><span class="chip ok">해결</span> 찍어서 잡을 땐 생략, 닫은 뒤 집게 값으로 판정</td></tr>
+      <tr><td><b>F. 처짐·발열</b> — 팔이 지령보다 2~5° 아래에 섬, 어깨 70°C</td><td>"올려라"가 내려감, 시도마다 어깨가 뜨거워짐</td><td><span class="chip ok">완화</span> 도착까지 밀어 넣기, P 게인 24, 시도 사이 대기 자세</td></tr>
+      <tr><td><b>G. 브라운아웃</b> — 문 집게에 0을 지령</td><td>전류가 튀어 팔 버스 재시작 → 팔이 통째로 떨어짐</td><td><span class="chip ok">해결</span> 집게 지령 최소 4</td></tr>
+      <tr><td><b>H. 놓기</b></td><td>두 번 다 토마토가 고리에서 빠짐 (활짝 열기 / 반만 천천히 + 물러나기)</td><td><span class="chip bad">미해결</span> 원인 미확정</td></tr>
+      <tr><td><b>I. 반복 불가 무대</b></td><td>떨어진 토마토를 고리에 다시 달 수 없어 3회 반복이 1회에서 멈춤</td><td><span class="chip bad">미해결</span></td></tr>
+      <tr><td><b>J. 평행이동 겨냥 (a)</b> — 카메라 회전값 실측</td><td>무대에서 고정된 점 표식을 못 쫓아 4회 모두 기준 초과(6.3~12.7mm)</td><td><span class="chip warn">보류</span> 시작점 맞추기가 대신함</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="fix">
+  <h2>3. 지금 풀어야 하는 것</h2>
+  <div class="cards">
+    <article class="card now">
+      <header><span class="id">H</span><h3>놓을 때 토마토가 떨어진다</h3><span class="chip bad">시연을 망친다</span></header>
+      <dl>
+        <dt>의심 1</dt><dd>무는 거리 70mm가 손가락 끝이 만나는 자리(86mm)보다 16mm 깊다. 집게 안쪽이 줄기를 뒤로 밀어 <b>무는 순간</b> 이미 고리에서 빠졌을 수 있다(그 뒤로는 집게가 들고 있었을 뿐).</dd>
+        <dt>의심 2</dt><dd>움직이는 턱 하나가 열리며 줄기를 옆으로 쓸어 간다.</dd>
+        <dt>확인 방법</dt><dd>놓기를 "열기 → 사진 → 물러나기 → 사진"으로 나눠 단계마다 손목 사진을 남긴다. 무는 거리 70과 78을 비교한다. 닫은 직후 사진에서 줄기가 고리 손잡이에서 어긋나 있으면 의심 1이다.</dd>
+        <dt>먼저 정할 것</dt><dd><b>시연에서 잡은 뒤 무엇을 하나</b> — (가) 놓고 다음 화분으로 / (나) 당겨서 따고 바구니에 놓기. (나)라면 "떨어짐"은 문제가 아니라 목표에 가깝다. 결정에 따라 H의 완료 기준이 바뀐다.</dd>
+      </dl>
+    </article>
+    <article class="card now">
+      <header><span class="id">I</span><h3>토마토를 다시 걸 수 없다</h3><span class="chip bad">시험을 막는다</span></header>
+      <dl>
+        <dt>왜 급한가</dt><dd>지금 성공은 2번이다. 고칠 때마다 같은 자리에서 5~10회 돌려 봐야 나아졌는지 안다. 다시 걸 수 없으면 그 비교 자체가 안 된다.</dd>
+        <dt>필요한 것</dt><dd>사람이 10초 안에 같은 자리에 다시 걸 수 있는 걸이(꼭지를 끼우는 클립·홈, 또는 자석). 높이는 30~50cm(팔 사거리 약 35cm).</dd>
+      </dl>
+    </article>
+  </div>
+</section>
+
+<section id="roadmap">
+  <h2>4. 완성까지 남은 단계</h2>
+  <p>각 단계는 한 번 쓰고 버릴 시험이 아니라 <b>앞으로 계속 쓸 도구·버튼·무대</b>를 하나씩 남긴다.
+    시연 목표는 10/24에 정했다. 실내 평지에 화분 2~3개를 한 줄로 두고, 로봇이 줄을 돌며 토마토를 찾아 다가가 줄기를 잡는다.</p>
+
+  <h3>시연 흐름 — 지금 어디까지 되나</h3>
+  <div class="flow">
+    <span class="n ok">찾기 (Astra 공간 지도)</span><i>→</i>
+    <span class="n ok">정면 보기</span><i>→</i>
+    <span class="n ok">70cm 앞으로</span><i>→</i>
+    <span class="n ok">손목 근접 450mm</span><i>→</i>
+    <span class="n no">잡기 시작 자세·거리 맞추기</span><i>→</i>
+    <span class="n part">줄기 표적 (사람 클릭)</span><i>→</i>
+    <span class="n ok">맞추기·나아가기·닫기·판정</span><i>→</i>
+    <span class="n no">놓기 / 따기</span><i>→</i>
+    <span class="n no">다음 화분</span>
+  </div>
+  <div class="legend"><span>■ 실기 확인 (10/24, 10/30)</span><span>■ 사람 손 필요</span><span>□ 없음·실패</span></div>
+
+  <div class="cards">
+    <article class="card now">
+      <header><span class="id">S1</span><h3>다시 걸 수 있는 무대</h3><span class="chip warn">하드웨어</span></header>
+      <dl>
+        <dt>남는 것</dt><dd>토마토 걸이 1벌 + 무대 배치도(화분 간격·높이·로봇 출발점)를 <code>docs/</code>에. 모든 반복 시험의 기준 무대가 된다.</dd>
+        <dt>완료 기준</dt><dd>다시 건 뒤 시작 자세에서 줄기 화소가 ±10px, 깊이가 ±5mm 안.</dd>
+      </dl>
+    </article>
+    <article class="card now">
+      <header><span class="id">S2</span><h3>잡기 반복 시험기</h3><span class="chip warn">소프트웨어</span></header>
+      <dl>
+        <dt>남는 것</dt><dd>이미 있는 면봉용 <code>swab_trials.py</code>를 줄기용으로 넓힌다. 시작 자세 → 줄기 표적 → <code>stem_grasp</code> → 물림 판정 → 놓기 → 대기 자세를 N회 돌린다. 단계마다 손목 사진을 남기고, 회차마다 한 줄(시작 오차·나아간 거리·집게 값·놓기 결과)을 <code>~/grasp_trials.csv</code>에 쓴다. 조작대 버튼 하나.</dd>
+        <dt>쓰임</dt><dd>코드를 고칠 때마다 돌리는 회귀 시험. "나아졌다"를 숫자로 말하게 된다.</dd>
+        <dt>완료 기준</dt><dd>버튼 한 번으로 5회 무인 반복, 사이사이 어깨 식힘 포함.</dd>
+      </dl>
+    </article>
+    <article class="card now">
+      <header><span class="id">S3</span><h3>잡은 뒤 동작 확정 (놓기 또는 따기)</h3><span class="chip bad">결정 필요</span></header>
+      <dl>
+        <dt>먼저</dt><dd>(가) 놓기냐 (나) 따서 바구니냐를 정한다.</dd>
+        <dt>남는 것</dt><dd>(가) 조작대 [놓기]를 S2 사진으로 원인을 잡아 고친 판. (나) [따기] = 문 채로 당기기·비틀기 → 바구니 자세 → 놓기.</dd>
+        <dt>완료 기준</dt><dd>S2로 5회 중 5회: (가) 토마토가 고리에 남음 / (나) 토마토가 바구니에 들어감.</dd>
+      </dl>
+    </article>
+    <article class="card">
+      <header><span class="id">S4</span><h3>다가가기 → 잡기 잇기</h3><span class="chip warn">소프트웨어</span></header>
+      <dl>
+        <dt>남는 것</dt><dd>공간 지도의 [손목 근접]이 끝난 자리(대기 자세, 줄기 약 450mm)에서 잡기 시작 자세로 바꾸고, 차체를 줄기 깊이 120~160mm까지 들이는 조작대 버튼 [줄기 앞까지].</dd>
+        <dt>주의</dt><dd>차체는 정지마찰 때문에 작은 거리를 못 간다(케이스 장착 후 200·1.0초부터 움직임). 차체는 대충, 마지막 ±40mm는 팔의 시작점 맞추기에 맡긴다.</dd>
+        <dt>완료 기준</dt><dd>토마토 1m 앞에서 출발해 5회 중 4회 "잡기 시작 조건"(깊이 120~160mm, 시작 오차 150px 안)에 도착.</dd>
+      </dl>
+    </article>
+    <article class="card">
+      <header><span class="id">S5</span><h3>줄기 자동 표적 (선택)</h3><span class="chip warn">소프트웨어</span></header>
+      <dl>
+        <dt>남는 것</dt><dd>열매(빨강) 위 같은 깊이 띠에서 세로 기둥을 찾아 표적을 대신 찍어 주는 기능. 사람이 다시 찍으면 그쪽이 이긴다. 이미 있는 깊이 띠 추적과 열매 검출을 재사용한다.</dd>
+        <dt>판단</dt><dd>시연에서 사람이 한 번 찍는 것을 허용하면 미뤄도 된다.</dd>
+        <dt>완료 기준</dt><dd>S2 10회 중 9회, 자동 표적이 사람 클릭과 15px 안.</dd>
+      </dl>
+    </article>
+    <article class="card">
+      <header><span class="id">S6</span><h3>시연 한 판 버튼</h3><span class="chip warn">통합</span></header>
+      <dl>
+        <dt>남는 것</dt><dd>찾기 → 정면 → 앞으로 → 근접 → 줄기 앞까지 → (표적) → 잡기 → 놓기/따기 → 다음 화분을 잇는 조작대 한 버튼. 언제든 [멈춤]이 먹히고, 실패하면 어느 단계에서 왜 멈췄는지 한 줄로 남긴다.</dd>
+        <dt>완료 기준</dt><dd>S1 무대(화분 2~3개)에서 연속 3판 성공.</dd>
+      </dl>
+    </article>
+    <article class="card later">
+      <header><span class="id">S7</span><h3>시연 뒤 — ROS 2 계통으로 옮기기</h3><span class="chip">나중</span></header>
+      <dl>
+        <dt>내용</dt><dd>깊이별 무는 자리·시작점 맞추기·겨냥 건너뛰기·물림 판정을 ROS 2 쪽 잡기로 옮긴다(<code>docs/ros2-이행계획.md</code> 졸업표). 시연 전에는 손대지 않는다.</dd>
+      </dl>
+    </article>
+  </div>
+  <p>순서: <b>S1·S2를 먼저</b>(이 둘이 없으면 나머지의 성공 여부를 잴 수 없다) → S3 → S4 → S6. S5는 시간이 남으면 한다.</p>
+</section>
+
+<section id="rules">
+  <h2>5. 계속 지킬 기준</h2>
+  <ul class="rules">
+    <li><b>카메라나 브래킷을 건드리면 깊이별 무는 자리 표를 다시 잰다.</b><span>줄기를 물려 놓고 <code>tool_jog --horiz -20</code>을 4번, 깊이와 화소를 <code>~/grip_uv.json</code>의 <code>by_z</code>에. 약 10분.</span></li>
+    <li><b>가는 표적에서 관절을 흔들어 겨냥하지 않는다.</b><span>겨냥을 줄이는 쪽으로 간다. 시작 자세를 잘 고르고, 평행이동으로 맞추고, 곧장 나아간다.</span></li>
+    <li><b>물림 판정은 집게 값이다.</b><span>4를 지령했을 때 빈손 5.3~5.4, 줄기 6.3~6.8, 문턱 5.9. 집게 지령은 4 아래로 내리지 않는다(브라운아웃).</span></li>
+    <li><b>시도 사이에는 대기 자세에서 식힌다.</b><span>대기 자세는 토크를 켜 둬도 부하 0, 분당 약 1°C 식는다. 어깨 70°C면 서보가 보호 동작에 들어간다.</span></li>
+    <li><b>찍은 표적은 그 화면 한 장의 자리다.</b><span>팔이 움직였으면 다시 찍는다. 시작점 맞추기는 자기가 옮긴 만큼 예측해서 따라간다.</span></li>
+    <li><b>조절값을 만지기 전에 크기부터 잰다.</b><span>오전 다섯 번의 실패는 게인 문제가 아니었다. 표적 자리가 틀렸다. 숫자는 실기 전에 PC 자체검증으로 확인한다.</span></li>
+  </ul>
+</section>
+
+<footer>
+  <span>근거: <code>docs/개발일지-2026-10-30-잡기분석.md</code> §1~6 · 조작대 작업 로그 · 손목 D405 사진(10/30 13:58, 15:28~15:31).</span>
+  <span>코드: <code>ros2/tools/stem_grasp.py</code> · <code>tool_jog.py</code> · <code>click_server.py</code> · <code>grip_set.py</code> — 커밋 e8260d3 · 439a931 · 9b7130e (브랜치 feat/base-firmware-v2-and-arm-presets).</span>
+</footer>
+
+</main>
+</body>
+</html>
