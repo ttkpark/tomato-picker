@@ -404,8 +404,8 @@ def build(job, args):
         # **집 안 공간 지도**(space_map.py) — 한 장 담기·제자리 스캔·목표로 가기·지우기.
         # 주행 포트를 쥐는 일이라 넛지와 같이 한 번에 하나만 돈다.
         mode = str(args.get("mode", ""))
-        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "clear"):
-            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|face|approach|near|clear")
+        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "reach", "clear"):
+            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|face|approach|near|reach|clear")
         a = [PY, T("space_map.py"), mode]
         if mode == "snap" and str(args.get("turn", "")).strip() != "":
             a += ["--turn", "%.0f" % num(args, "turn", 0, -180, 180)]
@@ -573,6 +573,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button title="첫 토마토 70cm 앞까지 가서 앞 카메라 정면에 맞춘다(거리를 모르는 토마토로는 안 간다)" onclick="run('space',spArgs({mode:'approach'}))">🍅 토마토 앞으로</button>
       <button title="찾아 둔 토마토 쪽으로 차체를 돌려 앞 카메라 정면에 둔다(지도 방위 → 검출로 다듬기)" onclick="run('space',spArgs({mode:'face'}))">🍅 정면 보기</button>
       <button title="토마토 앞(Astra 60cm 사각)에서 손목 D405 거리로 조금씩 다가가 45cm에 선다. 대기 자세에서만(D405가 주행 정면을 볼 때)" onclick="run('space',spArgs({mode:'near'}))">🍅 손목 근접</button>
+      <button title="팔을 잡기 시작 자세로 두고 손목 D405로 열매를 보며 옆걸음·전진으로 17cm에 선다 — 다음은 줄기 찍기 → 잡으러 간다" onclick="run('space',spArgs({mode:'reach'}))">🍅 잡기 거리까지</button>
       <button onclick="if(confirm('지도를 지울까? 다음 장의 자리가 원점이 된다'))run('space',{mode:'clear'})">지도 지움</button>
     </div>
     <div class="row" style="margin-top:6px">

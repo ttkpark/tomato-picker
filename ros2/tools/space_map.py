@@ -30,6 +30,7 @@ import heapq
 import json
 import math
 import os
+import subprocess
 import sys
 import time
 
@@ -1416,6 +1417,68 @@ def near_cmd(a, m) -> int:
         link.close()
 
 
+REACH_MM = 170.0               # 🍅 잡기 거리까지: 잡기 시작 자세의 손목 D405에서 열매 앞면이 이 거리면 멈춘다(줄기 ≈ +30mm)
+REACH_VX = 255                 # 전진 크기 — 최대(사람 지시 11/02, 케이스 얹은 차체는 200·1.0초가 7~12cm)
+REACH_LAT_MM = 35.0            # 가로로 이보다 어긋나면 옆걸음(시작 맞춤이 갚는 폭 ±40mm 안으로)
+GRASP_START = "1.6,93.9,115.7,-34.7,6.4"   # stem_grasp 시작 자세(10/30~11/01 물린 자세)
+
+
+def reach_cmd(a, m) -> int:
+    """🍅 잡기 거리까지 — 팔을 잡기 시작 자세로 두고 손목 D405로 열매를 보며 옆걸음·전진으로 REACH_MM에 선다.
+    그다음은 조작대 [줄기 찍기] → [잡으러 간다]. 마지막 ±40mm·수십 mm는 팔(시작 맞춤·곧장 전진)이 갚는다 —
+    차체는 정지마찰 때문에 7cm보다 작게 못 간다."""
+    from base_nudge import drive, open_link
+    if not yaw_front_ok():
+        return 1
+    rc = subprocess.call([sys.executable, os.path.join(HERE, "arm_stage.py"), "--target=" + GRASP_START])
+    if rc:
+        print("⛔ 잡기 시작 자세로 못 갔다")
+        return 1
+    link = open_link()
+    if link is None:
+        return 1
+    try:
+        last = None
+        for k in range(14):
+            got = wrist_tomato()
+            if got is None:
+                print("⛔ 손목 D405에 열매가 안 보인다 — [🍅 정면 보기]로 먼저 돌려라")
+                return 1
+            u, mm, _ang, v = got
+            it = v.intrinsics()
+            lat = (u - 420.0) * (mm if mm == mm else 600.0) / it.fx    # 십자(무는 자리) 세로줄 ≈ u 420
+            print("[%d] 열매 u %.0f · %s · 가로 %+.0fmm" % (k, u, "%.0fmm" % mm if mm == mm else "거리 ?", lat))
+            if abs(lat) > REACH_LAT_MM:
+                # ⚠ 옆걸음이 아니라 **회전**으로 맞춘다 — 11/02: vy 200·1.0초 14번에 가로 111mm 그대로(케이스 얹은
+                #   차체는 옆걸음 정지마찰이 더 크다). 회전은 IMU로 각을 재며 민다(near_cmd와 같은 길). +w = 왼쪽.
+                ang = math.degrees(math.atan2(420.0 - u, it.fx))
+                turn(link, int(math.copysign(a.w, ang)), a.wsecs, abs(ang))
+                continue
+            if mm == mm and mm <= a.reach_mm:
+                print("✅ 열매 %.0fmm · 가로 %+.0fmm — 잡기 거리. [줄기 찍기] → [잡으러 간다]" % (mm, lat))
+                return 0
+            if wrist_front_mm(v) < 80.0:
+                print("⛔ 손목 화면 아래 80mm 안에 물체 — 더 안 간다")
+                return 1
+            if last is not None and mm == mm and mm - a.reach_mm < 0.5 * (last - mm):
+                print("✅ 열매 %.0fmm — 한 걸음(%.0fmm)이 남은 %.0fmm보다 커서 여기서 멈춘다(나머지는 팔이)" % (
+                    mm, last - mm, mm - a.reach_mm))
+                return 0
+            secs = a.vsecs if (last is None or mm != mm or last - mm > 10) else a.vsecs + 0.3
+            # ⚠ 255에선 1초가 10cm를 넘는다 — 11/02 첫 시도: 265→145mm(고리 안까지) 넘쳤다. 가까우면 0.5초
+            #   0.5초도 354→170mm(18cm)로 넘쳤다 — 걸음 크기가 정지마찰에 따라 들쭉날쭉하다. 가까우면 실측 있는 200·0.8초
+            #   (7~12cm/1초)로. 근본은 엔코더 위치 제어 보드(docs/stm32-자세보드-목표.md).
+            if mm != mm or mm - a.reach_mm > 250:
+                drive(link, REACH_VX, 0, 0, secs)
+            else:
+                drive(link, 200, 0, 0, 0.8)
+            last = mm if mm == mm else last
+        print("⛔ 열네 번 움직여도 잡기 거리에 못 닿았다")
+        return 1
+    finally:
+        link.close()
+
+
 def lookahead(path, xy, dist: float):
     for p in path:
         if math.hypot(p[0] - xy[0], p[1] - xy[1]) >= dist:
@@ -1673,7 +1736,7 @@ def selftest() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "clear", "selftest", "replay", "selfcal"])
+    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "reach", "clear", "selftest", "replay", "selfcal"])
     ap.add_argument("file", nargs="*", help="replay·selfcal: ~/space_scans/scan-*.npz")
     ap.add_argument("--write", action="store_true", help="selfcal: 찾은 장착값을 ~/space_mount.json에 쓴다")
     ap.add_argument("--steps", type=int, default=16)
@@ -1690,6 +1753,7 @@ def main() -> int:
     ap.add_argument("--turn", type=float, help="snap: 손으로 돌린 대략 각도(도, +=왼쪽)")
     ap.add_argument("--tol", type=float, default=0.2)
     ap.add_argument("--max-steps", type=int, default=60)
+    ap.add_argument("--reach-mm", type=float, default=REACH_MM, help="reach: 잡기 시작 자세 손목 D405에서 열매까지 이 거리(mm)에 선다")
     ap.add_argument("--near-mm", type=float, default=NEAR_MM, help="near: 손목 D405에서 토마토까지 이 거리(mm)에 선다")
     a = ap.parse_args()
     if a.mode == "selftest":
@@ -1731,6 +1795,8 @@ def main() -> int:
         return approach_cmd(a, m)
     if a.mode == "near":
         return near_cmd(a, m)
+    if a.mode == "reach":
+        return reach_cmd(a, m)
     if a.x is None or a.y is None:
         print("go 는 --x --y (지도 좌표, m)가 있어야 한다")
         return 2
