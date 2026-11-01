@@ -251,6 +251,10 @@ def build(job, args):
         # 팔을 먼저 접고 나서 판을 돌린다 — 편 채로 돌면 가구에 걸린다(10/23). 한 프로세스 그룹이라 [멈춤]이 둘 다 끊는다.
         return ["/bin/sh", "-c", "%s %s --target=%s && %s %s home" % (
             PY, shlex.quote(T("arm_stage.py")), PARK, PY, shlex.quote(T("base_yaw.py")))]
+    if job == "release":
+        # 놓기 — 열기 → 고정 턱 떼기 → 빼기를 **차례로**(한 벡터로 합치면 빼면서 쓸고 나온다). 한 프로세스 그룹이라 [멈춤]이 다 끊는다.
+        tj = shlex.quote(T("tool_jog.py"))
+        return ["/bin/sh", "-c", "%s %s --grip 78 --left 12 && %s %s --along -30" % (PY, tj, PY, tj)]
     if job == "stage":
         t = str(args.get("target", PARK))
         parts = t.replace(" ", "").split(",")
@@ -745,7 +749,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <div class="row">
       <button onclick="run('grip',{value:78})">집게 연다</button>
       <button onclick="run('grip',{value:4})">집게 닫는다</button>
-      <button onclick="run('jog',{grip:78,along:-30})" title="끝까지 천천히(2초) 연 뒤 30mm 물러난다 — 반만 열고 물러나면 턱이 굵은 줄기를 끌고 나와 토마토가 고리에서 빠졌다(11/01 단계별 사진)">놓기</button>
+      <button onclick="run('release',{})" title="끝까지 천천히 열고 → 손목 화면 왼쪽으로 12mm(고정 턱을 줄기에서 뗀다) → 30mm 물러난다. 11/02: 열기만 하고 빼면 고정 턱이 줄기를 끌고 나와 토마토가 떨어졌다">놓기</button>
       <button onclick="run('pose',{})">자세 읽기</button>
       <button onclick="run('park',{})">대기 자세</button>
       <button onclick="run('roll0',{})">손목 롤 0</button>

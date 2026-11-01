@@ -55,6 +55,9 @@ def main() -> int:
                     help="자세를 묶지 않는다 — 올릴 여유가 없을 때만")
     ap.add_argument("--pitch", type=float, default=0.0,
                     help="집게 피치를 이만큼 바꾼다(도, +위) — wrist_flex로만")
+    ap.add_argument("--left", type=float, default=0.0,
+                    help="손목 화면 **왼쪽**으로 mm(수평, 접근 방향 기준) — 놓을 때 고정 턱을 줄기에서 뗀다. "
+                         "11/02 실측: pan≈2°에서 base +y 15mm → 열매가 화면 오른쪽으로 39px(손끝은 화면 왼쪽)")
     ap.add_argument("--grip", type=float, default=None,
                     help="옮기기 전에 집게를 이 값으로 **천천히**(2초) — 놓기: --grip 78 --along -30")
     ap.add_argument("--dry", action="store_true")
@@ -116,13 +119,20 @@ def main() -> int:
                 return 1
             got = press_to(tgt)
             print("피치 %+.1f° → wrist_flex %.1f°" % (args.pitch, got["wrist_flex"]))
-            if not (args.dx or args.dy or args.dz or args.along):
+            if not (args.dx or args.dy or args.dz or args.along or args.left):
                 return 0
             cur = got
             p0 = kin.forward(cur, geom)
         want = np.array([args.dx, args.dy, args.dz], float)
         if args.along:
             want = want + gp.approach_dir(cur, geom) * args.along
+        if args.left:
+            h = gp.approach_dir(cur, geom) * np.array([1.0, 1.0, 0.0])
+            n = float(np.linalg.norm(h))
+            if n < 1e-6:
+                print("접근축이 수직이라 화면 왼쪽을 못 정한다")
+                return 1
+            want = want + np.array([h[1], -h[0], 0.0]) / n * args.left   # 접근 (-1,0)이면 +y = 화면 왼쪽(실측)
         if args.horiz:
             # ⚠ 접근축은 보통 아래를 향한다(이 자세에서 −41°). 줄기 높이로
             #   올려 놓고 그 축을 따라 나아가면 올린 만큼 도로 내려간다.

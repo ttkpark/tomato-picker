@@ -1288,12 +1288,18 @@ def main() -> int:
             h = h / max(float(np.linalg.norm(h)), 1e-6)
             axes = (np.array([-h[1], h[0], 0.0]), np.array([0.0, 0.0, 1.0]))    # 옆, 위
             cols = []
+            try:
+                fx_ = float(json.load(open(vs.META))["intrinsics"]["fx"])
+            except Exception:                                  # noqa: BLE001
+                fx_ = 430.0
             for e in axes:
                 r = scene_shift(c, e, z)
-                if r is None:
+                if r is None or float(np.linalg.norm(r)) < 1e-6:
                     print("  시작 맞춤: 화면 이동을 못 쟀다 — 지금 자리에서 그대로")
                     return u, v, z
-                cols.append(r)                    # 줄기 깊이에서 잰 화소/mm
+                # ⚠ 위상상관은 **방향만** 쓴다 — 크기는 회차마다 12~49mm로 흔들렸다(11/02 10·11회차: 같은 줄기에 한 번은
+                #   모자라 꼭지를, 한 번은 넘쳐 고리 위를 물었다). 평행이동의 화면 이동은 fx/깊이로 정해진다.
+                cols.append(r / float(np.linalg.norm(r)) * fx_ / z)
             J = np.array(cols).T                  # 화소 / base mm
             lat[0] = (J[0, 0] * z, axes[0])       # 나아가는 중 가로 바로잡기용(화소·mm, 깊이 1mm 기준)
             for it in range(4):
@@ -1326,8 +1332,10 @@ def main() -> int:
 
         lat = [None]             # (화소/mm × 깊이, 옆 방향) — align_start가 잰다
         lat_sum = [0.0]          # 나아가며 옆으로 갚은 합(mm)
+        aligned = [None]         # 시작 맞춤이 예측한 줄기 자리 — 첫 걸음에 추적이 못 찾으면 이걸 믿는다
         if args.skip_aim_px > 0 and z > 0 and math.hypot(u - tu, v - tv) > args.tol:
             u, v, z = align_start(u, v, z)
+            aligned[0] = (u, v, z)
             cur = to_deg(io.read())
             base = dict(cur)
             tu, tv = aim_uv(z)
@@ -1361,6 +1369,10 @@ def main() -> int:
                 print("  %3d    (화면에서 놓쳤다 — 계획한 %.0fmm 중 %.0fmm 남았다, 마저 간다)"
                       % (step, plan[0], plan[0] - gone))
                 s = (tu, tv, max(NEAR_FLOOR, planz[0] - gone), 0, False)
+            if s is None and step == 0 and aligned[0] is not None:
+                # ⚠ 11/02 9회차: 맞춤 직후 첫 프레임에서 띠 추적이 못 찾아 그대로 끝났다 — 평행이동은 예측이 맞는다
+                print("  (맞춘 직후 추적이 못 찾았다 — 맞춤이 예측한 자리를 믿는다) ", end="")
+                s = (aligned[0][0], aligned[0][1], aligned[0][2], 0, False)
             if s is None:
                 publish_view(step=step, aim=args.aim, lost=True, tu=tu, tv=tv,
                              gone=gone, u=(prev[0] if prev else None),
