@@ -1304,10 +1304,15 @@ def main() -> int:
                     break
                 m = np.clip(np.linalg.lstsq(J, d, rcond=None)[0], -40.0, 40.0)
                 c = to_deg(io.read())
-                dd, res, big = move_base(c, axes[0] * m[0] + axes[1] * m[1])
-                nxt = {j: c[j] + float(dd.get(j, 0.0)) for j in kin.JOINTS}
-                if res > 1.0 or big > 12.0 or not legal(nxt, c)[0]:
-                    print("  시작 맞춤: 옆 %+.0f 위 %+.0fmm는 못 간다 — 여기까지" % (m[0], m[1]))
+                nxt = None
+                for k in (1.0, 0.6, 0.3):      # ⚠ 다 못 가면 갈 수 있는 만큼 — 11/01 7회차: 위 40mm가 막히자 통째로 포기했다
+                    dd, res, big = move_base(c, (axes[0] * m[0] + axes[1] * m[1]) * k)
+                    cand = {j: c[j] + float(dd.get(j, 0.0)) for j in kin.JOINTS}
+                    if res <= 1.0 and big <= 12.0 and legal(cand, c)[0]:
+                        nxt, m = cand, m * k
+                        break
+                if nxt is None:
+                    print("  시작 맞춤: 옆 %+.0f 위 %+.0fmm는 30%%도 못 간다 — 여기까지" % (m[0], m[1]))
                     break
                 go(nxt, 1.0)
                 pu, pv = u + float(J[0] @ m), v + float(J[1] @ m)
@@ -1326,6 +1331,10 @@ def main() -> int:
             cur = to_deg(io.read())
             base = dict(cur)
             tu, tv = aim_uv(z)
+            if math.hypot(u - tu, v - tv) > args.skip_aim_px:
+                # ⚠ 맞춤이 안 됐다고 관절 흔들기 겨냥으로 넘어가지 않는다 — 가는 줄기에선 그게 무너진다(10/30 0/5, 11/01 7회차 재현)
+                print("❌ 시작 맞춤 실패 — 겨냥점까지 %.0fpx. 시작 자세를 줄기 쪽으로 옮기거나 다시 찍어라" % math.hypot(u - tu, v - tv))
+                return 1
 
         gone, JI, prev, locked, stall, miss_streak = 0.0, None, (u, v), False, 0, 0
         cap = [None]             # 나아가기 상한 — 처음 나아갈 때 잰 거리로 정한다(advance_cap)
