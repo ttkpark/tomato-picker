@@ -744,7 +744,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <div class="row">
       <button onclick="run('grip',{value:78})">집게 연다</button>
       <button onclick="run('grip',{value:4})">집게 닫는다</button>
-      <button onclick="run('jog',{grip:35,along:-30})" title="반쯤 천천히 연 뒤 30mm 물러난다 — 확 열면 턱이 줄기를 쓸어 토마토가 빠졌다(10/30)">놓기</button>
+      <button onclick="run('jog',{grip:78,along:-30})" title="끝까지 천천히(2초) 연 뒤 30mm 물러난다 — 반만 열고 물러나면 턱이 굵은 줄기를 끌고 나와 토마토가 고리에서 빠졌다(11/01 단계별 사진)">놓기</button>
       <button onclick="run('pose',{})">자세 읽기</button>
       <button onclick="run('park',{})">대기 자세</button>
       <button onclick="run('roll0',{})">손목 롤 0</button>

@@ -1236,7 +1236,7 @@ def main() -> int:
                     return r
             return None
 
-        def scene_shift(c, e, mm=8.0):
+        def scene_shift(c, e, z, mm=8.0):
             """base로 e방향 mm 갔다 오며 **화면 통째**가 밀린 화소/mm와 그 장면의 깊이(mm).
             점 하나를 쫓다 잎·고리·손가락에 무너진 (a)와 달리 표식이 필요 없다(위상상관, 10/30)."""
             import cv2
@@ -1257,21 +1257,27 @@ def main() -> int:
             trial = {j: c[j] + float(dd.get(j, 0.0)) for j in kin.JOINTS}
             if res > 1.0 or big > 9.0 or not legal(trial, c)[0]:
                 return None
-            g0, dep = grab()
+            g0, d0 = grab()
             go(trial, 0.8)
-            g1, _ = grab()
+            g1, d1 = grab()
             go(c, 0.8)
-            if g0 is None or g1 is None:
+            if g0 is None or g1 is None or d0.shape != g0.shape or d1.shape != g1.shape:
                 return None
-            # 아래쪽은 손가락 — 카메라와 같이 움직여 이동량을 0으로 끌어당긴다
-            a0, a1 = np.float32(g0[:int(g0.shape[0] * 0.6)]), np.float32(g1[:int(g1.shape[0] * 0.6)])
+
+            def near(g, d):
+                # ⚠ **줄기 깊이(±40mm)에 있는 것만** 본다 — 화면 통째면 먼 벽이 이동량을 정하고, 깊이로 환산해도
+                #   틀렸다(11/01: 위 15mm가 예측보다 크게 먹어 꼭지 잎을 줄기로 잡았다). 아래 40%는 손가락이라 뺀다.
+                h = int(g.shape[0] * 0.6)
+                m = (d[:h] > z - 40.0) & (d[:h] < z + 40.0)
+                a = np.float32(g[:h])
+                return np.where(m, a, float(a[m].mean()) if m.sum() else 0.0).astype(np.float32), int(m.sum())
+            a0, n0 = near(g0, d0)
+            a1, n1 = near(g1, d1)
             win = cv2.createHanningWindow((a0.shape[1], a0.shape[0]), cv2.CV_32F)
             (sx, sy), resp = cv2.phaseCorrelate(a0, a1, win)
-            d = dep[:int(dep.shape[0] * 0.6)]
-            d = d[d > 0]
-            if resp < 0.05 or d.size < 500:
+            if resp < 0.05 or min(n0, n1) < 800:
                 return None
-            return np.array([sx, sy]) / mm, float(np.median(d))
+            return np.array([sx, sy]) / mm
 
         def align_start(u, v, z):
             """(b) 시작 맞춤 — **피치 지킨 평행이동만으로** 줄기를 겨냥점 근처에 데려온다(10/30엔 사람이
@@ -1283,16 +1289,18 @@ def main() -> int:
             axes = (np.array([-h[1], h[0], 0.0]), np.array([0.0, 0.0, 1.0]))    # 옆, 위
             cols = []
             for e in axes:
-                r = scene_shift(c, e)
+                r = scene_shift(c, e, z)
                 if r is None:
                     print("  시작 맞춤: 화면 이동을 못 쟀다 — 지금 자리에서 그대로")
                     return u, v, z
-                cols.append(r[0] * r[1] / z)      # 장면 깊이 → 줄기 깊이로(평행이동은 1/깊이)
+                cols.append(r)                    # 줄기 깊이에서 잰 화소/mm
             J = np.array(cols).T                  # 화소 / base mm
-            for it in range(3):
+            lat[0] = (J[0, 0] * z, axes[0])       # 나아가는 중 가로 바로잡기용(화소·mm, 깊이 1mm 기준)
+            for it in range(4):
                 tu_, tv_ = aim_uv(z)
                 d = np.array([tu_ - u, tv_ - v])
-                if float(np.linalg.norm(d)) <= 0.6 * args.skip_aim_px:
+                # ⚠ 허용(--tol)까지 맞춘다 — 11/01: 26px에서 멈췄더니 다음 프레임 38px, 줄기가 축 옆 11mm로 지나가 빗나갔다
+                if float(np.linalg.norm(d)) <= args.tol:
                     break
                 m = np.clip(np.linalg.lstsq(J, d, rcond=None)[0], -40.0, 40.0)
                 c = to_deg(io.read())
@@ -1311,7 +1319,9 @@ def main() -> int:
                       % (it + 1, m[0], m[1], u, v, z, math.hypot(aim_uv(z)[0] - u, aim_uv(z)[1] - v)))
             return u, v, z
 
-        if args.skip_aim_px > 0 and z > 0 and math.hypot(u - tu, v - tv) > args.skip_aim_px:
+        lat = [None]             # (화소/mm × 깊이, 옆 방향) — align_start가 잰다
+        lat_sum = [0.0]          # 나아가며 옆으로 갚은 합(mm)
+        if args.skip_aim_px > 0 and z > 0 and math.hypot(u - tu, v - tv) > args.tol:
             u, v, z = align_start(u, v, z)
             cur = to_deg(io.read())
             base = dict(cur)
@@ -1548,6 +1558,20 @@ def main() -> int:
             # 세 갈래를 차례로 — 자세를 지키는 병진이 가장 낫지만, 팔이 한계
             # 근처면 그것만 고집하다 한 발도 못 뗀다(2026-09-03). 피치가 조금
             # 도는 건 다음 걸음에서 겨냥으로 갚으면 된다.
+            if (no_aim[0] and lat[0] is not None and 100.0 < z_track < (planz[0] or 1e9) + 20.0
+                    and abs(tu - u) > 12.0 and abs(lat[0][0]) > 50.0 and 0 < a < 37 * 35
+                    and abs(lat_sum[0]) < 10.0):
+                # 겨냥을 건너뛰고 곧장 가는 중에도 **가로만은** 평행이동으로 갚는다 — 줄기가 보이는 동안(손가락에 가리기 전)
+                # ⚠ 가는 기둥일 때만(띠 화소/37행 < 35px — 꼭지 잎은 넓다), 합계 10mm까지 — 11/01 3회차: 꼭지 잎을
+                #   줄기로 믿고 18mm를 밀어 줄기가 집게 왼쪽 22mm로 빠졌다.
+                side_mm = float(np.clip((tu - u) * z_track / lat[0][0], -4.0, 4.0))
+                side_mm = float(np.clip(side_mm, -10.0 - lat_sum[0], 10.0 - lat_sum[0]))
+                dd, res, big = move_base(cur, lat[0][1] * side_mm)
+                cand = {j: cur[j] + float(dd.get(j, 0.0)) for j in kin.JOINTS}
+                if res < 1.0 and big < 6.0 and legal(cand, cur)[0]:
+                    cur = cand
+                    lat_sum[0] += side_mm
+                    print("(옆 %+.1fmm) " % side_mm, end="")
             nxt, want, why = advance_step(cur, want)
             if nxt is None and why.startswith(REACH_END):
                 print("%s — 줄기까지 %.0fmm, 무는 거리까지 %.0fmm 남았다. 로봇을 그만큼 앞으로 옮기고 다시"

@@ -56,7 +56,7 @@ def main() -> int:
     ap.add_argument("--pitch", type=float, default=0.0,
                     help="집게 피치를 이만큼 바꾼다(도, +위) — wrist_flex로만")
     ap.add_argument("--grip", type=float, default=None,
-                    help="옮기기 전에 집게를 이 값으로 **천천히**(2초) — 놓기: --grip 35 --along -30")
+                    help="옮기기 전에 집게를 이 값으로 **천천히**(2초) — 놓기: --grip 78 --along -30")
     ap.add_argument("--dry", action="store_true")
     args = ap.parse_args()
 
@@ -97,8 +97,8 @@ def main() -> int:
 
     try:
         if args.grip is not None and not args.dry:
-            # ⚠ 놓기는 **조금만, 천천히 연 뒤 물러난다** — 10/30: 문 줄기에서 집게를 확 열자(78, 0.9초)
-            #   움직이는 턱이 줄기를 쓸고 가 토마토가 고리에서 빠졌다. 반쯤 열면 줄기는 풀리고 턱은 덜 쓴다.
+            # ⚠ 놓기는 **끝까지 천천히 연 뒤 물러난다** — 11/01 단계별 사진: 반쯤(35) 열었을 땐 토마토가 그대로였고,
+            #   그 상태로 30mm 물러나자 턱이 굵은 줄기를 끌고 나와 고리에서 빠졌다. 열기 자체는 문제가 아니었다.
             g = max(4.0, min(100.0, args.grip))           # grip_set.GRIP_MIN과 같은 이유(브라운아웃)
             io.write(dict(io.read(), gripper=g), 2.0)
             time.sleep(0.4)
