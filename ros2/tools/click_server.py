@@ -633,7 +633,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <div class="row" style="margin-top:6px">
       <label>게인<input id="g_gain" value="0.35"></label>
       <label>문턱px<input id="g_tol" value="28"></label>
-      <label>무는거리<input id="g_stop" value="70"></label>
+      <label>무는거리<input id="g_stop" value="80"></label>
     </div>
     <div class="row" style="margin-top:6px">
       <label>믿는거리(mm, 0=자동)<input id="g_maxadv" value="0"></label>
