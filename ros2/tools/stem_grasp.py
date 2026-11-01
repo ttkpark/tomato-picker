@@ -524,7 +524,10 @@ def main() -> int:
             p1 = kin.forward(e, geom)
             rows.append([(p1.x - b0.x) / 0.5, (p1.y - b0.y) / 0.5, (p1.z - b0.z) / 0.5])
         A = np.vstack([np.array(rows).T, np.array([[0.0, 1.0, 1.0, 1.0]])])
-        want = np.append(gp.approach_dir(cur, geom) * mm, 0.0)
+        # ⚠ 접근축의 **수평 성분**으로 간다 — 깊이별 겨냥점(grip_uv by_z)은 `tool_jog --horiz`로 물러나며 잰 것이다.
+        #   시작 자세의 접근축은 위로 ≈5°(z 0.09)라 그대로 133mm 가면 12mm 높아져 고리 손잡이 위를 물었다(11/02 20회).
+        hz = gp.approach_dir(cur, geom) * np.array([1.0, 1.0, 0.0])
+        want = np.append(hz / max(float(np.linalg.norm(hz)), 1e-6) * mm, 0.0)
         sol, *_ = np.linalg.lstsq(A, want, rcond=None)
         res = float(np.linalg.norm(A @ sol - want))
         return dict(zip(cols, sol)), res, float(np.max(np.abs(sol)))
@@ -1287,14 +1290,16 @@ def main() -> int:
             h = gp.approach_dir(c, geom) * np.array([1.0, 1.0, 0.0])
             h = h / max(float(np.linalg.norm(h)), 1e-6)
             axes = (np.array([-h[1], h[0], 0.0]), np.array([0.0, 0.0, 1.0]))    # 옆, 위
-            cols = []
-            for e in axes:
-                r = scene_shift(c, e, z)
-                if r is None:
-                    print("  시작 맞춤: 화면 이동을 못 쟀다 — 지금 자리에서 그대로")
-                    return u, v, z
-                cols.append(r)                    # 줄기 깊이에서 잰 화소/mm
-            J = np.array(cols).T                  # 화소 / base mm
+            # ⚠ 화면↔base는 **모델**로 낸다 — 위상상관으로 재면 세로가 회차마다 −12~+49mm로 흔들려 꼭지·고리 위를 물었다
+            #   (11/02 9~17회). 위 = +fx/z(v 증가), 옆(+side) = −(fx/z + fx/r): 5축이라 옆 평행이동엔 pan 회전이 섞인다.
+            #   14회(이 모델)는 높이·옆이 맞았다. 시작 자세에서 물렸던 회차의 '위'도 19~26mm로 이 모델과 맞는다.
+            try:
+                fx_ = float(json.load(open(vs.META))["intrinsics"]["fx"])
+            except Exception:                                  # noqa: BLE001
+                fx_ = 438.0
+            p0 = kin.forward(c, geom)
+            r_mm = max(150.0, math.hypot(p0.x, p0.y))
+            J = np.array([[-(fx_ / z + fx_ / r_mm), 0.0], [0.0, fx_ / z]])   # 화소 / base mm
             lat[0] = (J[0, 0] * z, axes[0])       # 나아가는 중 가로 바로잡기용(화소·mm, 깊이 1mm 기준)
             for it in range(4):
                 tu_, tv_ = aim_uv(z)
