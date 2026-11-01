@@ -218,9 +218,14 @@ class FollowerIO:
             goal = follower.bus.sync_read("Goal_Position")
             torque = follower.bus.sync_read("Torque_Enable", normalize=False)
             before = {m: (goal[m] if torque.get(m) else present[m]) for m in present}
-            follower.configure()
-            follower.bus.enable_torque()
-            follower.bus.sync_write("Goal_Position", before)
+            # ⚠ **이미 전 관절 토크가 켜져 있으면 configure()를 건너뛴다** — 직전 도구가 같은 전원에서 이미
+            #   설정을 써 두었다(전원이 나가면 토크는 0으로 돌아오니 그땐 아래 길로 간다). 되돌리기가 있어도
+            #   끄는 그 순간의 처짐은 남는다: 11/01 줄기를 문 채 [놓기]를 새로 열자 팔이 잠깐 주저앉아
+            #   토마토가 고리에서 빠졌다(사람 관찰).
+            if not (torque and all(torque.values())):
+                follower.configure()
+                follower.bus.enable_torque()
+                follower.bus.sync_write("Goal_Position", before)
             # configure()가 P를 16으로 되돌린 직후 — 토크를 켠 채 써도 먹는다(10/30 되읽기 확인).
             for m, p in ARM_HOLD_P_GAIN.items():
                 follower.bus.write("P_Coefficient", m, int(p), normalize=False)
