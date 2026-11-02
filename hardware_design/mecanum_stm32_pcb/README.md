@@ -5,7 +5,18 @@
 
 - `gen_pcb.py` = **회로도 겸 배치**. 부품·넷·자리를 여기서 정하고 돌리면 `mecanum_stm32.kicad_pcb`가 다시 나온다.
   `"C:/Program Files/KiCad/9.0/bin/python.exe" gen_pcb.py` (겹침 0이어야 끝). `.kicad_sch`는 없다.
-- 지금 상태: **배치까지**(겹침 0, 넷 99개 래츠네스트). 라우팅·실크 정리 안 함. `placement.png` = 윗면 렌더.
+- 지금 상태: **배선 완료** — 미연결 0 · DRC 오류 0(실크 경고 69만). 선분 1,951 · 비아 201, 양면 GND 동박.
+  거버는 아직 안 뽑았다. `placement.png` = 윗면 3D 렌더.
+- 다시 만들기 (순서 중요 — `gen_pcb.py`가 저장하며 `.kicad_pro` 넷클래스를 덮어쓰고, `route.py`가 다시 넣는다):
+  ```
+  K="C:/Program Files/KiCad/9.0/bin/python.exe"
+  "$K" gen_pcb.py                 # 배치(빈 판)
+  "$K" route.py prep              # 넷클래스 + mecanum_stm32.dsn
+  java -jar freerouting-2.5.0.jar -de mecanum_stm32.dsn -do mecanum_stm32.ses --router.autorouter.max_passes=60 --gui.enabled=false
+  "$K" route.py finish            # .ses 가져오기 → 전원선 굵히기 → GND 동박 → 저장
+  ```
+  배치를 안 바꿨으면 Freerouting 없이 저장소의 `mecanum_stm32.ses`로 `gen_pcb.py` → `route.py finish`만 하면 같은 판이 나온다.
+  ⚠ KiCad 9.0.4의 `pcbnew.ExportSpecctraDSN`은 헤드리스에서 멈춰서 DSN/SES 변환을 `route.py`에 직접 짰다.
 
 ## 무엇을 왜 골랐나
 
@@ -60,9 +71,11 @@ Uno 크기(68.6×53.3)로는 부품 면적이 판의 67%라 2층 배선이 안 �
 
 1. **모터에 엔코더가 정말 있나, 커넥터가 PH 2.0mm인가** — 쉴드 회로도상 6핀이지만 실물 확인 전([목표 문서 §0.1](../../docs/stm32-자세보드-목표.md)).
    2.54mm(XH)면 J10~J13 풋프린트만 바꾸면 된다.
-2. **DRV8874 PMODE·IMODE** — 받은 데이터시트가 요약판(10쪽)이라 레벨 표가 없다. PMODE를 3V3에 묶어 PWM(IN1/IN2) 모드로
-   가정했고(R16 0Ω로 옮길 수 있게), IMODE는 GND. 정식 데이터시트(SLVSEY7) "Control Modes"·"Current Regulation" 표로 확인.
+2. ~~DRV8874 PMODE·IMODE~~ → **데이터시트(SLVSF66A, 42쪽)로 확인함**: PMODE=High → PWM 모드(표 2, nSLEEP가 올라갈 때 래치 —
+   nSLEEP 풀다운이라 순서 OK), IN1=PWM·IN2=0 → 정방향/코스트(표 4, Uno와 같은 동작), IMODE=GND → 고정 오프타임 초핑 +
+   과전류 **자동 재시도**(표 6), A_IPROPI 450µA/A.
 3. **케이스 트레이에 90×64가 들어가나** — 안 되면 `W, H`를 줄이고 4층으로 간다.
 4. **HTSSOP 방열 패드** — 인두로는 안 붙는다. 열풍기/리플로우, 또는 방열 비아로 뒤에서 땜.
-5. **라우팅 규칙** — ADuM1201 가운데 실크선 왼쪽(USB 쪽, `GNDU`)의 동박이 오른쪽(`GND`)으로 넘어가면 절연이 없다.
-   모터 전류 루프(VM·OUTx·PGND)는 굵고 짧게, 로직 GND와는 한 점에서만 만나게(별 결선).
+5. **자동배선 결과를 사람 눈으로 한 번** — 모터 전류 경로(VM→드라이버→커넥터), 크리스털 주변, 절연 경계
+   (GNDU 동박은 USB 칸에만, GND와 1.5mm 간격). 고정구멍 둘레 Ø6.5mm는 동박 금지(나사머리·스탠드오프가 GNDU를 로봇 GND에 잇지 않게).
+   배선 굵기: 핀에 들어가는 굵기로 배선한 뒤 `route.py widen()`이 간격이 되는 구간만 0.8/0.6mm로 키웠다(핀 근처는 가늘다 — 걱정되면 2oz 동박).

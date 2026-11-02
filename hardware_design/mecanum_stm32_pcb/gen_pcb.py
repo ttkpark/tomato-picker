@@ -48,7 +48,7 @@ P("D4", LED, "PWR 초록", {1: "GND", 2: "LEDP"}, 35.5, 40.5)
 
 # ---------------- USB 쪽(절연 너머, GNDU) : USB Mini-B → CH340C → ADuM1201 ----------------
 P("J2", ("Connector_USB", "USB_Mini-B_Wuerth_65100516121_Horizontal"), "USB Mini-B",   # 0.8mm 피치 — USB-C(0.5mm)는 손땜이 어렵다
-  {1: "VBUS", 2: "DM", 3: "DP", 4: None, 5: "GNDU", 6: "GNDU"}, 3.5, 9.0, 270)
+  {1: "VBUS", 2: "DM", 3: "DP", 4: None, 5: "GNDU", 6: "GNDU"}, 3.62, 9.0, 270)   # 고정탭이 판 끝에서 0.5mm 안에 들게
 P("U4", ("Package_SO", "SOIC-16_3.9x9.9mm_P1.27mm"), "CH340C",
   {1: "GNDU", 2: "U_TX", 3: "U_RX", 4: "U_V3", 5: "DP", 6: "DM", 7: None, 8: None, 9: None, 10: None,
    11: None, 12: None, 13: None, 14: None, 15: None, 16: "VBUS"}, 12.5, 11.0)
@@ -151,6 +151,7 @@ def build():
         if fp is None:
             sys.exit(f"풋프린트 없음: {lib}:{fpn}")
         fp.SetReference(ref); fp.SetValue(val)
+        fp.Reference().SetTextSize(pcbnew.VECTOR2I_MM(0.8, 0.8)); fp.Reference().SetTextThickness(pcbnew.FromMM(0.15))   # 실크 겹침 줄이기(0.8mm = 업체 최소 가독)
         names = {p.GetNumber() for p in fp.Pads() if p.GetNumber()}
         missing = set(pads) - names
         if missing:
