@@ -4,7 +4,7 @@
     ~/lerobot/.venv/bin/python ros2/tools/grasp_repeat.py                 # 10회
     ~/lerobot/.venv/bin/python ros2/tools/grasp_repeat.py --trials 3 --no-rehang   # 사람 없이 그대로 3회
 
-한 회 = 시작 자세 → 띠가 2초 가만히 보이면 그 자리를 클릭으로 → `stem_grasp`(조작대 [잡으러 간다]와 같은 인자,
+한 회 = 시작 자세 → 띠가 2초 가만히 보이면 **줄기 쪽으로 몸을 돌리고**(어깨, 넘으면 회전판) 띠를 보며 높이·거리(≈105mm)를 맞춘 뒤 그 자리를 클릭으로 → `stem_grasp`(조작대 [잡으러 간다]와 같은 인자,
 걸음만 12mm) → 물었으면 --hold초 들고 있다가 놓기(열기 → 왼쪽 12 → 뒤로) → 시작 자세.
 물었던 다음 회는 **띠가 한 번 사라졌다 다시 보여야**(사람이 토마토를 뗐다가 다시 걸어야) 시작한다. 빗나간 뒤엔 곧장 다시.
 
@@ -86,6 +86,112 @@ def wait_band(need_gone, timeout, steady_s=2.0, tol_px=8.0, last=None, moved_px=
     return None
 
 
+def heading_turn(c, du, z, geom, fx, stop_z):
+    """줄기를 집게의 곧은 길(접근축의 수평 성분) 위에 놓으려면 base 각을 얼마 돌려야 하나 → (pan 관절 변화°, base 각 변화°).
+
+    줄기 자리 S = TCP + 앞으로 (z−stop_z)/0.8 + 옆으로 L(= du·z/fx, du>0이면 화면 오른쪽). 5축이라 곧은 길은
+    어깨 축에서 나가는 반지름 방향이다 — 그래서 옆 평행이동(시작 맞춤)이 아니라 **회전**으로 맞춘다(11/02 사람 제안)."""
+    import math
+    import grasp_probe as gp
+    from tomato_picker.hardware import kinematics as kin
+    p = kin.forward(c, geom)
+    h = gp.approach_dir(c, geom) * np.array([1.0, 1.0, 0.0])
+    h = h[:2] / max(float(np.linalg.norm(h)), 1e-6)
+    left = np.array([h[1], -h[0]])                  # 화면 왼쪽(tool_jog --left와 같은 정의, 실측)
+    L = du * z / fx
+    S = np.array([p.x, p.y]) + h * max(0.0, (z - stop_z) / 0.8) - left * L
+    dphi = math.atan2(S[1], S[0]) - math.atan2(p.y, p.x)
+    dphi = (dphi + math.pi) % (2 * math.pi) - math.pi
+    e = dict(c)
+    e["shoulder_pan"] += 1.0
+    p1 = kin.forward(e, geom)
+    per = math.atan2(p1.y, p1.x) - math.atan2(p.y, p.x)     # pan 1°가 돌리는 base 각(rad)
+    return (dphi / per if abs(per) > 1e-6 else 0.0), math.degrees(dphi)
+
+
+def face_stem(b, stop_z, tol_px=15.0, iters=3):
+    """줄기 쪽으로 몸을 돌린다 — 어깨(pan)로, 어깨 범위를 넘으면 회전판으로. 돌린 뒤 다시 본 띠를 돌려준다.
+    회전판 부호는 한 번 돌려 보고 화면 어긋남이 커지면 뒤집는다(판 축이 어깨 축과 달라 근사다)."""
+    sys.path.insert(0, os.path.join(HERE, "..", "..", "src"))
+    sys.path.insert(0, os.path.join(HERE, "..", "src", "tomato_bridge"))
+    import arm_calib
+    from stem_grasp import uv_at_depth
+    from tomato_bridge.follower_io import FollowerIO
+    from tomato_picker.config import BASE_YAW_LIMIT_DEG
+    cal = arm_calib.Calib()
+    try:
+        by_z = json.load(open(os.path.expanduser("~/grip_uv.json")))["by_z"]
+        fx = float(json.load(open(gm.META))["intrinsics"]["fx"])
+    except Exception as exc:                               # noqa: BLE001
+        print("  몸 돌리기 건너뜀(표·내부값 없음: %s)" % exc)
+        return b
+    yaw_sign = 1.0
+    for _ in range(iters):
+        u, v, z = b
+        du = u - uv_at_depth(by_z, z)[0]
+        if abs(du) <= tol_px:
+            break
+        io = FollowerIO(hold_torque=True)
+        try:
+            c = cal.to_deg(io.read())
+            yaw = io.read_yaw()
+        finally:
+            io.hold_close()
+        dpan, dphi = heading_turn(c, du, z, cal.geom, fx, stop_z)
+        cand = dict(c)
+        cand["shoulder_pan"] += dpan
+        if abs(dpan) < 0.3:
+            break
+        if cal.legal(cand, c)[0]:
+            print("  몸 돌리기: 줄기가 곧은 길에서 %+.0fpx → 어깨 %+.1f°" % (du, dpan))
+            run("arm_stage.py", "--set", "shoulder_pan=%.1f" % cand["shoulder_pan"])
+        else:
+            ny = yaw + yaw_sign * dphi
+            if abs(ny) > BASE_YAW_LIMIT_DEG:
+                print("  몸 돌리기: 어깨도 회전판(%.1f° → %.1f°)도 범위 밖 — 로봇을 옮겨야 한다" % (yaw, ny))
+                break
+            print("  몸 돌리기: 어깨 범위 밖 → 회전판 %.1f° → %.1f°" % (yaw, ny))
+            run("base_yaw.py", "%.1f" % ny)
+        nb = wait_band(need_gone=False, timeout=15.0)
+        if nb is None:
+            print("  돌리고 나니 띠가 안 보인다")
+            return None
+        if not cal.legal(cand, c)[0] and abs(nb[0] - uv_at_depth(by_z, nb[2])[0]) > abs(du):
+            yaw_sign = -yaw_sign                  # 회전판을 반대로 돌렸다 — 다음엔 뒤집는다
+        b = nb
+    return b
+
+
+def close_in(b, stop_z, near_z=105.0, tol_px=15.0, iters=4):
+    """노란 띠로 다가간다 — 위아래는 높이로, 거리는 수평 전진으로 깊이 ≈near_z까지. 그 뒤는 stem_grasp의 짧은 접근이
+    한다(11/02 78~104mm에서 10/10). ⚠ stem_grasp의 클릭 추적은 큰 맞춤(옆 40·위 17mm) 뒤에 줄기를 놓쳤다(0/10).
+    띠 검출은 매 프레임 새로 하니 놓칠 게 없다. 위아래: 화면 1px ≈ z/(0.8·fy) mm(카메라가 숙여 있어 fy/z보다 작다)."""
+    from stem_grasp import uv_at_depth
+    try:
+        by_z = json.load(open(os.path.expanduser("~/grip_uv.json")))["by_z"]
+        fy = float(json.load(open(gm.META))["intrinsics"]["fy"])
+    except Exception as exc:                               # noqa: BLE001
+        print("  다가가기 건너뜀(%s)" % exc)
+        return b
+    for _ in range(iters):
+        b = face_stem(b, stop_z)
+        if b is None:
+            return None
+        u, v, z = b
+        dv = v - uv_at_depth(by_z, z)[1]
+        dz = float(np.clip(-dv * z / (0.8 * fy), -30.0, 30.0)) if abs(dv) > tol_px else 0.0
+        fwd = float(np.clip((z - near_z) / 0.8, 0.0, 60.0)) if z > near_z + 10.0 else 0.0
+        if not dz and not fwd:
+            break
+        print("  다가가기: 띠 %.0fmm, 겨냥점보다 %+.0fpx 아래 → 높이 %+.0f · 앞으로 %.0fmm" % (z, dv, dz, fwd))
+        run("tool_jog.py", "--dz", "%.1f" % dz, "--horiz", "%.1f" % fwd)
+        b = wait_band(need_gone=False, timeout=15.0, steady_s=1.0)
+        if b is None:
+            print("  다가가니 띠가 안 보인다")
+            return None
+    return b
+
+
 def snap(tag):
     try:
         shutil.copy(gm.COLOR, os.path.join(OUT, "%s_%s.jpg" % (time.strftime("%m%d-%H%M%S"), tag)))
@@ -146,6 +252,9 @@ def main():
         if b is None:
             print("띠가 %.0f초 안에 가만히 보이지 않았다 — 멈춘다" % a.wait)
             break
+        b = close_in(b, a.stop_z)
+        if b is None:
+            continue
         u, v, z = b
         last_band = b
         print("  띠 (%.0f, %.0f) %.0fmm — 문다" % (u, v, z))
