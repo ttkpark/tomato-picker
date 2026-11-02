@@ -55,9 +55,10 @@ def band():
     return gm.band_uvz(bgr, dep)
 
 
-def wait_band(need_gone, timeout, steady_s=2.0, tol_px=8.0, last=None, moved_px=20.0, blink_s=1.0):
+def wait_band(need_gone, timeout, steady_s=2.0, tol_px=8.0, last=None, moved_px=60.0, blink_s=1.0):
     """띠가 steady_s초 동안 tol_px 안에서 가만히 보이면 그 자리.
     need_gone이면 먼저 '다시 걸렸다'를 봐야 한다 — 한 번 안 보였거나, 지난 회 자리(last)에서 moved_px 넘게 옮겨졌거나.
+    ⚠ moved_px 60: 놓을 때 줄기가 회마다 10~40px 밀려 20이면 사람 없이 다시 걸린 것으로 읽었다(11/02 2차).
     ⚠ 한두 프레임 못 찾는 건(blink_s 안) 가만히 재기를 끊지 않는다. timeout ≤ 0이면 끝없이 기다린다."""
     t_end = time.time() + timeout if timeout > 0 else float("inf")
     gone = not need_gone
@@ -107,7 +108,7 @@ def selftest():
         assert wait_band(need_gone=False, timeout=5) is None
         seq = iter([(400, 300, 100)] * 3 + [None] + [(400, 300, 100)] * 30)   # 한 프레임 깜빡임은 무시
         assert wait_band(need_gone=False, timeout=60) is not None
-        seq = iter([(460, 300, 100)] * 30)                                     # 안 사라졌어도 옮겨 걸었으면 된다
+        seq = iter([(470, 300, 100)] * 30)                                     # 안 사라졌어도 옮겨 걸었으면 된다
         assert wait_band(need_gone=True, timeout=60, last=(400, 300, 100)) is not None
         seq = iter([(400, 300, 100)] * 300)                                    # 그대로면 기다린다
         assert wait_band(need_gone=True, timeout=30, last=(400, 300, 100)) is None
