@@ -192,6 +192,20 @@ def close_in(b, stop_z, near_z=105.0, tol_px=8.0, iters=4):     # 위아래 15px
     return b
 
 
+def look_around(pans=(8.0, 20.0, -20.0, -35.0, 35.0)):
+    """시작 자세에서 띠가 안 보이면 어깨만 돌려 가며 찾는다 — 로봇을 옮기면 줄기가 화면 밖으로 나간다(11/02 자리 4)."""
+    if band() is not None:
+        return True
+    for p in pans:
+        rc, _ = run("arm_stage.py", "--set", "shoulder_pan=%.1f" % p)
+        time.sleep(0.5)
+        if rc == 0 and band() is not None:
+            print("  어깨 %.0f°에서 띠를 찾았다" % p)
+            return True
+    print("  어깨를 돌려 봐도 띠가 안 보인다")
+    return False
+
+
 def snap(tag):
     try:
         shutil.copy(gm.COLOR, os.path.join(OUT, "%s_%s.jpg" % (time.strftime("%m%d-%H%M%S"), tag)))
@@ -247,6 +261,7 @@ def main():
         if rc:
             print("시작 자세로 못 갔다 — 멈춘다")
             return 1
+        look_around()
         # 물었던 다음 회만 '뗐다 다시 걸기'를 기다린다 — 빗나간 뒤엔 그대로 걸려 있으니 곧장 다시 문다
         b = wait_band(need_gone=(last_held and not a.no_rehang), timeout=a.wait, last=last_band)
         if b is None:

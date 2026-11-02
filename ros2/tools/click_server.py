@@ -267,7 +267,8 @@ def build(job, args):
         return a
     if job == "repeat":
         # 잡기 반복 — 노란 띠를 스스로 찾아 물고 놓고, 다시 걸리면 또(grasp_repeat.py 머리말)
-        a = [PY, T("grasp_repeat.py"), "--trials", "%d" % int(num(args, "trials", 10, 1, 50))]
+        a = [PY, T("grasp_repeat.py"), "--trials", "%d" % int(num(args, "trials", 10, 1, 50)),
+             "--wait", "%.0f" % num(args, "wait", 0, 0, 3600)]
         if args.get("no_rehang"):
             a += ["--no-rehang"]
         return a
