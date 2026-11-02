@@ -308,6 +308,16 @@ class FollowerIO:
         obs = self._with_retry(lambda: self._follower.get_observation())
         return {k[:-4]: float(v) for k, v in obs.items() if k.endswith(".pos")}
 
+    def goal(self) -> dict[str, float]:
+        """지금 **붙들고 있는 목표**(Goal_Position, read()와 같은 정규 단위).
+
+        ⚠ "그 자리에 둔 채 집게만" 같은 쓰기는 read()가 아니라 이걸 바탕으로 한다. read()는 처진 실제 자리라
+          그걸 목표로 다시 주면 처짐 보정(명령을 2~3° 더 올려 둔 것)이 날아가 팔이 그만큼 또 내려앉는다 —
+          11/02 실측 grip_set 한 번에 TCP z −15mm, 잡기의 닫는 순간에도 같았다. 문 집게도 실제 자리(6.5)를
+          목표로 주면 쥐는 힘이 풀린다."""
+        g = self._with_retry(lambda: self._follower.bus.sync_read("Goal_Position"))
+        return {k: float(v) for k, v in g.items()}
+
     def write(self, target: dict[str, float], secs: float) -> None:
         goal = {f"{name}.pos": float(v) for name, v in target.items()}
         self._with_retry(lambda: self._interpolate(goal, secs))
@@ -320,8 +330,13 @@ class FollowerIO:
           다음 스텝 시각을 맞추고 남은 시간만 잔다(늦었으면 안 잔다).
         """
         self._follower.bus.enable_torque()
-        current = {k: float(v) for k, v in self._follower.get_observation().items()
-                   if k.endswith(".pos")}
+        if self._hold_torque:
+            # 붙들던 목표에서 출발한다 — 처진 실제 자리에서 출발하면 첫 스텝이 처짐만큼 팔을 떨어뜨린다(goal() 주석)
+            current = {f"{k}.pos": float(v)
+                       for k, v in self._follower.bus.sync_read("Goal_Position").items()}
+        else:
+            current = {k: float(v) for k, v in self._follower.get_observation().items()
+                       if k.endswith(".pos")}
         steps = max(2, int(secs * self._fps))
         start = time.monotonic()
         interval = secs / steps

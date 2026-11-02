@@ -5,8 +5,9 @@
     ~/lerobot/.venv/bin/python ros2/tools/grip_uv_measure.py --save     # ~/grip_uv.json by_z 교체(백업 남김)
     python ros2/tools/grip_uv_measure.py --selftest                      # PC, 띠 검출 확인
 
-준비(사람): 줄기에 **노란 테이프 띠(폭 25~30mm)**를 감고, 시작 자세에서 집게가 그 띠 **가운데**를
-물게 한다(무는거리 80). 집게 위아래로 띠가 삐져나와야 한다 — 보이는 띠 화소의 중심 = 집게 가운데.
+준비(사람): 줄기(고리 손잡이~꽃받침 사이)에 **노란 테이프 띠(폭 5~8mm)**를 한 바퀴 감는다.
+열린 집게를 줄기 앞(깊이 ≈86mm)에 두고, 사람이 화분을 옮겨 띠를 두 손가락 사이 **높이 가운데**에 둔 뒤 닫는다.
+→ 띠 = 무는 자리. 문 채로는 띠가 가려져도 된다(0번은 건너뛰고 물러난 뒤부터 잰다).
 
 ⚠ 왜 띠인가: 세로 줄기는 위아래가 화면에 안 보여서(11/02 13~21회의 병) 맨 줄기로는 v를 못 잰다.
 ⚠ 왜 다시 재나: 10/30 표로 화면 8px까지 맞췄는데 집게는 줄기보다 높게 닫혔다(11/02 21회).
@@ -35,17 +36,27 @@ PY = sys.executable
 
 def band_uvz(bgr, dep_mm, prev=None, jump_px=120.0):
     """노란 띠 화소의 중심 (u, v)와 깊이 중앙값 z(mm). 못 찾으면 None.
-    색 문턱은 stem_grasp.tape_point와 같다. 집게가 띠 가운데를 가려 두 조각이 되므로 조각을 합친다."""
+    집게가 띠 가운데를 가려 두 조각이 되므로 조각을 합친다.
+    ⚠ 색상 24~40: 11/02 실측 테이프 H≈30, 주황 토마토 H 13~20 — tape_point의 18은 토마토를 띠로 잡았다."""
     import cv2
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    m = ((hsv[:, :, 0] > 18) & (hsv[:, :, 0] < 40)
-         & (hsv[:, :, 1] > 60) & (hsv[:, :, 2] > 80)).astype(np.uint8)
+    m = ((hsv[:, :, 0] > 24) & (hsv[:, :, 0] < 40)
+         & (hsv[:, :, 1] > 120) & (hsv[:, :, 2] > 50)).astype(np.uint8)
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
     n, lab, st, cen = cv2.connectedComponentsWithStats(m, 8)
     keep = [i for i in range(1, n) if st[i, cv2.CC_STAT_AREA] >= 150
             and (prev is None or math.hypot(cen[i][0] - prev[0], cen[i][1] - prev[1]) <= jump_px)]
-    if not keep:
+    zs = {}
+    for i in keep:
+        d = dep_mm[lab == i]
+        d = d[d > 0]
+        if d.size >= 20:
+            zs[i] = float(np.median(d))
+    if not zs:
         return None
+    # ⚠ 주황 토마토의 밝은 곳도 노랑 문턱을 넘는다 — 띠는 줄기 위라 **가장 가까운** 노랑이다. 그것과 15mm 안만 남긴다.
+    near = min(zs.values())
+    keep = [i for i, z in zs.items() if z <= near + 15.0]
     sel = np.isin(lab, keep)
     vs_, us_ = np.nonzero(sel)
     d = dep_mm[sel]
@@ -77,27 +88,67 @@ def jog(*a):
         raise SystemExit("tool_jog %s 실패(rc %d) — 멈춘다" % (" ".join(a), r.returncode))
 
 
-def measure(steps, step_mm, grip_open):
+def pose():
+    """지금 TCP 높이(mm)와 피치(lift+elbow+wrist, 도) — 실제로 읽은 자리(FK)."""
+    sys.path.insert(0, HERE)
+    sys.path.insert(0, os.path.join(HERE, "..", "..", "src"))
+    sys.path.insert(0, os.path.join(HERE, "..", "src", "tomato_bridge"))
+    import arm_calib
+    from tomato_picker.hardware import kinematics as kin
+    from tomato_bridge.follower_io import FollowerIO
+    cal = arm_calib.Calib()
+    io = FollowerIO(hold_torque=True)
+    try:
+        d = cal.to_deg(io.read())
+    finally:
+        io.hold_close()
+    return kin.forward(d, cal.geom).z, d["shoulder_lift"] + d["elbow_flex"] + d["wrist_flex"]
+
+
+def measure(steps, step_mm, grip_open, left_mm, fx, fy):
     table = []
     prev = None
+    h0, p0 = pose()      # 문 자리의 TCP 높이·피치 — 표는 이 높이·피치로 수평 전진할 때의 화면이다
+    raw = []
     for k in range(steps + 1):
         if k == 1:
-            jog("--grip", str(grip_open), "--horiz", str(-step_mm))
+            # 놓기와 같은 순서 — 열기 → 고정 턱 떼기(왼쪽) → 빼기. 안 떼면 고정 턱이 줄기를 끌고 나온다(11/01, 11/02 1걸음 z 그대로)
+            jog("--grip", str(grip_open), "--left", str(left_mm))
+            jog("--horiz", str(-step_mm))
         elif k > 1:
             jog("--horiz", str(-step_mm))
+        h, pt = pose()
         t0 = time.time()
         pts = [band_uvz(*grab(t0 + 0.4 * i), prev=prev) for i in range(3)]
         pts = [p for p in pts if p]
         if not pts:
+            if k == 0:       # 문 채로는 띠가 집게에 가려질 수 있다 — 물러난 뒤부터 잰다
+                print("  0: 문 자리에선 띠가 안 보인다(집게가 가림) — 물러나며 잰다")
+                continue
             print("  %d: 노란 띠를 못 찾았다 — 여기까지" % k)
             break
         u, v, z = (float(np.median([p[j] for p in pts])) for j in range(3))
+        if k >= 1:
+            u -= fx * left_mm / z      # 왼쪽으로 비킨 만큼 화면에서 오른쪽으로 밀려 보인다 — 무는 자리로 되돌린다
         dz = z - table[-1][0] if table else 0.0
+        if table and dz < 0.3 * step_mm:
+            print("  %d: 깊이가 %.0fmm밖에 안 늘었다 — 못 물러났다(한계?), 여기까지" % (k, dz))
+            break
+        raw.append((k, z, u, v, h, pt))
         warn = "  ⚠ 깊이가 %.0fmm 늘었다(명령 %.0f) — 줄기가 끌려왔나?" % (dz, step_mm) \
             if table and abs(dz - step_mm) > 8.0 else ""
         print("  %d: z %.0fmm  (%.0f, %.0f)%s" % (k, z, u, v, warn))
         table.append([round(z, 1), round(u, 1), round(v, 1)])
         prev = (u, v)
+    # ⚠ 물러나는 동안 팔이 처지고(11/02: 5걸음에 14mm) 피치도 샌다(3걸음에 4°) — 카메라가 낮아지거나 숙여지면
+    #   띠가 화면에서 움직인다. 잡기의 전진은 처짐 되먹임(go)이라 문 자리 높이·피치를 지킨다. 그래서 읽은 자세로 되돌린다:
+    #   Δv = −fy·cosθ·Δh/z − fy·tan(Δpitch), cosθ = 수평 1mm당 깊이 변화(카메라가 숙인 각).
+    #   11/02 첫 판은 높이만 갚았더니 104mm에서 실제보다 28px 위였다(피치 몫).
+    st = [(b[1] - a[1]) / step_mm for a, b in zip(raw, raw[1:]) if a[0] >= 1]
+    c = float(np.clip(np.median(st), 0.3, 1.0)) if st else 0.8
+    for row, (k, z, u, v, h, pt) in zip(table[-len(raw):], raw):
+        row[2] = round(v - fy * c * (h - h0) / z - fy * math.tan(math.radians(pt - p0)), 1)
+        print("  %d: 높이 %+.1fmm 피치 %+.1f° → v %.0f → %.0f (cosθ %.2f)" % (k, h - h0, pt - p0, v, row[2], c))
     return table
 
 
@@ -121,6 +172,10 @@ def selftest():
     u, v, z = band_uvz(bgr, dep)
     assert abs(u - 430) < 1 and abs(v - 360) < 1 and abs(z - 86) < 1, (u, v, z)
     assert band_uvz(bgr, dep, prev=(700, 100)) is None     # 멀리 튄 것은 버린다
+    t = bgr.copy()
+    cv2.rectangle(t, (300, 400), (380, 470), yel, -1)      # 뒤의 노란 토마토(더 멀다)
+    u2, v2, _ = band_uvz(t, dep)
+    assert abs(u2 - 430) < 1 and abs(v2 - 360) < 1, (u2, v2)
     assert band_uvz(np.zeros_like(bgr), dep) is None
     print("selftest OK")
 
@@ -130,6 +185,7 @@ def main():
     ap.add_argument("--steps", type=int, default=5, help="물러나는 횟수(기본 5 → 86~190mm 근처)")
     ap.add_argument("--step-mm", type=float, default=20.0)
     ap.add_argument("--grip-open", type=float, default=78.0, help="첫 걸음 전에 여는 집게 값")
+    ap.add_argument("--left-mm", type=float, default=12.0, help="열고 나서 고정 턱을 떼는 옆 이동(u는 보정)")
     ap.add_argument("--save", action="store_true", help="~/grip_uv.json의 by_z를 바꾼다(.bak 남김)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
@@ -140,7 +196,12 @@ def main():
     except Exception:                                      # noqa: BLE001
         g = {}
     print("줄기를 문 자리에서 시작 — 노란 띠가 집게 위아래로 보여야 한다")
-    new = measure(a.steps, a.step_mm, a.grip_open)
+    try:
+        fx = float(json.load(open(META))["intrinsics"]["fx"])
+        fy = float(json.load(open(META))["intrinsics"]["fy"])
+    except Exception:                                      # noqa: BLE001
+        fx = fy = 438.0
+    new = measure(a.steps, a.step_mm, a.grip_open, a.left_mm, fx, fy)
     if len(new) < 3:
         raise SystemExit("점이 %d개뿐 — 표로 못 쓴다(저장 안 함)" % len(new))
     compare(new, g.get("by_z"))

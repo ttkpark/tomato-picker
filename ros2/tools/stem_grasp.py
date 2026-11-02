@@ -1536,7 +1536,7 @@ def main() -> int:
                 if not args.no_close:
                     if args.grip_torque:
                         set_grip_torque(args.grip_torque)
-                    n = to_norm(to_deg(io.read()))
+                    n = io.goal()      # ⚠ read()면 닫는 순간 팔이 처짐만큼(≈15mm) 내려앉는다(FollowerIO.goal)
                     n["gripper"] = args.grip_shut
                     io.write(n, 1.2)
                     time.sleep(1.2)
@@ -1701,7 +1701,7 @@ def main() -> int:
                 if not args.no_close:
                     if args.grip_torque:
                         set_grip_torque(args.grip_torque)
-                    n = to_norm(to_deg(io.read()))
+                    n = io.goal()      # ⚠ read()면 닫는 순간 팔이 처짐만큼(≈15mm) 내려앉는다(FollowerIO.goal)
                     n["gripper"] = args.grip_shut
                     io.write(n, 1.2)
                     time.sleep(1.2)

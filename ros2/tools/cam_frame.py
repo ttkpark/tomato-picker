@@ -166,7 +166,7 @@ def main() -> int:
         got = to_deg(io.read())
         for _ in range(tries):
             n = to_norm(cmd)
-            n["gripper"] = io.read().get("gripper", 70.0)
+            n["gripper"] = io.goal().get("gripper", 70.0)
             io.write(n, 1.0)
             time.sleep(SETTLE)
             got = to_deg(io.read())

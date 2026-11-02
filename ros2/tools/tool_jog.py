@@ -85,7 +85,7 @@ def main() -> int:
         """
         cmd = dict(target)
         for _ in range(tries):
-            io.write(dict(to_norm(cmd), gripper=io.read().get("gripper", 40.0)), 0.9)
+            io.write(dict(to_norm(cmd), gripper=io.goal().get("gripper", 40.0)), 0.9)
             time.sleep(0.7)
             got = to_deg(io.read())
             miss = {j: target[j] - got[j] for j in kin.JOINTS}
@@ -103,7 +103,7 @@ def main() -> int:
             # ⚠ 놓기는 **끝까지 천천히 연 뒤 물러난다** — 11/01 단계별 사진: 반쯤(35) 열었을 땐 토마토가 그대로였고,
             #   그 상태로 30mm 물러나자 턱이 굵은 줄기를 끌고 나와 고리에서 빠졌다. 열기 자체는 문제가 아니었다.
             g = max(4.0, min(100.0, args.grip))           # grip_set.GRIP_MIN과 같은 이유(브라운아웃)
-            io.write(dict(io.read(), gripper=g), 2.0)
+            io.write(dict(io.goal(), gripper=g), 2.0)   # read()면 팔이 처짐만큼 내려앉는다
             time.sleep(0.4)
             print("집게 %.0f → 지금 %.1f" % (g, float(io.read().get("gripper", -1))))
         cur = to_deg(io.read())
@@ -151,7 +151,7 @@ def main() -> int:
         if args.dry:
             return 0
 
-        def solve(cur, target_vec, mode):
+        def solve(cur, target_vec, mode, dpitch=0.0):
             """4관절 야코비안. mode="keep"이면 피치(lift+elbow+wrist 합)를 고정 —
             위치 3식에 관절 4개라 남는 자유도 하나가 실제로 쓰이면 손목 카메라가
             돈다(2026-09-02: 70mm 올리는 동안 32° 돌아 열매가 화면 위로 사라진
@@ -172,7 +172,7 @@ def main() -> int:
                 A, rhs = np.array(J).T, target_vec
             else:
                 A = np.vstack([np.array(J).T, np.array([[0.0, 1.0, 1.0, 1.0]])])
-                rhs = np.append(target_vec, 0.0)
+                rhs = np.append(target_vec, dpitch)
             sol, *_ = np.linalg.lstsq(A, rhs, rcond=None)
             nxt = dict(cur)
             for j, w in zip(cols, sol):
@@ -190,9 +190,21 @@ def main() -> int:
         #   카메라가 같이 숙여지면 23mm 올려도 화면 속 줄기가 거의 안 움직였다. 조작대 '자세 안
         #   지킴' 칸도 원래 그 뜻이었다(비어 있으면 지킨다). 지키며 못 가는 걸음만 free로 간다.
         mode = "free" if args.free_pitch else "keep"
-        for k in range(n):
+        # ⚠ 걸음은 **처음 자리 기준 절대 목표**로 낸다. 예전엔 "지금 읽은 자리 + unit"이라 걸음마다 처진 만큼이
+        #   쌓였다 — 11/02 실측 --horiz 87mm에 z −24mm, 100mm 물러나며 −25mm(10/30 by_z도 이렇게 잰 것).
+        #   끝에 남은 오차는 2번까지 더 갚는다.
+        b_0 = np.array([p0.x, p0.y, p0.z])
+        PJ = ("shoulder_lift", "elbow_flex", "wrist_flex")
+        pitch0 = sum(cur[j] for j in PJ)      # 피치도 처음 값을 지킨다 — 걸음마다 '지금 값 유지'면 11/02 3걸음에 4° 샜다
+        for k in range(n + 2):
             cur = to_deg(io.read())
-            nxt, resid = solve(cur, unit, mode)
+            pc = kin.forward(cur, geom)
+            err = b_0 + unit * min(k + 1, n) - np.array([pc.x, pc.y, pc.z])
+            if k >= n:
+                if float(np.linalg.norm(err)) < 2.5:     # 그보다 작은 갚기는 처짐 함정(작은 걸음은 거꾸로 간다) — 11/02 1.4mm 갚기가 5mm 떨어뜨림
+                    break
+                err = np.clip(err, -8.0, 8.0)      # 갚기는 처짐만큼 — 크면 뭔가 막힌 것이니 조금씩
+            nxt, resid = solve(cur, err, mode, pitch0 - sum(cur[j] for j in PJ))
             ok, why = legal(nxt, cur)
             if not ok and mode == "keep":
                 nxt, resid = solve(cur, unit, "free")
@@ -204,8 +216,8 @@ def main() -> int:
                 break
             got = press_to(nxt)
             p = kin.forward(got, geom)
-            print("  %d/%d  TCP (%.1f, %.1f, %.1f)  잔차 %.1fmm"
-                  % (k + 1, n, p.x, p.y, p.z, resid))
+            print("  %s  TCP (%.1f, %.1f, %.1f)  잔차 %.1fmm"
+                  % ("%d/%d" % (k + 1, n) if k < n else "갚기", p.x, p.y, p.z, resid))
         p = kin.forward(to_deg(io.read()), geom)
         print("끝  TCP (%.1f, %.1f, %.1f)  — 처음에서 (%+.1f, %+.1f, %+.1f)"
               % (p.x, p.y, p.z, p.x - p0.x, p.y - p0.y, p.z - p0.z))

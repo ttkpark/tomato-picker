@@ -57,7 +57,7 @@ def main() -> int:
                 io._follower.bus.write("Max_Torque_Limit", "gripper", torque)  # noqa: SLF001
             except Exception as exc:                        # noqa: BLE001
                 print("⚠ 토크 상한 실패:", str(exc)[:60])
-        n = io.read()
+        n = io.goal()          # 붙든 목표 그대로 — read()면 처짐만큼 팔이 내려앉는다(FollowerIO.goal)
         n["gripper"] = v
         io.write(n, 0.9)
         time.sleep(1.1)

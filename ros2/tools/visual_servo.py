@@ -292,7 +292,7 @@ def main() -> int:
 
     from tomato_bridge.follower_io import FollowerIO
     io = FollowerIO(hold_torque=True)
-    grip = io.read().get("gripper", 60.0)
+    grip = io.goal().get("gripper", 60.0)
 
     def go(d, secs=1.0):
         n = to_norm(d)
