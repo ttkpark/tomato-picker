@@ -19,8 +19,12 @@
 //  (6) BOR 문턱을 옵션바이트로 Level 3(≈2.7V)에 못 박는다. 공장값은 BOR 꺼짐이라 3.3V 레일이 처져도
 //      리셋 대신 "이상 동작"을 한다 — 그러면 cause=BOD가 영영 안 찍힌다.
 //  (7) U = 시스템 부트로더 진입. 젯슨에서 같은 포트로 stm32flash가 굽는다(BOOT0 버튼 불필요).
-//  (8) 하드웨어 E-stop(PB13). 버튼이 릴레이 코일을 끊어 VM을 **물리적으로** 자른다 — 펌웨어는 그걸
-//      읽고 따라 서기만 한다(PWM 0·드라이버 재움). 소프트 정지(S·데드맨)는 그대로 보조.
+//  (8) 하드웨어 E-stop(PB13). 버튼이 릴레이 코일을 끊어 VM을 **물리적으로** 자른다. 펌웨어는
+//      눌리는 순간 인터럽트로 드라이버부터 재운다(접점이 전류 0에서 떨어지게 — 용착 방지).
+//      **풀려도 다시 안 간다(래치)** — S를 받아야 풀린다. 젯슨이 V를 50Hz로 계속 보내므로 래치가 없으면
+//      버튼을 놓는 순간 로봇이 다시 달린다. 소프트 정지(S·데드맨)는 그대로 보조.
+//  (8a) 릴레이 감시(PC5 = 릴레이 뒤 VM, 100k/10k). 눌렸는데 VM이 남아 있으면 접점 용착(weld) — 전원을
+//      껐다 켜기 전엔 안 풀린다. 코일이 붙었는데 VM이 없으면 rlyopen.
 //  (9) 배터리 감시(PC4, 100k/10k). 1초 평균이 문턱 아래로 2초 → 감속 정지 후 V 무시.
 //  (10) 바퀴별 속도 PID(엔코더). G로 kv>0을 준 바퀴만 폐루프 — 안 주면 Uno와 똑같은 개루프다.
 //       V는 그대로 "−255..255 = 최고속 대비 비율"이라 젯슨은 안 바뀐다.
@@ -40,8 +44,9 @@
 //   Q                 cap 한 줄 (보드계약 §6, proto=1 레거시 프로파일)
 //   U                 정지 후 시스템 부트로더로 (stm32flash)
 //   ?                 상태 + boot 보고
-// hb: "hb <ms> rx= bad= i2c=0 wdt= v=<vx,vy,w>" 뒤에 enc= vin= v5= amp= ampw= flt= fltn=
-//     spd= estop= lowbat= clf= 를 덧붙인다
+// hb: "hb <ms> rx= bad= i2c=0 wdt= v=<vx,vy,w>" 뒤에 enc= vin= vm= amp= ampw= flt= fltn=
+//     spd= estop=(0 정상/1 눌림/2 풀렸지만 래치) lowbat= clf= rly=(1 닫힘/0 열림/W 용착/O 안 붙음) 를 덧붙인다
+// 이벤트 줄: estop 1/0 · lowbat 1/0 · clfault i · weld 1 · rlyopen 1/0
 //     (motor_link·board_contract 둘 다 모르는 키는 무시한다).
 #include <IWatchdog.h>
 #include "stm32f4xx_ll_adc.h"
@@ -67,11 +72,10 @@ const uint32_t PIN_IPROPI[4] = {PC0, PC1, PC2, PC3};
 #define PIN_NSLEEP PB12   // 4개 드라이버 공통. 기판 풀다운 → 펌웨어가 깨우기 전엔 출력 Hi-Z
 #define PIN_VBAT   PC4    // 배터리(역접속 FET 뒤, E-stop 릴레이 앞) 100k/10k
 #define PIN_ESTOP  PB13   // HIGH=릴레이 코일 붙음(모터 허용) / LOW=E-stop 눌림·버튼 회로 끊김 → VM 차단
-#define PIN_V5     PC5    // 10k/10k
+#define PIN_VM     PC5    // 릴레이 **뒤** 모터 레일 VM, 100k/10k(배터리와 같은 비 — B의 ratio를 같이 쓴다)
 #define PIN_LED    PB0    // 하트비트마다 깜빡
 #define PIN_LEDF   PB1    // 드라이버 폴트
 // 실측 보정 손잡이 — 저항 오차·IPROPI 편차는 여기서 맞춘다.
-const uint32_t V5_DIV_X100 = 200;
 const uint32_t IPROPI_MA_PER_V = 2222; // 1kΩ × 450µA/A = 0.45V/A
 
 // ---------------- 리셋 흔적 (BKPSRAM: 리셋엔 살아남고 전원이 나가면 깨진다) ----------------
@@ -175,10 +179,20 @@ uint16_t fltCount = 0;
 bool bootWarm = false;
 uint32_t csrSave = 0;
 
-// E-stop: 20ms 같은 값이어야 인정(접점 튐). 풀린다고 다시 굴러가지 않는다 — 새 V가 와야 간다.
-bool estop = false, estopRaw = false;
+// E-stop: 눌림은 인터럽트로 즉시(디바운스 없음), 이벤트·풀림 판정은 20ms 디바운스.
+// estop = 지금 눌림(디바운스 후), estopLatch = 눌렸던 적이 있고 아직 X 0으로 안 풀림.
+bool estop = false, estopRaw = false, estopLatch = false;
+volatile bool estopIsrHit = false;    // ISR이 드라이버를 재웠다 — 진짜 눌림인지 loop가 가린다
 unsigned long estopEdge = 0;
 const unsigned long ESTOP_DEBOUNCE = 20;
+
+// 릴레이 감시: 100ms 표본이 3번 연속(300ms) 어긋나면 판정. 배터리 3V 아래(벤치·배터리 없음)는 판정 안 함.
+uint32_t vmMv = 0;
+bool weld = false, rlyOpen = false;   // weld는 전원을 껐다 켜야 풀린다
+uint8_t rlyBadN = 0;
+const uint32_t RLY_MIN_VIN = 3000;
+const uint8_t RLY_HOLD_N = 3;
+static inline bool driversAllowed(){ return !estop && !estopLatch && !weld && !estopIsrHit; }
 
 // 배터리: 100ms마다 재서 10개 평균(1초). lo_mv 아래 2초 → 감속 정지. lo_mv+300 위로 풀림.
 uint32_t batRatio = 11000;        // ×1000 = (100k+10k)/10k
@@ -366,7 +380,7 @@ void control(unsigned long now){
     int32_t d = encAcc[w] - encPrev[w]; encPrev[w] = encAcc[w];
     h.hist[h.hi] = d / dt; h.hi = (h.hi + 1) & 3;
     h.spd = (h.hist[0] + h.hist[1] + h.hist[2] + h.hist[3]) / 4;
-    if(!closedLoop(w) || testing || estop) continue;
+    if(!closedLoop(w) || testing || !driversAllowed()) continue;
     float cpsFull = (MAX_PWM - h.ks / 1000.f) / (h.kv / 1000.f);
     if(cpsFull <= 0){ h.duty = 0; setDuty(w, 0); continue; }   // ks ≥ MAX_PWM — 설정이 틀렸다
     bool fault;
@@ -379,27 +393,75 @@ void control(unsigned long now){
   }
 }
 
-// E-stop: 20ms 디바운스. 눌림 → 즉시 정지·드라이버 재움. 풀림 → 깨우기만(지령은 0 그대로).
+// ★ PB13 하강 에지 = 버튼이 코일을 끊은 순간. 릴레이 코일엔 역기전력 다이오드가 있어 접점은 수 ms 뒤에야
+//   떨어진다. 그 사이 드라이버를 먼저 재우면 접점이 **전류 0에서** 열린다 — 아크가 안 나야 접점이 안 붙는다
+//   (용착 방지). 디바운스는 여기선 안 한다: 잡음으로 한 번 서는 건 loop가 20ms 뒤 되살린다(estopPoll).
+//   레지스터 직접 쓰기만 — HAL·Serial은 ISR에서 안 부른다.
+void estopIsr(){
+  GPIOB->BSRR = 1u << (12 + 16);                       // PB12 nSLEEP LOW → 출력 Hi-Z
+  TIM8->CCR1 = 0; TIM8->CCR2 = 0; TIM8->CCR3 = 0; TIM8->CCR4 = 0;
+  TIM9->CCR1 = 0; TIM9->CCR2 = 0;
+  TIM12->CCR1 = 0; TIM12->CCR2 = 0;
+  estopIsrHit = true;
+}
+
+// 드라이버는 허용될 때만 깨어 있다 — nSLEEP는 이 한 곳에서만 쥔다.
+static inline void updSleep(){ digitalWrite(PIN_NSLEEP, driversAllowed() ? HIGH : LOW); }
+
+// E-stop: 20ms 디바운스로 이벤트. 눌림 → 래치. 풀림 → 보고만(래치 유지, S가 와야 깨운다).
 void estopPoll(unsigned long now){
   bool raw = digitalRead(PIN_ESTOP) == LOW;
   if(raw != estopRaw){ estopRaw = raw; estopEdge = now; }
-  if(raw == estop || now - estopEdge < ESTOP_DEBOUNCE) return;
-  estop = raw;
-  hardStop();
-  digitalWrite(PIN_NSLEEP, estop ? LOW : HIGH);
-  Serial.println(estop ? "estop 1" : "estop 0");
+  bool stable = now - estopEdge >= ESTOP_DEBOUNCE;
+  if(stable && raw != estop){
+    estop = raw;
+    if(estop){ estopLatch = true; hardStop(); }
+    Serial.println(estop ? "estop 1" : "estop 0");
+  }
+  if(estopIsrHit && stable){
+    // 진짜 눌림이면 위에서 래치가 걸렸다. 안 눌렸으면 잡음 — 0에서 다시 슬루로 출발(지령은 V가 다시 채운다).
+    if(!estop) hardStop();
+    estopIsrHit = false;
+  }
+  updSleep();
 }
+
+// 릴레이 감시(100ms마다 batPoll이 부른다). 코일 상태 = 버튼 상태(PB13이 코일 전압을 본다).
+//   눌림(코일 꺼짐)인데 VM > 배터리/2 → 접점 용착. ⚠ 하드웨어 E-stop이 더는 안 듣는다는 뜻이라
+//   S로 못 풀게 한다 — 사람이 릴레이를 보고 전원을 껐다 켜야 한다.
+//   ⚠ VM에 블리더가 없으면 드라이버가 잔 뒤 레일 커패시터(≈40µF)가 안 빠져 오검출한다 — 기판 몫.
+//   코일 붙음인데 VM < 배터리/2(배터리가 문턱 위일 때) → rlyopen(접점이 안 붙음). VM이 돌아오면 풀린다.
+void relayCheck(){
+  bool vmOn = vmMv * 2 > batMv;
+  if(batMv < RLY_MIN_VIN || batN < 10){ rlyBadN = 0; return; }
+  bool bad = estop ? vmOn : (!vmOn && batMv > batLo);
+  if(!bad){
+    rlyBadN = 0;
+    if(rlyOpen){ rlyOpen = false; Serial.println("rlyopen 0"); }
+    return;
+  }
+  if(rlyBadN < 255) rlyBadN++;
+  if(rlyBadN < RLY_HOLD_N) return;
+  if(estop && !weld){ weld = true; hardStop(); updSleep(); Serial.println("weld 1"); }
+  if(!estop && !rlyOpen){ rlyOpen = true; Serial.println("rlyopen 1"); }
+}
+
+static char rlyState(){ return weld ? 'W' : rlyOpen ? 'O' : (vmMv * 2 > batMv ? '1' : '0'); }
+static uint8_t estopState(){ return estop ? 1 : estopLatch ? 2 : 0; }
 
 // 배터리: 100ms 표본 10개 평균. 문턱 아래 2초 연속 → lowbat(목표 0 → 슬루 감속). 문턱+300 위 → 해제.
 void batPoll(unsigned long now){
   if(now - lastBat < 100) return;
   lastBat = now;
-  batBuf[batI] = adcMv(PIN_VBAT, vdda()) * batRatio / 1000;
+  uint32_t va = vdda();
+  batBuf[batI] = adcMv(PIN_VBAT, va) * batRatio / 1000;
+  vmMv = adcMv(PIN_VM, va) * batRatio / 1000;        // 평균 안 함 — relayCheck의 3연속이 거름망
   batI = (batI + 1) % 10;
   if(batN < 10) batN++;
   uint32_t sum = 0;
   for(uint8_t i = 0; i < batN; i++) sum += batBuf[i];
   batMv = sum / batN;
+  relayCheck();
   if(!batLo){                                        // 감시 끔
     if(lowbat){ lowbat = false; Serial.println("lowbat 0"); }
     lowSince = now; return;
@@ -497,7 +559,7 @@ void printBootReport(){
 }
 
 void printCap(){
-  Serial.print("cap proto=1 fw=3.1.0 board=stm32f405 units=0 closed_loop=1 enc=4 calib=0 vin=1 amp=1 estop_hw=1 pwm_hz=");
+  Serial.print("cap proto=1 fw=3.2.0 board=stm32f405 units=0 closed_loop=1 enc=4 calib=0 vin=1 amp=1 estop_hw=1 pwm_hz=");
   Serial.println(pwmHz);
 }
 
@@ -534,7 +596,7 @@ void handleLine(char* line){
   char c = line[0];
   char* p = line + 1;
   if(c == 'V'){
-    if(estop || lowbat) return;   // 50Hz로 오는 지령이라 nak를 쏟지 않는다 — hb의 estop=/lowbat=로 보인다
+    if(!driversAllowed() || lowbat) return;   // 50Hz로 오는 지령이라 nak를 쏟지 않는다 — hb의 estop=/rly=/lowbat=로 보인다
     int vx = nextInt(p), vy = nextInt(p), w = nextInt(p);
     if(vx > 255) vx = 255; if(vx < -255) vx = -255;
     if(vy > 255) vy = 255; if(vy < -255) vy = -255;
@@ -542,10 +604,21 @@ void handleLine(char* line){
     tgtVx = vx; tgtVy = vy; tgtW = w;
     testing = false;
   } else if(c == 'S'){
-    hardStop(); Serial.println("ok S");
+    hardStop();                    // S는 정지일 뿐 — E-stop 래치는 안 푼다. 젯슨이 S를 자동으로 많이 보낸다
+    Serial.println("ok S");        // (이동 끝·포트 재연결·넛지 끝) → S로 풀면 자동 시퀀스가 사람 확인 없이 재출발한다
+  } else if(c == 'X'){
+    // 보드 계약 §4: X 1 = 소프트 래치 걸기, X 0 = 해제(사람 확인 — 대시보드/조작대 [비상정지 해제] 버튼만 보낸다).
+    // 버튼이 눌린 채면 못 풀고, 용착(weld)은 전원을 껐다 켜야 풀린다. 인자가 없으면 상태만 답한다.
+    while(*p == ' ') p++;
+    if(*p == '1'){ estopLatch = true; hardStop(); updSleep(); Serial.println("ok X 1"); }
+    else if(*p == '0'){
+      if(weld)        Serial.println("nak weld");
+      else if(estop)  Serial.println("nak estop held");
+      else { estopLatch = false; updSleep(); Serial.println("ok X 0"); }
+    } else { Serial.print("ok X "); Serial.println(estopState()); }
   } else if(c == 'T'){
     int i = nextInt(p), d = nextInt(p);
-    if(estop){ Serial.println("nak estop"); return; }
+    if(!driversAllowed()){ Serial.println("nak estop"); return; }
     if(i >= 0 && i < 4){
       hardStop();
       encPoll();
@@ -623,7 +696,9 @@ void handleLine(char* line){
     Serial.print(" POL="); for(uint8_t i = 0; i < 4; i++){ Serial.print(POL[i]); Serial.print(','); }
     Serial.print(" hz="); Serial.print(pwmHz);
     Serial.print(" clk="); Serial.print(clkHse ? "HSE" : "HSI");
-    Serial.print(" estop="); Serial.print(estop);
+    Serial.print(" estop="); Serial.print(estopState());
+    Serial.print(" vm="); Serial.print(vmMv);
+    Serial.print(" rly="); Serial.print(rlyState());
     Serial.print(" bat="); Serial.print(batMv); Serial.print('/'); Serial.print(batLo);
     Serial.print(" ratio="); Serial.print(batRatio);
     Serial.print(" lowbat="); Serial.print(lowbat);
@@ -674,12 +749,13 @@ void setup(){
 
   Serial.begin(115200);     // USART1 PA9/PA10 (build_opt.h — 기본 Serial은 UART4=PA0/PA1이라 엔코더 D와 겹친다)
   hardStop();
-  estop = estopRaw = (digitalRead(PIN_ESTOP) == LOW);   // 켜질 때 이미 눌려 있으면 재운 채로 시작
-  digitalWrite(PIN_NSLEEP, estop ? LOW : HIGH);   // 이제 깨운다 (tWAKE ~1ms, 그동안은 어차피 0)
+  estop = estopRaw = estopLatch = (digitalRead(PIN_ESTOP) == LOW);   // 켜질 때 이미 눌려 있으면 래치·재운 채로
+  attachInterrupt(digitalPinToInterrupt(PIN_ESTOP), estopIsr, FALLING);
+  updSleep();               // 허용이면 이제 깨운다 (tWAKE ~1ms, 그동안은 어차피 0)
   ensureBor();
   lastCmd = lastTick = lastLoop = millis();
   printBootReport();
-  Serial.println("mecanum_stable v3.1-stm32 ready. proto: V vx vy w | S | T i d | P n | L .. | R a d | F hz | B r lo | G i kv ks kp ki | N i cpr dia | W | Q | U | ? (+*CRC)");
+  Serial.println("mecanum_stable v3.2-stm32 ready. proto: V vx vy w | S | T i d | P n | L .. | R a d | F hz | B r lo | G i kv ks kp ki | N i cpr dia | W | Q | U | ? (+*CRC)");
   printCap();
   if(estop) Serial.println("estop 1");
   for(uint8_t i = 0; i < 4; i++) encPrev[i] = encAcc[i];
@@ -753,7 +829,7 @@ void loop(){
     Serial.print(" enc=");
     for(uint8_t i = 0; i < 4; i++){ Serial.print(encAcc[i]); if(i < 3) Serial.print(','); }
     Serial.print(" vin="); Serial.print(batMv);
-    Serial.print(" v5="); Serial.print(adcMv(PIN_V5, va) * V5_DIV_X100 / 100);
+    Serial.print(" vm="); Serial.print(vmMv);
     Serial.print(" amp="); Serial.print(total);
     Serial.print(" ampw=");
     for(uint8_t i = 0; i < 4; i++){ Serial.print(amp[i]); if(i < 3) Serial.print(','); }
@@ -761,9 +837,10 @@ void loop(){
     Serial.print(" fltn="); Serial.print(fltCount);
     Serial.print(" spd=");
     for(uint8_t i = 0; i < 4; i++){ Serial.print((int32_t)WH[i].spd); if(i < 3) Serial.print(','); }
-    Serial.print(" estop="); Serial.print(estop);
+    Serial.print(" estop="); Serial.print(estopState());
     Serial.print(" lowbat="); Serial.print(lowbat);
-    Serial.print(" clf="); Serial.println(clfMask);
+    Serial.print(" clf="); Serial.print(clfMask);
+    Serial.print(" rly="); Serial.println(rlyState());
     digitalToggle(PIN_LED);
   }
 

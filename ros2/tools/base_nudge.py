@@ -81,7 +81,11 @@ def main() -> int:
                     help="이 펄스 동안만 듀티 상한(P n, ≤4095)을 올린다 — 하트비트 뒤에 보낸다")
     ap.add_argument("--dither", type=int, default=0,
                     help="정지마찰 깨기: 지령 동안 vy를 ±이 크기로 4Hz 흔든다(메모리 stiction-is-the-lever)")
+    ap.add_argument("--estop-reset", action="store_true",
+                    help="STM32 보드 비상정지 래치 해제(X 0) — 사람이 누르는 조작대 [비상정지 해제]만 쓴다")
     args = ap.parse_args()
+    if args.estop_reset:
+        return estop_reset(args.boot_wait)
     if not (args.vx or args.vy or args.w):
         print("지령이 전부 0이다 — 안 움직인다.")
         return 1
@@ -104,8 +108,28 @@ def main() -> int:
         time.sleep(0.4)
         st = link.stats()
         link.close()
-    print("정지. 보드:", {k: st.get(k) for k in ("connected", "board_resets", "boot_report") if k in st})
+    print("정지. 보드:", {k: st.get(k) for k in ("connected", "board_resets", "boot_report", "fw_state") if k in st})
+    if (st.get("fw_state") or {}).get("estop") in ("1", "2"):
+        print("⚠ 비상정지가 걸려 있어 안 움직였다 — 버튼을 놓고 [비상정지 해제]")
     return 0
+
+
+def estop_reset(boot_wait: float) -> int:
+    """`X 0`을 보내고 보드 답(ok X 0 / nak estop held / nak weld)을 보여 준다."""
+    link = open_link(boot_wait)
+    if link is None:
+        return 1
+    try:
+        if link.board != "stm32":
+            print("Uno 보드다 — 비상정지 래치가 없다(해제할 것 없음).")
+            return 0
+        ok = link.estop_reset()
+        time.sleep(1.2)                       # 답 + 다음 하트비트(estop=)까지
+        st = link.stats()
+    finally:
+        link.close()
+    print("X 0 →", "보냄" if ok else "실패", "· 응답:", st.get("acks"), st.get("error"), "· 상태:", st.get("fw_state"))
+    return 0 if (st.get("fw_state") or {}).get("estop") == "0" else 1
 
 
 if __name__ == "__main__":

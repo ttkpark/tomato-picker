@@ -28,6 +28,7 @@ from ..config import (
     BASE_DRIVE_SPEED,
     BASE_MAX_PWM,
     BASE_PWM_HZ,
+    BASE_PWM_HZ_STM32,
     BASE_SERIAL_BAUD,
     BASE_SERIAL_PORT,
     BASE_SLEW_ACCEL,
@@ -39,7 +40,8 @@ from .motor_link import MotorLink
 
 # 펌웨어에 밀어넣는 튜닝 값과, 그걸 만드는 명령. 보드가 리셋되면 전부 기본값으로
 # 돌아가므로 연결이 새로 열릴 때마다(MotorLink.generation 변화) 다시 보낸다.
-TUNING_KEYS = ("hz", "max_pwm", "accel", "decel")
+TUNING_KEYS = ("hz", "hz_stm32", "max_pwm", "accel", "decel")   # hz = Uno(≤1526), hz_stm32 = STM32(≤40000)
+HZ_MAX = {"hz": 1526, "hz_stm32": 40000}
 
 
 def _load_saved_tuning(path: str) -> dict:
@@ -65,6 +67,7 @@ class JetsonBase(MobileBase):
         # 스레드를 띄우고, 포트가 붙는 즉시 on_connect(_push_tuning)를 부른다.
         self._tuning = {
             "hz": BASE_PWM_HZ,
+            "hz_stm32": BASE_PWM_HZ_STM32,
             "max_pwm": BASE_MAX_PWM,
             "accel": BASE_SLEW_ACCEL,
             "decel": BASE_SLEW_DECEL,
@@ -85,11 +88,20 @@ class JetsonBase(MobileBase):
         return self._link
 
     def link_stats(self) -> dict:
-        return {**self._link.stats(), "tuning": dict(self._tuning)}
+        return {**self._link.stats(), "tuning": self.tuning}
+
+    def _hz_key(self, link: MotorLink | None = None) -> str:
+        """지금 붙은 보드의 주파수 칸. 보드를 모르면(첫 하트비트 전) Uno로 본다."""
+        return "hz_stm32" if (link or self._link).board == "stm32" else "hz"
 
     @property
     def tuning(self) -> dict:
-        return dict(self._tuning)
+        # 화면의 "hz"는 **지금 보드에 실제로 들어가는 값**이다(보드가 바뀌면 같이 바뀐다).
+        return {**self._tuning, "hz": self._tuning[self._hz_key()]}
+
+    def estop_reset(self) -> bool:
+        """[비상정지 해제] 버튼 → `X 0`. STM32 보드만 의미가 있다(Uno는 래치가 없다)."""
+        return self._link.estop_reset()
 
     def tune(self, **values) -> dict:
         """PWM 주파수·듀티상한·가감속을 **런타임에** 바꾼다(재플래시 불필요).
@@ -98,17 +110,20 @@ class JetsonBase(MobileBase):
         대시보드 "모터 튜닝" 패널이 이걸 부른다. 값은 인스턴스에 남아
         보드가 리셋돼 재연결돼도 자동으로 다시 밀어넣어진다.
         """
+        if values.get("hz") is not None:            # 화면의 hz = 지금 붙은 보드의 칸에 넣는다
+            self._tuning[self._hz_key()] = int(values["hz"])
         for key in TUNING_KEYS:
-            if values.get(key) is not None:
+            if key != "hz" and values.get(key) is not None:
                 self._tuning[key] = int(values[key])
-        self._tuning["hz"] = max(24, min(1526, self._tuning["hz"]))
+        for key, hi in HZ_MAX.items():
+            self._tuning[key] = max(24, min(hi, self._tuning[key]))
         self._tuning["max_pwm"] = max(200, min(4095, self._tuning["max_pwm"]))
         self._tuning["accel"] = max(1, min(255, self._tuning["accel"]))
         self._tuning["decel"] = max(1, min(255, self._tuning["decel"]))
         self._tuned_generation = -1   # 다음 지령에서 다시 밀어넣게
         self._save_tuning()
         self._ensure_tuning()
-        return dict(self._tuning)
+        return self.tuning
 
     def _save_tuning(self) -> None:
         """고른 값을 디스크에 남긴다 — 서비스가 재시작돼도 살아남게.
@@ -156,7 +171,7 @@ class JetsonBase(MobileBase):
         """
         link = link or self._link
         t = self._tuning
-        ok = link.send_raw(f"F {t['hz']}")
+        ok = link.send_raw(f"F {t[self._hz_key(link)]}")
         ok = link.send_raw(f"P {t['max_pwm']}") and ok
         ok = link.send_raw(f"R {t['accel']} {t['decel']}") and ok
         if ok:

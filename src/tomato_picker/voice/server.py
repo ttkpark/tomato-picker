@@ -539,6 +539,15 @@ def _handle_command(body: dict, arm, base, vision=None, line=None) -> tuple[bool
             base.hold(0, 0, 0)  # 홀드 세션이 돌고 있으면 그걸 먼저 멈춘다
             base.stop()
             return True, "정지"
+        if action == "base_estop_reset":
+            # [비상정지 해제] — STM32 보드의 E-stop 래치를 푼다(X 0). 사람이 누르는 이 버튼만 보낸다:
+            # S로 풀게 하면 이동 끝·재연결에서 자동으로 나가는 S가 사람 확인 없이 래치를 풀어 버린다.
+            if base is None or not hasattr(base, "estop_reset"):
+                return False, "바퀴 미연결"
+            base.hold(0, 0, 0)
+            if not base.estop_reset():
+                return False, "링크가 안 열려 있다"
+            return True, "비상정지 해제(X 0) 보냄 — 버튼이 눌린 채면 안 풀린다(hb estop=1)"
         if action == "base_tune":
             # PWM 주파수·듀티상한·가감속 실시간 변경(재플래시 불필요).
             if base is None or not hasattr(base, "tune"):

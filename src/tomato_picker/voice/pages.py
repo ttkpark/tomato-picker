@@ -157,6 +157,11 @@ def _shell(title: str, body: str, script: str, here: str, common: bool = True) -
 
 _CONTROL_BODY = """
 <div class="card" id="link">링크 상태 확인 중...</div>
+<div class="card" id="estopCard" style="display:none">
+  <span id="estopTxt"></span>
+  <button id="estopReset" onclick="cmd({action:'base_estop_reset'})">비상정지 해제 (X 0)</button>
+  <div class="dim" id="estopEv"></div>
+</div>
 
 <div class="card" id="keys">⌨ <b>키보드</b>: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 또는 방향키 = 이동(누르는 동안 계속) ·
 <kbd>Q</kbd><kbd>E</kbd> = 회전 · <kbd>Space</kbd> = 정지 · <kbd>0</kbd>~<kbd>9</kbd> = 프리셋(현재 모드로) ·
@@ -529,6 +534,24 @@ _CONTROL_JS = """
     if (base.error) bits.push(base.error);
     const link = document.getElementById('link');
     link.textContent = bits.join('  ·  ');
+    // STM32 보드만: 비상정지 상태. 버튼을 놓아도 래치가 걸려 있다(estop=2) — 사람이 [비상정지 해제]를 눌러야 다시 간다.
+    // S(정지)로는 안 풀린다: 이동 끝·재연결이 S를 자동으로 보내 사람 확인 없이 재출발하게 되기 때문.
+    const fs = base.fw_state || {}, ec = document.getElementById('estopCard');
+    if (ec) {
+      ec.style.display = base.board === 'stm32' ? '' : 'none';
+      const es = fs.estop, rly = fs.rly;
+      const txt = rly === 'W' ? '⛔ 릴레이 접점 용착 — 하드웨어 비상정지가 안 듣습니다. 전원을 끄고 릴레이를 확인하세요'
+                : es === '1' ? '🛑 비상정지 눌림 — 모터 전원 차단됨'
+                : es === '2' ? '⏸ 비상정지 풀림·잠김 — 주변을 확인하고 [비상정지 해제]를 누르세요'
+                : rly === 'O' ? '⚠ 릴레이가 안 붙습니다(E-STOP 단자 J6 열림?)'
+                : fs.lowbat === '1' ? '🔋 저전압 정지 — 배터리 ' + (fs.vin || '?') + 'mV'
+                : '● 비상정지 정상 · 배터리 ' + (fs.vin || '?') + 'mV · 모터 ' + (fs.vm || '?') + 'mV';
+      document.getElementById('estopTxt').textContent = txt;
+      document.getElementById('estopReset').disabled = es !== '2';
+      document.getElementById('estopEv').textContent = (base.events || []).join('  ·  ');
+      ec.style.background = (rly === 'W' || es === '1') ? 'color-mix(in srgb, #e74c3c 22%, Canvas)'
+                          : (es === '2' || rly === 'O' || fs.lowbat === '1') ? 'color-mix(in srgb, #f39c12 22%, Canvas)' : '';
+    }
     link.style.background = ok ? 'color-mix(in srgb, #2ecc71 18%, Canvas)'
                                : 'color-mix(in srgb, #e74c3c 18%, Canvas)';
 

@@ -31,7 +31,7 @@ API 요약 (전부 JSON)
     GET  /cam/<이름>.jpg             카메라 넷(d405_color|d405_depth|astra_color|astra_depth)
     POST /click   {u,v,mode}         mode=target(줄기) | grip(십자)
     POST /clear                      표적 지움
-    POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge|space(snap|scan|go|step|wrist|clear)
+    POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge|estop_reset|space(snap|scan|go|step|wrist|clear)
     POST /stop                       도는 일을 끊는다
     GET  /space?mt=                  공간 지도(격자·복셀·자세·길) — mt가 같으면 {same:true}
     GET  /imu                        차체 회전량(tools/imu_yaw.py가 쓰는 /dev/shm/imu.json 그대로 + age)
@@ -410,6 +410,10 @@ def build(job, args):
         if args.get("max_pwm"):
             a += ["--max-pwm", "%d" % int(num(args, "max_pwm", 0, 0, 4095))]
         return a
+    if job == "estop_reset":
+        # STM32 보드 비상정지 래치 해제(X 0). 버튼을 놓아도 보드는 잠겨 있다 — 사람이 이걸 눌러야 다시 간다.
+        # S(정지)로는 안 풀리게 했다(넛지·이동 끝의 자동 S가 사람 확인 없이 풀어 버리므로, 2026-11-02 결정).
+        return [PY, T("base_nudge.py"), "--estop-reset"]
     if job == "space":
         # **집 안 공간 지도**(space_map.py) — 한 장 담기·제자리 스캔·목표로 가기·지우기.
         # 주행 포트를 쥐는 일이라 넛지와 같이 한 번에 하나만 돈다.
@@ -748,6 +752,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <div class="row" style="margin-top:6px">
       <button onclick="nudge(0,0,1)">↺ 좌회전</button>
       <button onclick="nudge(0,0,-1)">↻ 우회전</button>
+      <button onclick="run('estop_reset',{})" title="STM32 보드: 비상정지 버튼을 놓은 뒤 주변을 확인하고 누른다">비상정지 해제</button>
     </div>
     <div class="k" style="margin-top:4px">한 번 짧게 톡 움직인다(케이스 장착 후 문턱 재측정 필요 — 2026-10-22 듀티 37% 정지·58% 주행). ⚠ tomato-voice가 꺼져 있어야 함.</div>
   </div>

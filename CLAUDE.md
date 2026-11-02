@@ -109,6 +109,7 @@ behavior the task requires stay in.
   현재 기본 700Hz·듀티 4095(2026-10-22: 케이스 무게로 2600은 정지마찰을 못 넘김). ⚠ 포트를 열면 커널 DTR 토글로 **Uno가 리셋**되므로
   설정은 **첫 하트비트 이후**에 넣어야 먹는다(부트로더 ~2초가 다 먹어버림).
   **차기 = STM32F405 보드**(2026-11-02~, 미제작): 펌웨어 [`firmware/mecanum_stm32/`](firmware/mecanum_stm32/)(같은 프로토콜 + 엔코더 4·전류·nFAULT, 젯슨에서 `U`→`stm32flash`) · 기판 [`hardware_design/mecanum_stm32_pcb/`](hardware_design/mecanum_stm32_pcb/)(`gen_pcb.py`=회로도 겸 배치, DRV8874×4·CH340C+ADuM1201 절연·하드웨어 비상정지 릴레이, 배선 완료(DRC 오류 0)·거버 전, 부품은 엘레파츠 장바구니). 요구사항 = [`docs/STM32_메카넘_베이스컨트롤러_명세서.md`](docs/STM32_메카넘_베이스컨트롤러_명세서.md) v0.2.
+  ⚠ STM32 보드 비상정지는 **놓아도 잠긴다** — `X 0`(대시보드·조작대 [비상정지 해제])으로만 풀린다, `S`로는 안 풀림. 젯슨은 하트비트로 보드를 알아보고(`MotorLink.board`) 주파수를 보드별로 민다(Uno ≤1526Hz, STM32 20kHz). 검사 = `python tools/stm32_link_check.py`.
   ⚠️ **`firmware/PS2-MOTOR/`는 레거시**(PS2 직접조종, 불안정). `mecanum_serial/`은 폐기. 새 작업은 `mecanum_stable` 기준.
   모터↔바퀴 실측(2026-10-22 케이스 장착 후): A=RR B=RL C=FR D=FL, `POL={-1,1,-1,1}`.
 - **게임패드 주행은 폐지했다(2026-10-22)** — `controller_drive.py`·`controller-drive.service`·셋업 문서를

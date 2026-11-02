@@ -115,6 +115,11 @@ class MotorLink:
         self._boot_report: str | None = None   # 마지막 리셋 원인 보고 원문
         self._boot_causes: dict[str, int] = {}  # 원인별 누적 — 이게 진단의 결론이다
         self._acks: list[str] = []   # 펌웨어 "ok ..." 확인 응답(최근 4개)
+        # 보드 종류 — STM32(mecanum_stm32)는 hb에 estop=·enc= 같은 토큰을 더 싣는다. 포트를 열어도 리셋되지
+        # 않아 부팅 배너를 못 볼 수 있으므로 **하트비트로** 알아본다. None = 아직 모름, "uno" / "stm32".
+        self._board: str | None = None
+        self._fw_state: dict[str, str] = {}   # STM32 hb의 estop/rly/lowbat/vin/vm (대시보드 표시용)
+        self._events: list[str] = []          # estop 1/0 · weld 1 · rlyopen 1/0 · lowbat 1/0 · clfault i (최근 6개)
         self._pending_on_connect = False  # 첫 하트비트를 기다리는 중인가
         self._rx_buf = b""               # 줄 중간에서 끊긴 수신 조각
         self._last_error: str | None = None
@@ -172,6 +177,25 @@ class MotorLink:
             self._fail(exc)
             return False
 
+    def estop_reset(self) -> bool:
+        """비상정지 래치 해제(`X 0`) — **사람이 누르는 [비상정지 해제] 버튼만** 부른다.
+
+        STM32 보드는 E-stop 버튼을 놓아도 래치가 걸린 채 멈춰 있고(젯슨이 V를 계속 보내므로 놓자마자
+        달리지 않게), `X 0`으로만 풀린다. `S`로는 안 풀린다 — 이동 끝·넛지 끝·포트 재연결이 S를
+        자동으로 보내서 자동 시퀀스가 사람 확인 없이 재출발하기 때문(2026-11-02 결정).
+        버튼이 눌린 채면 `nak estop held`, 릴레이 용착이면 `nak weld`(전원을 껐다 켜야 함)가 온다.
+        Uno 보드는 X를 모른다(무시) — 래치 자체가 없다.
+        """
+        with self._lock:
+            self._target = (0, 0, 0)          # 풀리는 순간 옛 목표로 튀어 나가지 않게
+            self._target_ts = time.monotonic()
+        return self.send_raw("X 0")
+
+    @property
+    def board(self) -> str | None:
+        """'stm32' / 'uno' / None(첫 하트비트 전)."""
+        return self._board
+
     def stats(self) -> dict:
         """링크 품질 스냅샷 — 대시보드 배지/디버깅용."""
         age = time.monotonic() - self._last_hb if self._last_hb else None
@@ -195,6 +219,9 @@ class MotorLink:
             # 원인별 누적 — "USB 전원 멀쩡한데 왜 재부팅하나"의 최종 답이 여기 나온다.
             "boot_causes": dict(self._boot_causes),
             "acks": list(self._acks),
+            "board": self._board,
+            "fw_state": dict(self._fw_state),   # STM32: estop 0/1/2 · rly 1/0/W/O · lowbat · vin/vm(mV)
+            "events": list(self._events),
             "error": self._last_error,
             "target": self._target,
         }
@@ -249,6 +276,8 @@ class MotorLink:
         self._generation += 1
         self._opened_at = time.monotonic()
         self._last_hb = 0.0   # 새 연결 — 옛 하트비트 시각은 무효
+        self._board = None    # 다른 보드가 꽂혔을 수 있다 — 첫 하트비트로 다시 알아본다
+        self._fw_state = {}
         # 이미 돌고 있던 보드일 수도, 방금 리셋된 보드일 수도 있다 — 어느 쪽이든
         # 확실히 멈춘 상태에서 시작한다.
         try:
@@ -423,6 +452,11 @@ class MotorLink:
                         self._i2c_err = _int_or(token[4:], self._i2c_err)
                     elif token.startswith("wdt="):     # v2.1
                         self._wdt_near = _int_or(token[4:], self._wdt_near)
+                    else:
+                        key, eq, val = token.partition("=")
+                        if eq and key in ("estop", "rly", "lowbat", "vin", "vm"):   # STM32 v3.2
+                            self._fw_state[key] = val
+                self._board = "stm32" if "estop" in self._fw_state else "uno"
                 # ★ 보드 재부팅 판정 — 우리가 안 시켰는데 uptime/수신카운터가 되감겼다.
                 #   포트는 멀쩡히 열려 있어 write 예외도, 재연결도 없다. 이걸 안 보면
                 #   보드는 컴파일 기본값(1500Hz·듀티2000·슬루6/12)으로 돌아가 있는데
@@ -463,6 +497,10 @@ class MotorLink:
             elif line.startswith("nak"):
                 self._nak += 1
                 self._last_error = line
+            elif line.split(" ")[0] in ("estop", "weld", "rlyopen", "lowbat", "clfault"):
+                # STM32 이벤트 줄(한 번씩만 온다) — 화면에서 "왜 안 움직이나"를 바로 보이게.
+                self._events.append(time.strftime("%H:%M:%S ") + line)
+                del self._events[:-6]
 
 
 def _clamp(v: int) -> int:
