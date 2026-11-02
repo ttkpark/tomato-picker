@@ -55,22 +55,32 @@ def band():
     return gm.band_uvz(bgr, dep)
 
 
-def wait_band(need_gone, timeout, steady_s=2.0, tol_px=8.0):
-    """띠가 steady_s초 동안 tol_px 안에서 가만히 보이면 그 자리. need_gone이면 먼저 한 번 안 보여야 한다."""
-    t_end = time.time() + timeout
+def wait_band(need_gone, timeout, steady_s=2.0, tol_px=8.0, last=None, moved_px=20.0, blink_s=1.0):
+    """띠가 steady_s초 동안 tol_px 안에서 가만히 보이면 그 자리.
+    need_gone이면 먼저 '다시 걸렸다'를 봐야 한다 — 한 번 안 보였거나, 지난 회 자리(last)에서 moved_px 넘게 옮겨졌거나.
+    ⚠ 한두 프레임 못 찾는 건(blink_s 안) 가만히 재기를 끊지 않는다. timeout ≤ 0이면 끝없이 기다린다."""
+    t_end = time.time() + timeout if timeout > 0 else float("inf")
     gone = not need_gone
-    since, ref = None, None
+    since, ref, miss_t = None, None, None
     while time.time() < t_end:
         b = band()
+        now = time.time()
         if b is None:
-            if not gone:
-                print("  띠가 사라졌다 — 다시 걸리길 기다린다")
-            gone, since, ref = True, None, None
-        elif gone:
-            if ref is None or abs(b[0] - ref[0]) > tol_px or abs(b[1] - ref[1]) > tol_px:
-                since, ref = time.time(), b      # 움직이는 중(사람 손) — 처음부터 다시 잰다
-            elif time.time() - since >= steady_s:
-                return b
+            miss_t = miss_t or now
+            if now - miss_t >= blink_s:
+                if not gone:
+                    print("  띠가 사라졌다 — 다시 걸리길 기다린다")
+                gone, since, ref = True, None, None
+        else:
+            miss_t = None
+            if not gone and last is not None and abs(b[0] - last[0]) + abs(b[1] - last[1]) > moved_px:
+                print("  띠가 옮겨졌다 — 다시 걸린 것으로 본다")
+                gone = True
+            if gone:
+                if ref is None or abs(b[0] - ref[0]) > tol_px or abs(b[1] - ref[1]) > tol_px:
+                    since, ref = now, b      # 움직이는 중(사람 손) — 처음부터 다시 잰다
+                elif now - since >= steady_s:
+                    return b
         time.sleep(0.3)
     return None
 
@@ -84,7 +94,7 @@ def snap(tag):
 
 def selftest():
     global band
-    seq = iter([(400, 300, 100)] * 3 + [None] * 2 + [(300, 200, 90), (420, 310, 100)] + [(421, 311, 100)] * 30)
+    seq = iter([(400, 300, 100)] * 3 + [None] * 6 + [(300, 200, 90), (420, 310, 100)] + [(421, 311, 100)] * 30)
     clock = [0.0]
     real_band, real_time, real_sleep = band, time.time, time.sleep
     band = lambda: next(seq)                                       # noqa: E731
@@ -95,6 +105,12 @@ def selftest():
         assert b is not None and abs(b[0] - 421) < 1, b          # 사라짐 → 움직임(손) 무시 → 가만히 2초
         seq = iter([None] * 300)
         assert wait_band(need_gone=False, timeout=5) is None
+        seq = iter([(400, 300, 100)] * 3 + [None] + [(400, 300, 100)] * 30)   # 한 프레임 깜빡임은 무시
+        assert wait_band(need_gone=False, timeout=60) is not None
+        seq = iter([(460, 300, 100)] * 30)                                     # 안 사라졌어도 옮겨 걸었으면 된다
+        assert wait_band(need_gone=True, timeout=60, last=(400, 300, 100)) is not None
+        seq = iter([(400, 300, 100)] * 300)                                    # 그대로면 기다린다
+        assert wait_band(need_gone=True, timeout=30, last=(400, 300, 100)) is None
     finally:
         band, time.time, time.sleep = real_band, real_time, real_sleep
     print("selftest OK")
@@ -109,7 +125,7 @@ def main():
     ap.add_argument("--stop-z", type=float, default=75.0)
     ap.add_argument("--adv", type=float, default=12.0, help="나아가는 한 걸음(mm) — 8이면 느리다")
     ap.add_argument("--hold", type=float, default=3.0, help="물었으면 이만큼 들고 있다가 놓는다(초)")
-    ap.add_argument("--wait", type=float, default=300.0, help="띠를 기다리는 최대 시간(초)")
+    ap.add_argument("--wait", type=float, default=0.0, help="띠를 기다리는 최대 시간(초, 0=끝없이 — 사람이 거는 데 몇 분 걸린다)")
     ap.add_argument("--no-rehang", action="store_true", help="띠가 사라졌다 다시 보이길 안 기다린다(사람 없이 반복)")
     a = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
@@ -117,7 +133,7 @@ def main():
     # 물고 있을 수도 있다 — 놓지 않고 시작 자세로 가면 토마토를 끌고 간다
     run("tool_jog.py", "--grip", "78", "--left", "12")
     run("tool_jog.py", "--horiz", "-35")
-    held_n, last_held = 0, False
+    held_n, last_held, last_band = 0, False, None
     for n in range(1, a.trials + 1):
         print("\n=== %d/%d ===" % (n, a.trials))
         rc, _ = run("arm_stage.py", "--target=" + a.start)
@@ -125,11 +141,12 @@ def main():
             print("시작 자세로 못 갔다 — 멈춘다")
             return 1
         # 물었던 다음 회만 '뗐다 다시 걸기'를 기다린다 — 빗나간 뒤엔 그대로 걸려 있으니 곧장 다시 문다
-        b = wait_band(need_gone=(last_held and not a.no_rehang), timeout=a.wait)
+        b = wait_band(need_gone=(last_held and not a.no_rehang), timeout=a.wait, last=last_band)
         if b is None:
             print("띠가 %.0f초 안에 가만히 보이지 않았다 — 멈춘다" % a.wait)
             break
         u, v, z = b
+        last_band = b
         print("  띠 (%.0f, %.0f) %.0fmm — 문다" % (u, v, z))
         json.dump({"u": int(round(u)), "v": int(round(v)), "z": z, "when": time.strftime("%Y-%m-%d %H:%M:%S"),
                    "by": "grasp_repeat"}, open(CLICK, "w"), indent=1)
