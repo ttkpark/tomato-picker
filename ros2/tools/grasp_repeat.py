@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""**잡기 반복** — 노란 띠를 스스로 찾아 물고, 놓고, 다시 걸리면 또 문다.
+
+    ~/lerobot/.venv/bin/python ros2/tools/grasp_repeat.py                 # 10회
+    ~/lerobot/.venv/bin/python ros2/tools/grasp_repeat.py --trials 3 --no-rehang   # 사람 없이 그대로 3회
+
+한 회 = 시작 자세 → 띠가 2초 가만히 보이면 그 자리를 클릭으로 → `stem_grasp`(조작대 [잡으러 간다]와 같은 인자,
+걸음만 12mm) → 물었으면 --hold초 들고 있다가 놓기(열기 → 왼쪽 12 → 뒤로) → 시작 자세.
+물었던 다음 회는 **띠가 한 번 사라졌다 다시 보여야**(사람이 토마토를 뗐다가 다시 걸어야) 시작한다. 빗나간 뒤엔 곧장 다시.
+
+⚠ 띠 = 줄기에 감은 노란 테이프(grip_uv_measure.band_uvz). 띠가 없으면 시작하지 않는다.
+⚠ 기록: ~/grasp_repeat/log.jsonl (한 줄 = 한 회) + 회마다 시작·끝 사진.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import grip_uv_measure as gm                                # noqa: E402
+
+PY = sys.executable
+OUT = os.path.expanduser("~/grasp_repeat")
+CLICK = os.path.expanduser("~/click_target.json")
+# 11/02 22회(물었다)의 시작 자세 — 띠까지 ≈100mm, 문 높이·피치
+START = "-7.1,75.5,132.2,-28.8,7.1"
+
+
+def run(name, *a):
+    r = subprocess.run([PY, os.path.join(HERE, name), *a], capture_output=True, text=True)
+    sys.stdout.write(r.stdout[-3000:])
+    return r.returncode, r.stdout
+
+
+def band():
+    """지금 프레임의 띠 (u, v, z) 또는 None."""
+    import cv2
+    try:
+        bgr = cv2.imread(gm.COLOR)
+        sc = float(json.load(open(gm.META)).get("depth_scale_mm", 1.0))
+        dep = np.load(gm.DEPTH).astype(float) * sc
+    except Exception:                                      # noqa: BLE001
+        return None
+    if bgr is None or dep.shape[:2] != bgr.shape[:2]:
+        return None
+    return gm.band_uvz(bgr, dep)
+
+
+def wait_band(need_gone, timeout, steady_s=2.0, tol_px=8.0):
+    """띠가 steady_s초 동안 tol_px 안에서 가만히 보이면 그 자리. need_gone이면 먼저 한 번 안 보여야 한다."""
+    t_end = time.time() + timeout
+    gone = not need_gone
+    since, ref = None, None
+    while time.time() < t_end:
+        b = band()
+        if b is None:
+            if not gone:
+                print("  띠가 사라졌다 — 다시 걸리길 기다린다")
+            gone, since, ref = True, None, None
+        elif gone:
+            if ref is None or abs(b[0] - ref[0]) > tol_px or abs(b[1] - ref[1]) > tol_px:
+                since, ref = time.time(), b      # 움직이는 중(사람 손) — 처음부터 다시 잰다
+            elif time.time() - since >= steady_s:
+                return b
+        time.sleep(0.3)
+    return None
+
+
+def snap(tag):
+    try:
+        shutil.copy(gm.COLOR, os.path.join(OUT, "%s_%s.jpg" % (time.strftime("%m%d-%H%M%S"), tag)))
+    except OSError:
+        pass
+
+
+def selftest():
+    global band
+    seq = iter([(400, 300, 100)] * 3 + [None] * 2 + [(300, 200, 90), (420, 310, 100)] + [(421, 311, 100)] * 30)
+    clock = [0.0]
+    real_band, real_time, real_sleep = band, time.time, time.sleep
+    band = lambda: next(seq)                                       # noqa: E731
+    time.time = lambda: clock[0]
+    time.sleep = lambda s: clock.__setitem__(0, clock[0] + s)
+    try:
+        b = wait_band(need_gone=True, timeout=60)
+        assert b is not None and abs(b[0] - 421) < 1, b          # 사라짐 → 움직임(손) 무시 → 가만히 2초
+        seq = iter([None] * 300)
+        assert wait_band(need_gone=False, timeout=5) is None
+    finally:
+        band, time.time, time.sleep = real_band, real_time, real_sleep
+    print("selftest OK")
+
+
+def main():
+    if "--selftest" in sys.argv:
+        return selftest()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--trials", type=int, default=10)
+    ap.add_argument("--start", default=START, help="시작 자세(관절 5개, 도)")
+    ap.add_argument("--stop-z", type=float, default=75.0)
+    ap.add_argument("--adv", type=float, default=12.0, help="나아가는 한 걸음(mm) — 8이면 느리다")
+    ap.add_argument("--hold", type=float, default=3.0, help="물었으면 이만큼 들고 있다가 놓는다(초)")
+    ap.add_argument("--wait", type=float, default=300.0, help="띠를 기다리는 최대 시간(초)")
+    ap.add_argument("--no-rehang", action="store_true", help="띠가 사라졌다 다시 보이길 안 기다린다(사람 없이 반복)")
+    a = ap.parse_args()
+    os.makedirs(OUT, exist_ok=True)
+    a.trials = max(1, a.trials)
+    # 물고 있을 수도 있다 — 놓지 않고 시작 자세로 가면 토마토를 끌고 간다
+    run("tool_jog.py", "--grip", "78", "--left", "12")
+    run("tool_jog.py", "--horiz", "-35")
+    held_n, last_held = 0, False
+    for n in range(1, a.trials + 1):
+        print("\n=== %d/%d ===" % (n, a.trials))
+        rc, _ = run("arm_stage.py", "--target=" + a.start)
+        if rc:
+            print("시작 자세로 못 갔다 — 멈춘다")
+            return 1
+        # 물었던 다음 회만 '뗐다 다시 걸기'를 기다린다 — 빗나간 뒤엔 그대로 걸려 있으니 곧장 다시 문다
+        b = wait_band(need_gone=(last_held and not a.no_rehang), timeout=a.wait)
+        if b is None:
+            print("띠가 %.0f초 안에 가만히 보이지 않았다 — 멈춘다" % a.wait)
+            break
+        u, v, z = b
+        print("  띠 (%.0f, %.0f) %.0fmm — 문다" % (u, v, z))
+        json.dump({"u": int(round(u)), "v": int(round(v)), "z": z, "when": time.strftime("%Y-%m-%d %H:%M:%S"),
+                   "by": "grasp_repeat"}, open(CLICK, "w"), indent=1)
+        snap("%02d_start" % n)
+        t0 = time.time()
+        rc, out = run("stem_grasp.py", "--aim", "click", "--steps", "16", "--adv", "%.0f" % a.adv,
+                      "--max-turn", "2", "--gain", "0.35", "--tol", "12", "--rejacobian", "6",
+                      "--stop-z", "%.0f" % a.stop_z, "--max-adv", "0", "--max-dz", "25",
+                      "--skip-aim-px", "50", "--trust-first-z")
+        held = rc == 0 and "**물었다**" in out
+        secs = time.time() - t0
+        snap("%02d_%s" % (n, "held" if held else "miss"))
+        held_n += held
+        last_held = held
+        print("  → %s (%.0f초) · 누적 %d/%d" % ("물었다" if held else "못 물었다", secs, held_n, n))
+        with open(os.path.join(OUT, "log.jsonl"), "a") as f:
+            f.write(json.dumps({"when": time.strftime("%Y-%m-%d %H:%M:%S"), "n": n, "held": held,
+                                "secs": round(secs, 1), "band": [round(u), round(v), round(z)]}) + "\n")
+        if held:
+            time.sleep(a.hold)
+        # 놓기 — 조작대 [놓기]와 같은 순서(열기 → 고정 턱 떼기 → 뒤로). 빈손이어도 연다.
+        run("tool_jog.py", "--grip", "78", "--left", "12")
+        run("tool_jog.py", "--horiz", "-35")
+    print("\n끝: %d회 중 %d회 물었다" % (n, held_n))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

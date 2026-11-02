@@ -255,6 +255,12 @@ def build(job, args):
         # 놓기 — 열기 → 고정 턱 떼기 → 빼기를 **차례로**(한 벡터로 합치면 빼면서 쓸고 나온다). 한 프로세스 그룹이라 [멈춤]이 다 끊는다.
         tj = shlex.quote(T("tool_jog.py"))
         return ["/bin/sh", "-c", "%s %s --grip 78 --left 12 && %s %s --along -30" % (PY, tj, PY, tj)]
+    if job == "repeat":
+        # 잡기 반복 — 노란 띠를 스스로 찾아 물고 놓고, 다시 걸리면 또(grasp_repeat.py 머리말)
+        a = [PY, T("grasp_repeat.py"), "--trials", "%d" % int(num(args, "trials", 10, 1, 50))]
+        if args.get("no_rehang"):
+            a += ["--no-rehang"]
+        return a
     if job == "stage":
         t = str(args.get("target", PARK))
         parts = t.replace(" ", "").split(",")
@@ -664,6 +670,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button class="go" onclick="run('grasp',grasp(false))">잡으러 간다</button>
       <button onclick="run('grasp',grasp(true))">안 닫고 가기</button>
       <button onclick="run('grasp',Object.assign(grasp(true),{dry:1}))">겨냥만 본다</button>
+      <button onclick="run('repeat',{trials:10})" title="줄기에 감은 노란 띠를 스스로 찾아 문다 → 3초 들고 놓는다 → 토마토를 뗐다 다시 걸면 또. 빗나가면 곧장 다시. 기록 ~/grasp_repeat/">🔁 반복 잡기(노란 띠)</button>
     </div>
     </div>
   </div>

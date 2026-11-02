@@ -1308,7 +1308,8 @@ def main() -> int:
                 if float(np.linalg.norm(d)) <= args.tol:
                     break
                 m = np.clip(np.linalg.lstsq(J, d, rcond=None)[0], -40.0, 40.0)
-                c = to_deg(io.read())
+                # ⚠ c는 **직전 지령**이다(읽은 자리 아님) — 읽은 자리에서 다음 걸음을 짜면 처짐이 쌓인다:
+                #   11/02 반복 1회차는 '위 +4mm'를 시켰는데 실제로 12.6mm 내려가 꽃받침을 밀었다.
                 nxt = None
                 for k in (1.0, 0.6, 0.3):      # ⚠ 다 못 가면 갈 수 있는 만큼 — 11/01 7회차: 위 40mm가 막히자 통째로 포기했다
                     dd, res, big = move_base(c, (axes[0] * m[0] + axes[1] * m[1]) * k)
@@ -1320,6 +1321,8 @@ def main() -> int:
                     print("  시작 맞춤: 옆 %+.0f 위 %+.0fmm는 30%%도 못 간다 — 여기까지" % (m[0], m[1]))
                     break
                 go(nxt, 1.0)
+                c = nxt
+                align_cmd[0] = nxt
                 pu, pv = u + float(J[0] @ m), v + float(J[1] @ m)
                 r = see2((pu, pv))
                 u, v = (r[0], r[1]) if r is not None else (pu, pv)
@@ -1330,10 +1333,11 @@ def main() -> int:
             return u, v, z
 
         lat = [None]             # (화소/mm × 깊이, 옆 방향) — align_start가 잰다
+        align_cmd = [None]       # 시작 맞춤의 마지막 지령 — 전진은 여기서 출발한다(읽은 자리면 처짐만큼 낮아진다)
         lat_sum = [0.0]          # 나아가며 옆으로 갚은 합(mm)
         if args.skip_aim_px > 0 and z > 0 and math.hypot(u - tu, v - tv) > args.tol:
             u, v, z = align_start(u, v, z)
-            cur = to_deg(io.read())
+            cur = dict(align_cmd[0]) if align_cmd[0] else to_deg(io.read())
             base = dict(cur)
             tu, tv = aim_uv(z)
             if math.hypot(u - tu, v - tv) > args.skip_aim_px:
