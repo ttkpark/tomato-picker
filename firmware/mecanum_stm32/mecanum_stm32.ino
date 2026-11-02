@@ -3,9 +3,9 @@
 //
 //  (1) PCA9685(I2C) 대신 타이머 PWM 직결. v2.1 워치독의 1순위 용의자였던 "I2C 버스 행"이
 //      원리적으로 없다. 호환을 위해 i2c=/i2cerr= 칸은 남기되 항상 0이다.
-//  (2) PWM 24~40000Hz. PCA9685 상한(1526Hz)이 없으니 20kHz(초음파)로 올려 "소음↔속도" 맞바꿈을
-//      끊을 수 있다. 그래도 기본값은 Uno와 같은 1500Hz — 젯슨이 첫 hb 뒤 F/P/R을 되밀어 넣으므로
-//      기본을 바꾸면 "보드를 바꿔서 달라진 것"과 "주파수를 바꿔서 달라진 것"이 섞인다.
+//  (2) PWM 24~40000Hz, 기본 **20kHz**(명세서 v0.1: 10~20kHz — 가청 대역 밖). PCA9685 상한(1526Hz)이
+//      없어 "소음↔속도" 맞바꿈이 끊긴다. ⚠ 젯슨이 첫 hb 뒤 base_tuning의 F(지금 700)를 되밀어 넣으니
+//      이 보드에선 그 값을 20000으로 바꿔야 기본이 산다(젯슨 코드는 그대로).
 //  (3) 엔코더 4채널을 **타이머 엔코더 모드**로 센다. 인터럽트로 세지 않는다 — 카운트는 하드웨어가
 //      하고 loop는 읽기만 하므로, loop가 직렬 송신으로 몇 ms 막혀도 펄스를 하나도 안 잃는다.
 //      TIM2/TIM5는 32비트, TIM3/TIM4는 16비트라 소프트웨어로 32비트로 이어 붙인다.
@@ -19,6 +19,11 @@
 //  (6) BOR 문턱을 옵션바이트로 Level 3(≈2.7V)에 못 박는다. 공장값은 BOR 꺼짐이라 3.3V 레일이 처져도
 //      리셋 대신 "이상 동작"을 한다 — 그러면 cause=BOD가 영영 안 찍힌다.
 //  (7) U = 시스템 부트로더 진입. 젯슨에서 같은 포트로 stm32flash가 굽는다(BOOT0 버튼 불필요).
+//  (8) 하드웨어 E-stop(PB13). 버튼이 릴레이 코일을 끊어 VM을 **물리적으로** 자른다 — 펌웨어는 그걸
+//      읽고 따라 서기만 한다(PWM 0·드라이버 재움). 소프트 정지(S·데드맨)는 그대로 보조.
+//  (9) 배터리 감시(PC4, 100k/10k). 1초 평균이 문턱 아래로 2초 → 감속 정지 후 V 무시.
+//  (10) 바퀴별 속도 PID(엔코더). G로 kv>0을 준 바퀴만 폐루프 — 안 주면 Uno와 똑같은 개루프다.
+//       V는 그대로 "−255..255 = 최고속 대비 비율"이라 젯슨은 안 바뀐다.
 //
 // 프로토콜 (라인 단위, '\n' 종료. 모든 라인에 선택적으로 "*HH" 체크섬):
 //   V <vx> <vy> <w>   속도지령. vx=전진+, vy=우평행+, w=시계회전+. 각 -255..255. (무응답)
@@ -27,12 +32,16 @@
 //   P <n>             최대 PWM 스케일 (0..4095 척도 유지. 기본 2000)
 //   L <a><b><c><d>    바퀴 극성 (각 1/-1)
 //   R <accel> <decel> 슬루 스텝. 기본 6 / 12
-//   F <hz>            PWM 주파수 (24~40000)
+//   F <hz>            PWM 주파수 (24~40000, 기본 20000)
+//   B <ratio_x1000> <lo_mv>   배터리 분압비(기본 11000=11.0배)·저전압 문턱(기본 6400, 0=끔)
+//   G <i> <kv> <ks> <kp> <ki> 바퀴 i(0..3, -1=전체) 속도 PID. 전부 ×1000. kv=0이면 그 바퀴 개루프
+//   N <i> <cpr> <dia_um>      엔코더 CPR(4체배 후)·바퀴 지름 — 저장·보고만(rpm)
 //   W                 워치독 자가진단(일부러 멈춤 → cause=WDT last=test 로 돌아와야 정상)
 //   Q                 cap 한 줄 (보드계약 §6, proto=1 레거시 프로파일)
 //   U                 정지 후 시스템 부트로더로 (stm32flash)
 //   ?                 상태 + boot 보고
-// hb: "hb <ms> rx= bad= i2c=0 wdt= v=<vx,vy,w>" 뒤에 enc= vin= v5= amp= ampw= flt= fltn= 을 덧붙인다
+// hb: "hb <ms> rx= bad= i2c=0 wdt= v=<vx,vy,w>" 뒤에 enc= vin= v5= amp= ampw= flt= fltn=
+//     spd= estop= lowbat= clf= 를 덧붙인다
 //     (motor_link·board_contract 둘 다 모르는 키는 무시한다).
 #include <IWatchdog.h>
 #include "stm32f4xx_ll_adc.h"
@@ -56,12 +65,12 @@ const int8_t ENC_DIR[4] = {1, 1, 1, 1};   // ponytail: 상수 — 모터를 자�
 const uint32_t PIN_NFAULT[4] = {PC10, PC11, PC12, PD2};
 const uint32_t PIN_IPROPI[4] = {PC0, PC1, PC2, PC3};
 #define PIN_NSLEEP PB12   // 4개 드라이버 공통. 기판 풀다운 → 펌웨어가 깨우기 전엔 출력 Hi-Z
-#define PIN_VM     PC4    // 47k/10k
+#define PIN_VBAT   PC4    // 배터리(역접속 FET 뒤, E-stop 릴레이 앞) 100k/10k
+#define PIN_ESTOP  PB13   // HIGH=릴레이 코일 붙음(모터 허용) / LOW=E-stop 눌림·버튼 회로 끊김 → VM 차단
 #define PIN_V5     PC5    // 10k/10k
 #define PIN_LED    PB0    // 하트비트마다 깜빡
 #define PIN_LEDF   PB1    // 드라이버 폴트
 // 실측 보정 손잡이 — 저항 오차·IPROPI 편차는 여기서 맞춘다.
-const uint32_t VM_DIV_X100 = 570;    // (47k+10k)/10k
 const uint32_t V5_DIV_X100 = 200;
 const uint32_t IPROPI_MA_PER_V = 2222; // 1kΩ × 450µA/A = 0.45V/A
 
@@ -139,7 +148,7 @@ extern "C" void SystemClock_Config(void){
 // ---------------- 상태 (v2.1과 같은 이름·같은 기본값) ----------------
 int8_t POL[4] = {-1, 1, -1, 1};   // 모터 A반전 B정 C반전 D정. 런타임 'L'로 변경가능
 int MAX_PWM = 2000;               // 0..4095 척도 (PCA9685 시절 그대로 — 젯슨의 P 값이 그대로 통한다)
-const uint16_t PWM_HZ_DEFAULT = 1500;
+const uint16_t PWM_HZ_DEFAULT = 20000;   // 명세서 v0.1. 젯슨 base_tuning F도 20000으로
 uint16_t pwmHz = PWM_HZ_DEFAULT;
 
 const unsigned long CMD_TIMEOUT  = 300;
@@ -165,6 +174,42 @@ uint16_t fltCount = 0;
 
 bool bootWarm = false;
 uint32_t csrSave = 0;
+
+// E-stop: 20ms 같은 값이어야 인정(접점 튐). 풀린다고 다시 굴러가지 않는다 — 새 V가 와야 간다.
+bool estop = false, estopRaw = false;
+unsigned long estopEdge = 0;
+const unsigned long ESTOP_DEBOUNCE = 20;
+
+// 배터리: 100ms마다 재서 10개 평균(1초). lo_mv 아래 2초 → 감속 정지. lo_mv+300 위로 풀림.
+uint32_t batRatio = 11000;        // ×1000 = (100k+10k)/10k
+uint32_t batLo = 6400;            // mV. 2S Li-ion 3.2V/셀. 0=감시 끔
+uint32_t batBuf[10]; uint8_t batN = 0, batI = 0;
+uint32_t batMv = 0;
+bool lowbat = false;
+unsigned long lastBat = 0, lowSince = 0;
+const uint32_t BAT_HYST = 300;
+const unsigned long BAT_HOLD = 2000;
+
+// ---------------- 바퀴 속도 PID ----------------
+// 단위: 속도 = 카운트/초(cps, 4체배 후), 듀티 = 0..4095(MAX_PWM 척도). G 값은 ×1000 고정소수점.
+//   duty = sign(t)·ks + kv·t + kp·e + ki·∫e      (t = 목표 cps, e = t − 측정)
+// V 호환: t = (바퀴 지령/255) · cps_full,  cps_full = (MAX_PWM − ks)/kv = 피드포워드만으로 꽉 차는 속도.
+struct Wheel {
+  int32_t kv = 0, ks = 0, kp = 0, ki = 0;   // ×1000. kv=0 → 개루프
+  int32_t cpr = 0, diaUm = 0;               // N: 보고용
+  float integ = 0, spd = 0;                 // ∫e, 측정 cps(이동평균)
+  float hist[4] = {0, 0, 0, 0}; uint8_t hi = 0;
+  uint16_t badMs = 0;
+  int32_t duty = 0;
+};
+Wheel WH[4];
+int wcmd[4] = {0, 0, 0, 0};        // 바퀴 지령(−255..255, 바퀴 전진=+, POL 적용 전) A..D
+int32_t encPrev[4];
+uint8_t clfMask = 0;               // 폐루프 폭주로 개루프로 떨어진 바퀴
+unsigned long lastCtl = 0;
+const unsigned long CTL_MS = 10;   // 100Hz
+static inline bool closedLoop(uint8_t w){ return WH[w].kv > 0 && !(clfMask & (1u << w)); }
+int32_t pidStep(Wheel& h, float tgt, float dt, int32_t maxPwm, bool& fault);   // ⚠ 직접 선언 — 안 하면 Arduino가 Wheel보다 위에 원형을 만든다
 
 // ---------------- 레지스터 도우미 ----------------
 static void pinAF(GPIO_TypeDef* g, uint8_t n, uint8_t af, bool pullup){
@@ -243,15 +288,29 @@ static uint32_t vdda(){
 static uint32_t adcMv(uint32_t pin, uint32_t va){ return (uint32_t)analogRead(pin) * va / 4095; }
 
 // ---------------- 구동 (v2.1과 같은 수식) ----------------
-void driveWheel(uint8_t w, int s){
-  s = (int)s * POL[w];
-  int mag = abs(s);
-  if(mag > 255) mag = 255;
+// 부호 있는 듀티(−MAX_PWM..MAX_PWM, 바퀴 전진=+)를 극성 적용해 내보낸다.
+void setDuty(uint8_t w, int32_t d){
+  d *= POL[w];
+  uint32_t mag = (uint32_t)(d < 0 ? -d : d);
+  if(mag > (uint32_t)MAX_PWM) mag = MAX_PWM;
   const MotorPwm& m = MOT[w];
-  uint32_t pwm = (uint32_t)mag * MAX_PWM / 255;          // 0..MAX_PWM (PCA9685 척도)
-  uint32_t ccr = pwm * (m.t->ARR + 1) / 4095;            // → 이 타이머의 비교값
-  setCcr(m.t, m.c1, s > 0 ? ccr : 0);
-  setCcr(m.t, m.c2, s < 0 ? ccr : 0);
+  uint32_t ccr = mag * (m.t->ARR + 1) / 4095;            // → 이 타이머의 비교값
+  setCcr(m.t, m.c1, d > 0 ? ccr : 0);
+  setCcr(m.t, m.c2, d < 0 ? ccr : 0);
+}
+
+static inline int32_t openDuty(int s){
+  if(s > 255) s = 255;
+  if(s < -255) s = -255;
+  return (int32_t)s * MAX_PWM / 255;                     // 0..MAX_PWM (PCA9685 척도)
+}
+
+void driveWheel(uint8_t w, int s){ setDuty(w, openDuty(s)); }
+
+// 폐루프 바퀴는 control()이 100Hz로 내보낸다. 지령 0이면 여기서 바로 0 — 정지는 기다리지 않는다.
+void outWheel(uint8_t w){
+  if(!closedLoop(w)){ setDuty(w, openDuty(wcmd[w])); return; }
+  if(wcmd[w] == 0){ WH[w].integ = 0; WH[w].badMs = 0; WH[w].duty = 0; setDuty(w, 0); }
 }
 
 // 메카넘 mixing. FL = vx-vy-w ; FR = vx+vy+w ; RL = vx+vy-w ; RR = vx-vy+w
@@ -261,10 +320,8 @@ void applyCurrent(){
   int FR = curVx + curVy + curW;
   int RL = curVx + curVy - curW;
   int RR = curVx - curVy + curW;
-  driveWheel(0, RR);  // A
-  driveWheel(1, RL);  // B
-  driveWheel(2, FR);  // C
-  driveWheel(3, FL);  // D
+  wcmd[0] = RR; wcmd[1] = RL; wcmd[2] = FR; wcmd[3] = FL;   // A B C D
+  for(uint8_t w = 0; w < 4; w++) outWheel(w);
   BT->lastPhase = PH_IDLE;
 }
 
@@ -274,6 +331,84 @@ void hardStop(){
   curVx = curVy = curW = 0;
   testing = false;
   applyCurrent();
+}
+
+// 한 바퀴 PID 한 걸음. 목표 0이면 적분·폭주 판정을 비우고 0(코스트) — 정지에서 떨지 않게.
+// 반환: 듀티. 폭주(듀티 80%↑로 0.5초째 반대로 돌거나 목표의 10%도 못 낼 때) → fault=true.
+int32_t pidStep(Wheel& h, float tgt, float dt, int32_t maxPwm, bool& fault){
+  fault = false;
+  if(tgt == 0){ h.integ = 0; h.badMs = 0; return 0; }
+  float kv = h.kv / 1000.f, ks = h.ks / 1000.f, kp = h.kp / 1000.f, ki = h.ki / 1000.f;
+  float e = tgt - h.spd;
+  float u0 = (tgt > 0 ? ks : -ks) + kv * tgt + kp * e;
+  if(ki > 0){                                       // 적분 포화 방지: 적분항만으로 ±maxPwm을 못 넘게
+    float lim = maxPwm / ki;
+    h.integ += e * dt;
+    if(h.integ > lim) h.integ = lim;
+    if(h.integ < -lim) h.integ = -lim;
+  }
+  float u = u0 + ki * h.integ;
+  if(u > maxPwm) u = maxPwm;
+  if(u < -maxPwm) u = -maxPwm;
+  bool stuck = fabsf(u) > 0.8f * maxPwm && (h.spd * tgt < 0 || fabsf(h.spd) < 0.1f * fabsf(tgt));
+  h.badMs = stuck ? (uint16_t)min(60000.f, h.badMs + dt * 1000) : 0;
+  if(h.badMs > 500) fault = true;
+  return (int32_t)u;
+}
+
+// 100Hz: 엔코더 차분 → cps(4샘플 평균) → 폐루프 바퀴 듀티.
+void control(unsigned long now){
+  float dt = (now - lastCtl) / 1000.f;
+  lastCtl = now;
+  if(dt <= 0 || dt > 0.1f) dt = CTL_MS / 1000.f;   // 첫 바퀴·긴 막힘은 기본 주기로
+  for(uint8_t w = 0; w < 4; w++){
+    Wheel& h = WH[w];
+    int32_t d = encAcc[w] - encPrev[w]; encPrev[w] = encAcc[w];
+    h.hist[h.hi] = d / dt; h.hi = (h.hi + 1) & 3;
+    h.spd = (h.hist[0] + h.hist[1] + h.hist[2] + h.hist[3]) / 4;
+    if(!closedLoop(w) || testing || estop) continue;
+    float cpsFull = (MAX_PWM - h.ks / 1000.f) / (h.kv / 1000.f);
+    if(cpsFull <= 0){ h.duty = 0; setDuty(w, 0); continue; }   // ks ≥ MAX_PWM — 설정이 틀렸다
+    bool fault;
+    h.duty = pidStep(h, wcmd[w] / 255.f * cpsFull, dt, MAX_PWM, fault);
+    if(fault){
+      clfMask |= 1u << w;
+      Serial.print("clfault "); Serial.println(w);
+      outWheel(w);                                   // 개루프로 떨어진다
+    } else setDuty(w, h.duty);
+  }
+}
+
+// E-stop: 20ms 디바운스. 눌림 → 즉시 정지·드라이버 재움. 풀림 → 깨우기만(지령은 0 그대로).
+void estopPoll(unsigned long now){
+  bool raw = digitalRead(PIN_ESTOP) == LOW;
+  if(raw != estopRaw){ estopRaw = raw; estopEdge = now; }
+  if(raw == estop || now - estopEdge < ESTOP_DEBOUNCE) return;
+  estop = raw;
+  hardStop();
+  digitalWrite(PIN_NSLEEP, estop ? LOW : HIGH);
+  Serial.println(estop ? "estop 1" : "estop 0");
+}
+
+// 배터리: 100ms 표본 10개 평균. 문턱 아래 2초 연속 → lowbat(목표 0 → 슬루 감속). 문턱+300 위 → 해제.
+void batPoll(unsigned long now){
+  if(now - lastBat < 100) return;
+  lastBat = now;
+  batBuf[batI] = adcMv(PIN_VBAT, vdda()) * batRatio / 1000;
+  batI = (batI + 1) % 10;
+  if(batN < 10) batN++;
+  uint32_t sum = 0;
+  for(uint8_t i = 0; i < batN; i++) sum += batBuf[i];
+  batMv = sum / batN;
+  if(!batLo){                                        // 감시 끔
+    if(lowbat){ lowbat = false; Serial.println("lowbat 0"); }
+    lowSince = now; return;
+  }
+  if(batN < 10){ lowSince = now; return; }           // 평균이 찰 때까지는 판정 안 함
+  if(!lowbat){
+    if(batMv >= batLo) lowSince = now;
+    else if(now - lowSince >= BAT_HOLD){ lowbat = true; tgtVx = tgtVy = tgtW = 0; Serial.println("lowbat 1"); }
+  } else if(batMv > batLo + BAT_HYST){ lowbat = false; lowSince = now; Serial.println("lowbat 0"); }
 }
 
 int approach(int cur, int tgt){
@@ -362,7 +497,7 @@ void printBootReport(){
 }
 
 void printCap(){
-  Serial.print("cap proto=1 fw=3.0.0 board=stm32f405 units=0 closed_loop=0 enc=4 calib=0 vin=1 amp=1 estop_hw=0 pwm_hz=");
+  Serial.print("cap proto=1 fw=3.1.0 board=stm32f405 units=0 closed_loop=1 enc=4 calib=0 vin=1 amp=1 estop_hw=1 pwm_hz=");
   Serial.println(pwmHz);
 }
 
@@ -399,6 +534,7 @@ void handleLine(char* line){
   char c = line[0];
   char* p = line + 1;
   if(c == 'V'){
+    if(estop || lowbat) return;   // 50Hz로 오는 지령이라 nak를 쏟지 않는다 — hb의 estop=/lowbat=로 보인다
     int vx = nextInt(p), vy = nextInt(p), w = nextInt(p);
     if(vx > 255) vx = 255; if(vx < -255) vx = -255;
     if(vy > 255) vy = 255; if(vy < -255) vy = -255;
@@ -409,6 +545,7 @@ void handleLine(char* line){
     hardStop(); Serial.println("ok S");
   } else if(c == 'T'){
     int i = nextInt(p), d = nextInt(p);
+    if(estop){ Serial.println("nak estop"); return; }
     if(i >= 0 && i < 4){
       hardStop();
       encPoll();
@@ -444,6 +581,28 @@ void handleLine(char* line){
     Serial.flush();
     BT->lastPhase = PH_TEST;
     for(;;) { }
+  } else if(c == 'B'){
+    int r = nextInt(p), lo = nextInt(p);
+    if(r > 0) batRatio = r;
+    if(lo >= 0) batLo = lo;
+    batN = 0;                       // 비율이 바뀌면 평균을 새로
+    Serial.print("ok B "); Serial.print(batRatio); Serial.print(' '); Serial.println(batLo);
+  } else if(c == 'G'){
+    int i = nextInt(p); int32_t kv = nextInt(p), ks = nextInt(p), kp = nextInt(p), ki = nextInt(p);
+    if(i < -1 || i > 3 || kv < 0 || ks < 0 || kp < 0 || ki < 0){ Serial.println("nak arg"); return; }
+    for(uint8_t w = 0; w < 4; w++){
+      if(i >= 0 && w != i) continue;
+      WH[w].kv = kv; WH[w].ks = ks; WH[w].kp = kp; WH[w].ki = ki;
+      WH[w].integ = 0; WH[w].badMs = 0; clfMask &= ~(1u << w);   // 새 게인 = 폭주 판정도 새로
+      outWheel(w);
+    }
+    Serial.print("ok G "); Serial.print(i); Serial.print(' '); Serial.print(kv); Serial.print(' ');
+    Serial.print(ks); Serial.print(' '); Serial.print(kp); Serial.print(' '); Serial.println(ki);
+  } else if(c == 'N'){
+    int i = nextInt(p); int32_t cpr = nextInt(p), dia = nextInt(p);
+    if(i < -1 || i > 3 || cpr < 0 || dia < 0){ Serial.println("nak arg"); return; }
+    for(uint8_t w = 0; w < 4; w++) if(i < 0 || w == i){ WH[w].cpr = cpr; WH[w].diaUm = dia; }
+    Serial.print("ok N "); Serial.print(i); Serial.print(' '); Serial.print(cpr); Serial.print(' '); Serial.println(dia);
   } else if(c == 'Q'){
     printCap();
   } else if(c == 'U'){
@@ -464,7 +623,20 @@ void handleLine(char* line){
     Serial.print(" POL="); for(uint8_t i = 0; i < 4; i++){ Serial.print(POL[i]); Serial.print(','); }
     Serial.print(" hz="); Serial.print(pwmHz);
     Serial.print(" clk="); Serial.print(clkHse ? "HSE" : "HSI");
+    Serial.print(" estop="); Serial.print(estop);
+    Serial.print(" bat="); Serial.print(batMv); Serial.print('/'); Serial.print(batLo);
+    Serial.print(" ratio="); Serial.print(batRatio);
+    Serial.print(" lowbat="); Serial.print(lowbat);
     Serial.println();
+    for(uint8_t w = 0; w < 4; w++){
+      Serial.print("wh "); Serial.print(w);
+      Serial.print(" G="); Serial.print(WH[w].kv); Serial.print(','); Serial.print(WH[w].ks); Serial.print(',');
+      Serial.print(WH[w].kp); Serial.print(','); Serial.print(WH[w].ki);
+      Serial.print(closedLoop(w) ? " loop=closed" : (clfMask & (1u << w)) ? " loop=FAULT" : " loop=open");
+      Serial.print(" spd="); Serial.print((int32_t)WH[w].spd);
+      if(WH[w].cpr){ Serial.print(" rpm="); Serial.print((int32_t)(WH[w].spd * 60 / WH[w].cpr)); }
+      Serial.print(" N="); Serial.print(WH[w].cpr); Serial.print(','); Serial.println(WH[w].diaUm);
+    }
     printBootReport();
   }
 }
@@ -477,6 +649,7 @@ void setup(){
   pinMode(PIN_NSLEEP, OUTPUT); digitalWrite(PIN_NSLEEP, LOW);
   pinMode(PIN_LED, OUTPUT);    pinMode(PIN_LEDF, OUTPUT);
   for(uint8_t i = 0; i < 4; i++) pinMode(PIN_NFAULT[i], INPUT_PULLUP);
+  pinMode(PIN_ESTOP, INPUT);    // 기판 100k 풀다운 — 선이 빠지면 LOW = E-stop 쪽으로 안전
   analogReadResolution(12);
 
   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN | RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_GPIODEN;
@@ -501,12 +674,16 @@ void setup(){
 
   Serial.begin(115200);     // USART1 PA9/PA10 (build_opt.h — 기본 Serial은 UART4=PA0/PA1이라 엔코더 D와 겹친다)
   hardStop();
-  digitalWrite(PIN_NSLEEP, HIGH);   // 이제 깨운다 (tWAKE ~1ms, 그동안은 어차피 0)
+  estop = estopRaw = (digitalRead(PIN_ESTOP) == LOW);   // 켜질 때 이미 눌려 있으면 재운 채로 시작
+  digitalWrite(PIN_NSLEEP, estop ? LOW : HIGH);   // 이제 깨운다 (tWAKE ~1ms, 그동안은 어차피 0)
   ensureBor();
   lastCmd = lastTick = lastLoop = millis();
   printBootReport();
-  Serial.println("mecanum_stable v3.0-stm32 ready. proto: V vx vy w | S | T i d | P n | L .. | R a d | F hz | W | Q | U | ? (+*CRC)");
+  Serial.println("mecanum_stable v3.1-stm32 ready. proto: V vx vy w | S | T i d | P n | L .. | R a d | F hz | B r lo | G i kv ks kp ki | N i cpr dia | W | Q | U | ? (+*CRC)");
   printCap();
+  if(estop) Serial.println("estop 1");
+  for(uint8_t i = 0; i < 4; i++) encPrev[i] = encAcc[i];
+  lastCtl = lastBat = lowSince = millis();
   IWatchdog.begin(250000);  // 250ms. LSI 오차로 실제 170~470ms
 }
 
@@ -518,6 +695,8 @@ void loop(){
 
   encPoll();
   faultPoll();
+  estopPoll(now);
+  batPoll(now);
 
   while(Serial.available()){
     char ch = Serial.read();
@@ -559,6 +738,8 @@ void loop(){
     }
   }
 
+  if(now - lastCtl >= CTL_MS) control(now);
+
   if(now - lastHb > 1000){
     lastHb = now;
     uint32_t va = vdda();
@@ -571,13 +752,18 @@ void loop(){
     Serial.print(" v="); Serial.print(curVx); Serial.print(','); Serial.print(curVy); Serial.print(','); Serial.print(curW);
     Serial.print(" enc=");
     for(uint8_t i = 0; i < 4; i++){ Serial.print(encAcc[i]); if(i < 3) Serial.print(','); }
-    Serial.print(" vin="); Serial.print(adcMv(PIN_VM, va) * VM_DIV_X100 / 100);
+    Serial.print(" vin="); Serial.print(batMv);
     Serial.print(" v5="); Serial.print(adcMv(PIN_V5, va) * V5_DIV_X100 / 100);
     Serial.print(" amp="); Serial.print(total);
     Serial.print(" ampw=");
     for(uint8_t i = 0; i < 4; i++){ Serial.print(amp[i]); if(i < 3) Serial.print(','); }
     Serial.print(" flt="); Serial.print(fltMask);
-    Serial.print(" fltn="); Serial.println(fltCount);
+    Serial.print(" fltn="); Serial.print(fltCount);
+    Serial.print(" spd=");
+    for(uint8_t i = 0; i < 4; i++){ Serial.print((int32_t)WH[i].spd); if(i < 3) Serial.print(','); }
+    Serial.print(" estop="); Serial.print(estop);
+    Serial.print(" lowbat="); Serial.print(lowbat);
+    Serial.print(" clf="); Serial.println(clfMask);
     digitalToggle(PIN_LED);
   }
 

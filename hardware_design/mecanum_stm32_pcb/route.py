@@ -1,6 +1,6 @@
 # 자동배선 (KiCad 9 python + Freerouting). gen_pcb.py로 배치한 **직후의 빈 판**에서:
 #   python route.py prep     → 넷클래스(.kicad_pro) + mecanum_stm32.dsn
-#   java -jar freerouting.jar -de mecanum_stm32.dsn -do mecanum_stm32.ses -mp 60
+#   java -jar freerouting.jar -de mecanum_stm32.dsn -do mecanum_stm32.ses --router.autorouter.max_passes=60 --router.optimizer.enabled=false --gui.enabled=false
 #   python route.py finish   → .ses의 선·비아를 판에 넣고 GND 동박(양면) 채워 저장
 #
 # 왜 DSN을 직접 쓰나: 이 빌드(9.0.4)의 pcbnew.ExportSpecctraDSN은 헤드리스 파이썬에서 **멈춘다**(보이지 않는
@@ -13,17 +13,18 @@ import pcbnew
 HERE = os.path.dirname(os.path.abspath(__file__))
 PCB, PRO = os.path.join(HERE, "mecanum_stm32.kicad_pcb"), os.path.join(HERE, "mecanum_stm32.kicad_pro")
 DSN, SES = PCB[:-10] + ".dsn", PCB[:-10] + ".ses"
-W, H, ISO_Y, ISO_GAP = 90.0, 64.0, 27.0, 1.5
+from gen_pcb import W, H, ISO_Y              # 판 크기·절연 칸은 한 곳(gen_pcb)에서만
+ISO_GAP = 1.5
 
 # (이름, 선폭, 간격, 비아지름, 비아드릴 mm, 넷 패턴)
 # 선폭은 **핀에 들어갈 수 있는 굵기**로 배선한다 — DRV8874는 0.65mm, MCU는 0.5mm 피치라 0.8mm 선은 핀 사이 간격을
 # 못 지켜 Freerouting이 통째로 포기한다(첫 시도: 미배선 145). 굵기는 배선 뒤 widen()이 간격이 되는 구간만 키운다.
 DEFAULT = (0.18, 0.15, 0.6, 0.3)   # 0.18/0.15mm = 일반 업체 기본 공정(JLC 최소 0.1/0.1) 안. 0.2면 신호 2개가 못 지나간다
 CLASSES = [
-    ("Power", 0.4, 0.2, 0.8, 0.4, ["VBAT_IN", "VLOG", "SW5"]),
+    ("Power", 0.4, 0.2, 0.8, 0.4, ["VBAT_IN", "VBAT_P", "VLOG", "SW5"]),
     # VM은 24핀이 판 전체에 퍼져 0.4mm·0.8비아로는 길을 못 찾는다(3회 연속 VM만 18연결 실패) → 가늘게 잇고 widen이 키운다
     ("Motor", 0.3, 0.15, 0.6, 0.3, ["VM", "M?+", "M?-"]),   # 모터 출력도(4차: MC− 1개만 실패)
-    ("Supply", 0.25, 0.15, 0.6, 0.3, ["5V", "3V3", "VBUS", "GND", "GNDU"]),
+    ("Supply", 0.25, 0.15, 0.6, 0.3, ["5V", "3V3", "VBUS", "ISO_V1", "COIL", "GND", "GNDU"]),
 ]
 WIDEN = {"Power": [0.8, 0.6], "Motor": [0.8, 0.6, 0.4], "Supply": [0.5]}   # 배선 후 시도할 굵기(큰 것부터)
 SCREW_RING = 6.5   # mm, 고정구멍 둘레 동박 금지 지름(M3 나사머리 ≈5.5) — H2는 USB(GNDU) 칸 안이라 특히 중요

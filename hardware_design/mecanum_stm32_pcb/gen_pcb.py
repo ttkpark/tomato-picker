@@ -11,8 +11,9 @@ import pcbnew
 
 FP = r"C:/Program Files/KiCad/9.0/share/kicad/footprints"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mecanum_stm32.kicad_pcb")
-W, H = 90.0, 64.0          # Uno(68.58×53.34)보다 크다 — 2층 배선 밀도 때문(Uno 크기면 부품면적 67%)
+W, H = 100.0, 70.0         # Uno(68.58×53.34)보다 크다 — 2층 배선 밀도 때문. 명세서 v0.1 반영(릴레이·벌크)으로 90×64에서 키움
 UW, UH = 68.58, 53.34      # 아래 좌표는 Uno 판 기준 힌트 → 비율로 늘려 쓴다
+ISO_Y = 30.0               # USB 절연 칸(GNDU) 아래 경계 mm — 이 칸엔 GNDU 쪽 부품만(route.py가 동박을 여기서 가른다)
 
 R06, C06, C12, LED = ("Resistor_SMD", "R_0603_1608Metric"), ("Capacitor_SMD", "C_0603_1608Metric"), \
     ("Capacitor_SMD", "C_1206_3216Metric"), ("LED_SMD", "LED_0603_1608Metric")
@@ -23,16 +24,28 @@ parts = []   # (ref, (lib, fp), value, {pad: net}, x, y, rot)
 def P(ref, fp, val, pads, x, y, rot=0):
     parts.append((ref, fp, val, {str(k): v for k, v in pads.items()}, x, y, rot))
 
-# ---------------- 전원: 배터리 → 역접속 P-FET → VM(모터) / 다이오드 → 홀드업 → 5V 벅 → 3V3 LDO ----------------
+# ---------------- 전원 (명세서 v0.1 반영) ----------------
+# 배터리 → 역접속 P-FET → VBAT_P ─┬─ 벌크 1000µF×2 · 배터리 전압 감지(100k/10k)
+#                                 ├─ [비상정지 릴레이 K1] → VM(모터 드라이버)   ← 버튼이 코일을 끊으면 VM이 물리적으로 끊긴다
+#                                 └─ 다이오드 → 홀드업 → 5V 벅 → 3V3 LDO       ← 로직은 릴레이와 무관하게 산다
 P("J1", ("TerminalBlock", "TerminalBlock_bornier-2_P5.08mm"), "BAT 7.4~12.6V", {1: "VBAT_IN", 2: "GND"}, 4.5, 44.0, 90)
 P("Q1", ("Package_SO", "SOIC-8_3.9x4.9mm_P1.27mm"), "AO4407A",            # D=배터리, S=VM: 역접속이면 몸체다이오드가 막는다
-  {1: "VM", 2: "VM", 3: "VM", 4: "Q1_G", 5: "VBAT_IN", 6: "VBAT_IN", 7: "VBAT_IN", 8: "VBAT_IN"}, 12.0, 47.0, 0)
+  {1: "VBAT_P", 2: "VBAT_P", 3: "VBAT_P", 4: "Q1_G", 5: "VBAT_IN", 6: "VBAT_IN", 7: "VBAT_IN", 8: "VBAT_IN"}, 12.0, 47.0, 0)
 P("R1", R06, "10k", {1: "Q1_G", 2: "GND"}, 12.0, 51.0)
-P("D1", ("Diode_SMD", "D_SOD-123"), "BZT52C12", {1: "VM", 2: "Q1_G"}, 16.5, 51.0)   # Vgs 클램프(TVS 클램프 24V > Vgs 20V)
+P("D1", ("Diode_SMD", "D_SOD-123"), "BZT52C12", {1: "VBAT_P", 2: "Q1_G"}, 16.5, 51.0)   # Vgs 클램프(TVS 클램프 24V > Vgs 20V)
 P("D2", ("Diode_SMD", "D_SMB"), "SMBJ15A", {1: "VM", 2: "GND"}, 19.0, 46.0, 90)      # 역기전력. DRV8874 37V 안
-P("C1", ("Capacitor_THT", "CP_Radial_D10.0mm_P5.00mm"), "470u 25V", {1: "VM", 2: "GND"}, 27.0, 46.5)
-P("D3", ("Diode_SMD", "D_SMA"), "SS34", {1: "VLOG", 2: "VM"}, 6.5, 30.0, 90)          # 모터가 VM을 끌어내려도 로직은 홀드업으로 버틴다
-P("C2", ("Capacitor_THT", "CP_Radial_D10.0mm_P5.00mm"), "470u 25V", {1: "VLOG", 2: "GND"}, 7.0, 22.0, 90)
+P("C1", ("Capacitor_THT", "CP_Radial_D12.5mm_P5.00mm"), "1000u 35V", {1: "VBAT_P", 2: "GND"}, 27.0, 46.5)   # 명세서: 벌크 1000µF×2 이상
+P("C14", ("Capacitor_THT", "CP_Radial_D12.5mm_P5.00mm"), "1000u 35V", {1: "VBAT_P", 2: "GND"}, 35.0, 47.5)
+# 비상정지: J6(외부 NC 버튼, 없으면 단락) 직렬로 5V → 릴레이 코일. 버튼을 누르면 코일이 꺼지고 접점이 VM을 끊는다(MCU 무관).
+# 코일 쪽 전압을 MCU(PB13)가 읽어 젯슨에 보고한다(estop=1). 펌웨어의 S·데드맨은 그대로 보조 정지.
+P("K1", ("Relay_THT", "Relay_SPDT_SANYOU_SRD_Series_Form_C"), "SRD-05VDC-SL-C",
+  {1: "VBAT_P", 2: "COIL", 5: "GND", 3: "VM", 4: None}, 33.0, 38.0, 0)               # 1=COM 3=NO 4=NC(안 씀) 2·5=코일
+P("D7", ("Diode_SMD", "D_SMA"), "SS34", {1: "COIL", 2: "GND"}, 40.0, 41.0, 90)        # 코일 역기전력
+P("J6", ("TerminalBlock", "TerminalBlock_bornier-2_P5.08mm"), "E-STOP (NC)", {1: "5V", 2: "COIL"}, 4.5, 34.0, 90)
+P("R60", R06, "10k", {1: "COIL", 2: "ESTOP"}, 46.0, 36.0)                            # FT 핀 PB13, 코일 5V를 직렬저항으로
+P("R61", R06, "100k", {1: "ESTOP", 2: "GND"}, 46.0, 38.0)
+P("D3", ("Diode_SMD", "D_SMA"), "SS34", {1: "VLOG", 2: "VBAT_P"}, 6.5, 30.0, 90)          # 모터가 VM을 끌어내려도 로직은 홀드업으로 버틴다
+P("C2", ("Capacitor_THT", "CP_Radial_D10.0mm_P5.00mm"), "470u 25V", {1: "VLOG", 2: "GND"}, 7.0, 29.5, 90)   # 절연 칸(y<ISO_Y) 밖
 P("U2", ("Package_TO_SOT_SMD", "SOT-23-6"), "TPS542025 (5V)",
   {1: "GND", 2: "SW5", 3: "VLOG", 4: "5V", 5: None, 6: "BST5"}, 14.0, 29.0)          # EN 띄움 = 켜짐
 P("C3", C12, "10u 25V", {1: "VLOG", 2: "GND"}, 14.0, 33.0)
@@ -50,27 +63,34 @@ P("D4", LED, "PWR 초록", {1: "GND", 2: "LEDP"}, 35.5, 40.5)
 P("J2", ("Connector_USB", "USB_Mini-B_Wuerth_65100516121_Horizontal"), "USB Mini-B",   # 0.8mm 피치 — USB-C(0.5mm)는 손땜이 어렵다
   {1: "VBUS", 2: "DM", 3: "DP", 4: None, 5: "GNDU", 6: "GNDU"}, 3.62, 9.0, 270)   # 고정탭이 판 끝에서 0.5mm 안에 들게
 P("U4", ("Package_SO", "SOIC-16_3.9x9.9mm_P1.27mm"), "CH340C",
-  {1: "GNDU", 2: "U_TX", 3: "U_RX", 4: "U_V3", 5: "DP", 6: "DM", 7: None, 8: None, 9: None, 10: None,
+  {1: "GNDU", 2: "U_TXC", 3: "U_RXC", 4: "U_V3", 5: "DP", 6: "DM", 7: None, 8: None, 9: None, 10: None,
    11: None, 12: None, 13: None, 14: None, 15: None, 16: "VBUS"}, 12.5, 11.0)
 P("C9", C06, "100n", {1: "U_V3", 2: "GNDU"}, 9.5, 17.5)
 P("C10", C06, "100n", {1: "VBUS", 2: "GNDU"}, 12.5, 17.5)
 P("C11", C12, "10u 25V", {1: "VBUS", 2: "GNDU"}, 9.5, 20.0)
 P("U5", ("Package_SO", "SOIC-8_3.9x4.9mm_P1.27mm"), "ADuM1201ARZ",                # 1~4=USB측, 5~8=MCU측
-  {1: "VBUS", 2: "U_RX", 3: "U_TX", 4: "GNDU", 5: "GND", 6: "MCU_RX", 7: "MCU_TX", 8: "3V3"}, 20.0, 9.0, 90)
-P("C12", C06, "100n", {1: "VBUS", 2: "GNDU"}, 17.5, 3.0)
+  {1: "ISO_V1", 2: "U_RX", 3: "U_TX", 4: "GNDU", 5: "GND", 6: "MCU_RX", 7: "MCU_TX", 8: "3V3"}, 20.0, 9.0, 90)
+# 젯슨 40핀 UART 직결 대안(명세서: 3.3V UART, 레벨시프터 없음) — 절연기 **앞**에 붙여 절연은 그대로 둔다.
+# USB로 쓸 땐 R62~R64(0Ω) 실장 + J7 비움. J7로 쓸 땐 R62~R64를 빼고 젯슨 TX→2, RX←3, 3.3V→4, GND→1.
+P("R62", R06, "0", {1: "U_TXC", 2: "U_TX"}, 16.0, 6.0, 90)
+P("R63", R06, "0", {1: "U_RX", 2: "U_RXC"}, 16.0, 9.0, 90)
+P("R64", R06, "0", {1: "VBUS", 2: "ISO_V1"}, 16.0, 12.0, 90)
+P("J7", ("Connector_PinHeader_2.54mm", "PinHeader_1x04_P2.54mm_Vertical"), "JETSON UART",
+  {1: "GNDU", 2: "U_TX", 3: "U_RX", 4: "ISO_V1"}, 9.0, 1.8, 90)
+P("C12", C06, "100n", {1: "ISO_V1", 2: "GNDU"}, 17.5, 3.0)
 P("C13", C06, "100n", {1: "3V3", 2: "GND"}, 23.0, 3.0)
 
 # ---------------- MCU STM32F405RGT6 ----------------
 mcu = {1: "3V3", 2: None, 3: None, 4: None, 5: "OSC_IN", 6: "OSC_OUT", 7: "NRST",
        8: "IPR_A", 9: "IPR_B", 10: "IPR_C", 11: "IPR_D", 12: "GND", 13: "3V3", 14: "ENC_D_A", 15: "ENC_D_B",
        16: "PWM_C1", 17: "PWM_C2", 18: "GND", 19: "3V3", 20: "SPI_CS", 21: "SPI_SCK", 22: "SPI_MISO", 23: "SPI_MOSI",
-       24: "VM_SNS", 25: "V5_SNS", 26: "LED_ST", 27: "LED_FLT", 28: "BOOT1", 29: "IMU_INT", 30: None,
-       31: "VCAP1", 32: "3V3", 33: "NSLEEP", 34: None, 35: "PWM_D1", 36: "PWM_D2",
+       24: "VB_SNS", 25: "V5_SNS", 26: "LED_ST", 27: "LED_FLT", 28: "BOOT1", 29: "IMU_INT", 30: None,
+       31: "VCAP1", 32: "3V3", 33: "NSLEEP", 34: "ESTOP", 35: "PWM_D1", 36: "PWM_D2",
        37: "PWM_A1", 38: "PWM_A2", 39: "PWM_B1", 40: "PWM_B2", 41: None, 42: "MCU_TX", 43: "MCU_RX",
        44: None, 45: None, 46: "SWDIO", 47: "VCAP2", 48: "3V3", 49: "SWCLK", 50: "ENC_A_A",
        51: "FLT_A", 52: "FLT_B", 53: "FLT_C", 54: "FLT_D", 55: "ENC_A_B", 56: "ENC_B_A", 57: "ENC_B_B",
        58: "ENC_C_A", 59: "ENC_C_B", 60: "BOOT0", 61: "I2C_SCL", 62: "I2C_SDA", 63: "GND", 64: "3V3"}
-MX, MY = 40.0, 26.5
+MX, MY = 36.0, 26.5   # 100×70 판에서 H4 고정구멍을 피하는 자리
 P("U1", ("Package_QFP", "LQFP-64_10x10mm_P0.5mm"), "STM32F405RGT6", mcu, MX, MY, 0)
 for i, (x, y) in enumerate([(MX - 7.5, MY - 3), (MX - 7.5, MY + 3), (MX + 7.5, MY - 3), (MX + 7.5, MY + 3), (MX, MY - 7.6)]):
     P(f"C{20 + i}", C06, "100n", {1: "3V3", 2: "GND"}, x, y, 90)              # VDD×4 + VDDA
@@ -89,8 +109,8 @@ P("R7", R06, "1k", {1: "LED_ST", 2: "LEDS"}, MX + 9.5, MY + 9.0)
 P("D5", LED, "상태 초록", {1: "GND", 2: "LEDS"}, MX + 12.0, MY + 9.0)
 P("R8", R06, "1k", {1: "LED_FLT", 2: "LEDF"}, MX + 9.5, MY + 11.0)
 P("D6", LED, "고장 빨강", {1: "GND", 2: "LEDF"}, MX + 12.0, MY + 11.0)
-P("R9", R06, "47k", {1: "VM", 2: "VM_SNS"}, MX - 9.5, MY + 3.5)               # VM/5.7 → 18.8V까지(56k는 100개 단위가 없다)
-P("R10", R06, "10k", {1: "VM_SNS", 2: "GND"}, MX - 9.5, MY + 5.5)
+P("R9", R06, "100k", {1: "VBAT_P", 2: "VB_SNS"}, MX - 9.5, MY + 3.5)            # 배터리/11 → 36V까지(명세서 100k/10k, 24V 배터리도 OK)
+P("R10", R06, "10k", {1: "VB_SNS", 2: "GND"}, MX - 9.5, MY + 5.5)
 P("R11", R06, "10k", {1: "5V", 2: "V5_SNS"}, MX - 12.0, MY + 3.5)
 P("R12", R06, "10k", {1: "V5_SNS", 2: "GND"}, MX - 12.0, MY + 5.5)
 
@@ -132,7 +152,7 @@ P("J3", H254(5), "SWD", {1: "3V3", 2: "SWDIO", 3: "SWCLK", 4: "NRST", 5: "GND"},
 P("J4", H254(4), "I2C (MPU6050)", {1: "3V3", 2: "GND", 3: "I2C_SCL", 4: "I2C_SDA"}, 60.5, 21.5)
 P("R17", R06, "10k", {1: "3V3", 2: "I2C_SCL"}, 56.5, 22.0, 90)
 P("R18", R06, "10k", {1: "3V3", 2: "I2C_SDA"}, 58.0, 30.0, 90)
-P("J5", H254(7), "SPI IMU", {1: "3V3", 2: "GND", 3: "SPI_SCK", 4: "SPI_MISO", 5: "SPI_MOSI", 6: "SPI_CS", 7: "IMU_INT"}, 2.5, 52.0 - 36, 0)
+P("J5", H254(7), "SPI IMU", {1: "3V3", 2: "GND", 3: "SPI_SCK", 4: "SPI_MISO", 5: "SPI_MOSI", 6: "SPI_CS", 7: "IMU_INT"}, 66.5, 4.0, 0)   # 오른쪽 헤더 줄 — 절연 칸 밖
 
 UNO_HOLES = [(14.0, 2.54), (15.24, 50.8), (66.04, 7.62), (66.04, 35.56)]   # Uno 도면(왼쪽아래 원점) → 아래에서 y 뒤집음
 
@@ -178,7 +198,7 @@ def iso_line(b):
     """절연 경계(실크) — ADuM1201 한가운데를 지나는 세로선. GNDU 동박이 이 선을 넘으면 절연이 없다."""
     u5 = b.FindFootprintByReference("U5"); x = pcbnew.ToMM(u5.GetPosition().x)
     s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_SEGMENT); s.SetLayer(pcbnew.F_SilkS)
-    s.SetStart(pcbnew.VECTOR2I_MM(x, 0.5)); s.SetEnd(pcbnew.VECTOR2I_MM(x, 26.0)); s.SetWidth(pcbnew.FromMM(0.2)); b.Add(s)
+    s.SetStart(pcbnew.VECTOR2I_MM(x, 0.5)); s.SetEnd(pcbnew.VECTOR2I_MM(x, ISO_Y)); s.SetWidth(pcbnew.FromMM(0.2)); b.Add(s)
 
 
 def overlaps(b):
@@ -239,6 +259,23 @@ def settle(b):
         placed.append(crt(f, 0.0 if f.GetReference().startswith("H") else 0.25))
 
 
+USB_NETS = {"GNDU", "VBUS", "U_TXC", "U_RXC", "ISO_V1", "DP", "DM", "U_V3", "U_TX", "U_RX"}
+
+
+def iso_check(b):
+    """절연 칸(U5 중심 왼쪽, y<ISO_Y)엔 USB 쪽 부품만, USB 쪽 부품은 칸 안에만. 어기면 GND 동박이 칸을 침범한다."""
+    ix = pcbnew.ToMM(b.FindFootprintByReference("U5").GetPosition().x)
+    bad = []
+    for f in b.GetFootprints():
+        r = f.GetReference()
+        if r == "U5" or r.startswith("H"): continue
+        bb = f.GetBoundingBox(False)
+        inside = pcbnew.ToMM(bb.GetLeft()) < ix and pcbnew.ToMM(bb.GetTop()) < ISO_Y
+        usb = bool({p.GetNetname() for p in f.Pads()} & USB_NETS)
+        if inside != usb: bad.append(f"{r} {'칸 침범' if inside else 'USB 부품이 칸 밖'}")
+    return bad
+
+
 if __name__ == "__main__":
     b = build()
     area = sum(crt(f, 0).GetArea() for f in b.GetFootprints()) / 1e12
@@ -250,3 +287,5 @@ if __name__ == "__main__":
     pcbnew.SaveBoard(OUT, b)
     print(f"부품 {len(parts) + len(UNO_HOLES)}개, 넷 {b.GetNetCount()}개 → {OUT}")
     print("겹침/이탈:", len(bad)); print("\n".join(bad))
+    iso = iso_check(b)
+    print("절연 칸 위반:", len(iso)); print(chr(10).join(iso))
