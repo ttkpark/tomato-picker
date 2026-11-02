@@ -21,7 +21,8 @@
   **배터리 감지 PC4**(역접속 FET 뒤·E-stop 릴레이 앞, **100k/10k**) ·
   **VM 감지 PC5**(릴레이 **뒤** 모터 레일, 100k/10k — 배터리와 같은 비라 `B`의 ratio를 같이 쓴다) ·
   **E-stop 감지 PB13**(10k 직렬 + 100k 풀다운. HIGH=릴레이 붙음/모터 허용, LOW=눌림·선 빠짐. 하강 에지 = 인터럽트) ·
-  LED PB0(하트비트)·PB1(폴트) · 남은 헤더: I2C1 PB8/PB9, SPI1 PA4~PA7, IMU INT PB10.
+  **5V 감지 PB0**(10k/10k) · **3V3** = 핀 없이 VREFINT(VDDA) · 하트비트 `v5=`·`v33=`(mV) ·
+  LED PB11(하트비트)·PB1(폴트) · 남은 헤더: I2C1 PB8/PB9, SPI1 PA4~PA7, IMU INT PB10.
 - 보정 손잡이: 배터리·VM 분압비 = `B` 명령(런타임), `IPROPI_MA_PER_V` = 스케치 위쪽 상수.
 
 ## Uno(v2.1)와 다른 점

@@ -57,7 +57,7 @@ def make_link(rx: bytes) -> MotorLink:
     return link
 
 
-STM_HB = (b"hb 1000 rx=5 bad=0 i2c=0 wdt=0 v=0,0,0 enc=0,0,0,0 vin=7800 vm=0 amp=0 ampw=0,0,0,0 "
+STM_HB = (b"hb 1000 rx=5 bad=0 i2c=0 wdt=0 v=0,0,0 enc=0,0,0,0 vin=7800 vm=0 v5=5010 v33=3298 amp=0 ampw=0,0,0,0 "
           b"flt=0 fltn=0 spd=0,0,0,0 estop=2 lowbat=0 clf=0 rly=0\n")
 UNO_HB = b"hb 1000 rx=5 bad=0 i2c=0 wdt=0 v=0,0,0\n"
 
@@ -66,7 +66,9 @@ link = make_link(STM_HB + b"estop 0\n")
 link._drain_input()
 check("STM32 하트비트 → board=stm32", link.board == "stm32", str(link.board))
 check("estop=2(풀렸지만 잠김) 보관", link.stats()["fw_state"].get("estop") == "2", str(link.stats()["fw_state"]))
-check("vin/vm/rly 보관", link.stats()["fw_state"].get("vin") == "7800" and link.stats()["fw_state"].get("rly") == "0")
+fs = link.stats()["fw_state"]
+check("vin/vm/rly 보관", fs.get("vin") == "7800" and fs.get("rly") == "0")
+check("계통 전압 v5/v33 보관", fs.get("v5") == "5010" and fs.get("v33") == "3298", str(fs))
 check("이벤트 줄 'estop 0' 기록", any(e.endswith("estop 0") for e in link.stats()["events"]), str(link.stats()["events"]))
 check("하트비트가 연결로 인정", link.stats()["hb_age"] is not None)
 

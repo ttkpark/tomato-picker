@@ -266,7 +266,7 @@
         "pcb_color": "rgba(0, 0, 0, 0.000)",
         "priority": 1,
         "schematic_color": "rgba(0, 0, 0, 0.000)",
-        "track_width": 0.3,
+        "track_width": 0.26,
         "via_diameter": 0.6,
         "via_drill": 0.3,
         "wire_width": 6
@@ -317,6 +317,10 @@
       {
         "netclass": "Power",
         "pattern": "VBAT_IN"
+      },
+      {
+        "netclass": "Power",
+        "pattern": "VBAT_R"
       },
       {
         "netclass": "Power",

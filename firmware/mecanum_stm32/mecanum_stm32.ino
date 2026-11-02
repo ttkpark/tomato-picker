@@ -44,7 +44,7 @@
 //   Q                 cap 한 줄 (보드계약 §6, proto=1 레거시 프로파일)
 //   U                 정지 후 시스템 부트로더로 (stm32flash)
 //   ?                 상태 + boot 보고
-// hb: "hb <ms> rx= bad= i2c=0 wdt= v=<vx,vy,w>" 뒤에 enc= vin= vm= amp= ampw= flt= fltn=
+// hb: "hb <ms> rx= bad= i2c=0 wdt= v=<vx,vy,w>" 뒤에 enc= vin= vm= v5= v33= amp= ampw= flt= fltn=
 //     spd= estop=(0 정상/1 눌림/2 풀렸지만 래치) lowbat= clf= rly=(1 닫힘/0 열림/W 용착/O 안 붙음) 를 덧붙인다
 // 이벤트 줄: estop 1/0 · lowbat 1/0 · clfault i · weld 1 · rlyopen 1/0
 //     (motor_link·board_contract 둘 다 모르는 키는 무시한다).
@@ -73,10 +73,12 @@ const uint32_t PIN_IPROPI[4] = {PC0, PC1, PC2, PC3};
 #define PIN_VBAT   PC4    // 배터리(역접속 FET 뒤, E-stop 릴레이 앞) 100k/10k
 #define PIN_ESTOP  PB13   // HIGH=릴레이 코일 붙음(모터 허용) / LOW=E-stop 눌림·버튼 회로 끊김 → VM 차단
 #define PIN_VM     PC5    // 릴레이 **뒤** 모터 레일 VM, 100k/10k(배터리와 같은 비 — B의 ratio를 같이 쓴다)
-#define PIN_LED    PB0    // 하트비트마다 깜빡
+#define PIN_V5     PB0    // 5V 레일 10k/10k. 3V3(VDDA)는 핀 없이 VREFINT로 잰다
+#define PIN_LED    PB11   // 하트비트마다 깜빡
 #define PIN_LEDF   PB1    // 드라이버 폴트
 // 실측 보정 손잡이 — 저항 오차·IPROPI 편차는 여기서 맞춘다.
 const uint32_t IPROPI_MA_PER_V = 2222; // 1kΩ × 450µA/A = 0.45V/A
+const uint32_t V5_RATIO = 2000;        // ×1000 — 10k/10k
 
 // ---------------- 리셋 흔적 (BKPSRAM: 리셋엔 살아남고 전원이 나가면 깨진다) ----------------
 #define BOOT_MAGIC    0xB07E5732u
@@ -830,6 +832,8 @@ void loop(){
     for(uint8_t i = 0; i < 4; i++){ Serial.print(encAcc[i]); if(i < 3) Serial.print(','); }
     Serial.print(" vin="); Serial.print(batMv);
     Serial.print(" vm="); Serial.print(vmMv);
+    Serial.print(" v5="); Serial.print(adcMv(PIN_V5, va) * V5_RATIO / 1000);
+    Serial.print(" v33="); Serial.print(va);
     Serial.print(" amp="); Serial.print(total);
     Serial.print(" ampw=");
     for(uint8_t i = 0; i < 4; i++){ Serial.print(amp[i]); if(i < 3) Serial.print(','); }

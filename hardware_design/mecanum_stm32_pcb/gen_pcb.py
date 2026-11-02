@@ -19,20 +19,28 @@ R06, C06, C12, LED = ("Resistor_SMD", "R_0603_1608Metric"), ("Capacitor_SMD", "C
     ("Capacitor_SMD", "C_1206_3216Metric"), ("LED_SMD", "LED_0603_1608Metric")
 HTSSOP = ("Package_SO", "HTSSOP-16-1EP_4.4x5mm_P0.65mm_EP3.4x5mm_Mask2.46x2.31mm_ThermalVias")
 PH6 = ("Connector_JST", "JST_PH_B6B-PH-K_1x06_P2.00mm_Vertical")
+H254 = lambda n: ("Connector_PinHeader_2.54mm", f"PinHeader_1x{n:02d}_P2.54mm_Vertical")
 
 parts = []   # (ref, (lib, fp), value, {pad: net}, x, y, rot)
 def P(ref, fp, val, pads, x, y, rot=0):
     parts.append((ref, fp, val, {str(k): v for k, v in pads.items()}, x, y, rot))
 
 # ---------------- 전원 (명세서 v0.1 반영) ----------------
-# 배터리 → 역접속 P-FET → VBAT_P ─┬─ 벌크 1000µF×2 · 배터리 전압 감지(100k/10k)
+# 배터리 → 역접속 P-FET → 전원 스위치 P-FET → VBAT_P ─┬─ 벌크 1000µF×2 · 배터리 전압 감지(100k/10k)
 #                                 ├─ [비상정지 릴레이 K1] → VM(모터 드라이버)   ← 버튼이 코일을 끊으면 VM이 물리적으로 끊긴다
 #                                 └─ 다이오드 → 홀드업 → 5V 벅 → 3V3 LDO       ← 로직은 릴레이와 무관하게 산다
 P("J1", ("TerminalBlock", "TerminalBlock_bornier-2_P5.08mm"), "BAT 7.4~12.6V", {1: "VBAT_IN", 2: "GND"}, 4.5, 44.0, 90)
-P("Q1", ("Package_SO", "SOIC-8_3.9x4.9mm_P1.27mm"), "AO4407A",            # D=배터리, S=VM: 역접속이면 몸체다이오드가 막는다
-  {1: "VBAT_P", 2: "VBAT_P", 3: "VBAT_P", 4: "Q1_G", 5: "VBAT_IN", 6: "VBAT_IN", 7: "VBAT_IN", 8: "VBAT_IN"}, 12.0, 47.0, 0)
-P("R1", R06, "10k", {1: "Q1_G", 2: "GND"}, 12.0, 51.0)
-P("D1", ("Diode_SMD", "D_SOD-123"), "BZT52C12", {1: "VBAT_P", 2: "Q1_G"}, 16.5, 51.0)   # Vgs 클램프(TVS 클램프 24V > Vgs 20V)
+# 전원 스위치 = Q1·Q4 소스 맞댄 P-FET 쌍. 바깥 스위치(J8)는 게이트만 GND로 당긴다 — 배터리 전류가 스위치를
+# 지나지 않고(작은 패널 스위치로 충분), 꺼지면 대기전류 0. FET 하나로는 몸체다이오드로 새서 못 끈다.
+# 역접속이면 Q1 몸체다이오드가 막고 게이트(GND=+)가 꺼진 쪽이라 둘 다 안 켜진다.
+P("Q1", ("Package_SO", "SOIC-8_3.9x4.9mm_P1.27mm"), "AO4407A",            # D=배터리, S=공통점: 역접속이면 몸체다이오드가 막는다
+  {1: "VBAT_R", 2: "VBAT_R", 3: "VBAT_R", 4: "Q_G", 5: "VBAT_IN", 6: "VBAT_IN", 7: "VBAT_IN", 8: "VBAT_IN"}, 12.0, 47.0, 0)
+P("Q4", ("Package_SO", "SOIC-8_3.9x4.9mm_P1.27mm"), "AO4407A",            # S=공통점, D=VBAT_P: 꺼지면 몸체다이오드가 배터리→부하를 막는다
+  {1: "VBAT_R", 2: "VBAT_R", 3: "VBAT_R", 4: "Q_G", 5: "VBAT_P", 6: "VBAT_P", 7: "VBAT_P", 8: "VBAT_P"}, 12.0, 41.0, 0)
+P("R1", R06, "100k", {1: "VBAT_R", 2: "Q_G"}, 12.0, 51.0)                 # 스위치 열림 → Vgs 0 → 꺼짐
+P("R68", R06, "10k", {1: "Q_G", 2: "PWR_SW"}, 8.0, 51.0)                  # 닫힘 → Vgs ≈ −0.9·Vbat(12V 클램프)
+P("D1", ("Diode_SMD", "D_SOD-123"), "BZT52C12", {1: "VBAT_R", 2: "Q_G"}, 16.5, 51.0)   # Vgs 클램프(Vgs 최대 20V)
+P("J8", H254(2), "POWER SW", {1: "PWR_SW", 2: "GND"}, 2.0, 38.0, 90)      # 잠금형 스위치(토글·래칭 푸시). 빠지면 꺼진다
 P("D2", ("Diode_SMD", "D_SMB"), "SMBJ15A", {1: "VM", 2: "GND"}, 19.0, 46.0, 90)      # 역기전력. DRV8874 37V 안
 P("C1", ("Capacitor_THT", "CP_Radial_D12.5mm_P5.00mm"), "1000u 35V", {1: "VBAT_P", 2: "GND"}, 27.0, 46.5)   # 명세서: 벌크 1000µF×2 이상
 P("C14", ("Capacitor_THT", "CP_Radial_D12.5mm_P5.00mm"), "1000u 35V", {1: "VBAT_P", 2: "GND"}, 35.0, 47.5)
@@ -84,7 +92,7 @@ P("C13", C06, "100n", {1: "3V3", 2: "GND"}, 23.0, 3.0)
 mcu = {1: "3V3", 2: None, 3: None, 4: None, 5: "OSC_IN", 6: "OSC_OUT", 7: "NRST",
        8: "IPR_A", 9: "IPR_B", 10: "IPR_C", 11: "IPR_D", 12: "GND", 13: "3V3", 14: "ENC_D_A", 15: "ENC_D_B",
        16: "PWM_C1", 17: "PWM_C2", 18: "GND", 19: "3V3", 20: "SPI_CS", 21: "SPI_SCK", 22: "SPI_MISO", 23: "SPI_MOSI",
-       24: "VB_SNS", 25: "VM_SNS", 26: "LED_ST", 27: "LED_FLT", 28: "BOOT1", 29: "IMU_INT", 30: None,
+       24: "VB_SNS", 25: "VM_SNS", 26: "V5_SNS", 27: "LED_FLT", 28: "BOOT1", 29: "IMU_INT", 30: "LED_ST",
        31: "VCAP1", 32: "3V3", 33: "NSLEEP", 34: "ESTOP", 35: "PWM_D1", 36: "PWM_D2",
        37: "PWM_A1", 38: "PWM_A2", 39: "PWM_B1", 40: "PWM_B2", 41: None, 42: "MCU_TX", 43: "MCU_RX",
        44: None, 45: None, 46: "SWDIO", 47: "VCAP2", 48: "3V3", 49: "SWCLK", 50: "ENC_A_A",
@@ -111,6 +119,8 @@ P("R8", R06, "1k", {1: "LED_FLT", 2: "LEDF"}, MX + 9.5, MY + 11.0)
 P("D6", LED, "고장 빨강", {1: "GND", 2: "LEDF"}, MX + 12.0, MY + 11.0)
 P("R9", R06, "100k", {1: "VBAT_P", 2: "VB_SNS"}, MX - 9.5, MY + 3.5)            # 배터리/11 → 36V까지(명세서 100k/10k, 24V 배터리도 OK)
 P("R10", R06, "10k", {1: "VB_SNS", 2: "GND"}, MX - 9.5, MY + 5.5)
+P("R69", R06, "10k", {1: "5V", 2: "V5_SNS"}, MX - 14.5, MY + 3.5)               # 5V/2 → PB0. 3V3는 핀 없이 VREFINT로 잰다
+P("R70", R06, "10k", {1: "V5_SNS", 2: "GND"}, MX - 14.5, MY + 5.5)
 P("R11", R06, "100k", {1: "VM", 2: "VM_SNS"}, MX - 12.0, MY + 3.5)             # 릴레이 **뒤** VM 감지(÷11) — E-stop인데 VM이 살아 있으면 접점 용착
 P("R12", R06, "10k", {1: "VM_SNS", 2: "GND"}, MX - 12.0, MY + 5.5)
 # VM 방전(블리더) 2kΩ = 1k×2 직렬(0603 각 ≈40mW @12.6V). 없으면 드라이버가 잘 때 VM(≈40µF)이 110k로만 빠져
@@ -151,7 +161,6 @@ for n, w in enumerate("ABCD"):
     P(f"R{43 + n * 4}", R06, "10k", {1: "3V3", 2: eb}, x - 7.8, y + 2.6 * s, 90)
 
 # ---------------- 헤더: SWD · I2C(IMU 이전용) · SPI ----------------
-H254 = lambda n: ("Connector_PinHeader_2.54mm", f"PinHeader_1x{n:02d}_P2.54mm_Vertical")
 P("J3", H254(5), "SWD", {1: "3V3", 2: "SWDIO", 3: "SWCLK", 4: "NRST", 5: "GND"}, 64.5, 21.5)
 P("J4", H254(4), "I2C (MPU6050)", {1: "3V3", 2: "GND", 3: "I2C_SCL", 4: "I2C_SDA"}, 60.5, 21.5)
 P("R17", R06, "10k", {1: "3V3", 2: "I2C_SCL"}, 56.5, 22.0, 90)

@@ -160,6 +160,7 @@ _CONTROL_BODY = """
 <div class="card" id="estopCard" style="display:none">
   <span id="estopTxt"></span>
   <button id="estopReset" onclick="cmd({action:'base_estop_reset'})">비상정지 해제 (X 0)</button>
+  <div class="dim" id="railTxt"></div>
   <div class="dim" id="estopEv"></div>
 </div>
 
@@ -544,9 +545,13 @@ _CONTROL_JS = """
                 : es === '1' ? '🛑 비상정지 눌림 — 모터 전원 차단됨'
                 : es === '2' ? '⏸ 비상정지 풀림·잠김 — 주변을 확인하고 [비상정지 해제]를 누르세요'
                 : rly === 'O' ? '⚠ 릴레이가 안 붙습니다(E-STOP 단자 J6 열림?)'
-                : fs.lowbat === '1' ? '🔋 저전압 정지 — 배터리 ' + (fs.vin || '?') + 'mV'
-                : '● 비상정지 정상 · 배터리 ' + (fs.vin || '?') + 'mV · 모터 ' + (fs.vm || '?') + 'mV';
+                : fs.lowbat === '1' ? '🔋 저전압 정지'
+                : '● 비상정지 정상';
       document.getElementById('estopTxt').textContent = txt;
+      // 전압 계통별(mV → V). 모터 = 릴레이 뒤 VM이라 비상정지 중엔 0이 정상.
+      const V = k => fs[k] ? (fs[k] / 1000).toFixed(2) + 'V' : '?';
+      document.getElementById('railTxt').textContent =
+        '배터리 ' + V('vin') + ' · 모터 ' + V('vm') + ' · 5V ' + V('v5') + ' · 3.3V ' + V('v33');
       document.getElementById('estopReset').disabled = es !== '2';
       document.getElementById('estopEv').textContent = (base.events || []).join('  ·  ');
       ec.style.background = (rly === 'W' || es === '1') ? 'color-mix(in srgb, #e74c3c 22%, Canvas)'

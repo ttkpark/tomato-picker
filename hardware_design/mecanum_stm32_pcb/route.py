@@ -21,9 +21,9 @@ ISO_GAP = 1.5
 # 못 지켜 Freerouting이 통째로 포기한다(첫 시도: 미배선 145). 굵기는 배선 뒤 widen()이 간격이 되는 구간만 키운다.
 DEFAULT = (0.18, 0.15, 0.6, 0.3)   # 0.18/0.15mm = 일반 업체 기본 공정(JLC 최소 0.1/0.1) 안. 0.2면 신호 2개가 못 지나간다
 CLASSES = [
-    ("Power", 0.4, 0.2, 0.8, 0.4, ["VBAT_IN", "VBAT_P", "VLOG", "SW5"]),
+    ("Power", 0.4, 0.2, 0.8, 0.4, ["VBAT_IN", "VBAT_R", "VBAT_P", "VLOG", "SW5"]),
     # VM은 24핀이 판 전체에 퍼져 0.4mm·0.8비아로는 길을 못 찾는다(3회 연속 VM만 18연결 실패) → 가늘게 잇고 widen이 키운다
-    ("Motor", 0.3, 0.15, 0.6, 0.3, ["VM", "M?+", "M?-"]),   # 모터 출력도(4차: MC− 1개만 실패)
+    ("Motor", 0.26, 0.15, 0.6, 0.3, ["VM", "M?+", "M?-"]),   # 모터 출력도(4차: MC− 1개만 실패, 0.3은 11/02 전원스위치 판에서 MD− 1개 실패 → 0.26)
     ("Supply", 0.25, 0.15, 0.6, 0.3, ["5V", "3V3", "VBUS", "ISO_V1", "COIL", "GND", "GNDU"]),
 ]
 WIDEN = {"Power": [0.8, 0.6], "Motor": [0.8, 0.6, 0.4], "Supply": [0.5]}   # 배선 후 시도할 굵기(큰 것부터)
@@ -182,6 +182,8 @@ def widen(b):
     tracks = list(b.GetTracks())
     objs = [(p, p.GetNetCode()) for p in b.GetPads()] + [(t, t.GetNetCode()) for t in tracks]
     # ⚠ bbox는 매번 새로 잰다 — 미리 재 두면 나중에 굵어진 이웃을 못 봐서 간격 위반이 났다(1차 결과 5건)
+    ring = pcbnew.FromMM(SCREW_RING / 2)
+    rings = [f.GetPosition() for f in b.GetFootprints() if f.GetReference().startswith("H")]
     done = {}
     for t in tracks:
         if t.Type() != pcbnew.PCB_TRACE_T: continue
@@ -195,6 +197,8 @@ def widen(b):
             ok = bb.GetLeft() > edge and bb.GetTop() > edge and bb.GetRight() < pcbnew.FromMM(W) - edge and bb.GetBottom() < pcbnew.FromMM(H) - edge
             if ok:
                 sh = t.GetEffectiveShape(lay)
+                # 고정구멍은 구멍보다 넓은 나사머리 고리(SCREW_RING)가 금지 구역 — 구멍 bbox로 거르면 못 본다(VM이 고리를 0.01mm 물었다)
+                ok = not any(sh.Collide(c, ring) for c in rings)
                 bb.Inflate(clr)
                 for o, net in objs:
                     if o is t or not bb.Intersects(o.GetBoundingBox()): continue

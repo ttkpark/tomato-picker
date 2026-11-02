@@ -118,7 +118,7 @@ class MotorLink:
         # 보드 종류 — STM32(mecanum_stm32)는 hb에 estop=·enc= 같은 토큰을 더 싣는다. 포트를 열어도 리셋되지
         # 않아 부팅 배너를 못 볼 수 있으므로 **하트비트로** 알아본다. None = 아직 모름, "uno" / "stm32".
         self._board: str | None = None
-        self._fw_state: dict[str, str] = {}   # STM32 hb의 estop/rly/lowbat/vin/vm (대시보드 표시용)
+        self._fw_state: dict[str, str] = {}   # STM32 hb의 estop/rly/lowbat/vin/vm/v5/v33 (대시보드 표시용)
         self._events: list[str] = []          # estop 1/0 · weld 1 · rlyopen 1/0 · lowbat 1/0 · clfault i (최근 6개)
         self._pending_on_connect = False  # 첫 하트비트를 기다리는 중인가
         self._rx_buf = b""               # 줄 중간에서 끊긴 수신 조각
@@ -220,7 +220,7 @@ class MotorLink:
             "boot_causes": dict(self._boot_causes),
             "acks": list(self._acks),
             "board": self._board,
-            "fw_state": dict(self._fw_state),   # STM32: estop 0/1/2 · rly 1/0/W/O · lowbat · vin/vm(mV)
+            "fw_state": dict(self._fw_state),   # STM32: estop 0/1/2 · rly 1/0/W/O · lowbat · vin/vm/v5/v33(mV)
             "events": list(self._events),
             "error": self._last_error,
             "target": self._target,
@@ -454,7 +454,7 @@ class MotorLink:
                         self._wdt_near = _int_or(token[4:], self._wdt_near)
                     else:
                         key, eq, val = token.partition("=")
-                        if eq and key in ("estop", "rly", "lowbat", "vin", "vm"):   # STM32 v3.2
+                        if eq and key in ("estop", "rly", "lowbat", "vin", "vm", "v5", "v33"):   # STM32 v3.2
                             self._fw_state[key] = val
                 self._board = "stm32" if "estop" in self._fw_state else "uno"
                 # ★ 보드 재부팅 판정 — 우리가 안 시켰는데 uptime/수신카운터가 되감겼다.
