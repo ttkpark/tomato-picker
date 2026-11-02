@@ -255,6 +255,16 @@ def build(job, args):
         # 놓기 — 열기 → 고정 턱 떼기 → 빼기를 **차례로**(한 벡터로 합치면 빼면서 쓸고 나온다). 한 프로세스 그룹이라 [멈춤]이 다 끊는다.
         tj = shlex.quote(T("tool_jog.py"))
         return ["/bin/sh", "-c", "%s %s --grip 78 --left 12 && %s %s --along -30" % (PY, tj, PY, tj)]
+    if job == "tap":
+        # 바퀴 톡톡 — 255로 아주 짧게, 안 움직이면 조금씩 길게, 잰 만큼 갈 때까지(base_tap.py 머리말)
+        a = [PY, T("base_tap.py")]
+        for k, lim in (("x", 150), ("y", 150), ("w", 45)):
+            v = num(args, k, 0, -lim, lim)
+            if abs(v) > 1e-6:
+                a += ["--" + k, "%.0f" % v]
+        if len(a) == 2:
+            raise ValueError("갈 양이 없다")
+        return a
     if job == "repeat":
         # 잡기 반복 — 노란 띠를 스스로 찾아 물고 놓고, 다시 걸리면 또(grasp_repeat.py 머리말)
         a = [PY, T("grasp_repeat.py"), "--trials", "%d" % int(num(args, "trials", 10, 1, 50))]
