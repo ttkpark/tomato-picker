@@ -24,6 +24,11 @@ import time
 
 import numpy as np
 
+try:
+    sys.stdout.reconfigure(line_buffering=True)      # 조작대 로그가 실시간이어야 멈춘 자리가 보인다
+except Exception:                                      # noqa: BLE001
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import grip_uv_measure as gm                                # noqa: E402
@@ -35,10 +40,29 @@ CLICK = os.path.expanduser("~/click_target.json")
 START = "-7.1,75.5,132.2,-28.8,7.1"
 
 
+STEP_TIMEOUT = 240.0     # 한 도구 호출 상한(초) — 11/03 20회 시험 4회차에서 어딘가 20분 멈췄다(어디인지 로그가 버퍼라 못 봄)
+
+
 def run(name, *a):
-    r = subprocess.run([PY, os.path.join(HERE, name), *a], capture_output=True, text=True)
-    sys.stdout.write(r.stdout[-3000:])
-    return r.returncode, r.stdout
+    """도구를 부른다 — 출력은 **그 자리에서** 흘리고(멈추면 어디서 멈췄는지 보이게), 상한을 넘으면 죽인다(rc 124)."""
+    cmd = [PY, "-u", os.path.join(HERE, name), *a]
+    out = []
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    t_end = time.time() + STEP_TIMEOUT
+    try:
+        for line in p.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            out.append(line)
+            if time.time() > t_end:
+                raise TimeoutError
+        p.wait(timeout=max(1.0, t_end - time.time()))
+    except (TimeoutError, subprocess.TimeoutExpired):
+        p.kill()
+        p.wait()
+        print("  ⚠ %s가 %.0f초 넘게 안 끝나 죽였다" % (name, STEP_TIMEOUT))
+        return 124, "".join(out)
+    return p.returncode, "".join(out)
 
 
 def band():
