@@ -162,7 +162,7 @@ def face_stem(b, stop_z, tol_px=15.0, iters=3):
     return b
 
 
-def close_in(b, stop_z, near_z=105.0, tol_px=8.0, iters=4):     # 위아래 15px면 ≈5mm 높게 남아 빗나갔다(11/02 옮긴 자리 2회)
+def close_in(b, stop_z, near_z=105.0, tol_px=8.0, iters=6):     # 위아래 15px면 ≈5mm 높게 남아 빗나갔다(11/02 옮긴 자리 2회)
     """노란 띠로 다가간다 — 위아래는 높이로, 거리는 수평 전진으로 깊이 ≈near_z까지. 그 뒤는 stem_grasp의 짧은 접근이
     한다(11/02 78~104mm에서 10/10). ⚠ stem_grasp의 클릭 추적은 큰 맞춤(옆 40·위 17mm) 뒤에 줄기를 놓쳤다(0/10).
     띠 검출은 매 프레임 새로 하니 놓칠 게 없다. 위아래: 화면 1px ≈ z/(0.8·fy) mm(카메라가 숙여 있어 fy/z보다 작다)."""
@@ -179,7 +179,8 @@ def close_in(b, stop_z, near_z=105.0, tol_px=8.0, iters=4):     # 위아래 15px
             return None
         u, v, z = b
         dv = v - uv_at_depth(by_z, z)[1]
-        dz = float(np.clip(-dv * z / (0.8 * fy), -30.0, 30.0)) if abs(dv) > tol_px else 0.0
+        # ⚠ 게인 0.6 — 1.0이면 +29 → −9 → +14px로 진동하다 끝났다(11/02~03 빈손 4회 전부 이것)
+        dz = float(np.clip(-0.6 * dv * z / (0.8 * fy), -30.0, 30.0)) if abs(dv) > tol_px else 0.0
         fwd = float(np.clip((z - near_z) / 0.8, 0.0, 60.0)) if z > near_z + 10.0 else 0.0
         if not dz and not fwd:
             break
