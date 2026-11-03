@@ -287,6 +287,7 @@ def field(lo: np.ndarray) -> np.ndarray:
 
 NEAR = 0.05                    # 짐작에서 칸² 당 깎는 점수(맞은 점 1개 ≈ 1점). 모의 가기에서 0.2도 비슷 — 손으로 옮긴 뒤 0.5m 다시 찾기를 덜 막는 쪽
 HIT = 0.36                     # 우도 이 이상 = 장애물 2칸 안에 떨어졌다
+TIE = 0.03                     # 최고점에서 (스캔 점 × 이만큼) 안은 동점 — 래스터 잡음(±1~2점)은 자리를 못 옮긴다
 
 
 def match(s: dict, scan: np.ndarray, prior, win_xy: float, win_deg: float):
@@ -321,20 +322,31 @@ def match(s: dict, scan: np.ndarray, prior, win_xy: float, win_deg: float):
     # 짐작에서 멀수록 조금씩 깎는다 — 벽을 따라 미끄러져도 점수가 같거나 몇 점 오르는 자리로 튀지 않게
     # (모의 가기: 0.19m 튀었다 돌아오며 좌우로 흔들렸다). 진짜 고침은 맞은 점 수십 개로 이 값을 넘는다.
     near = NEAR * (oi[:, None] ** 2 + oi[None, :] ** 2)
-    best, bp = -1e9, prior
     ths = np.radians(np.arange(-win_deg, win_deg + 1e-9, 1.0))
     per = np.empty(len(ths))
+    at = np.zeros((len(ths), 2), int)              # θ마다 고른 (i, j)
     for k, dth in enumerate(ths):
         p = idx(to_world((prior[0], prior[1], prior[2] + dth), scan))
         IX = p[:, 0, None, None] + oi[None, :, None]
         IY = p[:, 1, None, None] + oi[None, None, :]
         ok = (IX >= 0) & (IX < N) & (IY >= 0) & (IY < N)
         sc = np.where(ok, S[IX.clip(0, N - 1), IY.clip(0, N - 1)], 0).sum(0) - near - 1e-4 * abs(math.degrees(dth))
-        i, j = np.unravel_index(int(sc.argmax()), sc.shape)
-        per[k] = sc[i, j]
-        if sc[i, j] > best:
-            best = float(sc[i, j])
-            bp = np.array([prior[0] + oi[i] * RES, prior[1] + oi[j] * RES, wrap(prior[2] + dth)])
+        # ⚠ **벽 하나만 보이는 장은 벽을 따라 점수가 평평하다**(2026-11-03 모의 코스: 상자가 Astra 60cm 사각에 들면 뒷벽
+        #   직선뿐). 그 위에 격자 래스터 잡음 ±1점이 얹히고 한쪽 끝이 모름(상자 그림자)이면 argmax가 걸음마다 한 칸씩
+        #   같은 쪽으로 흘렀다(전진 14걸음에 y −0.57m, NEAR 0.05는 못 막음). 잡음보다 적게 이기는 자리는 동점으로 보고
+        #   짐작에 가까운 쪽 — 진짜 1칸 오차는 점의 40%(0.6→1.0)를 벌어 그대로 고쳐진다.
+        tie = np.argwhere(sc >= sc.max() - TIE * len(scan))
+        i, j = tie[int(np.argmin(oi[tie[:, 0]] ** 2 + oi[tie[:, 1]] ** 2))]
+        per[k], at[k] = sc[i, j], (i, j)
+    # θ도 같은 동점 규칙 — 전진마다 IMU는 +0.3°인데 지도 θ가 +1°씩 흘러 8걸음에 9°(2026-11-03 모의 코스).
+    #   단 **IMU가 준 좁은 창(≤IMU_WIN_DEG)에서만** — 1°는 2m 앞 점을 3.5cm(1칸 미만)만 옮겨 점수가 둔하므로, 넓은 창
+    #   (IMU 없음·손으로 돌림)에서 짐작 쪽을 고르면 4° 틀린다(selftest ②). 거기선 지도가 θ를 정한다.
+    #   폭을 10%로 키워 자이로를 더 믿게 해 봤더니 IMU 스케일·바이어스 오차(모의 2%·0.05°/s)가 쌓여도 지도가 못 끌어와
+    #   θ 6°·출발 맞춤 거절(시드 2) — 3%가 맞다.
+    tk = np.nonzero(per >= per.max() - TIE * len(scan))[0] if win_deg <= IMU_WIN_DEG else np.array([int(per.argmax())])
+    k = int(tk[np.argmin(np.abs(ths[tk]))])
+    best, (i, j) = float(per[k]), at[k]
+    bp = np.array([prior[0] + oi[i] * RES, prior[1] + oi[j] * RES, wrap(prior[2] + ths[k])])
     c = idx(to_world(bp, scan))
     c = c[((c >= 0) & (c < N)).all(1)]
     hit = int((F[c[:, 0], c[:, 1]] >= HIT).sum())
@@ -444,6 +456,9 @@ def astra_blocked(wait: float = 0.4) -> bool:
         time.sleep(0.2)
 
 
+DEGEN = 0.01                   # 스캔 2D 분산의 고유값 비가 이보다 작으면 "한 줄"(벽 하나) — refine 주석
+
+
 def refine(s: dict, pts: np.ndarray, m: dict, pose) -> np.ndarray:
     """격자 맞춤(5cm·1°, 2D 스캔 100점) 결과를 **지도 전체의 장애물 칸에 대한 점구름 ICP**로 다듬는다.
     한 장끼리 ICP는 벽 하나만 겹치면 벽을 따라 미끄러졌지만(되돌림), 방의 벽·모서리가 다 든 지도에는 평행이동이 선다.
@@ -453,10 +468,19 @@ def refine(s: dict, pts: np.ndarray, m: dict, pose) -> np.ndarray:
         return pose
     dst = (occ - N // 2 + 0.5) * RES
     dst = dst[np.hypot(dst[:, 0] - pose[0], dst[:, 1] - pose[1]) < 4.5]
-    got, frac, res = icp2d(flat(pts, m), dst, pose, iters=30)
-    if frac >= 0.5 and res < 0.04 and np.hypot(*(got[:2] - pose[:2])) < 0.25 and abs(wrap(got[2] - pose[2])) < math.radians(3):
-        return got
-    return pose
+    src = flat(pts, m)
+    got, frac, res = icp2d(src, dst, pose, iters=30)
+    if not (frac >= 0.5 and res < 0.04 and np.hypot(*(got[:2] - pose[:2])) < 0.25 and abs(wrap(got[2] - pose[2])) < math.radians(3)):
+        return pose
+    # ⚠ **벽 하나만 보이는 장(점이 한 줄)은 벽을 따라서는 정보가 없다** — 점-점 ICP는 지도에 짝이 없는 점(상자 그림자 쪽)을
+    #   아는 벽 끝 칸에 짝지어 벽을 따라 끌어당겼다(2026-11-03 모의 코스: 전진 14걸음에 y −0.57m). 줄 방향 이동은 버리고
+    #   법선 방향(그 장이 실제로 재는 것)만 받는다. θ는 줄로도 선다.
+    w = to_world(pose, src)[:, :2]
+    ev, vec = np.linalg.eigh(np.cov(w.T))
+    if ev[0] < DEGEN * ev[1]:
+        n = vec[:, 0]                                  # 작은 고유값의 축 = 벽의 법선
+        got[:2] = pose[:2] + n * float((got[:2] - pose[:2]) @ n)
+    return got
 
 
 def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: float,
@@ -1729,6 +1753,22 @@ def selftest() -> int:
     dp9 = np.zeros((480, 640), np.uint16); dp9[110:170] = 1130      # 토마토 줄(행 ≈139)만 차 있다
     assert slice_valid(dp9, mt8, m9, 0.0) < SLICE_MIN <= slice_valid(dp9, mt8, m9, 0.0, e=e9)
     assert slice_valid(dp9, mt8, m9, 0.0, e=math.radians(-15)) == 0.0                 # 바닥 줄은 비었다
+    # ⑩ 벽 하나만 보이는 장 — 벽을 따라서는 정보가 없다. 래스터 잡음(벽 칸이 1·2칸씩 들쭉날쭉)과 한쪽 끝의 그림자(모름)가
+    #   있어도 격자 맞춤은 짐작 y를 지키고(동점은 짐작 쪽), ICP refine도 줄 방향으로 끌리지 않는다(2026-11-03 모의 코스에서 잡음)
+    sw = empty()
+    for j in range(-40, 10):                           # 벽 x=2.7, y −2.0..0.5 (y>0.5는 그림자 = 모름)
+        sw["lo"][tuple(idx([2.7, j * RES]))] = 2.0
+        if j % 3 == 0:
+            sw["lo"][tuple(idx([2.75, j * RES]))] = 2.0   # 가끔 두 칸 두께
+    sw["lo"][idx([0.5, 0])[0]:idx([2.65, 0])[0], idx([0, -1.4])[1]:idx([0, 0.45])[1]] = -2.0     # 그 앞은 빈 곳
+    ys = np.arange(-1.8, 1.0, 0.02)                   # 그림자 쪽(0.5~1.0)은 지도에 짝이 없다
+    wall = np.c_[np.full(len(ys), 2.7), ys]           # 차체가 원점·θ=0이면 그대로 차체 좌표
+    for pr_y in (0.0, -0.05, 0.05):
+        g10 = match(sw, wall, [0.0, pr_y, 0.0], 0.3, 0)[0]
+        assert abs(g10[1] - pr_y) < 1e-9 and abs(g10[0]) < 0.06, ("벽을 따라 흘렀다", pr_y, g10)
+    p10 = np.c_[wall, np.full(len(ys), 0.3)]
+    r10 = refine(sw, p10, m, np.array([0.0, 0.0, 0.0]))
+    assert abs(r10[1]) < 0.01 and abs(r10[0]) < 0.06, ("ICP가 벽을 따라 끌렸다", r10)
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0

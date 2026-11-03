@@ -3,6 +3,7 @@
 
     python ros2/tools/space_map_sim.py            # IMU, 스케일 2% 틀림 — 합격선 단언(복셀 75%·θ 5°)
     python ros2/tools/space_map_sim.py noimu 0    # IMU 없이(비교용, 단언 없음)
+    SIM_GO="1.7,0.4;2.2,-1.0;0.3,1.0;-1.2,0.8;0,0" python ros2/tools/space_map_sim.py imu 0   # 코스: 전 구간 참 자리 0.3m 안
 
 가짜 방 5×3.5×2.5m + 상자 둘을 Astra 내부값으로 광선 추적해 깊이를 만든다(바닥은 0 = 실측처럼 IR이 안 돌아온다,
 거리² 잡음). 차체는 회전 지령 200 아래면 안 돈다(정지마찰), 돌면 35°/s에 옆으로 조금 밀린다. IMU는 스케일 2% 틀림.
@@ -130,6 +131,8 @@ sm.imu_now = imu_now
 sm.IMU_WIN_DEG = float(os.environ.get("SIM_IMUWIN", sm.IMU_WIN_DEG))
 SCALE_ERR = float(os.environ.get("SIM_SCALE", SCALE_ERR))
 sm.frame = frame
+sm.astra_blocked = lambda wait=0.4: (render() > 0).mean() < sm.NEAR_VALID   # 실기와 같은 판정: 60cm 안이면 깊이가 거의 0
+sm.yaw_front_ok = lambda: True                                              # 회전판은 정면(대기 자세)
 sys.modules["base_nudge"] = types.SimpleNamespace(open_link=lambda *a, **k: Link(), drive=drive)
 sm.MAP = os.path.join(tempfile.mkdtemp(), "m.npz")
 sm.SCANS = os.path.join(os.path.dirname(sm.MAP), "scans")   # 홈에 기록을 남기지 않는다
@@ -152,6 +155,25 @@ def surf_dist(p):
 
 
 start = true.copy()
+
+
+def map_pose():
+    """참 자세 → 지도 좌표(지도 원점 = 첫 장의 참 자세)."""
+    c0, s0 = math.cos(-start[2]), math.sin(-start[2])
+    d = true - start
+    return np.array([c0 * d[0] - s0 * d[1], s0 * d[0] + c0 * d[1], sm.wrap(d[2])])
+
+
+if os.environ.get("SIM_TRACE"):          # 걸음마다 지도 자세 옆에 참 자세·오차를 찍는다(어디서 벌어지는지 보려고)
+    _loc = sm.localize
+
+    def _traced(s_, *a, **k):
+        ok = _loc(s_, *a, **k)
+        tm = map_pose()
+        print("    [참] (%.2f, %.2f, %.0f°) · 오차 %.2fm %+.1f°" % (tm[0], tm[1], math.degrees(tm[2]),
+              float(np.hypot(*(s_["pose"][:2] - tm[:2]))), math.degrees(sm.wrap(s_["pose"][2] - tm[2]))))
+        return ok
+    sm.localize = _traced
 HAND = bool(os.environ.get("SIM_HAND"))
 if HAND:                                  # 사람이 손으로: 0.45초 돌리고 1.2초 멈추기를 되풀이(모터 지령 없음)
     import threading
@@ -196,15 +218,27 @@ print("참 회전 %.0f° · 지도 θ 오차 %.1f°" % (math.degrees(true[2] - s
 print("복셀 %d · 표면 7.5cm 안 %.1f%% · 중앙값 %.3fm" % (len(dv), 100 * (dv < 0.075).mean(), np.median(dv)))
 print("장애물 칸 %d · 표면 10cm 안 %.1f%%" % (len(do), 100 * (do < 0.10).mean()))
 err = abs(math.degrees(sm.wrap(est_th - true[2])))
-if os.environ.get("SIM_GO"):            # 이어서 목표로 가기 — 지도 좌표 SIM_GO="x,y"
-    gx, gy = (float(v) for v in os.environ["SIM_GO"].split(","))
-    ga = types.SimpleNamespace(x=gx, y=gy, w=150, wsecs=0.8, vx=150, vsecs=0.8, tol=0.2, max_steps=40, deg=20.0)
-    rc2 = sm.go_cmd(ga, M)
-    s = sm.load()
-    tm = np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2])        # 참 자리(지도 좌표)
-    print("=== 가기 rc=%d · 참 자리 (%.2f, %.2f) · 목표까지 %.2fm · 지도 자세 오차 %.2fm %.1f°" % (
-        rc2, tm[0], tm[1], float(np.hypot(tm[0] - gx, tm[1] - gy)), float(np.hypot(*(s["pose"][:2] - tm))),
-        math.degrees(sm.wrap(s["pose"][2] + start[2] - true[2]))))
+if os.environ.get("SIM_GO"):            # 이어서 목표로 가기 — 지도 좌표 SIM_GO="x,y" 또는 코스 "x,y;x,y;…"
+    legs = []
+    for g in os.environ["SIM_GO"].split(";"):
+        gx, gy = (float(v) for v in g.split(","))
+        ga = types.SimpleNamespace(x=gx, y=gy, w=150, wsecs=0.8, vx=150, vsecs=0.8, tol=0.2, max_steps=60, deg=20.0)
+        t1 = time.time()
+        rc2 = sm.go_cmd(ga, M)
+        s = sm.load()
+        tm = np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2])        # 참 자리(지도 좌표)
+        legs.append((gx, gy, rc2, tm, float(np.hypot(tm[0] - gx, tm[1] - gy)), float(np.hypot(*(s["pose"][:2] - tm))),
+                     math.degrees(sm.wrap(s["pose"][2] + start[2] - true[2])), time.time() - t1))
+        print("=== 가기 rc=%d · 참 자리 (%.2f, %.2f) · 목표까지 %.2fm · 지도 자세 오차 %.2fm %.1f°" % (
+            (rc2,) + tuple(tm) + legs[-1][4:7]))
+    print("\n=== 코스 %d구간 ===\n목표            rc  참 자리          남은 거리  자세 오차   θ 오차  초" % len(legs))
+    for gx, gy, rc2, tm, left, perr, terr, sec in legs:
+        print("(%5.2f, %5.2f)  %d   (%5.2f, %5.2f)   %.2fm     %.2fm    %5.1f°  %3.0f  %s" % (
+            gx, gy, rc2, tm[0], tm[1], left, perr, terr, sec, "✅" if rc2 == 0 and left <= 0.3 else "❌"))
+    if not os.environ.get("SIM_ORACLE"):
+        bad = [l for l in legs if l[2] != 0 or l[4] > 0.3]
+        assert not bad, ("코스 실패 %d/%d구간(참 자리 기준 0.3m 안에 못 섰다)" % (len(bad), len(legs)))
+        print("space_map_sim 가기 ✅ %d구간 전부 참 자리 0.3m 안" % len(legs))
     if os.environ.get("SIM_SCAN2"):    # 새 자리에서 한 바퀴 — 몰래 밀어 놓아(시작 맞춤 미끄럼 흉내) register가 고치는지
         from scipy.spatial import cKDTree
         before = s["vox"].astype(int).copy()
