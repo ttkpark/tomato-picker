@@ -82,7 +82,8 @@ def frame():
 
 
 def stem_ref(bgr, dep, cfg=None, intr=None):
-    """맨 줄기(띠 없음)의 기준점 — 토마토 꼭대기에서 (옆 stem_du_mm, 위 stem_dz_mm)만큼 옮긴 자리.
+    """맨 줄기(띠 없음)의 기준점 — 토마토 꼭대기에서 (옆 stem_du_mm, 위 stem_dz_mm, 깊이 stem_dd_mm)만큼 옮긴 자리.
+    깊이도 옮긴다: 카메라가 숙여 보니 토마토 윗가장자리가 줄기보다 뒤다(11/03 띠 151 vs 꼭대기 168mm).
     두 값은 ~/grip_uv.json에 있고 띠를 걸어 둔 채 `--calib-stem`으로 잰다(줄기 길이가 정하는 물리값).
     안 재 놨으면 None — 맨 줄기는 쓰지 않는다(엉뚱한 데를 자신 있게 무는 것보다 낫다)."""
     t = gm.tomato_top_uvz(bgr, dep)
@@ -91,12 +92,12 @@ def stem_ref(bgr, dep, cfg=None, intr=None):
     try:
         cfg = cfg or json.load(open(gm.GRIP_UV))
         intr = intr or json.load(open(gm.META))["intrinsics"]
-        du, dz = float(cfg["stem_du_mm"]), float(cfg["stem_dz_mm"])
+        du, dz, dd = float(cfg["stem_du_mm"]), float(cfg["stem_dz_mm"]), float(cfg.get("stem_dd_mm", 0.0))
         fx, fy = float(intr["fx"]), float(intr["fy"])
     except (OSError, ValueError, KeyError):
         return None
     u, vtop, z = t
-    return u + du * fx / z, vtop - dz * 0.8 * fy / z, z
+    return u + du * fx / z, vtop - dz * 0.8 * fy / z, z + dd
 
 
 def band():
@@ -114,7 +115,7 @@ def calib_stem(frames=15):
     """띠를 걸어 둔 채, 띠 ↔ 토마토 꼭대기의 차이를 mm로 재서 ~/grip_uv.json에 적는다(stem_du_mm, stem_dz_mm)."""
     k = json.load(open(gm.META))["intrinsics"]
     fx, fy = float(k["fx"]), float(k["fy"])
-    dus, dzs = [], []
+    dus, dzs, dds = [], [], []
     for _ in range(frames):
         f = frame()
         b = gm.band_uvz(*f) if f else None
@@ -122,16 +123,18 @@ def calib_stem(frames=15):
         if b and t:
             dus.append((b[0] - t[0]) * b[2] / fx)
             dzs.append((t[1] - b[1]) * b[2] / (0.8 * fy))
-            print("  띠 (%.0f,%.0f) %.0fmm · 토마토 꼭대기 (%.0f,%.0f) %.0fmm → 옆 %+.1f 위 %+.1f mm"
-                  % (b[0], b[1], b[2], t[0], t[1], t[2], dus[-1], dzs[-1]))
+            dds.append(b[2] - t[2])
+            print("  띠 (%.0f,%.0f) %.0fmm · 토마토 꼭대기 (%.0f,%.0f) %.0fmm → 옆 %+.1f 위 %+.1f 깊이 %+.1f mm"
+                  % (b[0], b[1], b[2], t[0], t[1], t[2], dus[-1], dzs[-1], dds[-1]))
         time.sleep(0.4)
     if len(dus) < 5:
         print("띠와 토마토가 같이 보이는 프레임이 %d장뿐 — 안 적는다" % len(dus))
         return 1
-    du, dz = float(np.median(dus)), float(np.median(dzs))
-    print("중앙값: 옆 %+.1f 위 %+.1f mm (n=%d, 퍼짐 %.1f/%.1f)" % (du, dz, len(dus), np.std(dus), np.std(dzs)))
+    du, dz, dd = float(np.median(dus)), float(np.median(dzs)), float(np.median(dds))
+    print("중앙값: 옆 %+.1f 위 %+.1f 깊이 %+.1f mm (n=%d, 퍼짐 %.1f/%.1f/%.1f)"
+          % (du, dz, dd, len(dus), np.std(dus), np.std(dzs), np.std(dds)))
     cfg = json.load(open(gm.GRIP_UV))
-    cfg["stem_du_mm"], cfg["stem_dz_mm"] = round(du, 1), round(dz, 1)
+    cfg["stem_du_mm"], cfg["stem_dz_mm"], cfg["stem_dd_mm"] = round(du, 1), round(dz, 1), round(dd, 1)
     json.dump(cfg, open(gm.GRIP_UV, "w"), indent=1)
     print("~/grip_uv.json에 적었다")
     return 0
@@ -321,11 +324,11 @@ def selftest():
         real_top = gm.tomato_top_uvz
         gm.tomato_top_uvz = lambda *_: (400.0, 300.0, 100.0)
         try:
-            r = stem_ref(None, None, {"stem_du_mm": 10, "stem_dz_mm": 20}, {"fx": 400, "fy": 400})
+            r = stem_ref(None, None, {"stem_du_mm": 10, "stem_dz_mm": 20, "stem_dd_mm": -5}, {"fx": 400, "fy": 400})
             assert stem_ref(None, None, {}, {"fx": 400, "fy": 400}) is None     # 안 재 놨으면 안 쓴다
         finally:
             gm.tomato_top_uvz = real_top
-        assert r and abs(r[0] - 440) < 1e-6 and abs(r[1] - 236) < 1e-6 and r[2] == 100, r
+        assert r and abs(r[0] - 440) < 1e-6 and abs(r[1] - 236) < 1e-6 and r[2] == 95, r
     finally:
         band, time.time, time.sleep = real_band, real_time, real_sleep
     print("selftest OK")

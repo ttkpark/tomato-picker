@@ -66,10 +66,11 @@ def band_uvz(bgr, dep_mm, prev=None, jump_px=120.0):
     return float(us_.mean()), float(vs_.mean()), float(np.median(d))
 
 
-def tomato_top_uvz(bgr, dep_mm, near_mm=50.0, max_z=250.0, min_area=1500):
+def tomato_top_uvz(bgr, dep_mm, near_mm=150.0, max_z=250.0, min_area=1500):
     """토마토(주황) 꼭대기 (u, v)와 그 둘레 깊이 z(mm). 맨 줄기(띠 없음)의 기준점 — 줄기는 토마토 꼭대기 바로 위다.
     ⚠ 마룻바닥도 주황 색상(H 15~20)이라 색만으로는 토마토와 한 덩어리가 된다(11/03 시작 사진 53장, 폭 200px) —
-    가장 가까운 주황 깊이 +near_mm 안만 남긴다(바닥은 멀다). max_z 너머에 주황뿐이면(토마토 없음, 바닥만) None.
+    가장 가까운 주황 깊이 +near_mm 안만 남긴다(바닥은 멀다). ⚠ 토마토가 커서(지름 ≈10cm) 가까이선 깊이가 60~200mm에
+    걸친다 — 50mm로 자르니 꼭대기가 잘려 None이었다(11/03 실측 near 62·띠 151). max_z 너머에 주황뿐이면(바닥만) None.
     u는 꼭대기 쪽 15% 줄의 평균(집게가 아래를 가려도 된다)."""
     import cv2
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
