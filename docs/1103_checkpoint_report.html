@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>토마토 로봇 체크포인트 보고</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  /* 보고서: 한 열, 요약 → 표 → 기준 → 요청. 색은 잉크·종이·토마토 하나·판정색 셋 */
+  --paper: #fbfaf7; --ink: #23201c; --muted: #6b655c; --line: #ddd8cf; --card: #f3f0ea;
+  --tomato: #c8381f;
+  --ok: #2e7d4f; --warn: #b7791f; --todo: #5a6b8c;
+  --display: "Noto Sans KR", "Malgun Gothic", sans-serif; --body: "Noto Sans KR", "Malgun Gothic", sans-serif; --mono: "IBM Plex Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #1a1816; --ink: #ece7df; --muted: #a39c91; --line: #3a3630; --card: #24211d;
+  --tomato: #ef5a3c; --ok: #5fc08a; --warn: #e0a24a; --todo: #8fa3cc; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --paper: #1a1816; --ink: #ece7df; --muted: #a39c91; --line: #3a3630; --card: #24211d;
+  --tomato: #ef5a3c; --ok: #5fc08a; --warn: #e0a24a; --todo: #8fa3cc; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.7 var(--body); }
+main { max-width: 820px; margin: 0 auto; padding: 32px 16px 80px; display: flex; flex-direction: column; gap: 28px; }
+header { border-bottom: 3px solid var(--tomato); padding-bottom: 14px; }
+header .to { color: var(--muted); font-size: 13px; }
+h1 { font: 700 26px/1.3 var(--display); margin: 6px 0 4px; text-wrap: balance; }
+h2 { font: 700 17px/1.4 var(--display); margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+h2::before { content: ""; width: 6px; height: 18px; background: var(--tomato); border-radius: 2px; }
+p { margin: 0 0 8px; max-width: 68ch; }
+.sum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.tile .n { font: 500 28px/1.1 var(--mono); font-variant-numeric: tabular-nums; }
+.tile .l { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { border-bottom: 1px solid var(--line); padding: 8px 8px; text-align: left; vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 12.5px; }
+td.num, th.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wrap { overflow-x: auto; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: #fff; white-space: nowrap; }
+.pill.ok { background: var(--ok); } .pill.warn { background: var(--warn); } .pill.todo { background: var(--todo); }
+ul, ol { margin: 0 0 8px; padding-left: 22px; } li { margin: 2px 0; }
+code { font: 13px var(--mono); background: var(--card); padding: 1px 5px; border-radius: 4px; }
+.ask { border-left: 4px solid var(--tomato); background: var(--card); padding: 12px 16px; border-radius: 0 8px 8px 0; }
+.fill { color: var(--warn); font-weight: 500; }
+footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 12px; }
+@media (max-width: 520px) { .sum { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <div class="to">받는 분: 짱짱맨 PM · 보고: 박기용 · 2026-11-03</div>
+  <h1>토마토 로봇, 지금 어디까지 왔고 11월~1월에 무엇을 약속하는지</h1>
+  <p>첫 정식 보고입니다. 큰 목표 하나를 작은 체크포인트 넷으로 나눴고, 각각 "됐다"를 판정할 숫자를 미리 정했습니다.</p>
+</header>
+
+<section>
+  <h2>요약 (숫자 셋)</h2>
+  <div class="sum">
+    <div class="tile"><div class="n">9 / 14</div><div class="l">11/03 줄기 잡기 성공 (로봇을 6자리로 옮겨 가며, 회당 24~48초)</div></div>
+    <div class="tile"><div class="n">10 / 10</div><div class="l">11/02 같은 자리 반복 잡기 (처짐 누적 버그 수정 뒤)</div></div>
+    <div class="tile"><div class="n">DRC 0</div><div class="l">STM32 주행보드 배선 완료, 거버 출력 전 (130부품)</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>지금 되는 것 · 안 되는 것</h2>
+  <div class="wrap"><table>
+    <tr><th>단계</th><th>상태</th><th>근거</th></tr>
+    <tr><td>토마토 찾기 → 정면 → 70cm 접근 → 손목 카메라로 45cm 근접</td><td><span class="pill ok">실기 성공</span></td><td>10/24 큰 방에서 전 과정 연속 성공</td></tr>
+    <tr><td>바로 앞(11~15cm) 모형 줄기 잡기</td><td><span class="pill ok">64%</span></td><td>11/03 9/14. 실패 4회는 전부 같은 원인(다가가기 상하 진동) → 게인 수정, 검증 전</td></tr>
+    <tr><td>잡은 뒤 놓기</td><td><span class="pill warn">미검증</span></td><td>고정 턱이 줄기를 끌고 나와 "열기 → 옆으로 12mm → 빼기"로 바꿈</td></tr>
+    <tr><td>차체 정밀 이동 (3~5cm 단위)</td><td><span class="pill warn">불안정</span></td><td>지령이 0 아니면 18cm. 바퀴 "톡톡"으로 ±5mm까지는 됨. 근본 해결 = 엔코더 보드</td></tr>
+    <tr><td>전원 안정성</td><td><span class="pill warn">원인 확정</span></td><td>팔+바퀴 동시 구동 시 Uno 브라운아웃 리셋, USB 접지 루프(-71). 새 보드가 절연·전원 분리로 해결</td></tr>
+    <tr><td>STM32 주행보드 (엔코더 4ch · E-STOP · 전류감지)</td><td><span class="pill todo">주문 전</span></td><td>회로·배선 완료, 부품 장바구니 담김. 제작·배송 2~3주</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>체크포인트 4개</h2>
+  <div class="wrap"><table>
+    <tr><th>차수</th><th>기한</th><th>약속</th><th>"됐다"의 기준</th></tr>
+    <tr><td class="num">0차</td><td class="num">11/09</td><td>이 보고 + 규약대로 20회 측정 + 기판·부품 주문</td><td>셋 다 완료 (새로 만드는 것 없음)</td></tr>
+    <tr><td class="num">1차</td><td class="num">11/30</td><td>바로 앞 모형 토마토의 줄기 잡기</td><td>규약 20회 중 <b>10회 이상</b></td></tr>
+    <tr><td class="num">2차</td><td class="num">12/30</td><td>STM32 엔코더·E-STOP 주행보드 완성</td><td>아래 합격 5항목 전부</td></tr>
+    <tr><td class="num">3차</td><td class="num">01/31</td><td>방 안 임의 위치의 모형 나무 1그루를 찾아가 토마토 잡기</td><td>10회 중 <b>5회 이상</b>, 사람 개입 0, 회당 5분 이내</td></tr>
+  </table></div>
+  <p style="margin-top:8px;color:var(--muted)">"여러 그루를 자유롭게"는 4차(2월~)로 뒀습니다. 시연 무대는 실내 평지 토마토 공장(10/24 합의)으로 고정합니다.</p>
+</section>
+
+<section>
+  <h2>잡기 판정 규약 (1차·3차 공통)</h2>
+  <p><b>성공</b> = 닫은 뒤 집게 센서값 <code>≥ 6.0</code>(빈손 5.0~5.4, 물림 6.2~6.9, 11/01 실측) <b>그리고</b> 사람 눈으로 줄기가 두 손끝 사이에 있을 것. 화면에서는 맞았는데 안 물린 경우는 실패로 셉니다.</p>
+  <ul>
+    <li>매 회 토마토를 옮깁니다: 좌우 ±5cm, 앞뒤 ±3cm, 회전 ±20°를 주사위로 정함 (같은 자리 반복은 성적이 과장됩니다).</li>
+    <li>실패는 넷 중 하나로 기록: 빈손 / 엉뚱한 곳(꼭지·고리) / 충돌(화분·지지대, 즉시 중단) / 60초 초과.</li>
+    <li>20회는 하루에 끝내고, 중간에 코드를 고치면 처음부터 다시 셉니다.</li>
+    <li>제출물: 표 1장(회·옮김·결과·실패종류·소요초·집게값) + 전체 영상 1개.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>2차 주행보드 합격 5항목</h2>
+  <div class="wrap"><table>
+    <tr><th>#</th><th>항목</th><th>합격</th></tr>
+    <tr><td class="num">E1</td><td>엔코더 4채널</td><td>바퀴 손으로 10바퀴 → 카운트 CPR×10 ± 1, 4채널 전부</td></tr>
+    <tr><td class="num">E2</td><td>위치 제어</td><td>1m 사각형 3바퀴 뒤 위치 오차 ≤ 10cm, 각도 ≤ 3° (지도 보정 없이)</td></tr>
+    <tr><td class="num">E3</td><td>비상정지</td><td>누르면 즉시 정지, <b>놓아도 잠김</b>, 해제 명령으로만 풀림</td></tr>
+    <tr><td class="num">E4</td><td>전원</td><td>팔 + 4바퀴 급역전 100회 + 바퀴 잡아 세우기 10회 동안 젯슨·보드 리셋 0, USB 끊김 0</td></tr>
+    <tr><td class="num">E5</td><td>호환</td><td>젯슨 코드 수정 없이 기존 프로토콜 그대로 구동</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>위험과 대응</h2>
+  <ul>
+    <li><b>기판 납기</b>: 11월 안에 주문하지 않으면 12/30을 못 맞춥니다. 그래서 0차에 주문을 넣었습니다. 12월 중순을 넘기면 2차를 1/15로 미루고 <b>1주 전에</b> 말씀드립니다.</li>
+    <li><b>잡기 성공률이 50% 밑으로 떨어질 때</b>: 실패 4종 분포를 먼저 보고, 가장 큰 통 하나만 고칩니다. 게인을 여러 개 동시에 만지지 않습니다.</li>
+    <li><b>1인 개발</b>: 체크포인트마다 "표 1개 + 영상 1개 + 다음 할 일 3개"만 보고합니다. 기한을 못 지키는 것보다 말 없이 밀리는 것을 막는 게 목적입니다.</li>
+  </ul>
+</section>
+
+<section class="ask">
+  <h2>요청드리는 것</h2>
+  <ol>
+    <li>체크포인트 4개와 판정 기준에 동의 여부 (고칠 숫자가 있으면 지금이 좋습니다).</li>
+    <li>STM32 기판 제작 + 부품 구매 승인: <span class="fill">약 ____만 원 (견적 첨부 예정)</span>.</li>
+    <li>다음 보고일: 11/09 (0차 결과), 이후 체크포인트마다.</li>
+  </ol>
+</section>
+
+<footer>
+  근거 문서(저장소): docs/체크포인트-2026-11.md (판정 규약 원문) · docs/개발일지-2026-10-30-잡기분석.md §11~12 (10/10, 9/14 기록) · docs/1103_report.html (잡기 상세) · docs/STM32_메카넘_베이스컨트롤러_명세서.md v0.2 · docs/stm32-자세보드-목표.md §2 (합격 기준 원문)
+</footer>
+
+</main>
+</body>
+</html>
