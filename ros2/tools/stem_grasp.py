@@ -1143,6 +1143,17 @@ def main() -> int:
             print("❌ 겨눌 것을 못 찾았다 — 열매가 보이는 자세에서 시작하라.")
             return 1
         u, v, z, a, _clip = s
+        if args.hold_z and args.aim == "click":
+            # ⚠ 가는 줄기는 클릭 화소가 조금만 벗어나도 뒤 배경 깊이를 잰다(11/04 맨 줄기 4회째 237mm → 엉뚱한 맞춤).
+            #   부르는 쪽(grasp_repeat)이 여러 프레임 중앙값으로 낸 z를 클릭 파일에 실어 주면 그걸 쓴다.
+            try:
+                cz = float(json.load(open(args.click_file)).get("z") or 0.0)
+            except Exception:                              # noqa: BLE001
+                cz = 0.0
+            if 60.0 < cz < 400.0:
+                if abs(cz - z) > 5.0:
+                    print("  클릭 깊이 %.0fmm를 쓴다(이 화소에서 잰 값 %.0fmm)" % (cz, z))
+                z = cz
         tu, tv = aim_uv(z)
         print("지금: %s 화면(%.0f,%.0f) 깊이 %.0fmm 넓이%d  → 남은 화소 %.0f"
               % (args.aim, u, v, z, a, math.hypot(u - tu, v - tv)))

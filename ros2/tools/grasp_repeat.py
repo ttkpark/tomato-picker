@@ -291,17 +291,21 @@ def close_in(b, stop_z, near_z=105.0, tol_px=8.0, iters=6):     # 위아래 15px
     except Exception as exc:                               # noqa: BLE001
         print("  다가가기 건너뜀(%s)" % exc)
         return b
+    blind = REF == "stem"
+    near_meas = max(near_z, LOCK_Z) if blind else near_z
     for i in range(iters):
         b = face_stem(b, stop_z)
         if b is None:
             return None
         u, v, z = b
+        if blind and z <= LOCK_Z + 10.0 and abs(v - uv_at_depth(by_z, z)[1]) <= tol_px:
+            break
         dv = v - uv_at_depth(by_z, z)[1]
         # ⚠ 게인 0.6 — 1.0이면 +29 → −9 → +14px로 진동하다 끝났다(11/02~03 빈손 4회 전부 이것).
         # 마지막 반복만 1.0 — 0.6으로는 −13px가 남은 채 횟수를 다 써 빗나갔다(11/03 20회 시험의 빈손 1회).
         gain = 1.0 if i == iters - 1 else 0.6
         dz = float(np.clip(-gain * dv * z / (0.8 * fy), -30.0, 30.0)) if abs(dv) > tol_px else 0.0
-        fwd = float(np.clip((z - near_z) / 0.8, 0.0, 60.0)) if z > near_z + 10.0 else 0.0
+        fwd = float(np.clip((z - near_meas) / 0.8, 0.0, 60.0)) if z > near_meas + 10.0 else 0.0
         if not dz and not fwd:
             break
         print("  다가가기: 띠 %.0fmm, 겨냥점보다 %+.0fpx 아래 → 높이 %+.0f · 앞으로 %.0fmm" % (z, dv, dz, fwd))
@@ -310,7 +314,36 @@ def close_in(b, stop_z, near_z=105.0, tol_px=8.0, iters=6):     # 위아래 15px
         if b is None:
             print("  다가가니 띠가 안 보인다")
             return None
+    if blind and b is not None:
+        b = blind_step(b, near_z, by_z)
     return b
+
+
+LOCK_Z = 128.0   # 맨 줄기는 이 깊이까지만 보고 다가간다 — 더 가까이선 토마토가 화면을 채워 기준이 흔들렸다
+
+
+def predict_after_forward(b, fwd, aim):
+    """접근축으로 fwd mm 나아간 뒤 표적이 화면 어디 있을지. 축 위 점은 깊이마다 겨냥점(aim(z))에 찍히므로
+    겨냥점에서 벗어난 만큼만 원근으로 키운다(z/z'). 깊이는 카메라가 숙여 있어 1mm당 0.8mm 준다."""
+    u, v, z = b
+    z2 = z - 0.8 * fwd
+    au, av = aim(z)
+    au2, av2 = aim(z2)
+    k = z / z2
+    return au2 + (u - au) * k, av2 + (v - av) * k, z2
+
+
+def blind_step(b, near_z, by_z):
+    """마지막 구간(LOCK_Z → near_z)은 다시 보지 않고 간다 — 11/04 맨 줄기에서 100mm 근처 기준이
+    ±30~90px 오가며 줄기를 잃었다(띠와 나란히 재면 같은 거리에서 흔들림 없음 = 띠 없을 때만의 병)."""
+    from stem_grasp import uv_at_depth
+    u, v, z = b
+    fwd = float(np.clip((z - near_z) / 0.8, 0.0, 60.0))
+    if fwd < 3.0:
+        return b
+    print("  마지막 %.0fmm는 보지 않고 간다(맨 줄기 — 가까이선 기준이 흔들린다)" % fwd)
+    run("tool_jog.py", "--horiz", "%.1f" % fwd)
+    return predict_after_forward(b, fwd, lambda zz: uv_at_depth(by_z, zz))
 
 
 def look_around(pans=(8.0, 20.0, -20.0, -35.0, 35.0)):
@@ -365,6 +398,12 @@ def selftest():
         finally:
             gm.tomato_top_uvz = real_top
         assert r and abs(r[0] - 440) < 1e-6 and abs(r[1] - 236) < 1e-6 and r[2] == 95, r
+        # 보지 않고 나아간 뒤의 예측: 겨냥점에 있던 점은 겨냥점에 남고, 벗어난 만큼은 원근으로 커진다
+        aim = lambda zz: (400.0 + zz * 0.1, 300.0 - zz * 0.2)                    # noqa: E731
+        p = predict_after_forward((aim(128)[0], aim(128)[1], 128.0), 25.0, aim)
+        assert abs(p[2] - 108) < 1e-6 and abs(p[0] - aim(108)[0]) < 1e-6 and abs(p[1] - aim(108)[1]) < 1e-6, p
+        p = predict_after_forward((aim(128)[0] + 10, aim(128)[1], 128.0), 25.0, aim)
+        assert abs(p[0] - (aim(108)[0] + 10 * 128 / 108)) < 1e-6, p
     finally:
         band, time.time, time.sleep = real_band, real_time, real_sleep
     print("selftest OK")
