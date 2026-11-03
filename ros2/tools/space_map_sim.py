@@ -31,6 +31,7 @@ rng = np.random.default_rng(SEED)
 ROOM = (-2.0, 3.0, -1.5, 2.0, 0.0, 2.5)        # x0 x1 y0 y1 z0 z1
 BOX = (1.0, 1.4, 0.3, 0.9, 0.0, 0.8)
 BOX2 = (-1.2, -0.8, -1.5, -1.0, 0.0, 1.2)      # 구석 장
+BOXES = [BOX, BOX2]                           # 광선 추적 상자 목록 — checkpoint_sim이 화분·열매를 덧붙인다
 W, H = 640, 480
 IT = {"fx": 570.3, "fy": 570.3, "ppx": 319.5, "ppy": 239.5}
 M = dict(sm.MOUNT)
@@ -106,7 +107,7 @@ def render():
         t_exit = np.nanmin(np.where(d > 0, hi, np.where(d < 0, lo, np.inf)), -1)
         z_hit = o[2] + d[..., 2] * t_exit
         t = np.where(z_hit <= ROOM[4] + 1e-6, np.nan, t_exit)          # 바닥 = 안 보임
-        for B in (BOX, BOX2):
+        for B in BOXES:
             a = (np.array(B[0::2]) - o) / d
             b = (np.array(B[1::2]) - o) / d
             tn = np.nanmax(np.minimum(a, b), -1)
@@ -151,7 +152,7 @@ def surf_dist(p):
     walls = np.min(np.stack([np.abs(p[:, 0] - ROOM[0]), np.abs(p[:, 0] - ROOM[1]),
                              np.abs(p[:, 1] - ROOM[2]), np.abs(p[:, 1] - ROOM[3]),
                              np.abs(p[:, 2] - ROOM[5])], 1), 1)
-    return np.minimum(walls, np.minimum(box_out(p, BOX), box_out(p, BOX2)))
+    return np.minimum(walls, np.min(np.stack([box_out(p, B) for B in BOXES]), 0))
 
 
 start = true.copy()
@@ -197,73 +198,74 @@ if os.environ.get("SIM_ORACLE"):        # 천장: 맞춤 대신 참 자세(지�
         return np.array([c0 * d[0] - s0 * d[1], s0 * d[0] + c0 * d[1], sm.wrap(d[2])]), 1.0, 99, False
     sm.match = oracle
 args = types.SimpleNamespace(steps=int(os.environ.get("SIM_STEPS", 24)), w=int(os.environ.get("SIM_W", 150)), wsecs=float(os.environ.get("SIM_WSECS", 0.8)), deg=20.0, hand=HAND)
-t0 = time.time()
-rc = sm.scan_cmd(args, M)
-s = sm.load()
-# 지도 좌표 → 참 좌표: 지도 원점 = 첫 장의 참 자세
-c, sn = math.cos(start[2]), math.sin(start[2])
-vox = (s["vox"].astype(float) + 0.5) * sm.RES
-pw = np.stack([start[0] + c * vox[:, 0] - sn * vox[:, 1], start[1] + sn * vox[:, 0] + c * vox[:, 1], vox[:, 2]], 1)
-dv = surf_dist(pw)
-occ = np.argwhere(s["lo"] > sm.OCC)
-oc = (occ - sm.N // 2 + 0.5) * sm.RES
-ow = np.stack([start[0] + c * oc[:, 0] - sn * oc[:, 1], start[1] + sn * oc[:, 0] + c * oc[:, 1], np.full(len(oc), 0.3)], 1)
-do = surf_dist(ow)
-est_th = s["pose"][2] + start[2]
-print("\n=== %s seed %d rc=%d %.0fs ===" % ("IMU" if USE_IMU else "IMU 없음", SEED, rc, time.time() - t0))
-print("참 이동 %.2fm (지도 좌표 %.2f, %.2f)" % ((float(np.hypot(*(true[:2] - start[:2]))),) +
-      tuple(np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2]))))
-print("참 회전 %.0f° · 지도 θ 오차 %.1f°" % (math.degrees(true[2] - start[2]),
-                                       math.degrees(sm.wrap(est_th - true[2]))))
-print("복셀 %d · 표면 7.5cm 안 %.1f%% · 중앙값 %.3fm" % (len(dv), 100 * (dv < 0.075).mean(), np.median(dv)))
-print("장애물 칸 %d · 표면 10cm 안 %.1f%%" % (len(do), 100 * (do < 0.10).mean()))
-err = abs(math.degrees(sm.wrap(est_th - true[2])))
-if os.environ.get("SIM_GO"):            # 이어서 목표로 가기 — 지도 좌표 SIM_GO="x,y" 또는 코스 "x,y;x,y;…"
-    legs = []
-    for g in os.environ["SIM_GO"].split(";"):
-        gx, gy = (float(v) for v in g.split(","))
-        ga = types.SimpleNamespace(x=gx, y=gy, w=150, wsecs=0.8, vx=150, vsecs=0.8, tol=0.2, max_steps=60, deg=20.0)
-        t1 = time.time()
-        rc2 = sm.go_cmd(ga, M)
-        s = sm.load()
-        tm = np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2])        # 참 자리(지도 좌표)
-        legs.append((gx, gy, rc2, tm, float(np.hypot(tm[0] - gx, tm[1] - gy)), float(np.hypot(*(s["pose"][:2] - tm))),
-                     math.degrees(sm.wrap(s["pose"][2] + start[2] - true[2])), time.time() - t1))
-        print("=== 가기 rc=%d · 참 자리 (%.2f, %.2f) · 목표까지 %.2fm · 지도 자세 오차 %.2fm %.1f°" % (
-            (rc2,) + tuple(tm) + legs[-1][4:7]))
-    print("\n=== 코스 %d구간 ===\n목표            rc  참 자리          남은 거리  자세 오차   θ 오차  초" % len(legs))
-    for gx, gy, rc2, tm, left, perr, terr, sec in legs:
-        print("(%5.2f, %5.2f)  %d   (%5.2f, %5.2f)   %.2fm     %.2fm    %5.1f°  %3.0f  %s" % (
-            gx, gy, rc2, tm[0], tm[1], left, perr, terr, sec, "✅" if rc2 == 0 and left <= 0.3 else "❌"))
-    if not os.environ.get("SIM_ORACLE"):
-        bad = [l for l in legs if l[2] != 0 or l[4] > 0.3]
-        assert not bad, ("코스 실패 %d/%d구간(참 자리 기준 0.3m 안에 못 섰다)" % (len(bad), len(legs)))
-        print("space_map_sim 가기 ✅ %d구간 전부 참 자리 0.3m 안" % len(legs))
-    if os.environ.get("SIM_SCAN2"):    # 새 자리에서 한 바퀴 — 몰래 밀어 놓아(시작 맞춤 미끄럼 흉내) register가 고치는지
-        from scipy.spatial import cKDTree
-        before = s["vox"].astype(int).copy()
-        kick = [float(v) for v in os.environ.get("SIM_KICK", "0,0").split(",")]
-        true[0] += kick[0]; true[1] += kick[1]
-        sm.scan_cmd(args, M)
-        s = sm.load()
-        A = set(map(tuple, before))
-        new = np.array([v for v in map(tuple, s["vox"].astype(int)) if v not in A])
-        dn, _ = cKDTree(before).query(new)
-        pw2 = (new.astype(float) + 0.5) * sm.RES
-        pw2 = np.stack([start[0] + c * pw2[:, 0] - sn * pw2[:, 1], start[1] + sn * pw2[:, 0] + c * pw2[:, 1], pw2[:, 2]], 1)
-        tm = np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2])
-        if os.environ.get("SIM_PLOT"):
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            bad = surf_dist(pw2) >= 0.075
-            fig, ax = plt.subplots(1, 2, figsize=(14, 6))
-            ax[0].scatter(pw2[~bad, 0], pw2[~bad, 1], s=1, c="g"); ax[0].scatter(pw2[bad, 0], pw2[bad, 1], s=1, c="r")
-            ax[1].scatter(np.hypot(pw2[:, 0] - true[0], pw2[:, 1] - true[1]), pw2[:, 2], s=1, c=np.where(bad, "r", "g"))
-            ax[0].plot(true[0], true[1], "k^"); ax[0].set_aspect("equal")
-            plt.savefig(os.environ["SIM_PLOT"], dpi=60)
-        print("=== 새 자리 스캔 · 새 복셀 %d · 첫 지도 8cm 안 %.1f%% · 참 표면 7.5cm 안 %.1f%% · 지도 자세 오차 %.2fm" % (
-            len(new), 100 * (dn <= 1.5).mean(), 100 * (surf_dist(pw2) < 0.075).mean(), float(np.hypot(*(s["pose"][:2] - tm)))))
-if USE_IMU and not os.environ.get("SIM_SCALE") and not os.environ.get("SIM_XY"):
-    assert rc == 0 and (dv < 0.075).mean() >= 0.75 and err <= 5.0, ("지도 품질 합격선 미달", rc, (dv < 0.075).mean(), err)
-    print("space_map_sim ✅ 합격선(복셀 75%·θ 5°)")
+if __name__ == "__main__":          # 아래는 한 번 돌려 보는 흐름 — checkpoint_sim은 위 가짜 방·차체만 가져다 쓴다
+    t0 = time.time()
+    rc = sm.scan_cmd(args, M)
+    s = sm.load()
+    # 지도 좌표 → 참 좌표: 지도 원점 = 첫 장의 참 자세
+    c, sn = math.cos(start[2]), math.sin(start[2])
+    vox = (s["vox"].astype(float) + 0.5) * sm.RES
+    pw = np.stack([start[0] + c * vox[:, 0] - sn * vox[:, 1], start[1] + sn * vox[:, 0] + c * vox[:, 1], vox[:, 2]], 1)
+    dv = surf_dist(pw)
+    occ = np.argwhere(s["lo"] > sm.OCC)
+    oc = (occ - sm.N // 2 + 0.5) * sm.RES
+    ow = np.stack([start[0] + c * oc[:, 0] - sn * oc[:, 1], start[1] + sn * oc[:, 0] + c * oc[:, 1], np.full(len(oc), 0.3)], 1)
+    do = surf_dist(ow)
+    est_th = s["pose"][2] + start[2]
+    print("\n=== %s seed %d rc=%d %.0fs ===" % ("IMU" if USE_IMU else "IMU 없음", SEED, rc, time.time() - t0))
+    print("참 이동 %.2fm (지도 좌표 %.2f, %.2f)" % ((float(np.hypot(*(true[:2] - start[:2]))),) +
+          tuple(np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2]))))
+    print("참 회전 %.0f° · 지도 θ 오차 %.1f°" % (math.degrees(true[2] - start[2]),
+                                           math.degrees(sm.wrap(est_th - true[2]))))
+    print("복셀 %d · 표면 7.5cm 안 %.1f%% · 중앙값 %.3fm" % (len(dv), 100 * (dv < 0.075).mean(), np.median(dv)))
+    print("장애물 칸 %d · 표면 10cm 안 %.1f%%" % (len(do), 100 * (do < 0.10).mean()))
+    err = abs(math.degrees(sm.wrap(est_th - true[2])))
+    if os.environ.get("SIM_GO"):            # 이어서 목표로 가기 — 지도 좌표 SIM_GO="x,y" 또는 코스 "x,y;x,y;…"
+        legs = []
+        for g in os.environ["SIM_GO"].split(";"):
+            gx, gy = (float(v) for v in g.split(","))
+            ga = types.SimpleNamespace(x=gx, y=gy, w=150, wsecs=0.8, vx=150, vsecs=0.8, tol=0.2, max_steps=60, deg=20.0)
+            t1 = time.time()
+            rc2 = sm.go_cmd(ga, M)
+            s = sm.load()
+            tm = np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2])        # 참 자리(지도 좌표)
+            legs.append((gx, gy, rc2, tm, float(np.hypot(tm[0] - gx, tm[1] - gy)), float(np.hypot(*(s["pose"][:2] - tm))),
+                         math.degrees(sm.wrap(s["pose"][2] + start[2] - true[2])), time.time() - t1))
+            print("=== 가기 rc=%d · 참 자리 (%.2f, %.2f) · 목표까지 %.2fm · 지도 자세 오차 %.2fm %.1f°" % (
+                (rc2,) + tuple(tm) + legs[-1][4:7]))
+        print("\n=== 코스 %d구간 ===\n목표            rc  참 자리          남은 거리  자세 오차   θ 오차  초" % len(legs))
+        for gx, gy, rc2, tm, left, perr, terr, sec in legs:
+            print("(%5.2f, %5.2f)  %d   (%5.2f, %5.2f)   %.2fm     %.2fm    %5.1f°  %3.0f  %s" % (
+                gx, gy, rc2, tm[0], tm[1], left, perr, terr, sec, "✅" if rc2 == 0 and left <= 0.3 else "❌"))
+        if not os.environ.get("SIM_ORACLE"):
+            bad = [l for l in legs if l[2] != 0 or l[4] > 0.3]
+            assert not bad, ("코스 실패 %d/%d구간(참 자리 기준 0.3m 안에 못 섰다)" % (len(bad), len(legs)))
+            print("space_map_sim 가기 ✅ %d구간 전부 참 자리 0.3m 안" % len(legs))
+        if os.environ.get("SIM_SCAN2"):    # 새 자리에서 한 바퀴 — 몰래 밀어 놓아(시작 맞춤 미끄럼 흉내) register가 고치는지
+            from scipy.spatial import cKDTree
+            before = s["vox"].astype(int).copy()
+            kick = [float(v) for v in os.environ.get("SIM_KICK", "0,0").split(",")]
+            true[0] += kick[0]; true[1] += kick[1]
+            sm.scan_cmd(args, M)
+            s = sm.load()
+            A = set(map(tuple, before))
+            new = np.array([v for v in map(tuple, s["vox"].astype(int)) if v not in A])
+            dn, _ = cKDTree(before).query(new)
+            pw2 = (new.astype(float) + 0.5) * sm.RES
+            pw2 = np.stack([start[0] + c * pw2[:, 0] - sn * pw2[:, 1], start[1] + sn * pw2[:, 0] + c * pw2[:, 1], pw2[:, 2]], 1)
+            tm = np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2])
+            if os.environ.get("SIM_PLOT"):
+                import matplotlib
+                matplotlib.use("Agg")
+                import matplotlib.pyplot as plt
+                bad = surf_dist(pw2) >= 0.075
+                fig, ax = plt.subplots(1, 2, figsize=(14, 6))
+                ax[0].scatter(pw2[~bad, 0], pw2[~bad, 1], s=1, c="g"); ax[0].scatter(pw2[bad, 0], pw2[bad, 1], s=1, c="r")
+                ax[1].scatter(np.hypot(pw2[:, 0] - true[0], pw2[:, 1] - true[1]), pw2[:, 2], s=1, c=np.where(bad, "r", "g"))
+                ax[0].plot(true[0], true[1], "k^"); ax[0].set_aspect("equal")
+                plt.savefig(os.environ["SIM_PLOT"], dpi=60)
+            print("=== 새 자리 스캔 · 새 복셀 %d · 첫 지도 8cm 안 %.1f%% · 참 표면 7.5cm 안 %.1f%% · 지도 자세 오차 %.2fm" % (
+                len(new), 100 * (dn <= 1.5).mean(), 100 * (surf_dist(pw2) < 0.075).mean(), float(np.hypot(*(s["pose"][:2] - tm)))))
+    if USE_IMU and not os.environ.get("SIM_SCALE") and not os.environ.get("SIM_XY"):
+        assert rc == 0 and (dv < 0.075).mean() >= 0.75 and err <= 5.0, ("지도 품질 합격선 미달", rc, (dv < 0.075).mean(), err)
+        print("space_map_sim ✅ 합격선(복셀 75%·θ 5°)")

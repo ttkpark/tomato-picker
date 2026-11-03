@@ -90,6 +90,8 @@ behavior the task requires stay in.
   `python tools/eye_check.py` (보정→통합 배선 102종 — 카메라 둘 포함) ·
   `python ros2/tools/ros_selfcheck.py` (레거시 경계·URDF↔기구학 일치·보드계약 5층 데드맨·계약테스트/0속도정지·서보캘리 틱스팬↔NormLimits 물리범위·limits_deg 과대개방 감사·부품 전장하한/mount.x기하·yolo_seg 줄기클래스/마스크추출 stem_cut 연동·6-DoF 절단 포즈 및 깊이 평활화·Pre-grasp/Retract 및 5-DoF 기구학 정합성 진단·복합 엔드이펙터 파지TCP↔커터TCP 기하 오프셋·4단계 시퀀셜 궤적 계획 및 줄기축 비정렬 과실 거절/retract_grasp_tcp·roll_limit_deg 매개변수화 및 비수치 방어·click_server grasp aim 모드 연동·stem_cut 전단(shear) 비직교 왜곡 및 NaN 거절·detect_node YOLO 플러그/폴백·깊이 거절·스탠드오프·프리셋/캘리 등 590종) ·
   `python tools/arm_cartesian_check.py` (직교 좌표 제어·관절 보간 대체·처짐 되먹임·접힌 자세 집게 축 98종).
+  **체크포인트 1·2·3차를 가상 3D에서** = `python ros2/tools/checkpoint_sim.py` → `docs/checkpoint_sim.html`(브라우저 재생, 2026-11-03~,
+  [`docs/체크포인트-2026-11.md`](docs/체크포인트-2026-11.md) 끝 절).
 
 
 ## 하드웨어 제어 — **현재 구성 (중요: 옛 문서와 혼동 주의)**
