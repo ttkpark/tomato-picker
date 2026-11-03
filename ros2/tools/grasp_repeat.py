@@ -93,13 +93,16 @@ def stem_ref(bgr, dep, cfg=None, intr=None):
         cfg = cfg or json.load(open(gm.GRIP_UV))
         intr = intr or json.load(open(gm.META))["intrinsics"]
         du, dz, dd = float(cfg["stem_du_mm"]), float(cfg["stem_dz_mm"]), float(cfg.get("stem_dd_mm", 0.0))
+        su = float(cfg.get("stem_su_mm", 0.0))
         fx, fy = float(intr["fx"]), float(intr["fy"])
     except (OSError, ValueError, KeyError):
         return None
     u, vtop, z = t
-    su = stem_u(bgr, dep, t, fy) if bgr is not None else None
-    # 가로는 줄기 자체(있으면) — 토마토는 줄기에 비스듬히 매달려 중심이 줄기에서 10mm 벗어났다(11/03 맨 줄기 첫 화면)
-    return (su if su is not None else u + du * fx / z), vtop - dz * 0.8 * fy / z, z + dd
+    # 가로는 줄기 자체(있으면) — 토마토는 줄기에 비스듬히 매달려 중심이 줄기에서 10mm 벗어났다(11/03 맨 줄기 첫 화면).
+    # 줄기도 기울어 꼭지 바로 위(찾는 줄)와 무는 높이가 옆으로 6~7mm 다르다 → stem_su_mm(띠로 잼). 11/04 실측:
+    # 이 보정 전 오차가 151→100mm 내내 옆 −5.5~−7.1·위 −2.6~−3.3mm로 일정했다(흔들림 아님, 치우침).
+    sx = stem_u(bgr, dep, t, fy) if bgr is not None else None
+    return (sx + su * fx / z if sx is not None else u + du * fx / z), vtop - dz * 0.8 * fy / z, z + dd
 
 
 def stem_u(bgr, dep, top, fy, lo_mm=4.0, hi_mm=13.0, win_mm=20.0):
@@ -136,12 +139,15 @@ def calib_stem(frames=15):
     """띠를 걸어 둔 채, 띠 ↔ 토마토 꼭대기의 차이를 mm로 재서 ~/grip_uv.json에 적는다(stem_du_mm, stem_dz_mm)."""
     k = json.load(open(gm.META))["intrinsics"]
     fx, fy = float(k["fx"]), float(k["fy"])
-    dus, dzs, dds = [], [], []
+    dus, dzs, dds, sus = [], [], [], []
     for _ in range(frames):
         f = frame()
         b = gm.band_uvz(*f) if f else None
         t = gm.tomato_top_uvz(*f) if f else None
         if b and t:
+            sx = stem_u(f[0], f[1], t, fy)
+            if sx is not None:
+                sus.append((b[0] - sx) * b[2] / fx)
             dus.append((b[0] - t[0]) * b[2] / fx)
             dzs.append((t[1] - b[1]) * b[2] / (0.8 * fy))
             dds.append(b[2] - t[2])
@@ -156,6 +162,8 @@ def calib_stem(frames=15):
           % (du, dz, dd, len(dus), np.std(dus), np.std(dzs), np.std(dds)))
     cfg = json.load(open(gm.GRIP_UV))
     cfg["stem_du_mm"], cfg["stem_dz_mm"], cfg["stem_dd_mm"] = round(du, 1), round(dz, 1), round(dd, 1)
+    cfg["stem_su_mm"] = round(float(np.median(sus)), 1) if len(sus) >= 5 else 0.0
+    print("줄기 찾은 자리 → 띠: 옆 %+.1f mm (n=%d)" % (cfg["stem_su_mm"], len(sus)))
     json.dump(cfg, open(gm.GRIP_UV, "w"), indent=1)
     print("~/grip_uv.json에 적었다")
     return 0
