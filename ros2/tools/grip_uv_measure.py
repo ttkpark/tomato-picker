@@ -34,10 +34,15 @@ GRIP_UV = os.path.expanduser("~/grip_uv.json")
 PY = sys.executable
 
 
+BAND_H_PXMM = 4323.0   # 띠 세로 길이(px)×깊이(mm) — 11/03 실측 33px@131mm. 중심 v = 윗변 + 0.5·이것/z
+
+
 def band_uvz(bgr, dep_mm, prev=None, jump_px=120.0):
     """노란 띠 화소의 중심 (u, v)와 깊이 중앙값 z(mm). 못 찾으면 None.
     집게가 띠 가운데를 가려 두 조각이 되므로 조각을 합친다.
-    ⚠ 색상 24~40: 11/02 실측 테이프 H≈30, 주황 토마토 H 13~20 — tape_point의 18은 토마토를 띠로 잡았다."""
+    ⚠ 색상 24~40: 11/02 실측 테이프 H≈30, 주황 토마토 H 13~20 — tape_point의 18은 토마토를 띠로 잡았다.
+    ⚠ v는 평균이 아니라 **윗변 + 띠 절반 길이** — 다가가면(≈107mm) 집게 끝이 띠 아랫부분을 프레임마다 가렸다 들켰다 해서
+    평균 v가 −30↔+15px로 두 상태를 오갔다(11/03 저녁 다가가기 발산·빈손 3회). 윗변은 집게가 못 가린다."""
     import cv2
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     m = ((hsv[:, :, 0] > 24) & (hsv[:, :, 0] < 40)
@@ -63,7 +68,8 @@ def band_uvz(bgr, dep_mm, prev=None, jump_px=120.0):
     d = d[d > 0]
     if d.size < 20:
         return None
-    return float(us_.mean()), float(vs_.mean()), float(np.median(d))
+    z = float(np.median(d))
+    return float(us_.mean()), float(vs_.min()) + 0.5 * BAND_H_PXMM / z, z
 
 
 def tomato_top_uvz(bgr, dep_mm, near_mm=150.0, max_z=250.0, min_area=1500):
@@ -202,12 +208,15 @@ def selftest():
     cv2.rectangle(bgr, (420, 375), (440, 390), yel, -1)    # 아래 조각 — 가운데(346~374)는 집게가 가림
     dep[330:391, 420:441] = 86.0
     u, v, z = band_uvz(bgr, dep)
-    assert abs(u - 430) < 1 and abs(v - 360) < 1 and abs(z - 86) < 1, (u, v, z)
+    assert abs(u - 430) < 1 and abs(v - (330 + 0.5 * BAND_H_PXMM / 86)) < 1 and abs(z - 86) < 1, (u, v, z)
+    bgr2 = bgr.copy()
+    bgr2[375:391, 420:441] = 0                              # 아래 조각이 집게에 가려도 v는 같다
+    assert abs(band_uvz(bgr2, dep)[1] - v) < 1e-6
     assert band_uvz(bgr, dep, prev=(700, 100)) is None     # 멀리 튄 것은 버린다
     t = bgr.copy()
     cv2.rectangle(t, (300, 400), (380, 470), yel, -1)      # 뒤의 노란 토마토(더 멀다)
     u2, v2, _ = band_uvz(t, dep)
-    assert abs(u2 - 430) < 1 and abs(v2 - 360) < 1, (u2, v2)
+    assert abs(u2 - 430) < 1 and abs(v2 - v) < 1, (u2, v2)
     assert band_uvz(np.zeros_like(bgr), dep) is None
     # 토마토 꼭대기: 주황 바닥(멀다, 화면 아래 절반)과 가까운 주황 공 — 공 꼭대기 (430, 380)@120mm
     f = np.zeros((480, 848, 3), np.uint8)

@@ -402,8 +402,13 @@ def main():
                                 "secs": round(secs, 1), "band": [round(u), round(v), round(z)]}) + "\n")
         if held:
             time.sleep(a.hold)
-        # 놓기 — 조작대 [놓기]와 같은 순서(열기 → 고정 턱 떼기 → 뒤로). 빈손이어도 연다.
-        run("tool_jog.py", "--grip", "78", "--left", "12")
+        # 놓기 — 조작대 [놓기]와 같은 순서(열기 → 고정 턱 떼기 → 뒤로).
+        # ⚠ 빈손이면 옆으로 안 간다 — 꼭지 잎 위에서 닫혔다 열고 왼쪽 12mm를 가면 고정 턱이 꼭지를 밀어 클립에서 뺐다
+        #   (11/03 저녁 빈손 4회 중 3회 토마토 낙하, 문 회차는 한 번도 안 떨어짐).
+        if held:
+            run("tool_jog.py", "--grip", "78", "--left", "12")
+        else:
+            run("tool_jog.py", "--grip", "78")
         run("tool_jog.py", "--horiz", "-35")
         # 놓은 뒤 확인 — 11/03 9회째 놓다가 토마토가 고리에서 떨어졌는데 사진이 없어 원인을 못 봤다
         if held and wait_band(need_gone=False, timeout=5.0, steady_s=1.0) is None:
