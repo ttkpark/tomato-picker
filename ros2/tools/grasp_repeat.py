@@ -144,10 +144,12 @@ def wait_band(need_gone, timeout, steady_s=2.0, tol_px=8.0, last=None, moved_px=
     """띠가 steady_s초 동안 tol_px 안에서 가만히 보이면 그 자리.
     need_gone이면 먼저 '다시 걸렸다'를 봐야 한다 — 한 번 안 보였거나, 지난 회 자리(last)에서 moved_px 넘게 옮겨졌거나.
     ⚠ moved_px 60: 놓을 때 줄기가 회마다 10~40px 밀려 20이면 사람 없이 다시 걸린 것으로 읽었다(11/02 2차).
-    ⚠ 한두 프레임 못 찾는 건(blink_s 안) 가만히 재기를 끊지 않는다. timeout ≤ 0이면 끝없이 기다린다."""
+    ⚠ 한두 프레임 못 찾는 건(blink_s 안) 가만히 재기를 끊지 않는다. timeout ≤ 0이면 끝없이 기다린다.
+    돌려주는 값은 가만히 있던 동안의 **중앙값** — 띠 깊이가 한 프레임씩 100↔112mm로 튀는데 시차표가 1mm당 3px라
+    겨냥점이 30px씩 흔들려 다가가기가 발산했다(11/03 저녁 2회 빈손)."""
     t_end = time.time() + timeout if timeout > 0 else float("inf")
     gone = not need_gone
-    since, ref, miss_t = None, None, None
+    since, ref, miss_t, buf = None, None, None, []
     while time.time() < t_end:
         b = band()
         now = time.time()
@@ -164,9 +166,11 @@ def wait_band(need_gone, timeout, steady_s=2.0, tol_px=8.0, last=None, moved_px=
                 gone = True
             if gone:
                 if ref is None or abs(b[0] - ref[0]) > tol_px or abs(b[1] - ref[1]) > tol_px:
-                    since, ref = now, b      # 움직이는 중(사람 손) — 처음부터 다시 잰다
-                elif now - since >= steady_s:
-                    return b
+                    since, ref, buf = now, b, [b]      # 움직이는 중(사람 손) — 처음부터 다시 잰다
+                else:
+                    buf.append(b)
+                    if now - since >= steady_s:
+                        return tuple(float(np.median([x[i] for x in buf])) for i in range(3))
         time.sleep(0.3)
     return None
 
@@ -320,6 +324,9 @@ def selftest():
         assert wait_band(need_gone=True, timeout=60, last=(400, 300, 100)) is not None
         seq = iter([(400, 300, 100)] * 300)                                    # 그대로면 기다린다
         assert wait_band(need_gone=True, timeout=30, last=(400, 300, 100)) is None
+        seq = iter([(400, 300, 100), (401, 301, 112), (400, 300, 100), (402, 299, 112), (400, 300, 100)] * 20)
+        r = wait_band(need_gone=False, timeout=60, steady_s=1.0)              # 깊이가 튀어도 중앙값
+        assert r == (400.0, 300.0, 100.0), r
         # 맨 줄기 기준: 토마토 꼭대기(400,300)@100mm, 옆 +10·위 +20mm, fx=fy=400 → u 440, v 300-64
         real_top = gm.tomato_top_uvz
         gm.tomato_top_uvz = lambda *_: (400.0, 300.0, 100.0)
