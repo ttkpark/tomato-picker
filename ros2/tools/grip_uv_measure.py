@@ -93,15 +93,17 @@ def tomato_top_uvz(bgr, dep_mm, near_mm=150.0, max_z=250.0, min_area=1500):
     keep = [i for i in range(1, n) if st[i, cv2.CC_STAT_AREA] >= min_area]
     if not keep:
         return None
-    i = max(keep, key=lambda j: st[j, cv2.CC_STAT_AREA])
-    vs, us = np.nonzero(lab == i)
+    # ⚠ 가까운 조각을 **전부** 합친다 — 꼭지 잎과 집게 사이 반사광이 토마토를 좌우로 끊어, 큰 조각만 쓰니
+    #   오른쪽 어깨만 남아 기준이 줄기보다 70px 오른쪽에 섰다(11/03 맨 줄기 첫 화면). 바닥은 깊이로 이미 빠졌다.
+    vs, us = np.nonzero(np.isin(lab, keep))
     vtop = float(vs.min())
-    top = vs <= vtop + 0.15 * (vs.max() - vtop)
+    # u = 윗부분(토마토 폭의 30%) 좌우 끝의 가운데 — 가운데는 꼭지 잎이 가리고, 기울면 가장 높은 화소가 한쪽 어깨다.
+    top = vs <= vtop + 0.3 * (us.max() - us.min())
     d = dep_mm[vs[top], us[top]]
     d = d[d > 0]
     if d.size < 20:
         return None
-    return float(us[top].mean()), vtop, float(np.median(d))
+    return 0.5 * float(us[top].min() + us[top].max()), vtop, float(np.median(d))
 
 
 def grab(after):
@@ -227,6 +229,10 @@ def selftest():
     u, v, z = tomato_top_uvz(f, d)
     assert abs(u - 430) < 2 and abs(v - 380) < 2 and abs(z - 120) < 1, (u, v, z)   # 열기 연산이 꼭대기 1px를 깎는다
     assert tomato_top_uvz(f, np.full((480, 848), 400.0)) is None   # 공 없이 바닥만(멀다)이면 None
+    f2 = f.copy()
+    f2[:, 428:433] = (255, 255, 255)                        # 반사광이 공을 좌우로 끊어도 가운데는 그대로
+    u2, _, _ = tomato_top_uvz(f2, d)
+    assert abs(u2 - 430) < 2, u2
     print("selftest OK")
 
 

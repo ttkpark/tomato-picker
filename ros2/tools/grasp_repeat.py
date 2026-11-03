@@ -97,7 +97,28 @@ def stem_ref(bgr, dep, cfg=None, intr=None):
     except (OSError, ValueError, KeyError):
         return None
     u, vtop, z = t
-    return u + du * fx / z, vtop - dz * 0.8 * fy / z, z + dd
+    su = stem_u(bgr, dep, t, fy) if bgr is not None else None
+    # 가로는 줄기 자체(있으면) — 토마토는 줄기에 비스듬히 매달려 중심이 줄기에서 10mm 벗어났다(11/03 맨 줄기 첫 화면)
+    return (su if su is not None else u + du * fx / z), vtop - dz * 0.8 * fy / z, z + dd
+
+
+def stem_u(bgr, dep, top, fy, lo_mm=4.0, hi_mm=13.0, win_mm=20.0):
+    """토마토 꼭대기 lo~hi mm 위 줄에서 **채도 낮고 가까운** 화소의 가로 중앙값 = 줄기 u. 못 찾으면 None.
+    11/03 실측: 줄기(회녹색 테이프) S≈52, 토마토 S≈190, 꼭지 잎·뒤 덤불은 깊이로 빠진다(줄기 118 / 꼭대기 139mm)."""
+    import cv2
+    u0, vtop, z = top
+    k = 0.8 * fy / z                                      # 높이 mm → 화소
+    v0, v1 = max(0, int(vtop - hi_mm * k)), max(0, int(vtop - lo_mm * k))
+    w = win_mm * fy / z
+    a, b = max(0, int(u0 - w)), min(bgr.shape[1], int(u0 + w))
+    if v1 <= v0 or b <= a:
+        return None
+    hsv = cv2.cvtColor(bgr[v0:v1, a:b], cv2.COLOR_BGR2HSV)
+    d = dep[v0:v1, a:b]
+    m = (hsv[:, :, 1] < 90) & (d > 0) & (d < z + 10.0)
+    if m.sum() < 30:
+        return None
+    return a + float(np.median(np.nonzero(m)[1]))
 
 
 def band():
