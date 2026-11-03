@@ -271,7 +271,14 @@ def build(job, args):
              "--wait", "%.0f" % num(args, "wait", 0, 0, 3600)]
         if args.get("no_rehang"):
             a += ["--no-rehang"]
+        ref = str(args.get("ref", "auto"))
+        if ref not in ("auto", "band", "stem"):
+            raise ValueError("ref는 auto/band/stem")
+        a += ["--ref", ref]
         return a
+    if job == "stem_calib":
+        # 띠를 걸어 둔 채 띠↔토마토 꼭대기 차이를 재 둔다 — 그 뒤엔 띠 없이(맨 줄기) 반복 잡기가 된다
+        return [PY, T("grasp_repeat.py"), "--calib-stem"]
     if job == "stage":
         t = str(args.get("target", PARK))
         parts = t.replace(" ", "").split(",")
@@ -686,6 +693,8 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button onclick="run('grasp',grasp(true))">안 닫고 가기</button>
       <button onclick="run('grasp',Object.assign(grasp(true),{dry:1}))">겨냥만 본다</button>
       <button onclick="run('repeat',{trials:10})" title="줄기에 감은 노란 띠를 스스로 찾아 문다 → 3초 들고 놓는다 → 토마토를 뗐다 다시 걸면 또. 빗나가면 곧장 다시. 기록 ~/grasp_repeat/">🔁 반복 잡기(노란 띠)</button>
+      <button onclick="run('repeat',{trials:10,ref:'stem'})" title="띠 없이 — 토마토 꼭대기에서 재 둔 만큼 위를 겨눈다. 먼저 [줄기 기준 재기]">🔁 반복 잡기(맨 줄기)</button>
+      <button onclick="run('stem_calib',{})" title="띠를 걸어 둔 채 띠↔토마토 꼭대기 차이(mm)를 재서 ~/grip_uv.json에 적는다">📏 줄기 기준 재기</button>
     </div>
     </div>
   </div>

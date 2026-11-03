@@ -66,6 +66,37 @@ def band_uvz(bgr, dep_mm, prev=None, jump_px=120.0):
     return float(us_.mean()), float(vs_.mean()), float(np.median(d))
 
 
+def tomato_top_uvz(bgr, dep_mm, near_mm=50.0, max_z=250.0, min_area=1500):
+    """토마토(주황) 꼭대기 (u, v)와 그 둘레 깊이 z(mm). 맨 줄기(띠 없음)의 기준점 — 줄기는 토마토 꼭대기 바로 위다.
+    ⚠ 마룻바닥도 주황 색상(H 15~20)이라 색만으로는 토마토와 한 덩어리가 된다(11/03 시작 사진 53장, 폭 200px) —
+    가장 가까운 주황 깊이 +near_mm 안만 남긴다(바닥은 멀다). max_z 너머에 주황뿐이면(토마토 없음, 바닥만) None.
+    u는 꼭대기 쪽 15% 줄의 평균(집게가 아래를 가려도 된다)."""
+    import cv2
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    dm = cv2.medianBlur(dep_mm.astype(np.float32), 5)      # 한 점 튄 깊이가 '가장 가까운 것'이 되지 않게
+    m = ((hsv[:, :, 0] >= 3) & (hsv[:, :, 0] <= 22)
+         & (hsv[:, :, 1] > 110) & (hsv[:, :, 2] > 70) & (dm > 0))
+    if m.sum() < 500:
+        return None
+    near = float(dm[m].min())
+    if near > max_z:
+        return None
+    m = cv2.morphologyEx((m & (dm <= near + near_mm)).astype(np.uint8), cv2.MORPH_OPEN, np.ones((7, 7), np.uint8))
+    n, lab, st, _ = cv2.connectedComponentsWithStats(m, 8)
+    keep = [i for i in range(1, n) if st[i, cv2.CC_STAT_AREA] >= min_area]
+    if not keep:
+        return None
+    i = max(keep, key=lambda j: st[j, cv2.CC_STAT_AREA])
+    vs, us = np.nonzero(lab == i)
+    vtop = float(vs.min())
+    top = vs <= vtop + 0.15 * (vs.max() - vtop)
+    d = dep_mm[vs[top], us[top]]
+    d = d[d > 0]
+    if d.size < 20:
+        return None
+    return float(us[top].mean()), vtop, float(np.median(d))
+
+
 def grab(after):
     """after(초) 이후에 쓰인 프레임을 기다려 읽는다 — 움직이기 전 프레임으로 재면 표가 통째로 틀린다."""
     import cv2
@@ -177,6 +208,15 @@ def selftest():
     u2, v2, _ = band_uvz(t, dep)
     assert abs(u2 - 430) < 1 and abs(v2 - 360) < 1, (u2, v2)
     assert band_uvz(np.zeros_like(bgr), dep) is None
+    # 토마토 꼭대기: 주황 바닥(멀다, 화면 아래 절반)과 가까운 주황 공 — 공 꼭대기 (430, 380)@120mm
+    f = np.zeros((480, 848, 3), np.uint8)
+    f[300:, :] = (90, 140, 200)                             # 마룻바닥 비슷한 주황
+    cv2.circle(f, (430, 420), 40, (20, 110, 240), -1)
+    d = np.full((480, 848), 400.0)
+    cv2.circle(d, (430, 420), 40, 120.0, -1)
+    u, v, z = tomato_top_uvz(f, d)
+    assert abs(u - 430) < 2 and abs(v - 380) < 2 and abs(z - 120) < 1, (u, v, z)   # 열기 연산이 꼭대기 1px를 깎는다
+    assert tomato_top_uvz(f, np.full((480, 848), 400.0)) is None   # 공 없이 바닥만(멀다)이면 None
     print("selftest OK")
 
 

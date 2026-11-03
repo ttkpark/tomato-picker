@@ -65,8 +65,10 @@ def run(name, *a):
     return p.returncode, "".join(out)
 
 
-def band():
-    """지금 프레임의 띠 (u, v, z) 또는 None."""
+REF = "auto"      # band | stem | auto(띠 있으면 띠, 없으면 토마토 꼭대기 기준)
+
+
+def frame():
     import cv2
     try:
         bgr = cv2.imread(gm.COLOR)
@@ -76,7 +78,63 @@ def band():
         return None
     if bgr is None or dep.shape[:2] != bgr.shape[:2]:
         return None
-    return gm.band_uvz(bgr, dep)
+    return bgr, dep
+
+
+def stem_ref(bgr, dep, cfg=None, intr=None):
+    """맨 줄기(띠 없음)의 기준점 — 토마토 꼭대기에서 (옆 stem_du_mm, 위 stem_dz_mm)만큼 옮긴 자리.
+    두 값은 ~/grip_uv.json에 있고 띠를 걸어 둔 채 `--calib-stem`으로 잰다(줄기 길이가 정하는 물리값).
+    안 재 놨으면 None — 맨 줄기는 쓰지 않는다(엉뚱한 데를 자신 있게 무는 것보다 낫다)."""
+    t = gm.tomato_top_uvz(bgr, dep)
+    if t is None:
+        return None
+    try:
+        cfg = cfg or json.load(open(gm.GRIP_UV))
+        intr = intr or json.load(open(gm.META))["intrinsics"]
+        du, dz = float(cfg["stem_du_mm"]), float(cfg["stem_dz_mm"])
+        fx, fy = float(intr["fx"]), float(intr["fy"])
+    except (OSError, ValueError, KeyError):
+        return None
+    u, vtop, z = t
+    return u + du * fx / z, vtop - dz * 0.8 * fy / z, z
+
+
+def band():
+    """지금 프레임의 기준점 (u, v, z) 또는 None — 띠, 또는(REF) 맨 줄기."""
+    f = frame()
+    if f is None:
+        return None
+    b = gm.band_uvz(*f) if REF != "stem" else None
+    if b is None and REF != "band":
+        b = stem_ref(*f)
+    return b
+
+
+def calib_stem(frames=15):
+    """띠를 걸어 둔 채, 띠 ↔ 토마토 꼭대기의 차이를 mm로 재서 ~/grip_uv.json에 적는다(stem_du_mm, stem_dz_mm)."""
+    k = json.load(open(gm.META))["intrinsics"]
+    fx, fy = float(k["fx"]), float(k["fy"])
+    dus, dzs = [], []
+    for _ in range(frames):
+        f = frame()
+        b = gm.band_uvz(*f) if f else None
+        t = gm.tomato_top_uvz(*f) if f else None
+        if b and t:
+            dus.append((b[0] - t[0]) * b[2] / fx)
+            dzs.append((t[1] - b[1]) * b[2] / (0.8 * fy))
+            print("  띠 (%.0f,%.0f) %.0fmm · 토마토 꼭대기 (%.0f,%.0f) %.0fmm → 옆 %+.1f 위 %+.1f mm"
+                  % (b[0], b[1], b[2], t[0], t[1], t[2], dus[-1], dzs[-1]))
+        time.sleep(0.4)
+    if len(dus) < 5:
+        print("띠와 토마토가 같이 보이는 프레임이 %d장뿐 — 안 적는다" % len(dus))
+        return 1
+    du, dz = float(np.median(dus)), float(np.median(dzs))
+    print("중앙값: 옆 %+.1f 위 %+.1f mm (n=%d, 퍼짐 %.1f/%.1f)" % (du, dz, len(dus), np.std(dus), np.std(dzs)))
+    cfg = json.load(open(gm.GRIP_UV))
+    cfg["stem_du_mm"], cfg["stem_dz_mm"] = round(du, 1), round(dz, 1)
+    json.dump(cfg, open(gm.GRIP_UV, "w"), indent=1)
+    print("~/grip_uv.json에 적었다")
+    return 0
 
 
 def wait_band(need_gone, timeout, steady_s=2.0, tol_px=8.0, last=None, moved_px=60.0, blink_s=1.0):
@@ -259,14 +317,26 @@ def selftest():
         assert wait_band(need_gone=True, timeout=60, last=(400, 300, 100)) is not None
         seq = iter([(400, 300, 100)] * 300)                                    # 그대로면 기다린다
         assert wait_band(need_gone=True, timeout=30, last=(400, 300, 100)) is None
+        # 맨 줄기 기준: 토마토 꼭대기(400,300)@100mm, 옆 +10·위 +20mm, fx=fy=400 → u 440, v 300-64
+        real_top = gm.tomato_top_uvz
+        gm.tomato_top_uvz = lambda *_: (400.0, 300.0, 100.0)
+        try:
+            r = stem_ref(None, None, {"stem_du_mm": 10, "stem_dz_mm": 20}, {"fx": 400, "fy": 400})
+            assert stem_ref(None, None, {}, {"fx": 400, "fy": 400}) is None     # 안 재 놨으면 안 쓴다
+        finally:
+            gm.tomato_top_uvz = real_top
+        assert r and abs(r[0] - 440) < 1e-6 and abs(r[1] - 236) < 1e-6 and r[2] == 100, r
     finally:
         band, time.time, time.sleep = real_band, real_time, real_sleep
     print("selftest OK")
 
 
 def main():
+    global REF
     if "--selftest" in sys.argv:
         return selftest()
+    if "--calib-stem" in sys.argv:
+        return calib_stem()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--trials", type=int, default=10)
     ap.add_argument("--start", default=START, help="시작 자세(관절 5개, 도)")
@@ -275,7 +345,10 @@ def main():
     ap.add_argument("--hold", type=float, default=3.0, help="물었으면 이만큼 들고 있다가 놓는다(초)")
     ap.add_argument("--wait", type=float, default=0.0, help="띠를 기다리는 최대 시간(초, 0=끝없이 — 사람이 거는 데 몇 분 걸린다)")
     ap.add_argument("--no-rehang", action="store_true", help="띠가 사라졌다 다시 보이길 안 기다린다(사람 없이 반복)")
+    ap.add_argument("--ref", choices=("auto", "band", "stem"), default="auto",
+                    help="기준점: band=노란 띠만, stem=토마토 꼭대기(맨 줄기, --calib-stem 먼저), auto=띠 없으면 stem")
     a = ap.parse_args()
+    REF = a.ref
     os.makedirs(OUT, exist_ok=True)
     a.trials = max(1, a.trials)
     # 물고 있을 수도 있다 — 놓지 않고 시작 자세로 가면 토마토를 끌고 간다
