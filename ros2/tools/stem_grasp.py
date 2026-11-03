@@ -225,6 +225,9 @@ def main() -> int:
     ap.add_argument("--aim-only", action="store_true",
                     help="**겨냥만 하고 멈춘다** — 맞은 순간의 깊이를 ~/tip_depth.json에 남긴다. "
                          "나아가기·물기는 부르는 쪽이 기구학으로 한다(가는 표적에서 더 안전하다)")
+    ap.add_argument("--hold-z", action="store_true",
+                    help="시작 맞춤 동안 깊이를 클릭의 z로 고정한다(다시 재지 않음) — 조각 추적의 깊이는 띠 중앙값보다 "
+                         "9mm 멀게 나왔고 시차표가 3px/mm라 겨냥이 27px 내려가 꼭지를 물었다(11/03 저녁 3회)")
     ap.add_argument("--trust-first-z", action="store_true",
                     help="겨냥이 처음 맞은 순간의 깊이를 믿고 **그만큼만 나아간 뒤** 닫는다 "
                          "— 가는 표적은 나아가는 동안 깊이가 못 믿게 튄다")
@@ -1326,7 +1329,7 @@ def main() -> int:
                 pu, pv = u + float(J[0] @ m), v + float(J[1] @ m)
                 r = see2((pu, pv))
                 u, v = (r[0], r[1]) if r is not None else (pu, pv)
-                if r is not None and r[2] > 0:
+                if r is not None and r[2] > 0 and not args.hold_z:
                     z = r[2]
                 print("  시작 맞춤 %d: 옆 %+.0f 위 %+.0fmm → 줄기 (%.0f,%.0f) %.0fmm, 겨냥점까지 %.0fpx"
                       % (it + 1, m[0], m[1], u, v, z, math.hypot(aim_uv(z)[0] - u, aim_uv(z)[1] - v)))

@@ -390,7 +390,7 @@ def main():
         rc, out = run("stem_grasp.py", "--aim", "click", "--steps", "16", "--adv", "%.0f" % a.adv,
                       "--max-turn", "2", "--gain", "0.35", "--tol", "12", "--rejacobian", "6",
                       "--stop-z", "%.0f" % a.stop_z, "--max-adv", "0", "--max-dz", "25",
-                      "--skip-aim-px", "50", "--trust-first-z")
+                      "--skip-aim-px", "50", "--trust-first-z", "--hold-z")
         held = rc == 0 and "**물었다**" in out
         secs = time.time() - t0
         snap("%02d_%s" % (n, "held" if held else "miss"))
