@@ -540,8 +540,11 @@ def turn(link, w: int, secs: float, deg: float) -> float:
         return float("nan")
     t0 = t_kick = time.monotonic()
     w_now, moved = w, False
+    # 시간 상한은 정지마찰 보호지 각도 상한이 아니다 — 147° 방위를 2초(≈35°)에서 끊고 8°씩 더듬다 끝났다(11/03 가상 3차).
+    # 1°당 1/15초를 더 준다(실기 회전은 20~40°/s, 각도로 끊으니 넉넉해도 안전).
+    budget = secs * 2.5 + deg / 15.0
     try:
-        while time.monotonic() - t0 < secs * 2.5:
+        while time.monotonic() - t0 < budget:
             i = imu_now()
             got = abs(math.degrees(i[1] - i0[1])) if i is not None and i[0] == i0[0] else 0.0
             if got >= deg * COAST:
@@ -1075,15 +1078,24 @@ def ray_hit(lo: np.ndarray, xy, th: float, rmin: float = 0.4, rmax: float = 4.0)
 SPIN_R = 0.45
 
 
-def clearance(lo: np.ndarray, xy, rmax: float = 1.0) -> float:
-    """xy에서 가장 가까운 장애물 칸까지 거리(m). rmax 안에 없으면 rmax."""
+def nearest_occ(lo: np.ndarray, xy, rmax: float = 1.0):
+    """xy에서 가장 가까운 장애물 칸 → (거리 m, 그 칸의 (x, y)). rmax 안에 없으면 (rmax, None)."""
     c, r = idx(xy), int(rmax / RES)
     lo_ = np.clip(c - r, 0, N)
     win = lo[lo_[0]:min(N, c[0] + r + 1), lo_[1]:min(N, c[1] + r + 1)] > OCC
     if not win.any():
-        return rmax
+        return rmax, None
     ii, jj = np.nonzero(win)
-    return float(min(rmax, np.hypot(ii + lo_[0] - c[0], jj + lo_[1] - c[1]).min() * RES))
+    d = np.hypot(ii + lo_[0] - c[0], jj + lo_[1] - c[1])
+    k = int(np.argmin(d))
+    if d[k] * RES >= rmax:
+        return rmax, None
+    return float(d[k] * RES), ((ii[k] + lo_[0] - N // 2 + 0.5) * RES, (jj[k] + lo_[1] - N // 2 + 0.5) * RES)
+
+
+def clearance(lo: np.ndarray, xy, rmax: float = 1.0) -> float:
+    """xy에서 가장 가까운 장애물 칸까지 거리(m). rmax 안에 없으면 rmax."""
+    return nearest_occ(lo, xy, rmax)[0]
 
 
 TOMATO_SAME = 0.3              # 이 거리 안의 자리는 같은 나무로 묶는다(m)
@@ -1285,12 +1297,18 @@ def face_cmd(a, m) -> int:
             # 이미 보이면 지도 방위로 돌지 않는다 — 가까이선 토마토 자리 오차 0.1~0.2m가 방위로 16°까지 커졌다(10/23)
             print("  지금 화면에 토마토가 있다(cx %.0f) — 검출로만 다듬는다" % cx0)
         elif abs(b) > 5:
-            print("  → IMU %.1f° 돌았다" % turn(link, int(math.copysign(a.w, b)), a.wsecs, abs(b)))
+            got = turn(link, int(math.copysign(a.w, b)), a.wsecs, abs(b))
+            print("  → IMU %.1f° 돌았다" % got)
+            if not math.isnan(got):
+                b -= math.copysign(abs(got), b)       # 남은 방위 — 한 넛지가 못 채우면 아래서 마저 돈다
         for k in range(8):
             cx, w = tomato_cx()
             if cx is None:
-                print("[%d] 2초 동안 안 보인다 — 지도 방위 쪽으로 8° 더" % k)
-                turn(link, int(math.copysign(a.w, b)), a.wsecs, 8)
+                step = max(8.0, abs(b))
+                print("[%d] 2초 동안 안 보인다 — 지도 방위 쪽으로 %.0f° 더" % (k, step))
+                got = turn(link, int(math.copysign(a.w, b)), a.wsecs, step)
+                if not math.isnan(got):
+                    b -= math.copysign(abs(got), b)
                 continue
             err = w / 2 - cx
             print("[%d] cx 중앙값 %.0f (오차 %+.0f)" % (k, cx, err))
@@ -1315,12 +1333,35 @@ def face_cmd(a, m) -> int:
 APPROACH_STANDOFF = 0.7        # 토마토에서 이만큼 앞에 선다 — 도착 허용 0.2 + 차체 앞 0.2 + 여유
 
 
-def approach_goal(s: dict, standoff: float = APPROACH_STANDOFF):
-    """지금 자리 → 첫 토마토로 가는 선 위, 토마토에서 standoff 앞의 점. 이미 그 안이면 지금 자리."""
+def approach_goal(s: dict, standoff: float = APPROACH_STANDOFF, need: float = 0.0):
+    """지금 자리 → 첫 토마토로 가는 선 위, 토마토에서 standoff 앞의 점. 이미 그 안이면 지금 자리.
+    need>0이면 그 점 둘레 need 안에 장애물이 있을 때 토마토를 중심으로 ±90°까지 10°씩 비켜 선다 —
+    선 위의 점이 상자 모서리 0.3m 옆이라 도착하고도 못 돌았다(11/03 가상 3차 7회)."""
     t, p = s["tomato"][0], s["pose"]
     d = math.hypot(t[0] - p[0], t[1] - p[1])
-    k = max(0.0, (d - standoff) / d) if d > 1e-6 else 0.0
-    return p[0] + (t[0] - p[0]) * k, p[1] + (t[1] - p[1]) * k
+    if d <= standoff or d < 1e-6:
+        return p[0], p[1]
+    a0 = math.atan2(p[1] - t[1], p[0] - t[0])
+    lo = s["lo"]
+    if need > 0:                       # 나무 자신(화분·줄기)은 장애물로 안 센다 — 0.7m 앞 어디서나 0.6m라 여유 0.65를 영영 못 채웠다
+        lo = lo.copy()
+        c, r = idx(t[:2]), int(0.3 / RES)
+        lo[max(0, c[0] - r):c[0] + r + 1, max(0, c[1] - r):c[1] + r + 1] = 0.0
+    best = None
+    for da in sorted(range(-90, 91, 10), key=abs):
+        g = (t[0] + standoff * math.cos(a0 + math.radians(da)), t[1] + standoff * math.sin(a0 + math.radians(da)))
+        if need <= 0:
+            return g
+        gap = clearance(lo, g, need)
+        if gap >= need:
+            if da:
+                print("  선 위의 자리는 둘레가 좁다 — 토마토 둘레로 %+d° 비켜 선다" % da)
+            return g
+        if best is None or gap > best[0]:
+            best = (gap, da, g)
+    # 아무 데도 need가 안 나오면(벽 모서리의 나무) 가장 트인 자리 — 선 위를 고집하다 0.42에 서서 못 돌았다(11/03 가상 3차 6회)
+    print("  둘레 %.2fm가 나오는 자리가 없다 — 가장 트인 %+d°(%.2fm)에 선다" % (need, best[1], best[0]))
+    return best[2]
 
 
 def approach_cmd(a, m) -> int:
@@ -1336,23 +1377,35 @@ def approach_cmd(a, m) -> int:
     # 첫 맞춤만 믿었더니 겹친 점 40/115짜리 자세가 0.36m 앞이라 '이미 도착'으로 보고 안 갔다(10/23).
     if face_cmd(a, m) != 0:
         print("  (정면 맞추기 실패 — 그래도 지도 길로 간다)")
-    s = load()
-    gx, gy = approach_goal(s)
-    if math.hypot(gx - s["pose"][0], gy - s["pose"][1]) > a.tol:
-        print("가기 → (%.2f, %.2f)" % (gx, gy))
-        a.x, a.y = gx, gy
-        if go_cmd(a, m) != 0:
-            return 1
-    else:
-        print("이미 토마토 %.1fm 앞이다" % APPROACH_STANDOFF)
-    s = load()
-    if clearance(s["lo"], s["pose"][:2]) >= m.get("spin_r", SPIN_R):
-        return face_cmd(a, m)
+    # 둘레 여유에 도착 허용 오차를 더한다 — 목표는 0.45 넘게 잡았는데 0.13m 못 미쳐 서니 0.42가 됐다(11/03 가상 3차 6회).
+    # 가서 보니 좁으면(가며 지도가 자라 상자 모서리가 드러난다) 새 지도로 자리를 한 번 더 고른다.
+    tol0 = a.tol
+    try:
+        for k in range(2):
+            s = load()
+            gx, gy = approach_goal(s, need=m.get("spin_r", SPIN_R) + tol0)
+            if math.hypot(gx - s["pose"][0], gy - s["pose"][1]) > a.tol:
+                print("가기 → (%.2f, %.2f) · 그 자리 둘레 %.2fm" % (gx, gy, clearance(s["lo"], (gx, gy))))
+                a.x, a.y = gx, gy
+                if go_cmd(a, m) != 0:
+                    return 1
+            else:
+                print("이미 토마토 %.1fm 앞이다" % APPROACH_STANDOFF)
+            s = load()
+            if clearance(s["lo"], s["pose"][:2]) >= m.get("spin_r", SPIN_R):
+                return face_cmd(a, m)
+            print("  둘레 %.2fm — 좁다, 자리를 다시 고른다" % clearance(s["lo"], s["pose"][:2]))
+            a.tol = tol0 / 2             # 두 번째는 반만 봐준다 — 0.12m 옆의 트인 자리를 '이미 거기'로 치고 안 갔다
+    finally:
+        a.tol = tol0
     cx, w = tomato_cx()
     if cx is not None and abs(w / 2 - cx) < FACE_TOL_PX:
         print("✅ 토마토 앞이고 정면이다(cx %.0f) — 둘레가 좁아 더 돌지 않는다" % cx)
         return 0
-    print("⚠ 토마토 앞에 왔지만 둘레가 좁아 돌지 않는다 — 토마토 cx %s" % ("못 봄" if cx is None else "%.0f" % cx))
+    gap, at = nearest_occ(s["lo"], s["pose"][:2])
+    print("⚠ 토마토 앞에 왔지만 둘레 %.2fm가 좁아 돌지 않는다(가장 가까운 칸 %s · 토마토 %s) — 토마토 cx %s"
+          % (gap, "(%.2f, %.2f)" % at if at else "-", "(%.2f, %.2f)" % tuple(s["tomato"][0][:2]),
+             "못 봄" if cx is None else "%.0f" % cx))
     return 1
 
 
@@ -1736,6 +1789,11 @@ def selftest() -> int:
     assert np.allclose(approach_goal(sa), (0.5, 0.0))
     sa["pose"] = np.array([0.8, 0.0, 0.0])
     assert np.allclose(approach_goal(sa), (0.8, 0.0))
+    # 선 위의 자리(0.5, 0) 옆에 장애물이 있으면 토마토 둘레로 비켜 선다 — 둘레 0.45 확보, 토마토에서 0.7
+    sa["pose"] = np.array([0.0, 0.0, 0.0])
+    sa["lo"][tuple(idx((0.5, 0.2)))] = 1.0
+    gx, gy = approach_goal(sa, need=0.45)
+    assert abs(math.hypot(gx - 1.2, gy) - 0.7) < 1e-6 and gy < -0.1 and clearance(sa["lo"], (gx, gy)) >= 0.45, (gx, gy)
     # ⑧ 방위 띠 유효 비율 — 가운데가 비면(가까운 물체) 0, 차 있으면 1, 거울상이면 방위가 좌우 뒤집힌다
     mt8 = {"intrinsics": {"fx": 570.0, "fy": 570.0, "ppx": 319.5, "ppy": 239.5},
            "depth_scale_mm": 1.0, "min_mm": 600.0, "max_mm": 4000.0, "width": 640}

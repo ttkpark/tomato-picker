@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "src"))
 ap = argparse.ArgumentParser()
 ap.add_argument("which", nargs="*", default=["1", "2", "3"], help="1 2 3 가운데")
 ap.add_argument("--n", type=int, default=0, help="회수(기본 = 규약: 1차 20·2차 10·3차 10)")
+ap.add_argument("--only", type=int, nargs="*", default=[], help="이 회(1부터)만 돌린다 — 회마다 씨앗이 따로라 한 회만 다시 볼 수 있다")
 ap.add_argument("--seed", type=int, default=0)
 ap.add_argument("--yaw", choices=("enc", "imu", "both"), default="both", help="2차 요 출처(기본 둘 다 돌려 나란히 보인다)")
 ap.add_argument("--html-only", action="store_true", help="지난 결과(임시 JSON)로 페이지만 다시 쓴다")
@@ -259,6 +260,8 @@ def cp3(n, seed):
     m = dict(world.M)
     results = []
     for i in range(n):
+        if A.only and i + 1 not in A.only:
+            continue
         rng = np.random.default_rng(seed * 1000 + i)
         world.rng = rng
         sm.MAP = os.path.join(tempfile.mkdtemp(), "m.npz")
