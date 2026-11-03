@@ -197,14 +197,16 @@ def close_in(b, stop_z, near_z=105.0, tol_px=8.0, iters=6):     # 위아래 15px
     except Exception as exc:                               # noqa: BLE001
         print("  다가가기 건너뜀(%s)" % exc)
         return b
-    for _ in range(iters):
+    for i in range(iters):
         b = face_stem(b, stop_z)
         if b is None:
             return None
         u, v, z = b
         dv = v - uv_at_depth(by_z, z)[1]
-        # ⚠ 게인 0.6 — 1.0이면 +29 → −9 → +14px로 진동하다 끝났다(11/02~03 빈손 4회 전부 이것)
-        dz = float(np.clip(-0.6 * dv * z / (0.8 * fy), -30.0, 30.0)) if abs(dv) > tol_px else 0.0
+        # ⚠ 게인 0.6 — 1.0이면 +29 → −9 → +14px로 진동하다 끝났다(11/02~03 빈손 4회 전부 이것).
+        # 마지막 반복만 1.0 — 0.6으로는 −13px가 남은 채 횟수를 다 써 빗나갔다(11/03 20회 시험의 빈손 1회).
+        gain = 1.0 if i == iters - 1 else 0.6
+        dz = float(np.clip(-gain * dv * z / (0.8 * fy), -30.0, 30.0)) if abs(dv) > tol_px else 0.0
         fwd = float(np.clip((z - near_z) / 0.8, 0.0, 60.0)) if z > near_z + 10.0 else 0.0
         if not dz and not fwd:
             break
@@ -320,6 +322,10 @@ def main():
         # 놓기 — 조작대 [놓기]와 같은 순서(열기 → 고정 턱 떼기 → 뒤로). 빈손이어도 연다.
         run("tool_jog.py", "--grip", "78", "--left", "12")
         run("tool_jog.py", "--horiz", "-35")
+        # 놓은 뒤 확인 — 11/03 9회째 놓다가 토마토가 고리에서 떨어졌는데 사진이 없어 원인을 못 봤다
+        if held and wait_band(need_gone=False, timeout=5.0, steady_s=1.0) is None:
+            print("  ⚠ 놓은 뒤 띠가 안 보인다 — 토마토가 떨어졌을 수 있다")
+            snap("%02d_fell" % n)
     print("\n끝: %d회 중 %d회 물었다" % (n, held_n))
     return 0
 
