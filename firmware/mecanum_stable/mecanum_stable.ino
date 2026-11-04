@@ -26,6 +26,7 @@
 //   R <accel> <decel> 슬루 스텝(틱당 변화량 상한). 기본 6 / 12
 //   F <hz>            PWM 주파수 변경 (24~1526). 소음 튜닝용
 //   ?                 상태 1줄 출력
+//   E                 핀 탐침: 떠 있음 10 / 밖에서 H 11 / L 00 / 출력 o (엔코더 선이 핀까지 오는지)
 //   M <id> <ticks> <vx> <vy> <w>   거리 이동(v2.3): 앞바퀴 엔코더로 ticks만큼 가고 선다. 끝나면 "mv done|stall|abort ..."
 //   H                 살아 있음(무응답). M 도중엔 V 대신 이것으로 데드맨을 채운다 — V가 오면 이동은 취소된다
 //   K <slow> <min> <stall_ms> <sag_mv> <bg_mv>   M 감속 구간·최저 지령·걸림 판정·전압 처짐 문턱·밴드갭 보정 (0=그대로)
@@ -542,6 +543,33 @@ void handleLine(char* line){
       testWheel = i; testEnc0 = encGet(i);
       Serial.print(F("ok T ")); Serial.print(i); Serial.print(' '); Serial.println(d);
     }
+  } else if(c=='E'){
+    // 핀 탐침: 핀을 H로 충전→놓고(풀업 없이) 50µs 뒤 읽기, L로도 같은 것. 핀마다 두 글자.
+    //   "10"=떠 있음(아무 데도 안 물림) · "11"=밖에서 H로 당김 · "00"=밖에서 L로 당김
+    // 엔코더(D2·D3·D4·D6)가 안 세질 때 선이 핀까지 오는지, 다른 핀으로 갔는지 가른다. 시리얼(D0·D1)·I2C(A4·A5)는 안 건드린다.
+    PCICR &= ~_BV(PCIE2);
+    volatile uint8_t* const PT[3] = {&PORTD, &PORTB, &PORTC};
+    volatile uint8_t* const DR[3] = {&DDRD, &DDRB, &DDRC};
+    volatile uint8_t* const PN[3] = {&PIND, &PINB, &PINC};
+    const uint8_t LO[3] = {2, 0, 0}, HI[3] = {7, 5, 3};
+    Serial.print(F("ok E"));
+    for(uint8_t g = 0; g < 3; g++){
+      Serial.print(' '); Serial.print("DBC"[g]); Serial.print(LO[g]); Serial.print(':');
+      for(uint8_t b = LO[g]; b <= HI[g]; b++){
+        uint8_t m = _BV(b), d0 = *DR[g] & m, p0 = *PT[g] & m;
+        if(d0){ Serial.print(F("o ")); continue; }   // 출력으로 쓰는 핀은 건드리지 않는다
+        char r[3] = {0};
+        for(uint8_t k = 0; k < 2; k++){
+          if(k == 0) *PT[g] |= m; else *PT[g] &= ~m;
+          *DR[g] |= m; delayMicroseconds(20); *DR[g] &= ~m; *PT[g] &= ~m;
+          delayMicroseconds(50); r[k] = (*PN[g] & m) ? '1' : '0';
+        }
+        if(p0) *PT[g] |= m;   // 풀업 원래대로
+        Serial.print(r); Serial.print(' ');
+      }
+    }
+    Serial.println();
+    encPins = PIND; PCIFR = _BV(PCIF2); PCICR |= _BV(PCIE2);
   } else if(c=='P'){
     int n=nextInt(p); if(n>0&&n<=4095){ MAX_PWM=n; }
     Serial.print(F("ok P ")); Serial.println(MAX_PWM);
@@ -602,6 +630,7 @@ void handleLine(char* line){
     Serial.print(F(" i2cerr=")); Serial.print(i2cErr);
     Serial.print(F(" POL=")); for(uint8_t i=0;i<4;i++){Serial.print(POL[i]);Serial.print(',');}
     Serial.print(F(" pind=0x")); Serial.print(PIND, HEX);   // 엔코더 핀 실레벨: bit2,3=FL bit4,6=FR
+    Serial.print(F(" pinb=0x")); Serial.print(PINB, HEX); Serial.print(F(" pinc=0x")); Serial.print(PINC, HEX);
     Serial.println();
     printBootReport();
   }
