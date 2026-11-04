@@ -601,6 +601,7 @@ void handleLine(char* line){
     Serial.print(F(" strict=")); Serial.print(strictCrc);
     Serial.print(F(" i2cerr=")); Serial.print(i2cErr);
     Serial.print(F(" POL=")); for(uint8_t i=0;i<4;i++){Serial.print(POL[i]);Serial.print(',');}
+    Serial.print(F(" pind=0x")); Serial.print(PIND, HEX);   // 엔코더 핀 실레벨: bit2,3=FL bit4,6=FR
     Serial.println();
     printBootReport();
   }
