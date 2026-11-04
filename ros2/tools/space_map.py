@@ -1815,7 +1815,18 @@ EXPLORE_EDGE = 0.8             # 경계(빈 칸 ↔ 모르는 칸)에서 이 안
 EXPLORE_KNOWN = 0.9            # 설 자리 둘레 SPIN_R 상자의 이만큼은 아는 칸이어야 한다 — 모르는 칸 = 못 본 벽일 수 있다
 
 
-def frontier_goals(s: dict, m: dict, visited) -> np.ndarray:
+def parse_avoid(txt: str) -> list:
+    """"x0,x1,y0,y1;…"(지도 좌표 m) → 직사각형 목록. 빈 문자열이면 []."""
+    out = []
+    for part in filter(None, (q.strip() for q in (txt or "").split(";"))):
+        v = [float(q) for q in part.split(",")]
+        if len(v) != 4 or not all(math.isfinite(q) for q in v):
+            raise ValueError("제외 구역은 x0,x1,y0,y1 네 수다: %r" % part)
+        out.append((min(v[0], v[1]), max(v[0], v[1]), min(v[2], v[3]), max(v[2], v[3])))
+    return out
+
+
+def frontier_goals(s: dict, m: dict, visited, avoid=()) -> np.ndarray:
     """한 바퀴 돌 다음 자리 후보 [(x, y)] — 가까운 순. 아는 빈 칸 가운데 둘레 SPIN_R에 장애물이 없고,
     모르는 칸과 맞닿은 빈 칸(경계)에서 EXPLORE_EDGE 안이며, 돈 자리들에서 EXPLORE_GAP 넘게 떨어진 칸."""
     lo = s["lo"]
@@ -1832,6 +1843,8 @@ def frontier_goals(s: dict, m: dict, visited) -> np.ndarray:
     xy = (np.argwhere(cand) - N // 2 + 0.5) * RES
     for v in visited:
         xy = xy[np.hypot(xy[:, 0] - v[0], xy[:, 1] - v[1]) >= EXPLORE_GAP]
+    for x0, x1, y0, y1 in avoid:          # 사람이 "다시 가지 마라"고 한 곳(11/05: 다 본 작은 방)
+        xy = xy[~((xy[:, 0] >= x0) & (xy[:, 0] <= x1) & (xy[:, 1] >= y0) & (xy[:, 1] <= y1))]
     return xy[np.argsort(np.hypot(xy[:, 0] - s["pose"][0], xy[:, 1] - s["pose"][1]))]
 
 
@@ -1849,7 +1862,7 @@ def explore_cmd(a, m) -> int:
     """🧭 방 둘러보기 — [제자리 한 바퀴 스캔(지도) → 토마토 찾기 → 가까운 경계로 가기]를 되풀이한다.
     갈 경계가 없거나 a.rounds 바퀴를 채우면 끝. 찾은 토마토는 자리를 옮겨도 쌓인다(s["seen"]).
     ponytail: 가까운 경계부터(탐욕) — 방 하나용. 집 전체면 정보량 점수·되돌아오기 비용(또는 rtabmap+Nav2)."""
-    visited, fails = [], 0
+    visited, fails, avoid = [], 0, parse_avoid(getattr(a, "avoid", ""))
     for r in range(a.rounds):
         s = load()
         visited.append(s["pose"][:2].copy())
@@ -1862,7 +1875,7 @@ def explore_cmd(a, m) -> int:
             print("  ⚠ 찾기를 못 했다")
         s = load()
         goal = None
-        for g in frontier_goals(s, m, visited)[:40]:
+        for g in frontier_goals(s, m, visited, avoid)[:40]:
             path, _ = plan(s["lo"], s["pose"][:2], g, m["radius"])
             if path:
                 goal = clip_path(path, a.reach)
@@ -2082,6 +2095,8 @@ def selftest() -> int:
     fg = frontier_goals(sf, m, [np.zeros(2)])
     assert len(fg) and np.hypot(*fg[0]) >= EXPLORE_GAP and fg[0][1] > -1.05 + SPIN_R - RES, fg[:3]
     assert clip_path([[0, 0], [1, 0], [2, 0], [3, 0]], 1.5) == [2, 0]
+    assert not len(frontier_goals(sf, m, [np.zeros(2)], parse_avoid("-5,5,-5,5")))
+    assert parse_avoid("1,0,2,-1; ") == [(0.0, 1.0, -1.0, 2.0)]
     assert len(tomato_bearings({"w": 1280, "positions": [[640, 300]], "ground": [[100, 650]]}, mt)) == 2
     # ⑬ 납작한 물건 — 회색 마루에 주황 수건(렌즈 0.6m 앞 바닥)이 그 자리 점으로, 마루는 마루로. 광선이 지나가도 안 지워진다
     try:
@@ -2128,6 +2143,7 @@ def main() -> int:
     ap.add_argument("--rounds", type=int, default=6, help="explore: 한 바퀴 돌 자리 수 상한")
     ap.add_argument("--reach", type=float, default=2.0, help="explore: 한 번에 갈 길 길이 상한(m)")
     ap.add_argument("--no-find", action="store_true", help="explore: 토마토 찾기 없이 지도만")
+    ap.add_argument("--avoid", default="", help="explore: 경계로 안 고를 구역 \"x0,x1,y0,y1;…\"(지도 좌표 m)")
     ap.add_argument("--near-mm", type=float, default=NEAR_MM, help="near: 손목 D405에서 토마토까지 이 거리(mm)에 선다")
     a = ap.parse_args()
     if a.mode == "selftest":

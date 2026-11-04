@@ -464,6 +464,9 @@ def build(job, args):
                 a += ["--hand"]                 # 바퀴 대신 사람이 돌린다 — IMU가 멈출 때마다 한 장씩 담는다
         if mode == "explore":
             a += ["--rounds", "%d" % int(num(args, "rounds", 6, 1, 20))]
+            if str(args.get("avoid", "")).strip():
+                space_map.parse_avoid(str(args["avoid"]))          # 숫자 넷이 아니면 여기서 400
+                a += ["--avoid", str(args["avoid"])]
         if mode in ("approach", "near", "explore"):
             a += ["--vx", "%d" % int(num(args, "vx", 200, 60, 255)),
                   "--vsecs", "%.2f" % num(args, "vsecs", 1.0, 0.2, 2.0)]
@@ -590,6 +593,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
   <div class="card"><h2>공간 지도 — Astra 3D (집 안 다니기)</h2>
     <canvas class="k3d" id="sp3d" style="height:380px"></canvas>
     <div class="legend">
+      <span>끌기=돌리기 · 오른쪽 끌기/Shift+끌기/두 손가락=옮기기 · 휠=확대 · 두 번 누르기=로봇으로</span>
       <span>점=Astra가 본 표면(낮음 청록→높음 주황)</span>
       <span><b style="background:#3caa5a"></b>빈 바닥(광선)</span>
       <span><b style="background:#e64632"></b>장애물</span>
@@ -1301,13 +1305,24 @@ function spInit(){
   var nose=new THREE.Mesh(new THREE.ConeGeometry(0.06,0.14,12),new THREE.MeshBasicMaterial({color:0xffd166}));
   nose.rotation.z=-Math.PI/2; nose.position.set(0.22,0,0.09); g.add(nose);
   sp.robot=g; sp.scene.add(g); sp.scene.add(new THREE.AxesHelper(0.5));
-  var down=false,dragged=false,x0=0,y0=0,lx=0,ly=0;
-  cv.addEventListener('pointerdown',function(e){down=true;dragged=false;x0=lx=e.clientX;y0=ly=e.clientY;});
-  window.addEventListener('pointerup',function(e){ if(down&&!dragged&&e.target===cv) spPick(e); down=false;});
-  window.addEventListener('pointermove',function(e){ if(!down) return;
+  // 끌기 = 돌리기 · 오른쪽 끌기/Shift+끌기/두 손가락 = 옮기기(바닥 위로) · 휠 = 확대 · 두 번 누르기 = 로봇으로
+  var down=false,dragged=false,pan=false,x0=0,y0=0,lx=0,ly=0,ptrs={};
+  cv.addEventListener('contextmenu',function(e){e.preventDefault();});
+  cv.style.touchAction='none';
+  cv.addEventListener('pointerdown',function(e){ptrs[e.pointerId]=1;
+    if(!down){down=true;dragged=false;x0=lx=e.clientX;y0=ly=e.clientY;}
+    pan=e.button===2||e.shiftKey||Object.keys(ptrs).length>=2;});
+  window.addEventListener('pointerup',function(e){delete ptrs[e.pointerId];
+    if(Object.keys(ptrs).length) return;
+    if(down&&!dragged&&e.target===cv) spPick(e); down=false;});
+  window.addEventListener('pointermove',function(e){ if(!down||!ptrs[e.pointerId]) return;
     if(Math.abs(e.clientX-x0)+Math.abs(e.clientY-y0)>5) dragged=true; if(!dragged) return;
-    sp.az-=(e.clientX-lx)*0.01; sp.el=Math.max(0.1,Math.min(1.55,sp.el+(e.clientY-ly)*0.01));
-    lx=e.clientX; ly=e.clientY; spRender();});
+    var dx=e.clientX-lx,dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+    if(pan){var k=sp.dist*0.0015*(Object.keys(ptrs).length>=2?0.5:1),s=Math.sin(sp.az),c=Math.cos(sp.az);
+      sp.tgt.x+=k*(s*dx-c*dy); sp.tgt.y+=k*(-c*dx-s*dy);}
+    else{sp.az-=dx*0.01; sp.el=Math.max(0.1,Math.min(1.55,sp.el+dy*0.01));}
+    spRender();});
+  cv.addEventListener('dblclick',function(){ if(sp.pose){sp.tgt.set(sp.pose[0],sp.pose[1],0.3); spRender();}});
   cv.addEventListener('wheel',function(e){e.preventDefault();
     sp.dist=Math.max(0.8,Math.min(25,sp.dist*(1+e.deltaY*0.001))); spRender();},{passive:false});
   resize();
