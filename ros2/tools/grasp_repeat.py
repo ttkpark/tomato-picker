@@ -467,7 +467,8 @@ def main():
     start_z = start_tcp_z(a.start)
     for n in range(1, a.trials + 1):
         print("\n=== %d/%d ===" % (n, a.trials))
-        clear_above(start_z)
+        if n > 1:                    # 첫 회는 팔이 대기 자세(접힘, z≈295)일 수 있다 — 거기서 물러나면 안 된다
+            clear_above(start_z)
         rc, _ = run("arm_stage.py", "--target=" + a.start)
         if rc:
             print("시작 자세로 못 갔다 — 멈춘다")
