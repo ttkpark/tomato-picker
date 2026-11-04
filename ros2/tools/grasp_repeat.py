@@ -362,6 +362,7 @@ def look_around(pans=(8.0, 20.0, -20.0, -35.0, 35.0)):
 
 
 GRIP_SHUT, GRIP_HELD = 4.0, 5.9      # stem_grasp와 같은 판정 — 닫으라 했는데 5.9 위에서 멈추면 무언가 물었다
+GRIP_RELAX = 1.0                     # 물었으면 목표를 (지금 자리 − 이것)으로 물린다 — 조이되 멈춘 채 짓누르지 않게
 
 
 def straight_grasp(z, stop_z):
@@ -377,7 +378,7 @@ def straight_grasp(z, stop_z):
     g = float(m.group(1)) if m else -1.0
     held = g >= GRIP_HELD
     print("   집게 %.1f (빈손이면 <%.1f) → %s" % (g, GRIP_HELD, "**물었다**" if held else "빈손"))
-    return held
+    return held, g
 
 
 def start_tcp_z(start):
@@ -460,10 +461,11 @@ def selftest():
         real_run, calls = run, []
         run = lambda name, *a: (calls.append((name,) + a), (0, "집게 4 → 지금 6.4" if "--grip" in a else ""))[1]  # noqa: E731
         try:
-            assert straight_grasp(105.0, 75.0) and calls[0] == ("tool_jog.py", "--horiz", "30.0"), calls
+            h, g = straight_grasp(105.0, 75.0)
+            assert h and g == 6.4 and calls[0] == ("tool_jog.py", "--horiz", "30.0"), calls
             calls.clear()
             run = lambda name, *a: (calls.append((name,) + a), (0, "집게 4 → 지금 4.8"))[1]                     # noqa: E731
-            assert not straight_grasp(200.0, 75.0) and calls[0][2] == "45.0", calls   # 45mm 상한
+            assert not straight_grasp(200.0, 75.0)[0] and calls[0][2] == "45.0", calls   # 45mm 상한
         finally:
             run = real_run
     finally:
@@ -521,13 +523,20 @@ def main():
         snap("%02d_start" % n)
         t0 = time.time()
         if REF == "stem":
-            held = straight_grasp(z, a.stop_z)
+            held, g = straight_grasp(z, a.stop_z)
         else:
             rc, out = run("stem_grasp.py", "--aim", "click", "--steps", "16", "--adv", "%.0f" % a.adv,
                           "--max-turn", "2", "--gain", "0.35", "--tol", "12", "--rejacobian", "6",
                           "--stop-z", "%.0f" % a.stop_z, "--max-adv", "0", "--max-dz", "25",
                           "--skip-aim-px", "50", "--trust-first-z", "--hold-z")
             held = rc == 0 and "**물었다**" in out
+            m = re.search(r"집게 (-?[\d.]+) \(빈손이면", out)
+            g = float(m.group(1)) if m else -1.0
+        if held:
+            # ⚠ 문 채로 4까지 계속 조이지 않는다 — 11/04 굵은 데(7.3)를 물고 3초 조이자 집게 모터(ID 6)가 과부하로
+            #   버스에서 빠졌고, 다음 도구가 다시 붙는 동안 토크가 풀려 팔이 300mm 주저앉았다(나무를 침).
+            #   목표를 지금 자리 바로 안쪽으로 물려 계속 물되 멈춘 채 짓누르지 않게 한다.
+            run("tool_jog.py", "--grip", "%.1f" % max(GRIP_SHUT, g - GRIP_RELAX))
         secs = time.time() - t0
         snap("%02d_%s" % (n, "held" if held else "miss"))
         held_n += held
