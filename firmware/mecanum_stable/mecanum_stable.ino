@@ -26,6 +26,7 @@
 //   R <accel> <decel> 슬루 스텝(틱당 변화량 상한). 기본 6 / 12
 //   F <hz>            PWM 주파수 변경 (24~1526). 소음 튜닝용
 //   ?                 상태 1줄 출력
+//   G <ms> <pu>       고속 핀 표본: 풀업 켬/끔, 핀마다 Low 표본·엣지 수 + DDRD·PORTD (이름 bN은 포트 비트: D2=D2, B0=D8, C0=A0)
 //   E                 핀 탐침: 떠 있음 10 / 밖에서 H 11 / L 00 / 출력 o (엔코더 선이 핀까지 오는지)
 //   M <id> <ticks> <vx> <vy> <w>   거리 이동(v2.3): 앞바퀴 엔코더로 ticks만큼 가고 선다. 끝나면 "mv done|stall|abort ..."
 //   H                 살아 있음(무응답). M 도중엔 V 대신 이것으로 데드맨을 채운다 — V가 오면 이동은 취소된다
@@ -570,6 +571,39 @@ void handleLine(char* line){
     }
     Serial.println();
     encPins = PIND; PCIFR = _BV(PCIF2); PCICR |= _BV(PCIE2);
+  } else if(c=='G'){
+    // 고속 핀 표본: G <ms 1~800> <풀업 1/0> — D2~D7·D8~D13·A0~A3의 Low 표본 수와 엣지 수. 엔코더 ISR·25Hz 표본과 별개로 신호를 본다.
+    int ms = nextInt(p), pu = nextInt(p);
+    if(ms < 1 || ms > 800 || (!testing && (curVx || curVy || curW))){ Serial.println(F("nak G")); return; }
+    const uint8_t EM = _BV(2)|_BV(3)|_BV(4)|_BV(6), port0 = PORTD;
+    if(pu) PORTD |= EM; else PORTD &= ~EM;
+    delayMicroseconds(100);
+    const uint8_t mask[3] = {0xFC, 0x3F, 0x0F};
+    uint16_t low[3][8] = {{0}}, edge[3][8] = {{0}};
+    uint8_t prev[3] = {PIND, PINB, PINC};
+    uint32_t n = 0; unsigned long t0 = millis();
+    while(millis() - t0 < (unsigned long)ms){
+      uint8_t cur[3] = {PIND, PINB, PINC};
+      for(uint8_t g = 0; g < 3; g++){
+        uint8_t x = (cur[g] ^ prev[g]) & mask[g], z = ~cur[g] & mask[g];
+        prev[g] = cur[g];
+        for(uint8_t b = 0; (x | z) >> b; b++){
+          if((x >> b & 1) && edge[g][b] < 65535) edge[g][b]++;
+          if((z >> b & 1) && low[g][b] < 65535) low[g][b]++;
+        }
+      }
+      if(!(++n & 255)) wdt_reset();
+    }
+    Serial.print(F("ok G n=")); Serial.print(n);
+    Serial.print(F(" ddrd=0x")); Serial.print(DDRD, HEX); Serial.print(F(" portd=0x")); Serial.print(PORTD, HEX);
+    Serial.print(F(" pcicr=0x")); Serial.print(PCICR, HEX); Serial.print(F(" pcmsk2=0x")); Serial.print(PCMSK2, HEX);
+    for(uint8_t g = 0; g < 3; g++) for(uint8_t b = 0; b < 8; b++) if(low[g][b] || edge[g][b]){
+      Serial.print(' '); Serial.print("DBC"[g]); Serial.print(b); Serial.print(F(":l")); Serial.print(low[g][b]);
+      Serial.print('/'); Serial.print('e'); Serial.print(edge[g][b]);
+    }
+    Serial.println();
+    PORTD = (PORTD & ~EM) | (port0 & EM);
+    encPins = PIND;
   } else if(c=='P'){
     int n=nextInt(p); if(n>0&&n<=4095){ MAX_PWM=n; }
     Serial.print(F("ok P ")); Serial.println(MAX_PWM);
