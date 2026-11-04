@@ -332,7 +332,7 @@ def close_in(b, stop_z, near_z=105.0, tol_px=8.0, iters=6):     # 위아래 15px
     except Exception as exc:                               # noqa: BLE001
         print("  다가가기 건너뜀(%s)" % exc)
         return b
-    blind = REF == "stem"
+    blind = REF in ("stem", "model")     # model도 — 학습 사진이 130~160mm라 근접(105mm)에선 확신이 낮다(11/04 v2)
     near_meas = max(near_z, LOCK_Z) if blind else near_z
     for i in range(iters):
         b = face_stem(b, stop_z)

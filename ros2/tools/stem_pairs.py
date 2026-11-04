@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """**같은 자세로 두 번 찍기** — 띠 있는 사진의 라벨을 띠 없는 진짜 맨 줄기 사진에 그대로 옮긴다.
 
-    # 1) 띠를 감은 채: 줄기 정면 자세에서 27자세를 돌며 찍고 관절값을 남긴다
-    ~/lerobot/.venv/bin/python ros2/tools/stem_pairs.py capture --tag band
-    # 2) 사람이 띠를 뗀다. 같은 관절값으로 다시 돌며 찍는다
-    ~/lerobot/.venv/bin/python ros2/tools/stem_pairs.py replay --tag bare
+    # 1) 줄기 정면 자세에서 27자세를 돌며 찍고 관절값을 남긴다(띠 있든 없든 — 먼저 찍는 쪽 tag)
+    ~/lerobot/.venv/bin/python ros2/tools/stem_pairs.py capture --tag bare
+    # 2) 사람이 띠를 감는다(또는 뗀다). 같은 관절값으로 다시 돌며 찍는다
+    ~/lerobot/.venv/bin/python ros2/tools/stem_pairs.py replay --tag band
     # 3) (PC) 띠 사진으로 상자를 만들어 맨 줄기 사진의 라벨로 쓴다
     python ros2/tools/stem_pairs.py label <내려받은 pairs 폴더> data/stem_yolo
 
@@ -25,14 +25,14 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-OUT = os.path.expanduser("~/stem_pairs")
+OUT = os.path.expanduser(os.environ.get("STEM_PAIRS_DIR", "~/stem_pairs"))
 COLOR = "/dev/shm/d405_color.jpg"
 PY = sys.executable
 
 # 줄기 정면 자세에서의 상대 이동 — 앞으로(mm) × 높이(mm) × 어깨(도). 105~150mm, 위아래 ±8mm, 옆 ±2°.
-FWD = (0.0, 15.0, 30.0)
+FWD = (0.0, 15.0, 30.0, 45.0)     # 45 = 잡기 직전 거리(≈105mm) — v2는 이 거리가 없어 근접 사진 12장 중 1장만 찾았다
 DZ = (-8.0, 0.0, 8.0)
-PAN = (-2.0, 0.0, 2.0)
+PAN = (-3.0, 0.0, 3.0)
 
 
 def sh(name, *a):
@@ -69,10 +69,10 @@ def snap(path):
 def capture(tag):
     os.makedirs(OUT, exist_ok=True)
     import grasp_repeat as gr
-    gr.REF = "band"
+    gr.REF = "auto"            # 띠가 있으면 띠, 없으면 토마토 꼭대기 기준으로 줄기 정면을 잡는다(순서는 어느 쪽이 먼저여도 된다)
     b = gr.wait_band(need_gone=False, timeout=20, steady_s=1.0)
     if b is None:
-        print("띠가 안 보인다 — 시작 자세에서 띠가 보이게 하고 다시")
+        print("줄기가 안 보인다 — 시작 자세에서 토마토가 보이게 하고 다시")
         return 1
     gr.face_stem(b, 75.0)
     p0 = joints()
@@ -123,21 +123,54 @@ def label(src, dst, band_tag="band", bare_tag="bare"):
             continue
         k = f.split("_")[0]
         bare = os.path.join(src, "%s_%s.jpg" % (k, bare_tag))
-        r = al.label_one(cv2.imread(os.path.join(src, f)))
+        band_img = cv2.imread(os.path.join(src, f))
+        r = al.label_one(band_img)
         if r is None or not os.path.exists(bare):
             continue
-        _clean, (cx, cy, w, h), _ratio = r
+        clean, (cx, cy, w, h), _ratio = r
+        bare_img = cv2.imread(bare)
+        # ⚠ 같은 관절값으로 돌아와도 ≈1° 차이로 화면이 0~25px 어긋났다(11/04 실측) → 위상상관으로 재서 상자를 옮긴다.
+        #   응답이 약하면(장면이 달라졌거나 못 잼) 그 짝은 버린다 — 틀린 라벨이 없는 라벨보다 나쁘다.
+        (dx, dy), resp = shift(band_img, bare_img)
+        if resp < 0.15:
+            print("  %s: 어긋남을 못 쟀다(응답 %.2f) — 버린다" % (k, resp))
+            continue
+        H, W = bare_img.shape[:2]
         stamp = time.strftime("%m%d")
-        for name, img in (("pair%s_%s_bare" % (stamp, k), cv2.imread(bare)), ("pair%s_%s_band" % (stamp, k), _clean)):
+        for name, img, (bx, by) in (("pair%s_%s_bare" % (stamp, k), bare_img, (cx + dx / W, cy + dy / H)),
+                                    ("pair%s_%s_band" % (stamp, k), clean, (cx, cy))):
             cv2.imwrite(os.path.join(dst, "images", "train", name + ".jpg"), img)
             with open(os.path.join(dst, "labels", "train", name + ".txt"), "w") as fh:
-                fh.write("0 %.6f %.6f %.6f %.6f\n" % (cx, cy, w, h))
+                fh.write("0 %.6f %.6f %.6f %.6f\n" % (bx, by, w, h))
         n += 1
     print("짝 %d개 → %s (맨 줄기 %d장 + 띠 지운 %d장)" % (n, dst, n, n))
     return 0
 
 
+def shift(a_bgr, b_bgr):
+    """b가 a에서 (dx, dy)만큼 옮겨진 화면이라 보고 그 양과 응답(0~1)."""
+    import cv2
+    import numpy as np
+    a = np.float32(cv2.cvtColor(a_bgr, cv2.COLOR_BGR2GRAY))
+    b = np.float32(cv2.cvtColor(b_bgr, cv2.COLOR_BGR2GRAY))
+    return cv2.phaseCorrelate(a, b, cv2.createHanningWindow(a.shape[::-1], cv2.CV_32F))
+
+
+def selftest():
+    import cv2
+    import numpy as np
+    rng = np.random.default_rng(0)
+    a = cv2.GaussianBlur((rng.random((480, 848, 3)) * 255).astype(np.uint8), (7, 7), 0)
+    b = np.roll(np.roll(a, 12, axis=1), -7, axis=0)            # 오른쪽 12, 위 7
+    (dx, dy), r = shift(a, b)
+    assert abs(dx - 12) < 0.5 and abs(dy + 7) < 0.5 and r > 0.3, (dx, dy, r)
+    print("selftest OK")
+    return 0
+
+
 def main():
+    if "--selftest" in sys.argv:
+        return selftest()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cmd", choices=("capture", "replay", "label"))
     ap.add_argument("args", nargs="*")
