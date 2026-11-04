@@ -426,9 +426,11 @@ tr.sel{background:#2a3a55}tr{cursor:pointer}.ok{color:#7f7}.bad{color:#f77}
 #bar input{flex:1}#note{position:absolute;top:8px;left:8px;background:#000a;padding:6px 8px;border-radius:4px;white-space:pre}
 .v{font-size:13px;padding:6px;border-radius:4px;margin:4px 0}.v.ok{background:#153}.v.bad{background:#512}
 small{color:#aaa}
+.row{display:flex;gap:6px;align-items:center;margin:3px 0;font-size:12px}.row input[type=range]{flex:1}.row label{min-width:40px}.row input[type=number]{width:60px}
+#wl{position:absolute;right:8px;background:#000a;padding:3px 6px;border-radius:4px;font-size:12px;display:none}
 </style></head><body>
 <div id="side"><h1>체크포인트 가상 검증</h1><small id="meta"></small><div id="tabs"></div><div id="sum"></div><div id="list"></div><div id="legend"></div></div>
-<div id="view"><canvas id="c"></canvas><div id="note"></div>
+<div id="view"><canvas id="c"></canvas><div id="note"></div><div id="wl">손목 D405가 보는 것(848×480 화각)</div>
 <div id="bar"><button id="play">▶</button><input id="tl" type="range" min="0" max="1000" value="0"><span id="tt"></span></div></div>
 <script id="data" type="application/json">__DATA__</script>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
@@ -459,11 +461,12 @@ function fk(j){const d=Math.PI/180,pan=j[0]*d,a1=j[1]*d,a2=a1+j[2]*d,a3=a2+j[3]*
 function drawArm(arm,j,grip){arm.clear();const f=fk(j);for(let i=0;i<f.pts.length-1;i++){const a=new THREE.Vector3(...f.pts[i]),b=new THREE.Vector3(...f.pts[i+1]);const h=a.distanceTo(b);const m=new THREE.Mesh(new THREE.CylinderGeometry(0.014,0.014,h,8),mat(i==3?0xdddddd:0xffa030));m.position.copy(a).lerp(b,0.5);m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),b.clone().sub(a).normalize());arm.add(m)}
  const tip=new THREE.Vector3(...f.pts[4]);const gap=grip?0.006:0.018;const lat=new THREE.Vector3(-Math.sin(f.pan),Math.cos(f.pan),0);
  for(const s of [-1,1]){const fg=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.006,0.03),mat(0x999999));fg.position.copy(tip).addScaledVector(lat,s*gap);fg.rotation.z=f.pan;arm.add(fg)}}
+function walls(Rm){return [[Rm[0],Rm[0]+0.02,Rm[2],Rm[3],0,1.2],[Rm[1]-0.02,Rm[1],Rm[2],Rm[3],0,1.2],[Rm[0],Rm[1],Rm[2],Rm[2]+0.02,0,1.2],[Rm[0],Rm[1],Rm[3]-0.02,Rm[3],0,1.2]]}
 let cur={cp:0,trial:0},playing=false,tfrac=0,frames=null;
 const tabs=document.getElementById('tabs'),sum=document.getElementById('sum'),list=document.getElementById('list'),note=document.getElementById('note'),tl=document.getElementById('tl'),tt=document.getElementById('tt');
 document.getElementById('meta').textContent='만든 때 '+D.when+' · seed '+D.seed+' · ros2/tools/checkpoint_sim.py';
 D.cps.forEach((c,i)=>{const t=document.createElement('span');t.className='tab';t.textContent=(c.tab||c.name.split(' ')[0])+(c.passed?' ✅':' ❌');t.onclick=()=>show(i,0);tabs.appendChild(t)});
-function show(ci,ti){cur={cp:ci,trial:ti};[...tabs.children].forEach((t,i)=>t.classList.toggle('on',i==ci));const c=D.cps[ci],T=c.trials[ti],K=c.kind;
+function show(ci,ti){P.on=false;bar.style.display='';wl.style.display='none';cur={cp:ci,trial:ti};[...tabs.children].forEach((t,i)=>t.classList.toggle('on',i==ci));const c=D.cps[ci],T=c.trials[ti],K=c.kind;
  sum.innerHTML=`<h2>${c.name}</h2><div class="v ${c.passed?'ok':'bad'}">${c.passed?'합격':'불합격'} — ${c.ok}/${c.n} (규약: ${c.rule}, 기한 ${c.due})</div><small>${D.notes[K-1]}</small>`;
  let h='<table><tr><th>회</th><th>결과</th>'+(K==1?'<th>옮김 좌우/앞뒤/회전</th><th>오차 앞/옆/위 mm</th>':K==2?'<th>위치 cm</th><th>각도 °</th>':'<th>출발→화분 m</th><th>끝 거리</th>')+'<th>초</th></tr>';
  c.trials.forEach((t,i)=>{h+=`<tr class="${i==ti?'sel':''}" data-i="${i}"><td>${t.i}</td><td class="${t.ok?'ok':'bad'}">${t.ok?'✅':'❌'} ${t.cls}</td>`+
@@ -472,13 +475,51 @@ function show(ci,ti){cur={cp:ci,trial:ti};[...tabs.children].forEach((t,i)=>t.cl
  list.innerHTML=h+'</table>';list.querySelectorAll('tr[data-i]').forEach(r=>r.onclick=()=>show(ci,+r.dataset.i));
  build(K,T);tfrac=0;tl.value=0;playing=true;document.getElementById('play').textContent='⏸'}
 let rb,armJ,trace,est,plantPos;
+// ── 🎮 직접 조작 — 같은 모형·같은 판정 창으로 사람이 몰아 본다 ──
+const bar=document.getElementById('bar'),wl=document.getElementById('wl');
+const P={on:false,pose:[0,0,0],j:[0,150,-145,-10,0],grip:0,plant:[1.2,0,0.45],keys:{},pl:null,room:[-2,3,-1.5,2],
+ wc:new THREE.PerspectiveCamera(2*Math.atan(240/G.d405.fx)*57.2958,G.d405.w/480,0.02,5)};
+const J=[['pan',-110,110],['lift',0,180],['elbow',-180,20],['wrist',-110,110],['roll',-180,180]];
+const ptab=document.createElement('span');ptab.className='tab';ptab.textContent='🎮 직접 조작';ptab.onclick=showPlay;tabs.appendChild(ptab);
+function setPlant(){if(P.pl)root.remove(P.pl);P.pl=plant(P.plant[0],P.plant[1],P.plant[2]);root.add(P.pl)}
+function buildPlay(){sc.remove(root);root=new THREE.Group();sc.add(root);rb=robot();root.add(rb);frames=null;trace=est=null;
+ const C3=D.cps.find(c=>c.kind==3);P.room=C3?C3.room:[-2,3,-1.5,2];for(const w of walls(P.room))root.add(box(w,0x666666,0.35));for(const B of (C3?C3.boxes:[]))root.add(box(B,0x8a7a60));P.pl=null;setPlant();
+ document.getElementById('legend').innerHTML='<small>모형은 모의가 쓰는 것 그대로 — 화분 지름 20cm·높이 15cm, 줄기 1cm, 열매 공 r 3.5cm, 노란 띠 = 잡는 자리(열매 위 5.5cm). 상자·벽은 가짜 방(space_map_sim). 차체 0.44×0.30, 팔 base는 앞 '+G.arm_x+'m·높이 '+G.arm_z+'m.</small>'}
+function showPlay(){P.on=true;cur={cp:-1,trial:0};[...tabs.children].forEach((t,i)=>t.classList.toggle('on',i==D.cps.length));playing=false;bar.style.display='none';wl.style.display='';
+ const c1=D.cps.find(c=>c.kind==1);const j0=c1&&c1.trials[0].frames?c1.trials[0].frames[0].j:[0,150,-145,-10,0];P.j=j0.slice();
+ sum.innerHTML='<h2>직접 조작 — 토마토 모형이 얼마나 그럴듯한지 눈으로</h2><small>화면을 한 번 클릭한 뒤 <b>W/S</b> 앞뒤 · <b>A/D</b> 게걸음 · <b>Q/E</b> 회전 · <b>Shift</b> 빠르게. 팔은 슬라이더. 오른쪽 아래 작은 화면 = 손목 D405 시점.</small>';
+ let h='<h2>팔 관절(°)</h2>';J.forEach((q,i)=>h+=`<div class="row"><label>${q[0]}</label><input type="range" data-j="${i}" min="${q[1]}" max="${q[2]}" step="0.5" value="${P.j[i]}"><span id="jv${i}">${P.j[i]}</span></div>`);
+ h+='<div class="row"><label>집게</label><input type="checkbox" id="grip"> 닫기</div><div class="row"><button id="pz">시작 자세</button><button id="pw">대기 자세(주행)</button><button id="pr">로봇 제자리</button></div>';
+ h+=`<h2>화분(m)</h2><div class="row"><label>x</label><input type="number" id="px" step="0.05" value="${P.plant[0]}"><label>y</label><input type="number" id="py" step="0.05" value="${P.plant[1]}"><label>열매 z</label><input type="number" id="pzv" step="0.01" value="${P.plant[2]}"></div>`;
+ h+='<h2>읽기</h2><pre id="ro" style="font-size:12px;white-space:pre-wrap;margin:0"></pre><small>줄기 표적까지의 앞/옆/위는 checkpoint_sim 판정 그대로 — 앞 '+G.win.depth[0]+'~'+G.win.depth[1]+' · 옆 ±'+G.win.gap+' · 위 ±'+G.win.band+'mm 안이면 닫을 때 잡힌다, 앞 '+G.win.push+' 넘으면 충돌.</small>';
+ list.innerHTML=h;
+ const setJ=j=>{P.j=j.slice();list.querySelectorAll('input[data-j]').forEach(s=>{s.value=P.j[+s.dataset.j];document.getElementById('jv'+s.dataset.j).textContent=s.value})};
+ list.querySelectorAll('input[data-j]').forEach(s=>s.oninput=()=>{P.j[+s.dataset.j]=+s.value;document.getElementById('jv'+s.dataset.j).textContent=s.value});
+ document.getElementById('grip').onchange=e=>P.grip=e.target.checked?1:0;
+ document.getElementById('pz').onclick=()=>setJ(j0);document.getElementById('pw').onclick=()=>setJ([0,80,-150,90,0]);document.getElementById('pr').onclick=()=>{P.pose=[0,0,0]};
+ for(const [id,k] of [['px',0],['py',1],['pzv',2]])document.getElementById(id).oninput=e=>{P.plant[k]=+e.target.value;setPlant()};
+ buildPlay()}
+window.addEventListener('keydown',e=>{if(e.target.tagName=='INPUT')return;P.keys[e.key.toLowerCase()]=1;P.keys.shift=e.shiftKey;if(P.on&&'wasdqe'.includes(e.key.toLowerCase()))e.preventDefault()});
+window.addEventListener('keyup',e=>{P.keys[e.key.toLowerCase()]=0;P.keys.shift=e.shiftKey});
+function playTick(dt){const k=P.keys,f=k.shift?2:1;const vx=((k.w?1:0)-(k.s?1:0))*0.25*f,vy=((k.a?1:0)-(k.d?1:0))*0.25*f,w=((k.q?1:0)-(k.e?1:0))*0.8*f;
+ const [x,y,th]=P.pose,Rm=P.room;P.pose=[Math.min(Rm[1]-0.25,Math.max(Rm[0]+0.25,x+(vx*Math.cos(th)-vy*Math.sin(th))*dt)),Math.min(Rm[3]-0.25,Math.max(Rm[2]+0.25,y+(vx*Math.sin(th)+vy*Math.cos(th))*dt)),th+w*dt];
+ rb.position.set(P.pose[0],P.pose[1],0);rb.rotation.z=P.pose[2];drawArm(rb.arm,P.j,P.grip);rb.updateMatrixWorld(true);
+ const F=fk(P.j),tip=rb.arm.localToWorld(new THREE.Vector3(...F.pts[4])),p3=rb.arm.localToWorld(new THREE.Vector3(...F.pts[3]));
+ const dir=tip.clone().sub(p3).normalize(),hz=new THREE.Vector3(dir.x,dir.y,0).normalize(),lat=new THREE.Vector3(-hz.y,hz.x,0);
+ const d=new THREE.Vector3(P.plant[0],P.plant[1],P.plant[2]+0.055).sub(tip);const along=-d.dot(hz)*1000,side=d.dot(lat)*1000,up=d.z*1000;
+ const W=G.win;const v=along>W.push?'충돌(지지대를 민다)':(along>=W.depth[0]&&along<=W.depth[1]&&Math.abs(side)<=W.gap&&Math.abs(up)<=W.band)?'닫으면 잡힌다 ✅':(Math.abs(up)>W.band&&Math.abs(side)<=W.gap)?'엉뚱한 곳(띠 밖)':'빈손';
+ const wc=P.wc;wc.position.copy(tip).addScaledVector(dir,-0.075);wc.up.set(0,0,1);wc.lookAt(tip.clone().add(dir));
+ const fr=new THREE.Vector3(P.plant[0],P.plant[1],P.plant[2]).sub(wc.position),mm=fr.length()*1000,b=Math.atan2(lat.dot(fr),hz.dot(fr));
+ const seen=hz.dot(fr)>0&&Math.abs(b)<Math.atan(G.d405.ppx/G.d405.fx)&&mm>=G.d405.min&&mm<=G.d405.max;
+ document.getElementById('ro').textContent=`차체 (${P.pose[0].toFixed(2)}, ${P.pose[1].toFixed(2)}, ${(P.pose[2]*57.3).toFixed(0)}°)\n손끝(세계) (${tip.x.toFixed(3)}, ${tip.y.toFixed(3)}, ${tip.z.toFixed(3)})\n줄기 표적까지  앞 ${along.toFixed(0)} · 옆 ${side.toFixed(0)} · 위 ${up.toFixed(0)} mm\n→ ${P.grip?v:'(집게 열림) '+v}\n손목 D405: 열매 ${mm.toFixed(0)}mm · 가로 ${(b*57.3).toFixed(1)}° · u ${(G.d405.ppx-G.d405.fx*Math.tan(b)).toFixed(0)}${seen?'':'  — 안 보임/유효 '+G.d405.min+'~'+G.d405.max+'mm 밖'}`;
+ note.textContent=''}
 function build(K,T){sc.remove(root);root=new THREE.Group();sc.add(root);rb=robot();root.add(rb);frames=null;trace=est=null;
  if(K==1){root.add(plant(T.plant[0],T.plant[1],T.plant[2]));frames=T.frames;rb.position.set(0,0,0);rb.rotation.z=0;
   document.getElementById('legend').innerHTML='<small>주황=팔 · 회색 판=집게 · 노란 띠=줄기 표적. 회전 ±20°는 무대를 반대로 돌려 흉내 냈다.</small>'}
  else if(K==2){root.add(line([[0,0],[1,0],[1,1],[0,1],[0,0]],0x555555));trace=T.trace.map(r=>[r[1],r[2],r[3]]);est=T.trace.map(r=>[r[4],r[5],r[6]]);
   root.add(line(trace.map(p=>[p[0],p[1],0.02]),0x40ff80));root.add(line(est.map(p=>[p[0],p[1],0.03]),0xffa040));
   document.getElementById('legend').innerHTML='<small>회색=목표 사각형 · 초록=실제 자취 · 주황=엔코더가 믿는 자취(로봇은 주황을 따라 돈다). 끝에서 둘의 차이가 E2 오차.</small>'}
- else{const C3=D.cps[cur.cp],Rm=C3.room;for(const w of [[Rm[0],Rm[0]+0.02,Rm[2],Rm[3],0,1.2],[Rm[1]-0.02,Rm[1],Rm[2],Rm[3],0,1.2],[Rm[0],Rm[1],Rm[2],Rm[2]+0.02,0,1.2],[Rm[0],Rm[1],Rm[3]-0.02,Rm[3],0,1.2]])root.add(box(w,0x666666,0.35));
+ else{const C3=D.cps[cur.cp],Rm=C3.room;for(const w of walls(Rm))root.add(box(w,0x666666,0.35));
   for(const B of C3.boxes)root.add(box(B,0x8a7a60));root.add(plant(T.plant[0],T.plant[1],T.plant[2]));
   if(T.map.length){const im=new THREE.InstancedMesh(new THREE.BoxGeometry(0.045,0.045,0.02),mat(0x40c0ff,0.6),T.map.length);const o=new THREE.Object3D();T.map.forEach((p,i)=>{o.position.set(p[0],p[1],0.01);o.updateMatrix();im.setMatrixAt(i,o.matrix)});root.add(im)}
   if(T.path.length)root.add(line(T.path.map(p=>[p[0],p[1],0.05]),0xffff00));
@@ -501,7 +542,9 @@ document.getElementById('play').onclick=()=>{playing=!playing;document.getElemen
 let last=performance.now();
 function loop(now){const dt=(now-last)/1000;last=now;if(playing){const K=D.cps[cur.cp].kind;tfrac+=dt/(K==1?8:K==2?20:30);if(tfrac>=1){tfrac=1;playing=false;document.getElementById('play').textContent='▶'}tl.value=tfrac*1000}
  const w=cv.clientWidth,h=cv.clientHeight;if(cv.width!=w||cv.height!=h){R.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix()}
- tick();ctl.update();R.render(sc,cam);requestAnimationFrame(loop)}
+ if(P.on)playTick(dt);else tick();ctl.update();R.setScissorTest(false);R.setViewport(0,0,w,h);R.render(sc,cam);
+ if(P.on){const iw=Math.min(380,Math.floor(w*0.35)),ih=Math.floor(iw*480/G.d405.w);wl.style.bottom=(ih+12)+'px';R.setScissorTest(true);R.setScissor(w-iw-8,8,iw,ih);R.setViewport(w-iw-8,8,iw,ih);R.render(sc,P.wc);R.setScissorTest(false);R.setViewport(0,0,w,h)}
+ requestAnimationFrame(loop)}
 show(0,0);requestAnimationFrame(loop);
 </script></body></html>
 """
@@ -516,7 +559,14 @@ NOTES = [
 ]
 
 
+GEOM_JS = {"win": {"gap": GAP_HALF, "depth": list(DEPTH_WIN), "band": BAND_HALF, "push": PUSH_MM},
+           "d405": {"fx": D405["fx"], "ppx": D405["ppx"], "w": D405["w"], "min": D405["min_mm"], "max": D405["max_mm"]}}
+
+
 def page(blob: str) -> str:
+    d = json.loads(blob)
+    d["geom"].update(GEOM_JS)          # 🎮 직접 조작 탭이 판정 창·손목 카메라 값을 쓴다
+    blob = json.dumps(d, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
     return HTML.replace("__DATA__", blob.replace("</", "<\\/"))
 
 
