@@ -3,6 +3,7 @@
 
     ~/lerobot/.venv/bin/python ros2/tools/base_nudge.py --vx 130 --secs 0.6     # 앞으로 톡
     ~/lerobot/.venv/bin/python ros2/tools/base_nudge.py --w -130 --secs 0.8     # 제자리 회전
+    ~/lerobot/.venv/bin/python ros2/tools/base_nudge.py --vx 130 --ticks 800    # 앞바퀴 엔코더 800카운트(펌웨어 v2.3 M)
 
 ⚠ `tomato-voice`는 내린 채로(주행 보드 포트는 한 프로세스).
 ⚠ 포트를 열면 Uno가 리셋된다(DTR) — 첫 하트비트를 기다린 뒤에만 지령을 낸다.
@@ -81,6 +82,8 @@ def main() -> int:
                     help="이 펄스 동안만 듀티 상한(P n, ≤4095)을 올린다 — 하트비트 뒤에 보낸다")
     ap.add_argument("--dither", type=int, default=0,
                     help="정지마찰 깨기: 지령 동안 vy를 ±이 크기로 4Hz 흔든다(메모리 stiction-is-the-lever)")
+    ap.add_argument("--ticks", type=int, default=0,
+                    help="시간 대신 거리: 앞바퀴 엔코더 카운트만큼 가고 선다(보드가 센다, 3초 넘으면 세운다)")
     ap.add_argument("--estop-reset", action="store_true",
                     help="STM32 보드 비상정지 래치 해제(X 0) — 사람이 누르는 조작대 [비상정지 해제]만 쓴다")
     args = ap.parse_args()
@@ -101,6 +104,18 @@ def main() -> int:
         ok = link.send_raw(f"P {n}")
         print(f"듀티 상한 P {n} → {'보냄' if ok else '실패'}")
         time.sleep(0.15)
+    if args.ticks:
+        print(f"지령 vx={args.vx} vy={args.vy} w={args.w} · {args.ticks}카운트")
+        try:
+            r = link.drive_ticks(args.ticks, args.vx, args.vy, args.w, timeout=3.0)
+        finally:
+            time.sleep(0.4)
+            st = link.stats()
+            link.close()
+        fs = st.get("fw_state") or {}
+        print(f"결과 {r} · enc={fs.get('enc')} vcc={fs.get('vcc')} vmin={fs.get('vmin')} sag={fs.get('sag')}"
+              f" · 재부팅 {st.get('board_resets')} {st.get('boot_report') or ''}")
+        return 0 if r["state"] == "done" else 1
     print(f"지령 vx={args.vx} vy={args.vy} w={args.w} · {args.secs:.2f}s")
     try:
         drive(link, args.vx, args.vy, args.w, args.secs, args.dither)

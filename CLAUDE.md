@@ -99,7 +99,8 @@ behavior the task requires stay in.
 
 - **주행 펌웨어 = [`firmware/mecanum_stable/`](firmware/mecanum_stable/) v2** ✅ (아두이노/CH340, `/dev/ttyUSB0`).
   젯슨이 **시리얼 라인 프로토콜**로 구동: `V vx vy w`(속도, -255..255) / `S`(정지) / `T i d`(모터캘리)
-  / `P n`(PWM) / `L a b c d`(극성) / `R accel decel`(슬루) / `F hz`(PWM주파수). baud 115200.
+  / `P n`(PWM) / `L a b c d`(극성) / `R accel decel`(슬루) / `F hz`(PWM주파수)
+  / **`M id t vx vy w`(v2.3 거리 이동 — 앞바퀴 엔코더 t카운트를 보드가 세고, 걸림·로직전압 처짐이면 선다. 리셋돼도 `mv lost`로 진행을 남기고 혼자 안 이어 간다; 젯슨 `MotorLink.drive_ticks`가 남은 만큼 ×0.7로 다시)**. baud 115200.
   **v2 = 소음·끊김 대책**: PWM 50Hz→1500Hz(“우우웅”의 원인), 펌웨어 슬루(가감속),
   소프트 데드맨(300ms 감속/1000ms 하드), **XOR 체크섬 `*HH`**(한 번 받으면 무체크섬 `V` 거부),
   `V` 무응답 + 1초 하트비트에 링크 카운터. 젯슨 쪽은

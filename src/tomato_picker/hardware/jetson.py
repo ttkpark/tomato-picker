@@ -181,8 +181,8 @@ class JetsonBase(MobileBase):
 
     def drive_to(self, distance: float) -> None:
         raise NotImplementedError(
-            "drive_to는 이 펌웨어(mecanum_stable, 오픈루프)에서 아직 캘리브레이션되지 "
-            "않았다. drive_forward(seconds)를 대신 쓸 것."
+            "drive_to는 mm↔엔코더 카운트가 아직 실측되지 않았다. 카운트 단위 거리 이동은 "
+            "link.drive_ticks(ticks, vx, vy, w)(펌웨어 v2.3 M), 시간 단위는 drive_forward(seconds)."
         )
 
     def drive_forward(self, seconds: float, speed: int = BASE_DRIVE_SPEED) -> None:

@@ -26,7 +26,23 @@
 //   R <accel> <decel> 슬루 스텝(틱당 변화량 상한). 기본 6 / 12
 //   F <hz>            PWM 주파수 변경 (24~1526). 소음 튜닝용
 //   ?                 상태 1줄 출력
+//   M <id> <ticks> <vx> <vy> <w>   거리 이동(v2.3): 앞바퀴 엔코더로 ticks만큼 가고 선다. 끝나면 "mv done|stall|abort ..."
+//   H                 살아 있음(무응답). M 도중엔 V 대신 이것으로 데드맨을 채운다 — V가 오면 이동은 취소된다
+//   K <slow> <min> <stall_ms> <sag_mv> <bg_mv>   M 감속 구간·최저 지령·걸림 판정·전압 처짐 문턱·밴드갭 보정 (0=그대로)
 // 응답: 처리 확인 "ok ...", 체크섬 오류 "nak crc", 1초 주기 "hb <ms> rx=<n> bad=<n> v=<vx,vy,w>" enc=<A,B,C,D>
+//       vcc=<mV> vmin=<mV> sag=<n> [mv=<id>,<got>]
+//
+// v2.3 — 거리 이동과 브라운아웃 대비. 이 보드의 리셋은 대부분 모터 기동 때 로직 5V(XL1509, 모터와 같은 BAT)가
+//   처져서 난다(EXT|BOD). 그래서:
+//  (1) M은 보드가 직접 센다 — 젯슨 지연과 무관하게 5ms마다 진행을 보고, 남은 거리가 slow 안이면 줄이되
+//      정지마찰(≈90) 아래로는 안 내린다. 앞바퀴 둘 중 **도는 쪽만** 센다(뒷바퀴는 못 읽는다).
+//  (2) 걸림 = 즉시 정지. 지령 중인 앞바퀴가 stall_ms 동안 앞으로 2카운트도 못 가면 선다. 막힌 모터는
+//      정지 전류(최대 전류)를 먹으므로 이게 곧 브라운아웃 차단이고, "지령은 나가는데 안 움직인다"를 숫자로 보고한다.
+//  (3) 로직 전압 감시 — AVcc를 1.1V 밴드갭으로 잰다(핀 불필요). sag_mv 아래로 처지면 100ms 동안 가속을
+//      멈춘다(줄이는 건 허용). vmin=으로 리셋 직전 전압을 하트비트가 남긴다.
+//  (4) 리셋돼도 진행이 남는다 — 이동 기록을 .noinit에 체크섬과 함께 둔다. warm 리셋(BOD·DTR·WDT)이면
+//      부팅 줄 다음에 "mv lost <id> <got> <target>"을 뱉는다 — 젯슨이 남은 만큼만 다시 시킨다.
+//      리셋 뒤엔 절대 스스로 이어 가지 않는다(전원이 처진 채로 다시 출발하면 같은 리셋을 반복한다).
 //
 // v2.2 — 엔코더. 쉴드가 Uno에 물려 둔 앞바퀴 둘(C=FR, D=FL)을 4체배로 센다(뒷바퀴 A·B는 쉴드 NC라 0).
 //   T i 1 의 자동정지 줄이 "T auto-stop enc=<그 1초 동안 카운트>"를 싣는다.
@@ -204,6 +220,52 @@ int32_t encGet(uint8_t i){
   return v * POL[i] * ENC_DIR[i];
 }
 
+// ---------------- 로직 전압 감시 (v2.3) ----------------
+// AVcc를 기준으로 내부 1.1V 밴드갭을 재면 Vcc = bg × 1024 / ADC. 밴드갭은 칩마다 ±10%라 BG_MV가 보정 손잡이다
+// (멀티미터로 5V 핀을 재서 hb vcc=와 맞춘다). analogRead를 안 쓰므로 MUX를 밴드갭에 고정해 두고 틱마다 하나씩 읽는다.
+int BG_MV = 1100;
+int VSAG_MV = 4300;           // ⚠ 너무 높이면 가속이 늘 막혀 "안 움직인다"가 된다 — 그때는 M이 stall로 보고한다
+uint16_t vccMv = 0, vccMin = 0xFFFF, sagCount = 0;
+unsigned long sagUntil = 0;
+uint8_t vccSkip = 4;          // MUX 전환 직후 몇 개는 밴드갭이 덜 서서 낮게 나온다
+void vccInit(){ ADMUX = _BV(REFS0) | 0x0E; ADCSRA |= _BV(ADSC); }
+void vccTick(unsigned long now){
+  if(ADCSRA & _BV(ADSC)) return;          // 변환 중(104µs) — 다음 틱에
+  uint16_t a = ADC; ADCSRA |= _BV(ADSC);
+  if(vccSkip){ vccSkip--; return; }
+  if(!a) return;
+  vccMv = (uint32_t)BG_MV * 1024 / a;
+  if(vccMv < vccMin) vccMin = vccMv;
+  if((int)vccMv < VSAG_MV){
+    if((long)(now - sagUntil) >= 0) sagCount++;   // 새 처짐 사건만 센다
+    sagUntil = now + 100;
+  }
+}
+bool sagging(unsigned long now){ return (long)(sagUntil - now) > 0; }
+
+// ---------------- 거리 이동 M (v2.3) ----------------
+enum { MV_IDLE = 0, MV_RUN, MV_SETTLE };
+const uint8_t MV_WHEEL[2] = {3, 2};      // 읽을 수 있는 앞바퀴: D(FL), C(FR)
+uint8_t mvState = MV_IDLE;
+uint16_t mvId = 0;
+int32_t mvTarget = 0;
+int mvVx, mvVy, mvW, mvPeak;             // 이동 속도(감속 전), 가장 큰 바퀴 지령
+int8_t mvSign[2];                        // 이 이동에서 앞바퀴가 도는 방향(0 = 안 돈다 → 안 센다)
+int32_t mvEnc0[2], mvMark[2];
+unsigned long mvT0, mvMarkMs[2], mvSettleUntil;
+int MV_SLOW = 400;        // 남은 카운트가 이 안이면 비례 감속
+int MV_MIN = 100;         // 감속해도 가장 큰 바퀴 지령은 이 아래로 안 내린다(정지마찰 ≈90)
+int MV_STALL_MS = 500;    // 슬루 램프(ACCEL 3이면 0→255 425ms)보다 길게
+
+// 리셋을 넘어 살아남는 이동 기록. 체크섬이 맞을 때만 믿는다(SRAM 오염으로 boot #16129가 찍힌 적이 있다).
+volatile uint16_t mvRecId     __attribute__((section(".noinit")));
+volatile int32_t  mvRecTarget __attribute__((section(".noinit")));
+volatile int32_t  mvRecGot    __attribute__((section(".noinit")));
+volatile uint16_t mvRecChk    __attribute__((section(".noinit")));
+uint16_t mvChk(uint16_t id, int32_t t, int32_t g){
+  return id ^ (uint16_t)t ^ (uint16_t)(t >> 16) ^ (uint16_t)g ^ (uint16_t)(g >> 16) ^ 0xA55Au;
+}
+
 // 한 바퀴에 부호있는 속도 s(-255..255) 인가. wheel=0..3
 void driveWheel(uint8_t w, int s){
   s = (int)s * POL[w];
@@ -255,17 +317,109 @@ int approach(int cur, int tgt){
   return cur;
 }
 
+// 전압이 처진 동안: 줄이는 쪽으로만 움직인다(가속 = 전류를 더 끌어오는 일).
+int approachSag(int cur, int tgt){
+  int n = approach(cur, tgt);
+  return abs(n) > abs(cur) ? cur : n;
+}
+
+// 앞바퀴(도는 쪽만) 진행의 평균, 이동 방향 = +.
+int32_t mvProgress(){
+  int32_t sum = 0; uint8_t n = 0;
+  for(uint8_t k = 0; k < 2; k++) if(mvSign[k]){ sum += (encGet(MV_WHEEL[k]) - mvEnc0[k]) * mvSign[k]; n++; }
+  return n ? sum / n : 0;
+}
+
+void mvReport(const __FlashStringHelper* kind, int32_t got){
+  Serial.print(F("mv ")); Serial.print(kind); Serial.print(' '); Serial.print(mvId);
+  Serial.print(' '); Serial.print(got); Serial.print(' '); Serial.print(mvTarget);
+}
+
+void mvEnd(){ mvState = MV_IDLE; mvRecId = 0; }
+
+// 진행 중인 이동을 끊는다(새 지령·데드맨). 바퀴는 부른 쪽이 세운다.
+void mvAbort(const __FlashStringHelper* why){
+  if(mvState == MV_IDLE) return;
+  mvReport(F("abort"), mvProgress()); Serial.print(' '); Serial.println(why);
+  mvEnd();
+}
+
+// M <id> <ticks> <vx> <vy> <w>
+void mvStart(uint16_t id, int32_t ticks, int vx, int vy, int w){
+  int mix[2] = { vx - vy - w, vx + vy + w };            // FL, FR (applyCurrent와 같은 식)
+  int m4[4]  = { mix[0], mix[1], vx + vy - w, vx - vy + w };
+  if(id == 0 || ticks <= 0){ Serial.println(F("nak mv args")); return; }
+  if(!mix[0] && !mix[1]){ Serial.println(F("nak mv blind")); return; }   // 뒷바퀴만 도는 지령 = 셀 수 없다
+  mvAbort(F("M"));
+  if(testing) hardStop();
+  mvPeak = 0;
+  for(uint8_t i = 0; i < 4; i++) if(abs(m4[i]) > mvPeak) mvPeak = abs(m4[i]);
+  unsigned long now = millis();
+  for(uint8_t k = 0; k < 2; k++){
+    mvSign[k] = mix[k] > 0 ? 1 : mix[k] < 0 ? -1 : 0;
+    mvEnc0[k] = mvMark[k] = encGet(MV_WHEEL[k]);
+    mvMarkMs[k] = now;
+  }
+  mvId = id; mvTarget = ticks; mvVx = vx; mvVy = vy; mvW = w; mvT0 = now;
+  mvState = MV_RUN;
+  tgtVx = vx; tgtVy = vy; tgtW = w;
+  Serial.print(F("ok M ")); Serial.print(id); Serial.print(' '); Serial.println(ticks);
+}
+
+// 5ms 틱마다. 목표 속도(tgt*)를 정하고 끝·걸림을 판정한다.
+void mvTick(unsigned long now){
+  int32_t got = mvProgress();
+  if(mvState == MV_SETTLE){
+    // 세운 뒤 굴러간 만큼까지 센다 — 젯슨이 다음 보정 이동을 이 숫자로 정한다
+    if((long)(now - mvSettleUntil) < 0) return;
+    mvReport(F("done"), got); Serial.print(' '); Serial.println(now - mvT0);
+    mvEnd();
+    return;
+  }
+  mvRecGot = got; mvRecTarget = mvTarget; mvRecChk = mvChk(mvId, mvTarget, got); mvRecId = mvId;
+  int32_t rem = mvTarget - got;
+  if(rem <= 0){
+    hardStop();                        // 양 채널 0 = 코스팅. 역기전력으로 레일을 때리지 않는다
+    mvState = MV_SETTLE; mvSettleUntil = now + 150;
+    return;
+  }
+  for(uint8_t k = 0; k < 2; k++){
+    if(!mvSign[k]) continue;
+    int32_t e = encGet(MV_WHEEL[k]);
+    if((e - mvMark[k]) * mvSign[k] >= 2){ mvMark[k] = e; mvMarkMs[k] = now; }
+    else if(now - mvMarkMs[k] > (unsigned long)MV_STALL_MS){
+      // 뒤로 도는 것도(ENC_DIR 부호가 틀렸을 때) 여기 걸린다 — 목표에 영영 못 가니 세운다
+      hardStop();
+      mvReport(F("stall"), got); Serial.print(F(" wheel=")); Serial.print((char)('A' + MV_WHEEL[k]));
+      Serial.print(F(" sag=")); Serial.println(sagCount);
+      mvEnd();
+      return;
+    }
+  }
+  int32_t s = 256;
+  if(rem < MV_SLOW) s = rem * 256 / MV_SLOW;
+  int32_t sMin = (int32_t)MV_MIN * 256 / mvPeak;
+  if(sMin > 256) sMin = 256;
+  if(s < sMin) s = sMin;
+  tgtVx = mvVx * s / 256; tgtVy = mvVy * s / 256; tgtW = mvW * s / 256;
+}
+
 // ---- 시리얼 라인 버퍼 ----
 char buf[48];
 uint8_t blen = 0;
 
-int nextInt(char*& p){
+int32_t nextLong(char*& p){
   while(*p==' ') p++;
-  int sign=1;
+  int8_t sign=1;
   if(*p=='-'){ sign=-1; p++; } else if(*p=='+'){ p++; }
-  int v=0; bool any=false;
-  while(*p>='0' && *p<='9'){ v=v*10+(*p-'0'); p++; any=true; }
-  return any ? sign*v : 0;
+  int32_t v=0; uint8_t n=0;
+  while(*p>='0' && *p<='9'){ if(n++ < 9) v=v*10+(*p-'0'); p++; }   // 9자리에서 자른다(넘침 방지)
+  return sign*v;
+}
+
+int nextInt(char*& p){   // AVR int = 16비트 — 넘치면 뒤집히지 않게 자른다
+  int32_t v = nextLong(p);
+  return v > 32767 ? 32767 : v < -32767 ? -32767 : (int)v;
 }
 
 int8_t hexVal(char c){
@@ -356,7 +510,7 @@ void handleLine(char* line){
     return;                        // 깨진 라인은 절대 실행하지 않는다
   }
   if(crc > 0) strictCrc = true;    // 정상 체크섬을 받은 순간부터 strict
-  else if(strictCrc && line[0]=='V'){
+  else if(strictCrc && (line[0]=='V' || line[0]=='M')){   // 바퀴를 움직이는 명령만
     // strict 전환 뒤 무체크섬 속도지령 = 노이즈이거나 옛 클라이언트. 주행만 막고 알린다.
     rxBad++;
     Serial.println(F("nak nocrc"));
@@ -372,15 +526,16 @@ void handleLine(char* line){
     if(vx>255)vx=255; if(vx<-255)vx=-255;
     if(vy>255)vy=255; if(vy<-255)vy=-255;
     if(w >255)w =255; if(w <-255)w =-255;
+    mvAbort(F("V"));               // 사람·상위가 직접 잡았다 — 이동보다 우선
     tgtVx=vx; tgtVy=vy; tgtW=w;
     testing = false;
     // 응답 없음 — 50Hz로 들어오므로 되쏘면 TX 버퍼가 차서 loop가 막힌다.
   } else if(c=='S'){
-    hardStop(); Serial.println(F("ok S"));
+    mvAbort(F("S")); hardStop(); Serial.println(F("ok S"));
   } else if(c=='T'){
     int i=nextInt(p), d=nextInt(p);
     if(i>=0 && i<4){
-      hardStop();
+      mvAbort(F("T")); hardStop();
       driveWheel(i, d>=0 ? 200 : -200);
       testing = true;
       testUntil = millis()+1000;
@@ -392,7 +547,7 @@ void handleLine(char* line){
     Serial.print(F("ok P ")); Serial.println(MAX_PWM);
   } else if(c=='L'){
     for(uint8_t i=0;i<4;i++){ int v=nextInt(p); POL[i] = (v<0)?-1:1; }
-    hardStop();
+    mvAbort(F("L")); hardStop();
     Serial.print(F("ok L POL=")); for(uint8_t i=0;i<4;i++){Serial.print((int)POL[i]);Serial.print(',');} Serial.println();
   } else if(c=='R'){
     int a=nextInt(p), d=nextInt(p);
@@ -409,7 +564,25 @@ void handleLine(char* line){
       applyCurrent();
     }
     Serial.print(F("ok F ")); Serial.println(hz);
+  } else if(c=='M'){
+    int32_t id=nextLong(p), ticks=nextLong(p);
+    int vx=nextInt(p), vy=nextInt(p), w=nextInt(p);
+    mvStart(id > 0 && id <= 65535 ? (uint16_t)id : 0, ticks,
+            constrain(vx,-255,255), constrain(vy,-255,255), constrain(w,-255,255));
+  } else if(c=='H'){
+    // 살아 있음 — 데드맨(lastCmd)은 위에서 이미 채웠다. 응답 없음.
+  } else if(c=='K'){
+    int a=nextInt(p), b=nextInt(p), st=nextInt(p), sg=nextInt(p), bg=nextInt(p);
+    if(a>0) MV_SLOW=a;
+    if(b>0 && b<=255) MV_MIN=b;
+    if(st>0) MV_STALL_MS=st;
+    if(sg>0) VSAG_MV=sg;
+    if(bg>=900 && bg<=1300) BG_MV=bg;
+    Serial.print(F("ok K ")); Serial.print(MV_SLOW); Serial.print(' '); Serial.print(MV_MIN);
+    Serial.print(' '); Serial.print(MV_STALL_MS); Serial.print(' '); Serial.print(VSAG_MV);
+    Serial.print(' '); Serial.println(BG_MV);
   } else if(c=='W'){
+    // ⚠ 이동(M) 도중이면 기록을 **안 지운다** — 재부팅 뒤 "mv lost"가 나와야 정상(브라운아웃 경로 시험).
     // 워치독 자가진단 — **일부러** loop를 멈춘다. 이 계측의 존재 이유가
     // "워치독이 물었다"를 신뢰성 있게 보고하는 것인데, 그게 실제로 동작하는지
     // 확인할 방법이 없으면 0이 나와도 그게 '안 물렸다'인지 '못 잡았다'인지 모른다.
@@ -431,6 +604,15 @@ void handleLine(char* line){
     Serial.println();
     printBootReport();
   }
+}
+
+// 리셋 직전에 하던 이동을 보고한다(warm + 체크섬이 맞을 때만). 다시 출발은 젯슨이 정한다.
+void reportLostMove(){
+  if(bootWarm && mvRecId && mvRecChk == mvChk(mvRecId, mvRecTarget, mvRecGot)){
+    Serial.print(F("mv lost ")); Serial.print(mvRecId); Serial.print(' ');
+    Serial.print(mvRecGot); Serial.print(' '); Serial.println(mvRecTarget);
+  }
+  mvRecId = 0;
 }
 
 void setup(){
@@ -463,7 +645,9 @@ void setup(){
   // 배너보다 **먼저** 리셋 원인을 뱉는다 — 젯슨은 배너를 보고 "재부팅했다"고
   // 판정하므로, 그 시점엔 원인 줄이 이미 도착해 있어야 함께 로그에 남는다.
   printBootReport();
-  Serial.println(F("mecanum_stable v2.2 ready. proto: V vx vy w | S | T i d | P n | L .. | R a d | F hz | ? (+*CRC)"));
+  reportLostMove();         // 배너보다 먼저 — 젯슨이 재부팅을 알아챌 때 이미 손에 있게
+  vccInit();
+  Serial.println(F("mecanum_stable v2.3 ready. proto: V vx vy w | S | T i d | P n | L .. | R a d | F hz | M id t vx vy w | H | K .. | ? (+*CRC)"));
   armWatchdog();   // HW 워치독 250ms — 인터럽트 우선(원인을 남기고 리셋)
 }
 
@@ -497,8 +681,10 @@ void loop(){
   if(!testing){
     unsigned long silence = now - lastCmd;
     if(silence > HARD_TIMEOUT){
+      mvAbort(F("deadman"));
       if(curVx || curVy || curW){ hardStop(); Serial.println(F("deadman HARD")); }
     } else if(silence > CMD_TIMEOUT){
+      mvAbort(F("deadman"));      // 젯슨이 죽었다 — 남은 거리가 있어도 혼자 가지 않는다
       tgtVx = tgtVy = tgtW = 0;   // 슬루로 부드럽게 선다 — v1의 "주웅 주웅" 끊김 제거
     }
   }
@@ -506,9 +692,12 @@ void loop(){
   // 슬루 틱: 목표로 조금씩 이동
   if(!testing && (now - lastTick) >= TICK_MS){
     lastTick = now;
-    int nx = approach(curVx, tgtVx);
-    int ny = approach(curVy, tgtVy);
-    int nw = approach(curW,  tgtW);
+    vccTick(now);
+    if(mvState) mvTick(now);
+    bool sag = sagging(now);
+    int nx = sag ? approachSag(curVx, tgtVx) : approach(curVx, tgtVx);
+    int ny = sag ? approachSag(curVy, tgtVy) : approach(curVy, tgtVy);
+    int nw = sag ? approachSag(curW,  tgtW)  : approach(curW,  tgtW);
     if(nx!=curVx || ny!=curVy || nw!=curW){
       curVx=nx; curVy=ny; curW=nw;
       applyCurrent();
@@ -529,6 +718,12 @@ void loop(){
     Serial.print(curVy); Serial.print(','); Serial.print(curW);
     Serial.print(F(" enc="));   // STM32와 같은 순서 A,B,C,D — Uno는 A·B가 늘 0(쉴드 NC)
     for(uint8_t i = 0; i < 4; i++){ Serial.print(encGet(i)); if(i < 3) Serial.print(','); }
+    // 로직 5V — vmin은 지난 1초의 최저값. 리셋 직전 hb의 vmin이 브라운아웃이었는지를 말한다
+    Serial.print(F(" vcc=")); Serial.print(vccMv);
+    Serial.print(F(" vmin=")); Serial.print(vccMin == 0xFFFF ? vccMv : vccMin);
+    Serial.print(F(" sag=")); Serial.print(sagCount);
+    vccMin = 0xFFFF;
+    if(mvState){ Serial.print(F(" mv=")); Serial.print(mvId); Serial.print(','); Serial.print(mvProgress()); }
     Serial.println();
   }
 

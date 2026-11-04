@@ -78,6 +78,12 @@ class MotorLink:
     #   boot #12 warm cause=WDT last=I2C i2cerr=3 near=0 mcusr=0x0 r2=0xB2
     # cause: WDT(워치독=loop 250ms 블로킹) / POWER(전원이 실제로 나감) / EXT|BOD
     BOOT_REPORT = "boot #"
+    # 거리 이동(M, 펌웨어 v2.3) — 보드가 이만큼 안에 "ok M"을 안 하면 모르는 명령으로 본다(옛 펌웨어·STM32).
+    MOVE_ACK_SEC = 1.0
+    MOVE_ACTIVE = ("sent", "run")
+    MOVE_FINAL = ("done", "stall", "abort", "lost", "rejected", "timeout")
+    # 재부팅 뒤 다시 갈 때 가장 큰 축 지령의 하한 — 정지마찰(≈90) 위
+    MOVE_RESUME_FLOOR = 120
 
     def __init__(
         self,
@@ -126,6 +132,10 @@ class MotorLink:
         # 연결이 새로 열릴 때마다 증가. 보드가 리셋되면 P/F/R 설정이 기본값으로
         # 돌아가므로, 상위(JetsonBase)가 이 값을 보고 튜닝을 다시 밀어넣는다.
         self._generation = 0
+        # 거리 이동 상태: {"id","target","got","state","why","t"} — state ∈ MOVE_ACTIVE ∪ MOVE_FINAL
+        self._mv: dict | None = None
+        self._mv_send: str | None = None   # 다음 송신에 V 대신 실을 M 줄(송신 스레드가 보낸다 — V와 순서가 안 섞이게)
+        self._mv_seq = 0
         self._thread = threading.Thread(target=self._run, daemon=True, name="motor-link")
         self._thread.start()
 
@@ -156,6 +166,10 @@ class MotorLink:
             k = self._scale
             self._target = (_clamp(round(vx * k)), _clamp(round(vy * k)), _clamp(round(w * k)))
             self._target_ts = time.monotonic()
+            # 0이 아닌 속도 = 누가 직접 잡았다 → 이동 취소(다음 송신의 V를 보드가 abort로 받는다).
+            # 0은 무시한다 — 화면이 습관처럼 hold(0)을 찍어도 이동이 안 끊기게(멈춤은 stop()).
+            if (vx or vy or w) and self._mv_active():
+                self._mv.update(state="abort", why="set_velocity")
 
     def stop(self) -> None:
         """즉시 정지 — 목표를 0으로 두고 펌웨어에 하드 스톱(S)을 한 번 보낸다."""
@@ -163,6 +177,94 @@ class MotorLink:
             self._target = (0, 0, 0)
             self._target_ts = time.monotonic()
             self._stop_flag = True
+            if self._mv_active():
+                self._mv.update(state="abort", why="stop")
+
+    def move(self, ticks: int, vx: int = 0, vy: int = 0, w: int = 0) -> int:
+        """앞바퀴 엔코더로 ticks만큼 가고 서라(논블로킹, 펌웨어 v2.3 `M`). 이동 번호를 돌려준다.
+
+        보드가 5ms마다 직접 세고 감속·정지·걸림 판정까지 한다 — 젯슨 지연이 거리 오차가 되지 않게.
+        진행은 move_status()로 본다. 이동 중엔 V 대신 `H`(살아 있음)를 보내 데드맨만 채운다.
+        속도 배율(set_speed_scale)은 여기에도 걸린다.
+        """
+        with self._lock:
+            k = self._scale
+            self._mv_seq = self._mv_seq % 30000 + 1
+            mid = self._mv_seq
+            v = (_clamp(round(vx * k)), _clamp(round(vy * k)), _clamp(round(w * k)))
+            self._mv = {"id": mid, "target": int(ticks), "got": 0, "state": "sent", "why": "", "t": time.monotonic()}
+            self._mv_send = f"M {mid} {int(ticks)} {v[0]} {v[1]} {v[2]}"
+            self._target = (0, 0, 0)
+            self._target_ts = time.monotonic()
+        return mid
+
+    def move_status(self) -> dict | None:
+        with self._lock:
+            return dict(self._mv) if self._mv else None
+
+    def drive_ticks(self, ticks: int, vx: int = 0, vy: int = 0, w: int = 0,
+                    timeout: float = 10.0, resumes: int = 2) -> dict:
+        """move()를 끝까지 기다린다(블로킹). **브라운아웃 대비**가 여기 있다.
+
+        보드가 도중에 재부팅하면(state=lost) 간 만큼은 빼고 남은 만큼을 **속도 70%로** 다시 간다
+        (최대 resumes번, MOVE_RESUME_FLOOR 아래로는 안 내린다). 다시 가기 전에 보드가 부팅을 마치고
+        튜닝(F/P/R)이 다시 들어갈 때까지 기다린다 — 부트로더 구간에 보낸 M은 통째로 먹힌다.
+        걸림(stall)·취소(abort)·거절(rejected)·시간초과는 다시 가지 않는다(같은 원인으로 또 선다).
+        돌려주는 got = 이번 호출 전체에서 앞바퀴가 실제로 간 카운트(이동 방향 +).
+        """
+        ticks = int(ticks)
+        peak = max(abs(vx), abs(vy), abs(w)) or 1
+        k, done, tries = 1.0, 0, 0
+        while True:
+            self.move(ticks - done, round(vx * k), round(vy * k), round(w * k))
+            st = self._wait_move(timeout)
+            done += max(0, st["got"])
+            if st["state"] != "lost" or tries >= resumes or done >= ticks:
+                break
+            tries += 1
+            k = max(k * 0.7, min(1.0, self.MOVE_RESUME_FLOOR / peak))
+            print(f"  [base] 이동 중 보드 재부팅 — {done}/{ticks} 간 뒤 남은 만큼 다시({tries}/{resumes}, 속도 ×{k:.2f})")
+            t0 = time.monotonic()
+            while (self.pending_setup or not self.connected) and time.monotonic() - t0 < 8.0:
+                time.sleep(0.05)
+            time.sleep(0.2)   # on_connect가 민 F의 delay(100)이 끝나게
+        return {"state": st["state"], "got": done, "target": ticks, "resumes": tries, "why": st["why"]}
+
+    def _wait_move(self, timeout: float) -> dict:
+        t0 = time.monotonic()
+        while True:
+            st = self.move_status()
+            if st is None or st["state"] in self.MOVE_FINAL:
+                return st or {"state": "abort", "got": 0, "why": "none"}
+            if time.monotonic() - t0 > timeout:
+                self.stop()
+                time.sleep(0.1)
+                with self._lock:
+                    self._mv.update(state="timeout", why=f"{timeout:.0f}s")
+                    return dict(self._mv)
+            time.sleep(0.02)
+
+    def _mv_active(self) -> bool:
+        return self._mv is not None and self._mv["state"] in self.MOVE_ACTIVE
+
+    def _mv_line(self, line: str) -> None:
+        """`mv done|stall|abort|lost <id> <got> <target> ...` — 보드가 센 숫자가 최종이다."""
+        parts = line.split()
+        if len(parts) < 4:
+            return
+        mid, got = _int_or(parts[2], None), _int_or(parts[3], None)
+        with self._lock:
+            if self._mv is None or mid != self._mv["id"] or got is None:
+                return
+            # abort는 우리가 먼저 취소했어도 보드 숫자(got)로 덮는다. lost는 재부팅 감지보다 정확하다.
+            self._mv.update(state=parts[1], got=got, why=" ".join(parts[5:]))
+
+    def _mv_reset(self, why: str) -> None:
+        """보드가 재부팅했거나 포트를 다시 열었다 — 이동은 보드 쪽에서 이미 끝났다(리셋 = 정지)."""
+        with self._lock:
+            if self._mv_active():
+                self._mv.update(state="lost", why=why)
+            self._mv_send = None
 
     def send_raw(self, payload: str) -> bool:
         """설정용 단발 명령(P/L/R/F/T/?). 성공 여부를 돌려준다."""
@@ -276,6 +378,7 @@ class MotorLink:
         self._generation += 1
         self._opened_at = time.monotonic()
         self._last_hb = 0.0   # 새 연결 — 옛 하트비트 시각은 무효
+        self._mv_reset("reopen")   # 포트를 열면 Uno가 리셋된다(DTR) — 하던 이동은 끝났다
         self._board = None    # 다른 보드가 꽂혔을 수 있다 — 첫 하트비트로 다시 알아본다
         self._fw_state = {}
         # 이미 돌고 있던 보드일 수도, 방금 리셋된 보드일 수도 있다 — 어느 쪽이든
@@ -378,6 +481,7 @@ class MotorLink:
         """
         self._board_resets += 1
         self._generation += 1
+        self._mv_reset("reset")   # "mv lost"가 먼저 왔으면 이미 lost(정확한 got) — 그대로 둔다
         self._fw_ms = 0
         self._rx_ok = 0
         self._rx_bad = 0
@@ -389,6 +493,8 @@ class MotorLink:
             self._boot_causes[cause] = self._boot_causes.get(cause, 0) + 1
         where = _field(self._boot_report, "last=") if self._boot_report else None
         detail = f", 원인={cause}" + (f" @{where}" if where and where != "idle" else "") if cause else ""
+        if self._fw_state.get("vmin"):   # v2.3: 리셋 직전 1초의 로직 5V 최저 — 낮으면 브라운아웃
+            detail += f", 직전 vmin={self._fw_state['vmin']}mV"
         self._last_error = (
             f"보드 재부팅 감지({reason}{detail}) — 튜닝 재적용 #{self._board_resets}"
         )
@@ -399,6 +505,11 @@ class MotorLink:
         with self._lock:
             target, ts = self._target, self._target_ts
             stop_flag, self._stop_flag = self._stop_flag, False
+            mv_send, self._mv_send = self._mv_send, None
+            if self._mv and self._mv["state"] == "sent" and not mv_send \
+                    and time.monotonic() - self._mv["t"] > self.MOVE_ACK_SEC:
+                self._mv.update(state="rejected", why="no ack (펌웨어 v2.3 전?)")
+            mv_on = self._mv_active()
         fresh = (time.monotonic() - ts) < self.STALE_SEC
         vx, vy, w = target if fresh else (0, 0, 0)
         ser = self._ser
@@ -407,12 +518,17 @@ class MotorLink:
         try:
             if stop_flag:
                 ser.write(_framed("S"))
-            ser.write(_framed(f"V {vx} {vy} {w}"))
+            if mv_send:
+                ser.write(_framed(mv_send))
+            elif mv_on:
+                ser.write(_framed("H"))     # V를 보내면 보드가 이동을 취소한다
+            else:
+                ser.write(_framed(f"V {vx} {vy} {w}"))
             ser.flush()
         except Exception as exc:  # noqa: BLE001 - 케이블이 빠졌거나 보드가 죽었다
             self._fail(exc)
             return False
-        return bool(vx or vy or w)
+        return mv_on or bool(vx or vy or w)
 
     def _drain_input(self) -> None:
         """펌웨어 응답을 읽어 링크 상태를 갱신한다.
@@ -454,8 +570,14 @@ class MotorLink:
                         self._wdt_near = _int_or(token[4:], self._wdt_near)
                     else:
                         key, eq, val = token.partition("=")
-                        if eq and key in ("estop", "rly", "lowbat", "vin", "vm", "v5", "v33", "enc"):   # STM32 v3.2 · enc=A,B,C,D(Uno v2.2는 C·D만)
+                        if eq and key in ("estop", "rly", "lowbat", "vin", "vm", "v5", "v33", "enc",
+                                          "vcc", "vmin", "sag"):   # STM32 v3.2 · enc=A,B,C,D(Uno v2.2는 C·D만) · Uno v2.3 로직 전압
                             self._fw_state[key] = val
+                        elif key == "mv":                 # Uno v2.3: 이동 중 진행 "id,got"
+                            mid, _, got = val.partition(",")
+                            with self._lock:
+                                if self._mv_active() and _int_or(mid, None) == self._mv["id"]:
+                                    self._mv["got"] = _int_or(got, self._mv["got"])
                 self._board = "stm32" if "estop" in self._fw_state else "uno"
                 # ★ 보드 재부팅 판정 — 우리가 안 시켰는데 uptime/수신카운터가 되감겼다.
                 #   포트는 멀쩡히 열려 있어 write 예외도, 재연결도 없다. 이걸 안 보면
@@ -488,6 +610,12 @@ class MotorLink:
                 # 이미 _pending_on_connect로 처리 중이므로 세지 않는다 —
                 # 그 뒤에 나오는 배너만 "예상 못 한 재부팅"이다.
                 self._note_board_restart("부팅 배너")
+            elif line.startswith("mv "):
+                self._mv_line(line)
+            elif line.startswith("ok M "):
+                with self._lock:
+                    if self._mv and self._mv["state"] == "sent" and line.split()[2:3] == [str(self._mv["id"])]:
+                        self._mv["state"] = "run"
             elif line.startswith("ok "):
                 # 설정계열(F/P/R/S) 확인 응답. 튜닝이 **실제로 보드에 먹혔는지**를
                 # 화면에서 눈으로 확인할 수 있게 마지막 것들을 들고 있는다.
@@ -497,6 +625,10 @@ class MotorLink:
             elif line.startswith("nak"):
                 self._nak += 1
                 self._last_error = line
+                if line.startswith("nak mv"):
+                    with self._lock:
+                        if self._mv and self._mv["state"] == "sent":
+                            self._mv.update(state="rejected", why=line[7:])
             elif line.split(" ")[0] in ("estop", "weld", "rlyopen", "lowbat", "clfault"):
                 # STM32 이벤트 줄(한 번씩만 온다) — 화면에서 "왜 안 움직이나"를 바로 보이게.
                 self._events.append(time.strftime("%H:%M:%S ") + line)
