@@ -26,7 +26,7 @@
 //   R <accel> <decel> 슬루 스텝(틱당 변화량 상한). 기본 6 / 12
 //   F <hz>            PWM 주파수 변경 (24~1526). 소음 튜닝용
 //   ?                 상태 1줄 출력
-//   G <ms> <pu>       고속 핀 표본: 풀업 켬/끔, 핀마다 Low 표본·엣지 수 + DDRD·PORTD (이름 bN은 포트 비트: D2=D2, B0=D8, C0=A0)
+//   G <ms> <pu>       고속 핀 표본: A0~A3 풀업 켬/끔, 핀마다 Low 표본·엣지 수 + DDRC·PORTC (이름 bN은 포트 비트: D2=D2, B0=D8, C0=A0)
 //   E                 핀 탐침: 떠 있음 10 / 밖에서 H 11 / L 00 / 출력 o (엔코더 선이 핀까지 오는지)
 //   M <id> <ticks> <vx> <vy> <w>   거리 이동(v2.3): 앞바퀴 엔코더로 ticks만큼 가고 선다. 끝나면 "mv done|stall|abort ..."
 //   H                 살아 있음(무응답). M 도중엔 V 대신 이것으로 데드맨을 채운다 — V가 오면 이동은 취소된다
@@ -46,7 +46,7 @@
 //      부팅 줄 다음에 "mv lost <id> <got> <target>"을 뱉는다 — 젯슨이 남은 만큼만 다시 시킨다.
 //      리셋 뒤엔 절대 스스로 이어 가지 않는다(전원이 처진 채로 다시 출발하면 같은 리셋을 반복한다).
 //
-// v2.2 — 엔코더. 쉴드가 Uno에 물려 둔 앞바퀴 둘(C=FR, D=FL)을 4체배로 센다(뒷바퀴 A·B는 쉴드 NC라 0).
+// v2.2 — 엔코더. 앞바퀴 둘을 A0~A3에 선으로 이어 4체배로 센다(FL=A0·A1, FR=A3·A2, 뒷바퀴 A·B는 0).
 //   T i 1 의 자동정지 줄이 "T auto-stop enc=<그 1초 동안 카운트>"를 싣는다.
 //
 // v2.1 — "USB 전원은 멀쩡한데 보드만 재부팅한다"를 규명하기 위한 계측 + 그 원인 차단.
@@ -193,27 +193,27 @@ bool testing = false;     // T 캘리브레이션 진행 중(슬루/데드맨 �
 uint8_t testWheel = 0;
 int32_t testEnc0 = 0;
 
-// ---------------- 엔코더 (v2.2) ----------------
-// 쉴드는 M1(JP1)·M2(JP2) 엔코더만 Uno에 물려 있다(M3·M4는 NC — 회로도 ARDUINO_HR8833.pdf):
-//   ENC1 B=D2 A=D3 → JP1 = M1 = PCA ch6/7 = 모터 D(FL)
-//   ENC2 B=D4 A=D6 → JP2 = M2 = PCA ch4/5 = 모터 C(FR)
-// 넷 다 PORTD라 PCINT2 하나로 4체배 쿼드러처를 센다. 모터 A·B(뒷바퀴)는 읽을 수 없어 0으로 보고한다.
+// ---------------- 엔코더 (v2.2, 2026-11-05 A핀으로) ----------------
+// 쉴드 패턴으로는 신호가 Uno까지 안 왔다(11/04). 앞바퀴 엔코더를 선으로 A0~A3에 직접 이었다(11/05 실측):
+//   모터 D(FL) = A0·A1, 모터 C(FR) = A3·A2.  뒷바퀴 A·B는 안 이어서 0으로 보고한다.
+// 넷 다 PORTC라 PCINT1 하나로 4체배 쿼드러처를 센다. ⚠ A1은 쉴드 RGB 줄이라 밖에서 Low로 당긴다 —
+// 내부 풀업을 켜야 신호가 산다(끄면 엣지가 1/3로 준다).
 // 부호: 바퀴 전진 = + 가 되게 ENC_DIR을 맞춘다(T 3 1 / T 2 1 의 "T auto-stop enc="가 음수면 뒤집기).
-const int8_t ENC_DIR[4] = {1, 1, 1, 1};
+const int8_t ENC_DIR[4] = {1, 1, -1, 1};   // 11/05 실측: C(FR)만 반대
 const int8_t QD[16] = {0,1,-1,0, -1,0,0,1, 1,0,0,-1, 0,-1,1,0};   // [이전(A,B)<<2 | 지금(A,B)]
 volatile int32_t encRaw[2];       // 0=D(FL) 1=C(FR)
 volatile uint8_t encPins;
-ISR(PCINT2_vect){
-  uint8_t p = PIND, q = encPins; encPins = p;
-  encRaw[0] += QD[(q>>2&2 | q>>2&1) << 2 | (p>>2&2 | p>>2&1)];   // A=PD3 B=PD2
-  encRaw[1] += QD[(q>>5&2 | q>>4&1) << 2 | (p>>5&2 | p>>4&1)];   // A=PD6 B=PD4
+ISR(PCINT1_vect){
+  uint8_t p = PINC, q = encPins; encPins = p;
+  encRaw[0] += QD[((q<<1&2) | (q>>1&1)) << 2 | ((p<<1&2) | (p>>1&1))];   // A=PC0 B=PC1
+  encRaw[1] += QD[(q>>2&3) << 2 | (p>>2&3)];                             // A=PC3 B=PC2
 }
 void encInit(){
-  DDRD &= ~(_BV(2)|_BV(3)|_BV(4)|_BV(6));
-  PORTD |= _BV(2)|_BV(3)|_BV(4)|_BV(6);   // 내부 풀업 — 모터 쪽 10k가 이미 있지만 선이 빠졌을 때 떠다니지 않게
-  encPins = PIND;
-  PCMSK2 = _BV(PCINT18)|_BV(PCINT19)|_BV(PCINT20)|_BV(PCINT22);
-  PCIFR = _BV(PCIF2); PCICR |= _BV(PCIE2);
+  DDRC &= ~0x0F;
+  PORTC |= 0x0F;   // 내부 풀업 — A1은 이게 없으면 못 쓴다(위)
+  encPins = PINC;
+  PCMSK1 = 0x0F;   // PCINT8~11 = A0~A3 (A4·A5=I2C는 뺀다)
+  PCIFR = _BV(PCIF1); PCICR |= _BV(PCIE1);
 }
 // 바퀴 i(0=A..3=D)의 누적 카운트, 전진 = +. 읽을 수 없는 A·B는 0.
 int32_t encGet(uint8_t i){
@@ -547,8 +547,9 @@ void handleLine(char* line){
   } else if(c=='E'){
     // 핀 탐침: 핀을 H로 충전→놓고(풀업 없이) 50µs 뒤 읽기, L로도 같은 것. 핀마다 두 글자.
     //   "10"=떠 있음(아무 데도 안 물림) · "11"=밖에서 H로 당김 · "00"=밖에서 L로 당김
-    // 엔코더(D2·D3·D4·D6)가 안 세질 때 선이 핀까지 오는지, 다른 핀으로 갔는지 가른다. 시리얼(D0·D1)·I2C(A4·A5)는 안 건드린다.
-    PCICR &= ~_BV(PCIE2);
+    // 엔코더가 안 세질 때 선이 핀까지 오는지, 다른 핀으로 갔는지 가른다. 시리얼(D0·D1)·I2C(A4·A5)는 안 건드린다.
+    // "L" = 풀업이 켜졌는데 Low(엔코더가 끌어내리는 중) — 출력이 115mA까지 끌어서 H로 구동하지 않고 건너뛴다.
+    PCICR &= ~_BV(PCIE1);
     volatile uint8_t* const PT[3] = {&PORTD, &PORTB, &PORTC};
     volatile uint8_t* const DR[3] = {&DDRD, &DDRB, &DDRC};
     volatile uint8_t* const PN[3] = {&PIND, &PINB, &PINC};
@@ -559,6 +560,7 @@ void handleLine(char* line){
       for(uint8_t b = LO[g]; b <= HI[g]; b++){
         uint8_t m = _BV(b), d0 = *DR[g] & m, p0 = *PT[g] & m;
         if(d0){ Serial.print(F("o ")); continue; }   // 출력으로 쓰는 핀은 건드리지 않는다
+        if(p0 && !(*PN[g] & m)){ Serial.print(F("L ")); continue; }
         char r[3] = {0};
         for(uint8_t k = 0; k < 2; k++){
           if(k == 0) *PT[g] |= m; else *PT[g] &= ~m;
@@ -570,13 +572,13 @@ void handleLine(char* line){
       }
     }
     Serial.println();
-    encPins = PIND; PCIFR = _BV(PCIF2); PCICR |= _BV(PCIE2);
+    encPins = PINC; PCIFR = _BV(PCIF1); PCICR |= _BV(PCIE1);
   } else if(c=='G'){
     // 고속 핀 표본: G <ms 1~800> <풀업 1/0> — D2~D7·D8~D13·A0~A3의 Low 표본 수와 엣지 수. 엔코더 ISR·25Hz 표본과 별개로 신호를 본다.
     int ms = nextInt(p), pu = nextInt(p);
     if(ms < 1 || ms > 800 || (!testing && (curVx || curVy || curW))){ Serial.println(F("nak G")); return; }
-    const uint8_t EM = _BV(2)|_BV(3)|_BV(4)|_BV(6), port0 = PORTD;
-    if(pu) PORTD |= EM; else PORTD &= ~EM;
+    const uint8_t portc0 = PORTC;
+    if(pu) PORTC |= 0x0F; else PORTC &= ~0x0F;   // A0~A3(A4·A5=I2C는 안 건드림)
     delayMicroseconds(100);
     const uint8_t mask[3] = {0xFC, 0x3F, 0x0F};
     uint16_t low[3][8] = {{0}}, edge[3][8] = {{0}};
@@ -595,15 +597,15 @@ void handleLine(char* line){
       if(!(++n & 255)) wdt_reset();
     }
     Serial.print(F("ok G n=")); Serial.print(n);
-    Serial.print(F(" ddrd=0x")); Serial.print(DDRD, HEX); Serial.print(F(" portd=0x")); Serial.print(PORTD, HEX);
-    Serial.print(F(" pcicr=0x")); Serial.print(PCICR, HEX); Serial.print(F(" pcmsk2=0x")); Serial.print(PCMSK2, HEX);
+    Serial.print(F(" ddrc=0x")); Serial.print(DDRC, HEX); Serial.print(F(" portc=0x")); Serial.print(PORTC, HEX);
+    Serial.print(F(" pcicr=0x")); Serial.print(PCICR, HEX); Serial.print(F(" pcmsk1=0x")); Serial.print(PCMSK1, HEX);
     for(uint8_t g = 0; g < 3; g++) for(uint8_t b = 0; b < 8; b++) if(low[g][b] || edge[g][b]){
       Serial.print(' '); Serial.print("DBC"[g]); Serial.print(b); Serial.print(F(":l")); Serial.print(low[g][b]);
       Serial.print('/'); Serial.print('e'); Serial.print(edge[g][b]);
     }
     Serial.println();
-    PORTD = (PORTD & ~EM) | (port0 & EM);
-    encPins = PIND;
+    PORTC = (PORTC & ~0x0F) | (portc0 & 0x0F);
+    encPins = PINC;
   } else if(c=='P'){
     int n=nextInt(p); if(n>0&&n<=4095){ MAX_PWM=n; }
     Serial.print(F("ok P ")); Serial.println(MAX_PWM);
@@ -663,8 +665,8 @@ void handleLine(char* line){
     Serial.print(F(" strict=")); Serial.print(strictCrc);
     Serial.print(F(" i2cerr=")); Serial.print(i2cErr);
     Serial.print(F(" POL=")); for(uint8_t i=0;i<4;i++){Serial.print(POL[i]);Serial.print(',');}
-    Serial.print(F(" pind=0x")); Serial.print(PIND, HEX);   // 엔코더 핀 실레벨: bit2,3=FL bit4,6=FR
-    Serial.print(F(" pinb=0x")); Serial.print(PINB, HEX); Serial.print(F(" pinc=0x")); Serial.print(PINC, HEX);
+    Serial.print(F(" pind=0x")); Serial.print(PIND, HEX);   // 핀 실레벨
+    Serial.print(F(" pinb=0x")); Serial.print(PINB, HEX); Serial.print(F(" pinc=0x")); Serial.print(PINC, HEX);   // 엔코더: bit0,1=FL bit3,2=FR
     Serial.println();
     printBootReport();
   }

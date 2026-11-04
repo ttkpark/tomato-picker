@@ -115,6 +115,7 @@ behavior the task requires stay in.
   ⚠ STM32 보드 비상정지는 **놓아도 잠긴다** — `X 0`(대시보드·조작대 [비상정지 해제])으로만 풀린다, `S`로는 안 풀림. 젯슨은 하트비트로 보드를 알아보고(`MotorLink.board`) 주파수를 보드별로 민다(Uno ≤1526Hz, STM32 20kHz). 검사 = `python tools/stm32_link_check.py`.
   ⚠️ **`firmware/PS2-MOTOR/`는 레거시**(PS2 직접조종, 불안정). `mecanum_serial/`은 폐기. 새 작업은 `mecanum_stable` 기준.
   모터↔바퀴 실측(2026-10-22 케이스 장착 후): A=RR B=RL C=FR D=FL, `POL={-1,1,-1,1}`.
+  ⚠ **앞바퀴 엔코더 = 선으로 직결 FL A0·A1 / FR A3·A2**(2026-11-05, 쉴드 패턴은 신호가 안 온다, A1은 내부 풀업 필수). 뒷바퀴는 안 읽는다. `firmware/mecanum_stable/README.md`.
 - **게임패드 주행은 폐지했다(2026-10-22)** — `controller_drive.py`·`controller-drive.service`·셋업 문서를
   지웠다(필요하면 git 이력에서). 주행은 대시보드·조작대(`base_nudge`)·ROS `cmd_vel_node`로 한다.
 - **팔 제어 = 대시보드 `/control`** ✅ 권장 — 리더암 연결·미러링·프리셋 **슬롯 0~19** 저장/재생·
