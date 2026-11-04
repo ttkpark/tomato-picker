@@ -113,7 +113,7 @@ MPU6050을 젯슨 40핀 I²C(버스 7, 0x68)에 달았다. 발행기 = [`tools/i
 
 ## 엔코더 없는 몸체 움직임 — 얼마나 아나 (2026-11-05 실측)
 
-쉴드 엔코더가 Uno에 안 물려 있고(`firmware/mecanum_stable/README.md`) 바닥 CSI 카메라도 죽어 있어서(I²C 0x10 무응답 — 리본 확인 필요)
+쉴드 엔코더가 Uno에 안 물려 있어서(`firmware/mecanum_stable/README.md`, 바닥 카메라는 9/29에 뗐다)
 **IMU + Astra 전후 두 장 ICP**만으로 쟀다. `ros2/tools/odom_probe.py`, 정면 ≈60cm에 면 하나가 보이는 자리.
 
 | 지령 | Astra ICP (앞/왼, 회전) | IMU 회전 | 읽는 법 |

@@ -160,7 +160,7 @@ behavior the task requires stay in.
   **`join`으로 망을 갈아타도 BLE는 안 끊긴다**(SSH로 하면 자기가 탄 가지를 자른다).
   반경 10m 한계 / 토큰은 젯슨의 `/etc/tomato-ble-token`.
 
-## 바닥 카메라 · 라인 주행 (2026-08-09 추가)
+## 바닥 카메라 · 라인 주행 (2026-08-09 추가) — ⚠ **2026-09-29 뗐다**(Astra 크래들, `hardware_design/case/README.md`). `line-cam`은 11/05 disable. 아래는 이력
 - **바닥 CSI 카메라 = Arducam RPi Cam v2.1(IMX219), CAM1**, 전면 우측 바퀴 앞. jetson-io로
   "Camera IMX219 Dual" 오버레이 적용됨(L4T R39.2.0에 드라이버 내장).
 - **테이프는 진행방향과 나란한 가로 띠** — 흔한 "검은 세로선 조향"이 **아니다**.
