@@ -119,7 +119,8 @@ def empty() -> dict:
             "path": np.zeros((0, 2)), "goal": np.zeros(0),
             "imu": np.full(2, np.nan),
             "tomato": np.zeros((0, 4)),
-            "seen": np.zeros((0, 4))}     # 토마토 관측 (렌즈 x, y, 세계 방위, 거리|nan) — 자리를 옮겨 찾아도 쌓인다(둘러보기)   # 찾은 토마토 (x, y, 본 횟수, 거리 아는가 1/0)  # 지금 자세를 정할 때의 IMU (boot, yaw rad) — 다음 회전 짐작의 기준
+            "seen": np.zeros((0, 4)),
+            "flat": np.zeros((N, N), np.uint8)}   # 컬러로 본 납작한 물건(수건·매트) 칸마다 본 횟수 — 깊이로는 5cm 아래가 안 보인다     # 토마토 관측 (렌즈 x, y, 세계 방위, 거리|nan) — 자리를 옮겨 찾아도 쌓인다(둘러보기)   # 찾은 토마토 (x, y, 본 횟수, 거리 아는가 1/0)  # 지금 자세를 정할 때의 IMU (boot, yaw rad) — 다음 회전 짐작의 기준
 
 
 def load() -> dict:
@@ -209,9 +210,62 @@ def integrate(s: dict, scan: np.ndarray, pts: np.ndarray, m: dict) -> None:
         lo.flat[ff] -= 0.4
         lo.flat[np.unique(hi[:, 0] * N + hi[:, 1])] += 0.9
         np.clip(lo, -4.0, 4.0, out=lo)
+    # 광선이 납작한 물건 위를 지나 벽까지 가며 그 칸을 빈 곳으로 지운다 — 컬러로 본 칸은 매번 다시 장애물로
+    lo[s["flat"] >= FLAT_MIN] = np.maximum(lo[s["flat"] >= FLAT_MIN], 2.0)
     if len(pts):
         k = np.floor(to_world(s["pose"], pts) / RES).astype(np.int16)
         add_vox(s, k)
+
+
+RAW_COLOR = "/dev/shm/tomato_raw.jpg"   # tomato-vision이 쓰는 주석 없는 앞 컬러
+FLAT_MIN = 2                   # 이만큼 넘게 본 칸만 장애물(한 장 잡음 빼기)
+FLAT_RMAX = 1.5                # 바닥 투영은 멀수록 화소 하나가 길어진다 — 이 안만 믿는다
+
+
+def flat_points(img: np.ndarray, m: dict):
+    """앞 컬러(BGR) → (진한 색 바닥 점, 마루색 바닥 점) 차체 좌표. 2026-11-05 실기: 수건을 지도가 못 봐 그 위로 올라갔다.
+    마루(밝은 나무)는 채도 ≈12 — 줄무늬 수건·매트는 채도 >70·밝기 >110이거나 분홍·파랑 계열이다. 그늘진 마루는
+    채도가 89까지 오르지만 어둡다(밝기 77). 바닥 투영 = 렌즈 높이 h·기울기 0 가정(tilt_deg는 아직 0)."""
+    import cv2
+    small = img[::4, ::4]
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV).astype(np.int16)
+    H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    mark = ((S > 70) & (V > 110)) | ((S > 40) & (V > 60) & ((H > 130) | ((H > 75) & (H < 130))))
+    h, w = img.shape[:2]
+    f = (w / 2) / math.tan(math.radians(m["tcam_hfov"]) / 2)
+    vv, uu = np.mgrid[0:small.shape[0], 0:small.shape[1]] * 4.0
+    below = vv - h / 2 > f * math.tan(math.radians(4))         # 수평선 4° 아래만 — 그 위는 바닥이 아니다
+    X = f * m["h"] / np.where(below, vv - h / 2, 1.0)
+    Y = (w / 2 - uu) * m["h"] / np.where(below, vv - h / 2, 1.0)
+    ok = below & (X > 0.15) & (X < FLAT_RMAX)
+    c, s_ = math.cos(math.radians(m["tcam_yaw_deg"])), math.sin(math.radians(m["tcam_yaw_deg"]))
+    P = np.stack([m["x"] + c * X - s_ * Y, m["y"] + s_ * X + c * Y], -1)
+    return P[ok & mark], P[ok & ~mark]
+
+
+def mark_flat(s: dict, m: dict) -> int:
+    """지금 앞 컬러로 본 납작한 물건을 s["flat"]에 센다(본 칸 +1, 마루로 본 칸 −1) → 진한 색 칸 수.
+    ponytail: 컬러 한 장을 깊이 자세에 그대로 얹는다 — 멈춘 뒤에만 부른다(localize). 도는 중 스캔 장은 안 쓴다."""
+    try:
+        import cv2
+        img = cv2.imread(RAW_COLOR)
+        if img is None or time.time() - os.path.getmtime(RAW_COLOR) > 2.0:
+            return 0
+    except Exception:          # noqa: BLE001 — cv2가 없거나 발행기가 없으면 깊이 지도만
+        return 0
+    hit, floor = flat_points(img, m)
+    fl = s["flat"]
+    cells = []
+    for P in (hit, floor):
+        i = idx(to_world(s["pose"], P)) if len(P) else np.zeros((0, 2), int)
+        i = i[((i >= 0) & (i < N)).all(1)]
+        cells.append(np.unique(i[:, 0] * N + i[:, 1]))
+    # 수건의 흰 줄은 마루색이다 — 한 칸에 둘 다 있으면 진한 색이 이긴다(안 그러면 +1−1로 영영 안 쌓인다)
+    on, off = cells[0], np.setdiff1d(cells[1], cells[0])
+    fl.flat[on] = np.minimum(fl.flat[on].astype(int) + 1, 5)
+    fl.flat[off] = np.maximum(fl.flat[off].astype(int) - 1, 0)
+    s["lo"][fl >= FLAT_MIN] = np.maximum(s["lo"][fl >= FLAT_MIN], 2.0)
+    return len(hit)
 
 
 def wrist_to_body(p_arm_mm: np.ndarray, yaw_deg: float, m: dict) -> np.ndarray:
@@ -508,6 +562,7 @@ def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: floa
     elif (s["lo"] > OCC).sum() < 20 or strong:
         s["pose"] = pose
         integrate(s, sc, pts, m)
+        mark_flat(s, m)
         s["frames"] = int(s["frames"]) + 1
         ok = (s["lo"] > OCC).sum() >= 20 and strong
     else:
@@ -528,6 +583,30 @@ def localize(s: dict, m: dict, prior, win_xy: float, win_deg: float, after: floa
 
 CLOSE_DEG = 70.0               # 고리 닫기: 처음 이만큼의 장이 기준, 한 바퀴 뒤 이만큼 더 돌며 다시 본다
 COAST = 0.7                    # IMU가 목표의 이만큼 돌았다고 하면 지령을 끊는다 — 나머지는 감속 슬루가 민다
+
+
+HOLD_K = 15.0                  # 전진 방향 붙잡기: 회전 지령 = −HOLD_K × (출발 뒤 IMU가 잰 회전°)
+HOLD_MAX = 150                 # 그 회전 지령 상한 — 바퀴 하나를 거꾸로 돌릴 만큼은 안 준다
+
+
+def drive_straight(link, vx: int, secs: float) -> None:
+    """전진(후진)하며 IMU로 방향을 붙잡는다. 케이스 얹은 차체는 255×1.2초 한 번에 왼쪽으로 5~10° 틀어졌다
+    (2026-11-05 실기, 큰방 가는 길) — 가기의 "전진이 회전이 됐다"(10° 두 번) 정지에 걸리고, 지도 θ도 그만큼 흔들린다.
+    IMU가 없으면 그냥 민다. ponytail: 비례 제어만 — 틀어짐이 남으면 HOLD_K를 올리거나 바퀴별 듀티 보정(펌웨어 L/P)."""
+    from base_nudge import drive
+    i0 = imu_now()
+    if i0 is None:
+        drive(link, vx, 0, 0, secs)
+        return
+    t1 = time.monotonic()
+    try:
+        while time.monotonic() - t1 < secs:
+            i = imu_now()
+            err = math.degrees(wrap(i[1] - i0[1])) if i is not None and i[0] == i0[0] else 0.0
+            link.set_velocity(vx, 0, int(max(-HOLD_MAX, min(HOLD_MAX, -HOLD_K * err))))
+            time.sleep(0.05)
+    finally:
+        link.stop()
 
 
 def turn(link, w: int, secs: float, deg: float) -> float:
@@ -967,6 +1046,8 @@ def step_cmd(a, m) -> int:
     try:
         if a.w and not (a.vx or a.vy):
             print("회전 걸음 — IMU %.1f°" % turn(link, a.w, a.secs, a.deg))
+        elif a.vx and not (a.vy or a.w):
+            drive_straight(link, a.vx, a.secs)
         else:
             drive(link, a.vx, a.vy, a.w, a.secs)
     finally:
@@ -1688,7 +1769,7 @@ def go_cmd(a, m) -> int:
                 what = "회전 %s" % ("왼" if sg > 0 else "오른")
             else:
                 i0 = imu_now()
-                drive(link, a.vx, 0, 0, a.vsecs)
+                drive_straight(link, a.vx, a.vsecs)
                 prior = prev + [est_v * math.cos(th), est_v * math.sin(th), 0]
                 what = "전진"
                 # ⚠ 전진이 회전으로 바뀐다 = 바퀴가 걸렸거나 미끄러진다(2026-10-23 실기: 전진마다 +26~30°, 그 자리 지도가 25° 틀어졌다)
@@ -2002,6 +2083,23 @@ def selftest() -> int:
     assert len(fg) and np.hypot(*fg[0]) >= EXPLORE_GAP and fg[0][1] > -1.05 + SPIN_R - RES, fg[:3]
     assert clip_path([[0, 0], [1, 0], [2, 0], [3, 0]], 1.5) == [2, 0]
     assert len(tomato_bearings({"w": 1280, "positions": [[640, 300]], "ground": [[100, 650]]}, mt)) == 2
+    # ⑬ 납작한 물건 — 회색 마루에 주황 수건(렌즈 0.6m 앞 바닥)이 그 자리 점으로, 마루는 마루로. 광선이 지나가도 안 지워진다
+    try:
+        import cv2  # noqa: F401
+        m13 = dict(m, tcam_yaw_deg=0.0)
+        img = np.full((720, 1280, 3), 150, np.uint8)
+        v13 = int(360 + 985.3 * m13["h"] / 0.6)
+        img[v13 - 8:v13 + 9, 600:681] = (0, 120, 255)
+        hit, fl13 = flat_points(img, m13)
+        assert len(hit) and abs(np.median(hit[:, 0]) - (m13["x"] + 0.6)) < 0.03 and abs(np.median(hit[:, 1]) - m13["y"]) < 0.03, hit[:5]
+        assert len(fl13) > 10 * len(hit)
+        s13 = empty()
+        c13 = tuple(idx([1.0, 0.0]))
+        s13["flat"][c13] = FLAT_MIN
+        integrate(s13, np.array([[2.0, 0.0]]), np.zeros((0, 3)), dict(m, x=0.0, y=0.0))
+        assert s13["lo"][c13] >= 2.0 and s13["lo"][tuple(idx([0.5, 0.0]))] < 0
+    except ImportError:
+        print("  (cv2 없음 — ⑬ 건너뜀)")
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0

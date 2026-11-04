@@ -32,6 +32,8 @@ CLASSES = [c.strip() for c in os.environ.get("TV_CLASSES", "tomato").split(",") 
 JPEG_PATH = os.environ.get("TV_JPEG", "/dev/shm/tomato_vision.jpg")
 COUNT_PATH = os.environ.get("TV_COUNT", "/dev/shm/tomato_count")
 STATUS_PATH = os.environ.get("TV_STATUS", "/dev/shm/tomato_status")
+# 주석 없는 원본 — space_map이 바닥의 납작한 물건(수건·매트)을 색으로 찾는다. 주석 그림엔 주황 바닥 줄이 그어져 있다.
+RAW_PATH = os.environ.get("TV_RAW", "/dev/shm/tomato_raw.jpg")
 # 이 y좌표(px)보다 위(작은 y)면 '공중(부착)', 아래(큰 y)면 '바닥(낙과)'.
 # 카메라가 고정이라 장면에 맞게 한 번 교정하면 된다(720p 기준 기본 600).
 GROUND_LINE_Y = int(os.environ.get("TV_GROUND_Y", "600"))
@@ -163,6 +165,9 @@ def main() -> None:
             if not ok:
                 raise RuntimeError("프레임 읽기 실패")
             fail = 0
+            ok_raw, raw_buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+            if ok_raw:
+                _atomic_write(RAW_PATH, raw_buf.tobytes())
             res = model.predict(frame, device="cuda", conf=CONF, imgsz=IMGSZ,
                                 verbose=False)
             air, ground = _classify(res[0].boxes, frame.shape[1])

@@ -582,7 +582,9 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <figure style="margin:0"><img class="cam4" data-n="d405_color" style="width:100%"><figcaption class="k">D405 컬러</figcaption></figure>
       <figure style="margin:0"><img class="cam4" data-n="d405_depth" style="width:100%"><figcaption class="k">D405 깊이</figcaption></figure>
       <figure style="margin:0"><img class="cam4" data-n="astra_color" style="width:100%"><figcaption class="k">Astra 컬러(앞 카메라)</figcaption></figure>
-      <figure style="margin:0"><img class="cam4" data-n="astra_depth" style="width:100%;transform:scaleX(-1)" title="발행기 그림은 거울상(OpenNI 기본) — 보기만 좌우를 펴서 컬러와 같은 쪽으로 보인다. 데이터(npy)는 그대로, 3D는 space_map.cloud가 편다"><figcaption class="k">Astra 깊이(좌우 편 것)</figcaption></figure>
+      <!-- 깊이(58°×45°, 4:3)를 칸 폭에 채우면 컬러(66°×40°, 16:9)보다 세로로 늘어나 보인다 — 같은 각도 크기로 그린다:
+           폭 = tan29°/tan33° = 85.4%, 16:9 칸에서 위아래 6%씩 잘린다 -->
+      <figure style="margin:0"><div style="aspect-ratio:16/9;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#000"><img class="cam4" data-n="astra_depth" style="width:85.4%;transform:scaleX(-1)" title="발행기 그림은 거울상(OpenNI 기본) — 보기만 좌우를 펴서 컬러와 같은 쪽으로 보인다. 데이터(npy)는 그대로, 3D는 space_map.cloud가 편다. 컬러와 같은 각도 크기로 그렸다(깊이 화각이 좁아 양옆이 검다)"></div><figcaption class="k">Astra 깊이(좌우 편 것 · 컬러와 같은 배율)</figcaption></figure>
     </div>
   </div>
   <div class="card"><h2>공간 지도 — Astra 3D (집 안 다니기)</h2>
