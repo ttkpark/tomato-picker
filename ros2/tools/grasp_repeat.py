@@ -90,8 +90,8 @@ def stem_ref(bgr, dep, cfg=None, intr=None):
     if t is None:
         return None
     try:
-        cfg = cfg or json.load(open(gm.GRIP_UV))
-        intr = intr or json.load(open(gm.META))["intrinsics"]
+        cfg = cfg if cfg is not None else json.load(open(gm.GRIP_UV))
+        intr = intr if intr is not None else json.load(open(gm.META))["intrinsics"]
         du, dz, dd = float(cfg["stem_du_mm"]), float(cfg["stem_dz_mm"]), float(cfg.get("stem_dd_mm", 0.0))
         su = float(cfg.get("stem_su_mm", 0.0))
         fx, fy = float(intr["fx"]), float(intr["fy"])
