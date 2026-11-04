@@ -69,10 +69,10 @@ footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--lin
   <h2>지금 되는 것 · 안 되는 것</h2>
   <div class="wrap"><table>
     <tr><th>단계</th><th>상태</th><th>근거</th></tr>
-    <tr><td>토마토 찾기 → 정면 → 70cm 접근 → 손목 카메라로 45cm 근접</td><td><span class="pill ok">실기 성공</span></td><td>10/24 큰 방에서 전 과정 연속 성공</td></tr>
+    <tr><td>토마토 찾기 → 정면 → 70cm 접근 → 손목 카메라로 45cm 근접</td><td><span class="pill warn">1회 성공</span></td><td>10/24 02시 자동 루프가 큰 방에서 한 번 이어서 됨(손목 근접 494mm 정지). 기록은 작업판뿐, 판정 기준·반복 없음 → 3차에서 규약으로 다시 잼</td></tr>
     <tr><td>바로 앞(11~15cm) 모형 줄기 잡기</td><td><span class="pill ok">64%</span></td><td>11/03 9/14. 실패 4회는 전부 같은 원인(다가가기 상하 진동) → 게인 수정, 검증 전</td></tr>
     <tr><td>잡은 뒤 놓기</td><td><span class="pill warn">미검증</span></td><td>고정 턱이 줄기를 끌고 나와 "열기 → 옆으로 12mm → 빼기"로 바꿈</td></tr>
-    <tr><td>차체 정밀 이동 (3~5cm 단위)</td><td><span class="pill warn">불안정</span></td><td>지령이 0 아니면 18cm. 바퀴 "톡톡"으로 ±5mm까지는 됨. 근본 해결 = 엔코더 보드</td></tr>
+    <tr><td>차체 정밀 이동</td><td><span class="pill ok">±5mm</span></td><td>바퀴 "톡톡"(base_tap) 기준 ±5mm까지 가능. 연속 이동의 거리 제어는 엔코더 보드(2차)에서</td></tr>
     <tr><td>전원 안정성</td><td><span class="pill warn">원인 확정</span></td><td>팔+바퀴 동시 구동 시 Uno 브라운아웃 리셋, USB 접지 루프(-71). 새 보드가 절연·전원 분리로 해결</td></tr>
     <tr><td>STM32 주행보드 (엔코더 4ch · E-STOP · 전류감지)</td><td><span class="pill todo">주문 전</span></td><td>회로·배선 완료, 부품 장바구니 담김. 제작·배송 2~3주</td></tr>
   </table></div>
