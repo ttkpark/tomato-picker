@@ -575,12 +575,12 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
     <svg id="ov" viewBox="0 0 848 480" preserveAspectRatio="none"></svg>
   </div>
   <div class="card"><h2>카메라 넷 — 광학 + 깊이</h2>
-    <div class="k">D405 = 손목(7~50cm) · Astra = 앞(60~400cm, 깊이는 거울상·컬러와 정렬 안 됨). 깊이는 가까울수록 밝다/색은 발행기 기준.</div>
+    <div class="k">D405 = 손목(7~50cm) · Astra = 앞(60~400cm, 깊이는 거울상이라 좌우를 펴서 보여 줌·컬러와 정렬 안 됨). 깊이는 가까울수록 밝다/색은 발행기 기준.</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
       <figure style="margin:0"><img class="cam4" data-n="d405_color" style="width:100%"><figcaption class="k">D405 컬러</figcaption></figure>
       <figure style="margin:0"><img class="cam4" data-n="d405_depth" style="width:100%"><figcaption class="k">D405 깊이</figcaption></figure>
       <figure style="margin:0"><img class="cam4" data-n="astra_color" style="width:100%"><figcaption class="k">Astra 컬러(앞 카메라)</figcaption></figure>
-      <figure style="margin:0"><img class="cam4" data-n="astra_depth" style="width:100%"><figcaption class="k">Astra 깊이</figcaption></figure>
+      <figure style="margin:0"><img class="cam4" data-n="astra_depth" style="width:100%;transform:scaleX(-1)" title="발행기 그림은 거울상(OpenNI 기본) — 보기만 좌우를 펴서 컬러와 같은 쪽으로 보인다. 데이터(npy)는 그대로, 3D는 space_map.cloud가 편다"><figcaption class="k">Astra 깊이(좌우 편 것)</figcaption></figure>
     </div>
   </div>
   <div class="card"><h2>공간 지도 — Astra 3D (집 안 다니기)</h2>

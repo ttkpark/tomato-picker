@@ -33,6 +33,7 @@ import os
 import subprocess
 import sys
 import time
+import types
 
 import numpy as np
 
@@ -1414,25 +1415,67 @@ NEAR_STOP_MM = 200.0           # 화면 가운데 아래(화분 쪽)에 이보�
 NEAR_TURN_DEG = 6.0            # 토마토가 손목 화면 가운데에서 이보다 벗어나면 먼저 돈다
 
 
-def wrist_tomato():
+PICK_WIN_PX = 120             # 직전 자리에서 이만큼 안이면 같은 열매로 본다
+
+
+def pick_fruit(fr, prefer_u=None):
+    """(깊이 있음?, 넓이, u, mm) 목록에서 하나. prefer_u가 있으면 깊이 있는 것 중 **그 자리에 가장 가까운 것** —
+    11/05: 매번 가장 큰 것을 고르니 바닥의 빨간 통(왼쪽)과 토마토(오른쪽)를 번갈아 골라 ±40°씩 열 번 흔들다 끝났다."""
+    if prefer_u is None:
+        return max(fr)
+    # 자리가 먼저다 — 깊이가 이따금 비는 순간 '깊이 있는 것 먼저'로 빨간 통에 넘어갔다(11/05 둘째 판)
+    return min(fr, key=lambda f: (abs(f[2] - prefer_u) > PICK_WIN_PX, not f[0], abs(f[2] - prefer_u)))
+
+
+TURN_SETTLE_S = 1.0            # 돌고 난 뒤 손목 D405 새 장을 기다린다 — 11/05: 곧바로 본 장엔 토마토가 안 잡혀(흔들린 장)
+                               #   바닥의 빨간 통을 골라 ±40°씩 열 번 흔들었다. 1.5초 뒤엔 IMU대로(8°→8°) 보였다
+
+
+def front_hint(m):
+    """앞 카메라(tomato-vision YOLO — **매달린 토마토만** 센다)가 본 토마토 → 손목 D405 화면 u 짐작 | None.
+    손목 색 검출은 빨간 것이면 다 열매라 바닥의 빨간 통을 골랐다(11/05, 치울 수 없는 물건) — 무엇을 쫓을지는 YOLO가 정한다.
+    두 카메라는 0.14m 옆·0.26m 앞뒤로 떨어져 1m에서 ≈8°(≈60px) 어긋난다 — pick_fruit 창(PICK_WIN_PX)이 받는다."""
+    st = tomato_fresh(time.time() - 1.0, timeout=2.0)
+    bs = tomato_bearings(st, m) if st else []
+    if not bs:
+        return None
+    from tomato_picker.hardware.depth_camera import DepthView
+    it = DepthView(camera="d405").intrinsics()
+    return it.ppx - it.fx * math.tan(min(bs, key=abs))
+
+
+def after_turn_u(v, ang_deg: float, got_deg: float) -> float:
+    """열매가 가로 ang_deg(왼쪽 +)에 있었고 차체가 got_deg(IMU, 왼쪽 +, nan=모름) 돌았으면 지금 보일 u.
+    IMU가 없으면 다 돌았다고 본다(화면 가운데)."""
+    it = v.intrinsics()
+    rest = ang_deg - (got_deg if got_deg == got_deg else ang_deg)
+    return it.ppx - it.fx * math.tan(math.radians(rest))
+
+
+def wrist_tomato(prefer_u=None):
     """손목 D405(컬러=깊이 정렬)의 열매 → (u, 거리 mm, 가로 각 °, DepthView) | None.
-    깊이가 잡히는(유효 거리 안) 것 가운데 가장 큰 것, 없으면 가장 큰 것(거리 nan). **익음으로 거르지 않는다** —
+    깊이가 잡히는(유효 거리 안) 것 가운데 가장 큰 것(prefer_u가 있으면 그 자리에 가장 가까운 것), 없으면 거리 nan.
+    **익음으로 거르지 않는다** —
     가까이선 조명에 주황으로 보여 '안 익음'이 되고, 그 사이 2m 뒤 빨간 의자가 '익은 열매'로 뽑혔다(10/24).
     대기 자세(팔을 뒤로 접음)에서만 화면이 바로 서고 주행 정면을 본다 — 화면 오른쪽 = 차체 오른쪽."""
     from tomato_picker.hardware.depth_camera import DepthError, DepthView
     from tomato_picker.vision.color_detect import detect_fruits
     v = DepthView(camera="d405")
     v.require_color_aligned()
-    fr = []
-    for f in detect_fruits(v.color_bgr()):
-        try:
-            mm = v.depth_mm_at(*f.position)
-        except DepthError:
-            mm = float("nan")
-        fr.append((mm == mm, f.area, f.position[0], mm))
-    if not fr:
-        return None
-    _, _, u, mm = max(fr)
+    for _try in range(4):                   # 고른 열매의 깊이가 비었으면 새 장을 몇 번 더 본다(850mm 작은 열매는 깊이가 듬성하다)
+        fr = []
+        for f in detect_fruits(v.color_bgr()):
+            try:
+                mm = v.depth_mm_at(*f.position)
+            except DepthError:
+                mm = float("nan")
+            fr.append((mm == mm, f.area, f.position[0], mm))
+        if not fr:
+            return None
+        _, _, u, mm = pick_fruit(fr, prefer_u)
+        if mm == mm:
+            break
+        time.sleep(0.3)
     it = v.intrinsics()
     return u, mm, math.degrees(math.atan2(it.ppx - u, it.fx)), v
 
@@ -1456,9 +1499,11 @@ def near_cmd(a, m) -> int:
     if link is None:
         return 1
     try:
-        last = None
+        last, want, vx = None, front_hint(m), a.vx
+        if want is not None:
+            print("  앞 카메라(YOLO)가 본 매달린 토마토 → 손목 화면 u %.0f 근처를 쫓는다" % want)
         for k in range(10):
-            got = wrist_tomato()
+            got = wrist_tomato(want)
             if got is None:
                 print("⛔ 손목 D405에 익은 토마토가 안 보인다 — [🍅 토마토 앞으로]로 정면에 선 뒤 다시")
                 return 1
@@ -1472,21 +1517,29 @@ def near_cmd(a, m) -> int:
             if front < NEAR_STOP_MM:
                 print("⛔ 손목 화면 아래 %.0fmm에 물체(화분?) — 더 안 간다" % front)
                 return 1
+            want = u
             if abs(ang) > NEAR_TURN_DEG:
-                turn(link, int(math.copysign(a.w, ang)), a.wsecs, abs(ang))
+                want = after_turn_u(v, ang, turn(link, int(math.copysign(a.w, ang)), a.wsecs, abs(ang)))
+                time.sleep(TURN_SETTLE_S)
                 continue
             if mm != mm:
-                print("⛔ 토마토 거리를 못 잰다(D405 유효 %s) — 더 안 간다" % v.meta().get("valid_frac"))
-                return 1
+                # D405는 50cm 너머 작은 열매의 깊이가 자주 빈다(11/05: 850mm에서 열에 서넛) — 가운데 있고 앞 아래가
+                # 비었으면(위 NEAR_STOP 검사) 한 걸음 간다. 가까워지면 깊이가 잡힌다.
+                print("  토마토 거리 ?(D405 50cm 너머) — 앞 아래 %.0fmm 비었으니 한 걸음" % front)
+                drive(link, vx, 0, 0, a.vsecs)
+                continue
             # 걸음을 더 줄일 수 없다(정지마찰: 0.6초는 0) — 남은 게 직전 걸음의 절반 밑이면 한 걸음 더가 더 크게 넘친다.
             # 10/24 실기: 484mm에서 34mm 남기고 한 걸음 → 349mm(135mm 넘침)
             if last is not None and mm - a.near_mm < 0.5 * (last - mm):
                 print("✅ 손목 D405에서 토마토 %.0fmm — 한 걸음(%.0fmm)이 남은 %.0fmm보다 커서 여기서 멈춘다" % (
                     mm, last - mm, mm - a.near_mm))
                 return 0
-            # 정지마찰: 200·1.0초 = 7~12cm. 안 움직였으면(10mm 미만) 0.3초 늘린다
-            secs = a.vsecs if (last is None or last - mm > 10) else a.vsecs + 0.3
-            drive(link, a.vx, 0, 0, secs if mm - a.near_mm > 120 else max(0.7, secs * 0.7))
+            # 정지마찰: 200·1.0초 = 7~12cm. 안 움직였으면(10mm 미만) 0.3초 늘리고 세기도 +30(255까지) —
+            # 11/05: 200·1.3초를 일곱 번 내도 0mm(같은 지령만 되풀이했다)
+            stuck = last is not None and last - mm <= 10
+            secs = a.vsecs + 0.3 if stuck else a.vsecs
+            vx = min(255, vx + 30) if stuck else vx
+            drive(link, vx, 0, 0, secs if mm - a.near_mm > 120 else max(0.7, secs * 0.7))
             last = mm
         print("⛔ 열 번 다가가도 %.0fmm에 못 닿았다" % a.near_mm)
         return 1
@@ -1515,9 +1568,9 @@ def reach_cmd(a, m) -> int:
     if link is None:
         return 1
     try:
-        last = None
+        last, want = None, None
         for k in range(14):
-            got = wrist_tomato()
+            got = wrist_tomato(want)
             if got is None:
                 print("⛔ 손목 D405에 열매가 안 보인다 — [🍅 정면 보기]로 먼저 돌려라")
                 return 1
@@ -1525,11 +1578,14 @@ def reach_cmd(a, m) -> int:
             it = v.intrinsics()
             lat = (u - 420.0) * (mm if mm == mm else 600.0) / it.fx    # 십자(무는 자리) 세로줄 ≈ u 420
             print("[%d] 열매 u %.0f · %s · 가로 %+.0fmm" % (k, u, "%.0fmm" % mm if mm == mm else "거리 ?", lat))
+            want = u
             if abs(lat) > REACH_LAT_MM:
                 # ⚠ 옆걸음이 아니라 **회전**으로 맞춘다 — 11/02: vy 200·1.0초 14번에 가로 111mm 그대로(케이스 얹은
                 #   차체는 옆걸음 정지마찰이 더 크다). 회전은 IMU로 각을 재며 민다(near_cmd와 같은 길). +w = 왼쪽.
                 ang = math.degrees(math.atan2(420.0 - u, it.fx))
-                turn(link, int(math.copysign(a.w, ang)), a.wsecs, abs(ang))
+                want = after_turn_u(v, math.degrees(math.atan2(it.ppx - u, it.fx)),
+                                    turn(link, int(math.copysign(a.w, ang)), a.wsecs, abs(ang)))
+                time.sleep(TURN_SETTLE_S)
                 continue
             if mm == mm and mm <= a.reach_mm:
                 print("✅ 열매 %.0fmm · 가로 %+.0fmm — 잡기 거리. [줄기 찍기] → [잡으러 간다]" % (mm, lat))
@@ -1827,6 +1883,14 @@ def selftest() -> int:
     p10 = np.c_[wall, np.full(len(ys), 0.3)]
     r10 = refine(sw, p10, m, np.array([0.0, 0.0, 0.0]))
     assert abs(r10[1]) < 0.01 and abs(r10[0]) < 0.06, ("ICP가 벽을 따라 끌렸다", r10)
+    # ⑪ 손목 열매 고르기 — 직전 자리를 따라간다(11/05 빨간 통↔토마토 번갈아 고름)
+    fr = [(True, 900, 60.0, 800.0), (True, 400, 700.0, 840.0), (False, 2000, 420.0, float("nan"))]
+    assert pick_fruit(fr)[2] == 60.0 and pick_fruit(fr, 640.0)[2] == 700.0 and pick_fruit(fr, 420.0)[2] == 420.0
+    assert pick_fruit(fr, 250.0)[2] == 60.0                 # 창 안에 없으면 깊이 있는 것 중 가까운 쪽
+    assert pick_fruit([(True, 900, 60.0, 800.0), (False, 400, 470.0, float("nan"))], 469.0)[2] == 470.0
+    vi = types.SimpleNamespace(intrinsics=lambda: types.SimpleNamespace(fx=425.0, ppx=424.0))
+    assert abs(after_turn_u(vi, -30.0, -30.0) - 424.0) < 1e-6
+    assert after_turn_u(vi, -30.0, -20.0) > 424.0 + 60 and abs(after_turn_u(vi, -30.0, float("nan")) - 424.0) < 1e-6
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0

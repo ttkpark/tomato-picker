@@ -333,7 +333,7 @@ def cp3(n, seed):
             ax = ARM_X + (START_TCP.x - CAM_BACK) / 1000
             return np.array([p[0] + ax * c, p[1] + ax * s_]), p[2]
 
-        def wrist_tomato():
+        def wrist_tomato(prefer_u=None):
             physics()
             cam, th = cam_pose()
             d = np.array([px, py]) - cam
@@ -349,6 +349,7 @@ def cp3(n, seed):
             return u, mm, math.degrees(math.atan2(D405["ppx"] - u, D405["fx"])), v
         sm.wrist_tomato = wrist_tomato
         sm.wrist_front_mm = lambda v: float("inf")        # 화분은 손목 화면 아래 칸보다 낮다(ponytail: 안 본다)
+        sm.front_hint = lambda m: None                    # 손목 첫 표적 짐작(앞 카메라 YOLO) — 모형엔 빨간 통이 없다
         sm.subprocess = types.SimpleNamespace(call=lambda *a, **k: 0)   # arm_stage(잡기 시작 자세) — 팔은 모델이다
 
         a = types.SimpleNamespace(steps=24, w=150, wsecs=0.8, deg=20.0, hand=False, vx=200, vsecs=1.0, tol=0.2,
