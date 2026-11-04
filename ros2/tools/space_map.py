@@ -118,7 +118,8 @@ def empty() -> dict:
             "pose": np.zeros(3), "q": 0.0, "frames": 0,
             "path": np.zeros((0, 2)), "goal": np.zeros(0),
             "imu": np.full(2, np.nan),
-            "tomato": np.zeros((0, 4))}   # 찾은 토마토 (x, y, 본 횟수, 거리 아는가 1/0)  # 지금 자세를 정할 때의 IMU (boot, yaw rad) — 다음 회전 짐작의 기준
+            "tomato": np.zeros((0, 4)),
+            "seen": np.zeros((0, 4))}     # 토마토 관측 (렌즈 x, y, 세계 방위, 거리|nan) — 자리를 옮겨 찾아도 쌓인다(둘러보기)   # 찾은 토마토 (x, y, 본 횟수, 거리 아는가 1/0)  # 지금 자세를 정할 때의 IMU (boot, yaw rad) — 다음 회전 짐작의 기준
 
 
 def load() -> dict:
@@ -1033,19 +1034,25 @@ TOMATO_STATUS = "/dev/shm/tomato_status"
 TOMATO_GUESS = 1.5             # 지도에 벽이 없어 거리를 모르면 이만큼 앞에 둔다(화면에 '거리 모름'으로)
 
 
+def tomato_px(st: dict) -> list:
+    """검출 화소 [(cx, cy)] — 공중 + 바닥 줄 아래. 렌즈가 15cm라 쓰러진 나무의 열매는 바닥 줄(cy 600) 아래로
+    떨어진다(가까울수록) — 공중만 쓰면 쓰러진 나무를 못 찾는다(2026-11-05)."""
+    return list(st.get("positions", [])) + list(st.get("ground", []))
+
+
 def tomato_bearings(st: dict, m: dict) -> list:
     """tomato-vision 상태 → 차체 기준 방위(rad, 왼쪽 +). 화면 오른쪽 = 로봇 오른쪽(−)."""
     w = float(st.get("w", 1280))
     f = (w / 2) / math.tan(math.radians(m["tcam_hfov"]) / 2)
     return [math.radians(m["tcam_yaw_deg"]) + math.atan2(w / 2 - float(cx), f)
-            for cx, _ in st.get("positions", [])]
+            for cx, _ in tomato_px(st)]
 
 
 def tomato_elevations(st: dict, m: dict) -> list:
     """tomato-vision 상태 → 렌즈에서 본 높이각(rad, 위 +). 화소는 정사각이라 가로 화각의 f를 그대로 쓴다."""
     w, h = float(st.get("w", 1280)), float(st.get("h", 720))
     f = (w / 2) / math.tan(math.radians(m["tcam_hfov"]) / 2)
-    return [math.atan2(h / 2 - float(cy), f) for _, cy in st.get("positions", [])]
+    return [math.atan2(h / 2 - float(cy), f) for _, cy in tomato_px(st)]
 
 
 def tomato_fresh(after: float, timeout: float = 4.0):
@@ -1142,7 +1149,9 @@ def tomato_ranges(m: dict, bearings, ts: float, elevs=None) -> list:
     pts = cloud(dep, meta, m)
     rel = pts[:, :2] - [m["x"], m["y"]]
     d, ang = np.hypot(rel[:, 0], rel[:, 1]), np.arctan2(rel[:, 1], rel[:, 0])
-    band = (pts[:, 2] > m["floor_cut"]) & (pts[:, 2] < m["top"])
+    # 바닥 띠(floor_cut 5cm)는 빼지 않는다 — 쓰러진 나무의 열매는 바닥 위 3~7cm다. 높이각 ±3° 줄이 바닥을 막는다
+    # (그 줄의 바닥은 열매보다 뒤에 떨어진다, 마루는 IR이 비껴 대개 깊이 0)
+    band = pts[:, 2] < m["top"]
     elv = np.arctan2(pts[:, 2] - m["h"], d)
     out = []
     for b, e in zip(bearings, elevs if elevs is not None else [None] * len(bearings)):
@@ -1227,7 +1236,7 @@ def find_cmd(a, m) -> int:
             if bs:
                 print("    거리(렌즈) %s" % ["%.2fm" % r if r == r else "?" for r in rs])
             print("[%d] 방향 %.0f° · 토마토 %d (cx %s)" % (k + 1, math.degrees(th), len(bs),
-                                                    [int(c) for c, _ in st.get("positions", [])]))
+                                                    [int(c) for c, _ in tomato_px(st)]))
             if total >= 360:
                 break
             got = hand_turn(a.deg) if a.hand else turn(link, a.w, a.wsecs, a.deg)
@@ -1241,10 +1250,13 @@ def find_cmd(a, m) -> int:
     finally:
         if link is not None:
             link.close()
-    s["tomato"] = place_tomatoes(s, seen)
+    # 앞서 다른 자리에서 본 것과 합친다(둘러보기) — 지도를 지우면 같이 지워진다
+    allseen = [tuple(q) for q in s["seen"]] + seen
+    s["seen"] = np.array(allseen, float).reshape(-1, 4)
+    s["tomato"] = place_tomatoes(s, allseen)
     save(s)
     if not len(s["tomato"]):
-        print("토마토를 못 찾았다(두 번 넘게 본 방향이 없다) — 본 방위 %d개, %.0f° 돌았다" % (len(seen), total))
+        print("토마토를 못 찾았다(두 번 넘게 본 방향이 없다) — 이번에 본 방위 %d개, %.0f° 돌았다" % (len(seen), total))
         return 0
     for x, y, k, known in s["tomato"]:
         print("🍅 (%.2f, %.2f) · %d번 봄 · %s" % (x, y, k, "거리 잼(Astra 깊이, 없으면 지도 벽)" if known else
@@ -1262,7 +1274,7 @@ def tomato_cx(sec: float = 2.0):
         st = tomato_fresh(time.time())
         if st:
             w = int(st.get("w", w))
-            cs += [float(p[0]) for p in st.get("positions", [])]
+            cs += [float(p[0]) for p in tomato_px(st)]
     return (float(np.median(cs)), w) if cs else (None, w)
 
 
@@ -1637,6 +1649,7 @@ def go_cmd(a, m) -> int:
     if link is None:
         return 1
     est_w, est_v, stuck, veer = math.radians(20), 0.10, 0, 0
+    best, since = float("inf"), 0
     try:
         for i in range(a.max_steps):
             xy, th = s["pose"][:2], s["pose"][2]
@@ -1644,6 +1657,15 @@ def go_cmd(a, m) -> int:
             if left < a.tol:
                 print("✅ 도착 — 남은 %.2fm" % left)
                 return 0
+            # 맞춤 잡음(3~5cm)이 "움직였다"로 보여 아래 stuck이 안 걸린다 — 2026-11-05 실기: 전진 200이 정지마찰 아래인데
+            # 60걸음 내내 0.79m에 머물렀다. 목표 거리로 본다.
+            if left < best - 0.05:
+                best, since = left, 0
+            else:
+                since += 1
+                if since >= 10:
+                    print("⛔ 10걸음째 목표에 5cm도 못 다가갔다 — 막혔거나 지령이 정지마찰 아래(전진 크기·시간을 올려라)")
+                    return 1
             path, why = plan(s["lo"], xy, goal, m["radius"])
             if path is None:
                 print("⛔", why)
@@ -1705,6 +1727,86 @@ def go_cmd(a, m) -> int:
         return 1
     finally:
         link.close()
+
+
+EXPLORE_GAP = 0.8              # 이미 한 바퀴 돈 자리에서 이 안은 다시 안 간다
+EXPLORE_EDGE = 0.8             # 경계(빈 칸 ↔ 모르는 칸)에서 이 안의 빈 칸에 선다 — 거기서 돌면 모르는 쪽이 보인다
+EXPLORE_KNOWN = 0.9            # 설 자리 둘레 SPIN_R 상자의 이만큼은 아는 칸이어야 한다 — 모르는 칸 = 못 본 벽일 수 있다
+
+
+def frontier_goals(s: dict, m: dict, visited) -> np.ndarray:
+    """한 바퀴 돌 다음 자리 후보 [(x, y)] — 가까운 순. 아는 빈 칸 가운데 둘레 SPIN_R에 장애물이 없고,
+    모르는 칸과 맞닿은 빈 칸(경계)에서 EXPLORE_EDGE 안이며, 돈 자리들에서 EXPLORE_GAP 넘게 떨어진 칸."""
+    lo = s["lo"]
+    free, unk = lo < -FREE, np.abs(lo) <= FREE
+    edge = free & (np.roll(unk, 1, 0) | np.roll(unk, -1, 0) | np.roll(unk, 1, 1) | np.roll(unk, -1, 1))
+    r = int(math.ceil(m.get("spin_r", SPIN_R) / RES))
+    # 둘레가 거의 다 아는 칸이어야 한다 — 첫 스캔이 84°에서 끊긴 채 오른쪽(모름)이 벽인 자리를 골라 붙었다(2026-11-05 실기)
+    ii = np.pad(np.cumsum(np.cumsum(unk, 0), 1), ((1, 0), (1, 0)))
+    box = np.ones_like(lo)                     # 지도 가장자리는 모름으로
+    box[r:N - r, r:N - r] = (ii[2 * r + 1:, 2 * r + 1:] - ii[:-2 * r - 1, 2 * r + 1:]
+                             - ii[2 * r + 1:, :-2 * r - 1] + ii[:-2 * r - 1, :-2 * r - 1]) / (2 * r + 1) ** 2
+    cand = (free & dilate(edge, int(EXPLORE_EDGE / RES)) & ~dilate(lo > OCC, r)
+            & (box <= 1 - EXPLORE_KNOWN))
+    xy = (np.argwhere(cand) - N // 2 + 0.5) * RES
+    for v in visited:
+        xy = xy[np.hypot(xy[:, 0] - v[0], xy[:, 1] - v[1]) >= EXPLORE_GAP]
+    return xy[np.argsort(np.hypot(xy[:, 0] - s["pose"][0], xy[:, 1] - s["pose"][1]))]
+
+
+def clip_path(path, reach: float):
+    """길을 따라 reach(m)까지 간 점 — 가기는 걸음 상한 60(≈3m)이라 먼 목표는 쪼갠다."""
+    done = 0.0
+    for p, q in zip(path, path[1:]):
+        done += math.hypot(q[0] - p[0], q[1] - p[1])
+        if done >= reach:
+            return q
+    return path[-1]
+
+
+def explore_cmd(a, m) -> int:
+    """🧭 방 둘러보기 — [제자리 한 바퀴 스캔(지도) → 토마토 찾기 → 가까운 경계로 가기]를 되풀이한다.
+    갈 경계가 없거나 a.rounds 바퀴를 채우면 끝. 찾은 토마토는 자리를 옮겨도 쌓인다(s["seen"]).
+    ponytail: 가까운 경계부터(탐욕) — 방 하나용. 집 전체면 정보량 점수·되돌아오기 비용(또는 rtabmap+Nav2)."""
+    visited, fails = [], 0
+    for r in range(a.rounds):
+        s = load()
+        visited.append(s["pose"][:2].copy())
+        print("━━ %d/%d 자리 (%.2f, %.2f) θ=%.0f°" % (r + 1, a.rounds, s["pose"][0], s["pose"][1], math.degrees(s["pose"][2])))
+        scanned = scan_cmd(a, m) == 0 or scan_cmd(types.SimpleNamespace(**{**vars(a), "w": -a.w}), m) == 0
+        if not scanned:
+            # 한쪽으로만 막힌다 — 벽 옆에선 돌 때 뒤가 벽 쪽으로 휜다(회전 중심이 차체 뒤쪽). 반대로 한 번 더
+            print("  ⚠ 스캔을 못 했다(양쪽 다) — 찾기는 건너뛴다")
+        elif not a.no_find and find_cmd(a, m) != 0:
+            print("  ⚠ 찾기를 못 했다")
+        s = load()
+        goal = None
+        for g in frontier_goals(s, m, visited)[:40]:
+            path, _ = plan(s["lo"], s["pose"][:2], g, m["radius"])
+            if path:
+                goal = clip_path(path, a.reach)
+                break
+        if goal is None and not scanned:
+            # 2026-11-05 실기: 좁은 방(서랍장·의자·선반 사이)에서 양쪽 다 막힌 채 "다 봤다"고 끝났다
+            print("⛔ 여기선 한 바퀴를 못 돌고(차체가 걸린다) 갈 만한 아는 자리도 없다 — 둘레 0.45m가 트인 곳에 두고 다시")
+            return 1
+        if goal is None:
+            print("✅ 갈 경계가 없다 — 닿을 수 있는 곳은 다 봤다")
+            break
+        print("  → 경계 쪽 (%.2f, %.2f)로 간다" % tuple(goal))
+        if go_cmd(types.SimpleNamespace(**{**vars(a), "x": float(goal[0]), "y": float(goal[1])}), m) != 0:
+            visited.append(np.array(goal))          # 못 간 곳은 다시 고르지 않는다
+            fails += 1
+            if fails >= 2:
+                print("⛔ 두 번 연달아 못 갔다 — 멈춘다(자리를 보고 [한 장 담기] 뒤 다시)")
+                return 1
+        else:
+            fails = 0
+    s = load()
+    print("둘러보기 끝 — 복셀 %d · 돈 자리 %d곳 · 토마토 %d" % (len(s["vox"]), len(visited), len(s["tomato"])))
+    for x, y, k, known in s["tomato"]:
+        print("🍅 (%.2f, %.2f) · %d번 봄%s" % (x, y, k, "" if known else " · 거리 모름"))
+    return 0
 
 
 # ── 장치 없이 ──────────────────────────────────────────────────────────
@@ -1891,6 +1993,15 @@ def selftest() -> int:
     vi = types.SimpleNamespace(intrinsics=lambda: types.SimpleNamespace(fx=425.0, ppx=424.0))
     assert abs(after_turn_u(vi, -30.0, -30.0) - 424.0) < 1e-6
     assert after_turn_u(vi, -30.0, -20.0) > 424.0 + 60 and abs(after_turn_u(vi, -30.0, float("nan")) - 424.0) < 1e-6
+    # ⑫ 둘러보기 경계 — 아는 빈 방(x 0..2, y −1..1) 오른쪽 끝이 트여(x>2 모름) 있으면 그쪽 끝에 서고,
+    #   벽 0.45m 안·돈 자리 0.8m 안은 안 고른다. 쓰러진 나무 열매(바닥 줄 아래)도 방위에 든다
+    sf = empty()
+    sf["lo"][idx([0, -1])[0]:idx([2, 0])[0], idx([0, -1])[1]:idx([0, 1])[1]] = -2.0
+    sf["lo"][idx([0, 0])[0]:idx([2, 0])[0], idx([0, -1.05])[1]] = 2.0          # 오른쪽 벽 y=−1.05
+    fg = frontier_goals(sf, m, [np.zeros(2)])
+    assert len(fg) and np.hypot(*fg[0]) >= EXPLORE_GAP and fg[0][1] > -1.05 + SPIN_R - RES, fg[:3]
+    assert clip_path([[0, 0], [1, 0], [2, 0], [3, 0]], 1.5) == [2, 0]
+    assert len(tomato_bearings({"w": 1280, "positions": [[640, 300]], "ground": [[100, 650]]}, mt)) == 2
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
@@ -1898,7 +2009,7 @@ def selftest() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "reach", "clear", "selftest", "replay", "selfcal"])
+    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "reach", "explore", "clear", "selftest", "replay", "selfcal"])
     ap.add_argument("file", nargs="*", help="replay·selfcal: ~/space_scans/scan-*.npz")
     ap.add_argument("--write", action="store_true", help="selfcal: 찾은 장착값을 ~/space_mount.json에 쓴다")
     ap.add_argument("--steps", type=int, default=16)
@@ -1916,6 +2027,9 @@ def main() -> int:
     ap.add_argument("--tol", type=float, default=0.2)
     ap.add_argument("--max-steps", type=int, default=60)
     ap.add_argument("--reach-mm", type=float, default=REACH_MM, help="reach: 잡기 시작 자세 손목 D405에서 열매까지 이 거리(mm)에 선다")
+    ap.add_argument("--rounds", type=int, default=6, help="explore: 한 바퀴 돌 자리 수 상한")
+    ap.add_argument("--reach", type=float, default=2.0, help="explore: 한 번에 갈 길 길이 상한(m)")
+    ap.add_argument("--no-find", action="store_true", help="explore: 토마토 찾기 없이 지도만")
     ap.add_argument("--near-mm", type=float, default=NEAR_MM, help="near: 손목 D405에서 토마토까지 이 거리(mm)에 선다")
     a = ap.parse_args()
     if a.mode == "selftest":
@@ -1959,6 +2073,8 @@ def main() -> int:
         return near_cmd(a, m)
     if a.mode == "reach":
         return reach_cmd(a, m)
+    if a.mode == "explore":
+        return explore_cmd(a, m)
     if a.x is None or a.y is None:
         print("go 는 --x --y (지도 좌표, m)가 있어야 한다")
         return 2

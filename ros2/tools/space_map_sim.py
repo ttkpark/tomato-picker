@@ -266,6 +266,24 @@ if __name__ == "__main__":          # 아래는 한 번 돌려 보는 흐름 —
                 plt.savefig(os.environ["SIM_PLOT"], dpi=60)
             print("=== 새 자리 스캔 · 새 복셀 %d · 첫 지도 8cm 안 %.1f%% · 참 표면 7.5cm 안 %.1f%% · 지도 자세 오차 %.2fm" % (
                 len(new), 100 * (dn <= 1.5).mean(), 100 * (surf_dist(pw2) < 0.075).mean(), float(np.hypot(*(s["pose"][:2] - tm)))))
+    if os.environ.get("SIM_EXPLORE"):       # 방 둘러보기 N자리(토마토 찾기 없이) — 방 바닥 중 지도가 빈 곳으로 아는 비율
+        ea = types.SimpleNamespace(**vars(args), vx=150, vsecs=0.8, tol=0.2, max_steps=60,
+                                   rounds=int(os.environ["SIM_EXPLORE"]), reach=2.0, no_find=True)
+        cov0 = None
+        gx, gy = np.meshgrid(np.arange(ROOM[0] + 0.3, ROOM[1] - 0.3, sm.RES), np.arange(ROOM[2] + 0.3, ROOM[3] - 0.3, sm.RES))
+        gp = np.c_[gx.ravel(), gy.ravel()]
+        gp = gp[[all(not (B[0] - 0.1 < x < B[1] + 0.1 and B[2] - 0.1 < y < B[3] + 0.1) for B in BOXES) for x, y in gp]]
+        gm = (np.array([[c, sn], [-sn, c]]) @ (gp - start[:2]).T).T       # 참 → 지도 좌표
+
+        def cover(s_):
+            i = sm.idx(gm)
+            return float((s_["lo"][i[:, 0], i[:, 1]] < -sm.FREE).mean())
+        cov0 = cover(s)
+        rc3 = sm.explore_cmd(ea, M)
+        s = sm.load()
+        tm = np.array([[c, sn], [-sn, c]]) @ (true[:2] - start[:2])
+        print("=== 둘러보기 rc=%d · 방 바닥 빈 곳으로 앎 %.0f%% → %.0f%% · 지도 자세 오차 %.2fm" % (
+            rc3, 100 * cov0, 100 * cover(s), float(np.hypot(*(s["pose"][:2] - tm)))))
     if USE_IMU and not os.environ.get("SIM_SCALE") and not os.environ.get("SIM_XY"):
         assert rc == 0 and (dv < 0.075).mean() >= 0.75 and err <= 5.0, ("지도 품질 합격선 미달", rc, (dv < 0.075).mean(), err)
         print("space_map_sim ✅ 합격선(복셀 75%·θ 5°)")

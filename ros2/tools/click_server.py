@@ -31,7 +31,7 @@ API 요약 (전부 JSON)
     GET  /cam/<이름>.jpg             카메라 넷(d405_color|d405_depth|astra_color|astra_depth)
     POST /click   {u,v,mode}         mode=target(줄기) | grip(십자)
     POST /clear                      표적 지움
-    POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge|estop_reset|space(snap|scan|go|step|wrist|clear)
+    POST /run     {job,args}         job=stage|jog|grasp|grip|yaw|pose|park|loop|extend|roll0|swab|nudge|estop_reset|space(snap|scan|go|step|wrist|explore|clear)
     POST /stop                       도는 일을 끊는다
     GET  /space?mt=                  공간 지도(격자·복셀·자세·길) — mt가 같으면 {same:true}
     GET  /imu                        차체 회전량(tools/imu_yaw.py가 쓰는 /dev/shm/imu.json 그대로 + age)
@@ -436,8 +436,8 @@ def build(job, args):
         # **집 안 공간 지도**(space_map.py) — 한 장 담기·제자리 스캔·목표로 가기·지우기.
         # 주행 포트를 쥐는 일이라 넛지와 같이 한 번에 하나만 돈다.
         mode = str(args.get("mode", ""))
-        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "reach", "clear"):
-            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|face|approach|near|reach|clear")
+        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "reach", "explore", "clear"):
+            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|face|approach|near|reach|explore|clear")
         a = [PY, T("space_map.py"), mode]
         if mode == "snap" and str(args.get("turn", "")).strip() != "":
             a += ["--turn", "%.0f" % num(args, "turn", 0, -180, 180)]
@@ -448,12 +448,12 @@ def build(job, args):
                 raise ValueError("걸음 지령이 전부 0이다")
             a += ["--vx", str(v["vx"]), "--vy", str(v["vy"]), "--w", str(v["w"]),
                   "--secs", "%.2f" % num(args, "secs", 0.8, 0.2, 2.0)]
-        if mode in ("step", "scan", "go", "find", "approach"):
+        if mode in ("step", "scan", "go", "find", "approach", "explore"):
             # IMU가 있으면 회전 넛지는 시간이 아니라 이 각도까지 민다(정지마찰에 안 속는다)
             a += ["--deg", "%.0f" % num(args, "deg", 20, 3, 45)]
         if mode == "find" and args.get("hand"):
             a += ["--hand"]                     # 바퀴 대신 사람이 돌린다
-        if mode in ("scan", "go", "find", "face", "approach", "near"):
+        if mode in ("scan", "go", "find", "face", "approach", "near", "explore"):
             # find만 시계 방향을 고를 수 있다 — 한쪽이 막힌 자리(10/23 케이블)에서 반대로 돈다
             sign = -1 if (mode == "find" and args.get("cw")) else 1
             a += ["--w", "%d" % (sign * int(num(args, "w", 150, 60, 255))),
@@ -462,7 +462,9 @@ def build(job, args):
             a += ["--steps", "%d" % int(num(args, "steps", 16, 1, 40))]
             if args.get("hand"):
                 a += ["--hand"]                 # 바퀴 대신 사람이 돌린다 — IMU가 멈출 때마다 한 장씩 담는다
-        if mode in ("approach", "near"):
+        if mode == "explore":
+            a += ["--rounds", "%d" % int(num(args, "rounds", 6, 1, 20))]
+        if mode in ("approach", "near", "explore"):
             a += ["--vx", "%d" % int(num(args, "vx", 200, 60, 255)),
                   "--vsecs", "%.2f" % num(args, "vsecs", 1.0, 0.2, 2.0)]
         if mode == "go":
@@ -606,6 +608,7 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button title="찾아 둔 토마토 쪽으로 차체를 돌려 앞 카메라 정면에 둔다(지도 방위 → 검출로 다듬기)" onclick="run('space',spArgs({mode:'face'}))">🍅 정면 보기</button>
       <button title="토마토 앞(Astra 60cm 사각)에서 손목 D405 거리로 조금씩 다가가 45cm에 선다. 대기 자세에서만(D405가 주행 정면을 볼 때)" onclick="run('space',spArgs({mode:'near'}))">🍅 손목 근접</button>
       <button title="팔을 잡기 시작 자세로 두고 손목 D405로 열매를 보며 옆걸음·전진으로 17cm에 선다 — 다음은 줄기 찍기 → 잡으러 간다" onclick="run('space',spArgs({mode:'reach'}))">🍅 잡기 거리까지</button>
+      <button class="go" title="제자리 한 바퀴 스캔 → 토마토 찾기 → 지도의 경계(빈 곳과 모르는 곳 사이)로 가기를 되풀이한다(최대 6자리). 쓰러진 나무 열매도 센다. 회전판은 정면, 둘레 0.45m는 비워 둔다" onclick="run('space',spArgs({mode:'explore'}))">🧭 방 둘러보기</button>
       <button onclick="if(confirm('지도를 지울까? 다음 장의 자리가 원점이 된다'))run('space',{mode:'clear'})">지도 지움</button>
     </div>
     <div class="row" style="margin-top:6px">

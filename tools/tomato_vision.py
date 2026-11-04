@@ -180,6 +180,9 @@ def main() -> None:
             # 위치는 매 프레임 갱신(상태 파일), 개수는 변할 때만 로그
             _atomic_write(STATUS_PATH, json.dumps(
                 {"air": count, "fallen": len(ground), "positions": positions,
+                 # 바닥 줄 아래 검출 — 무대 카메라 시절엔 낙과였지만 차체 앞 Astra(렌즈 15cm)에선 쓰러진 나무의
+                 # 열매다. positions(공중)는 옛 소비자(음성·harvest)가 그대로 쓰게 두고 따로 싣는다.
+                 "ground": [[cx, cy] for *_, cx, cy in ground],
                  # 읽는 쪽(space_map 토마토 찾기)이 "멈춘 뒤에 찍힌 판정"인지, 화면 폭이 얼마인지 알아야 한다
                  "ts": time.time(), "w": int(frame.shape[1]), "h": int(frame.shape[0])}).encode("utf-8"))
             if count != last_count:
