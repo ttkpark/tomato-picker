@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -360,6 +361,25 @@ def look_around(pans=(8.0, 20.0, -20.0, -35.0, 35.0)):
     return False
 
 
+GRIP_SHUT, GRIP_HELD = 4.0, 5.9      # stem_grasp와 같은 판정 — 닫으라 했는데 5.9 위에서 멈추면 무언가 물었다
+
+
+def straight_grasp(z, stop_z):
+    """맨 줄기: 화면 추적 없이 **곧게 나아가 닫는다**. 겨냥은 LOCK_Z(128mm)에서 끝났고 마지막 구간은 예측으로 왔다.
+    ⚠ stem_grasp의 조각 추적은 가는 줄기에서 배경(270mm)으로 미끄러져 어깨를 18번 흔들다 토마토를 쳐 떨어뜨렸다
+    (11/04 맨 줄기, 메모리 thin-target-tracking-fails의 재발). 나아갈 거리는 stem_grasp --trust-first-z와 같은 z − stop_z."""
+    adv = float(np.clip(z - stop_z, 0.0, 45.0))
+    print("  곧게 %.0fmm 나아가 닫는다(추적 없음, 기준 깊이 %.0fmm)" % (adv, z))
+    if adv >= 1.0:
+        run("tool_jog.py", "--horiz", "%.1f" % adv)
+    _, out = run("tool_jog.py", "--grip", "%.0f" % GRIP_SHUT)
+    m = re.search(r"집게 \d+ → 지금 (-?[\d.]+)", out)
+    g = float(m.group(1)) if m else -1.0
+    held = g >= GRIP_HELD
+    print("   집게 %.1f (빈손이면 <%.1f) → %s" % (g, GRIP_HELD, "**물었다**" if held else "빈손"))
+    return held
+
+
 def start_tcp_z(start):
     """시작 자세의 TCP 높이(mm, FK) — 못 내면 None."""
     try:
@@ -435,6 +455,17 @@ def selftest():
         p = predict_after_forward((aim(128)[0] + 10, aim(128)[1], 128.0), 25.0, aim)
         assert abs(p[0] - (aim(108)[0] + 10 * 128 / 108)) < 1e-6, p
         assert 120.0 < (start_tcp_z(START) or 0.0) < 220.0      # 시작 자세 높이(실기 FK 168mm 근처)
+        # 곧게 잡기: 나아갈 거리·집게 판정
+        global run
+        real_run, calls = run, []
+        run = lambda name, *a: (calls.append((name,) + a), (0, "집게 4 → 지금 6.4" if "--grip" in a else ""))[1]  # noqa: E731
+        try:
+            assert straight_grasp(105.0, 75.0) and calls[0] == ("tool_jog.py", "--horiz", "30.0"), calls
+            calls.clear()
+            run = lambda name, *a: (calls.append((name,) + a), (0, "집게 4 → 지금 4.8"))[1]                     # noqa: E731
+            assert not straight_grasp(200.0, 75.0) and calls[0][2] == "45.0", calls   # 45mm 상한
+        finally:
+            run = real_run
     finally:
         band, time.time, time.sleep = real_band, real_time, real_sleep
     print("selftest OK")
@@ -489,11 +520,14 @@ def main():
                    "by": "grasp_repeat"}, open(CLICK, "w"), indent=1)
         snap("%02d_start" % n)
         t0 = time.time()
-        rc, out = run("stem_grasp.py", "--aim", "click", "--steps", "16", "--adv", "%.0f" % a.adv,
-                      "--max-turn", "2", "--gain", "0.35", "--tol", "12", "--rejacobian", "6",
-                      "--stop-z", "%.0f" % a.stop_z, "--max-adv", "0", "--max-dz", "25",
-                      "--skip-aim-px", "50", "--trust-first-z", "--hold-z")
-        held = rc == 0 and "**물었다**" in out
+        if REF == "stem":
+            held = straight_grasp(z, a.stop_z)
+        else:
+            rc, out = run("stem_grasp.py", "--aim", "click", "--steps", "16", "--adv", "%.0f" % a.adv,
+                          "--max-turn", "2", "--gain", "0.35", "--tol", "12", "--rejacobian", "6",
+                          "--stop-z", "%.0f" % a.stop_z, "--max-adv", "0", "--max-dz", "25",
+                          "--skip-aim-px", "50", "--trust-first-z", "--hold-z")
+            held = rc == 0 and "**물었다**" in out
         secs = time.time() - t0
         snap("%02d_%s" % (n, "held" if held else "miss"))
         held_n += held
