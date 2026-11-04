@@ -360,6 +360,36 @@ def look_around(pans=(8.0, 20.0, -20.0, -35.0, 35.0)):
     return False
 
 
+def start_tcp_z(start):
+    """시작 자세의 TCP 높이(mm, FK) — 못 내면 None."""
+    try:
+        sys.path.insert(0, os.path.join(HERE, "..", "..", "src"))
+        from tomato_picker.hardware import kinematics as kin
+        j = [float(x) for x in start.split(",")]
+        return kin.forward(dict(zip(kin.JOINTS, j)), kin.ArmGeometry()).z      # arm_calib.Calib.geom과 같다
+    except Exception as exc:                               # noqa: BLE001
+        print("  시작 높이를 못 냈다(%s) — 물러나기 검사 없이 간다" % exc)
+        return None
+
+
+def clear_above(start_z, margin=15.0, back_mm=40.0):
+    """팔이 시작 자세보다 margin 넘게 높으면 **뒤로 물러난 뒤 높이부터 내린다** — 자세 이동(arm_stage)은 관절을
+    하나씩 돌려 손끝이 호를 그리며 내려온다. 11/04 맨 줄기 빈손 회차가 팔을 고리 위 ≈40mm(z 210 vs 168)에 둔 채
+    끝났고, 다음 시작 자세로 내려오다 고리를 쳐 화분째 넘어뜨렸다. 고리 허브는 줄기 바로 위라 뒤로 빠지면 비어 있다."""
+    if start_z is None:
+        return
+    try:
+        z, _ = gm.pose()
+    except Exception as exc:                               # noqa: BLE001
+        print("  지금 높이를 못 읽었다(%s)" % exc)
+        return
+    if z - start_z <= margin:
+        return
+    print("  팔이 시작보다 %.0fmm 높다 — 뒤로 %.0fmm 물러난 뒤 내린다" % (z - start_z, back_mm))
+    run("tool_jog.py", "--horiz", "%.1f" % -back_mm)
+    run("tool_jog.py", "--dz", "%.1f" % max(-60.0, start_z - z))
+
+
 def snap(tag):
     try:
         shutil.copy(gm.COLOR, os.path.join(OUT, "%s_%s.jpg" % (time.strftime("%m%d-%H%M%S"), tag)))
@@ -404,6 +434,7 @@ def selftest():
         assert abs(p[2] - 108) < 1e-6 and abs(p[0] - aim(108)[0]) < 1e-6 and abs(p[1] - aim(108)[1]) < 1e-6, p
         p = predict_after_forward((aim(128)[0] + 10, aim(128)[1], 128.0), 25.0, aim)
         assert abs(p[0] - (aim(108)[0] + 10 * 128 / 108)) < 1e-6, p
+        assert 120.0 < (start_tcp_z(START) or 0.0) < 220.0      # 시작 자세 높이(실기 FK 168mm 근처)
     finally:
         band, time.time, time.sleep = real_band, real_time, real_sleep
     print("selftest OK")
@@ -433,8 +464,10 @@ def main():
     run("tool_jog.py", "--grip", "78", "--left", "12")
     run("tool_jog.py", "--horiz", "-35")
     held_n, last_held, last_band = 0, False, None
+    start_z = start_tcp_z(a.start)
     for n in range(1, a.trials + 1):
         print("\n=== %d/%d ===" % (n, a.trials))
+        clear_above(start_z)
         rc, _ = run("arm_stage.py", "--target=" + a.start)
         if rc:
             print("시작 자세로 못 갔다 — 멈춘다")
