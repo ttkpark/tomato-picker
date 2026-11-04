@@ -386,7 +386,7 @@ def clear_above(start_z, margin=15.0, back_mm=40.0):
     if z - start_z <= margin:
         return
     print("  팔이 시작보다 %.0fmm 높다 — 뒤로 %.0fmm 물러난 뒤 내린다" % (z - start_z, back_mm))
-    run("tool_jog.py", "--horiz", "%.1f" % -back_mm, "--dz", "6")
+    run("tool_jog.py", "--horiz", "%.1f" % -back_mm, "--dz", "10")
     run("tool_jog.py", "--dz", "%.1f" % max(-60.0, start_z - z))
 
 
@@ -462,7 +462,7 @@ def main():
     a.trials = max(1, a.trials)
     # 물고 있을 수도 있다 — 놓지 않고 시작 자세로 가면 토마토를 끌고 간다
     run("tool_jog.py", "--grip", "78", "--left", "12")
-    run("tool_jog.py", "--horiz", "-35", "--dz", "6")
+    run("tool_jog.py", "--horiz", "-35", "--dz", "10")
     held_n, last_held, last_band = 0, False, None
     start_z = start_tcp_z(a.start)
     for n in range(1, a.trials + 1):
@@ -511,9 +511,9 @@ def main():
             run("tool_jog.py", "--grip", "78", "--left", "12")
         else:
             run("tool_jog.py", "--grip", "78")
-        # ⚠ 빠질 때 6mm 위로 함께 — tool_jog은 처짐을 끝에서만 갚아, 빠지는 도중 손끝이 4~6mm 내려앉았다
+        # ⚠ 빠질 때 10mm 위로 함께(6이면 도중 아직 2.5mm 내려앉았다) — tool_jog은 처짐을 끝에서만 갚아, 빠지는 도중 손끝이 4~6mm 내려앉았다
         #   (11/04 176.6→170.6→174.0). 줄기 옆에서 주저앉으며 나무를 넘어뜨릴 뻔했다(사람 관찰).
-        run("tool_jog.py", "--horiz", "-35", "--dz", "6")
+        run("tool_jog.py", "--horiz", "-35", "--dz", "10")
         # 놓은 뒤 확인 — 11/03 9회째 놓다가 토마토가 고리에서 떨어졌는데 사진이 없어 원인을 못 봤다
         if held and wait_band(need_gone=False, timeout=5.0, steady_s=1.0) is None:
             print("  ⚠ 놓은 뒤 띠가 안 보인다 — 토마토가 떨어졌을 수 있다")
