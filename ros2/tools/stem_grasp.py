@@ -1143,6 +1143,7 @@ def main() -> int:
             print("❌ 겨눌 것을 못 찾았다 — 열매가 보이는 자세에서 시작하라.")
             return 1
         u, v, z, a, _clip = s
+        held_z = None            # --hold-z: 부르는 쪽이 준 표적 깊이 — 나아갈 거리 계획까지 이걸 쓴다
         if args.hold_z and args.aim == "click":
             # ⚠ 가는 줄기는 클릭 화소가 조금만 벗어나도 뒤 배경 깊이를 잰다(11/04 맨 줄기 4회째 237mm → 엉뚱한 맞춤).
             #   부르는 쪽(grasp_repeat)이 여러 프레임 중앙값으로 낸 z를 클릭 파일에 실어 주면 그걸 쓴다.
@@ -1153,7 +1154,7 @@ def main() -> int:
             if 60.0 < cz < 400.0:
                 if abs(cz - z) > 5.0:
                     print("  클릭 깊이 %.0fmm를 쓴다(이 화소에서 잰 값 %.0fmm)" % (cz, z))
-                z = cz
+                z = held_z = cz
         tu, tv = aim_uv(z)
         print("지금: %s 화면(%.0f,%.0f) 깊이 %.0fmm 넓이%d  → 남은 화소 %.0f"
               % (args.aim, u, v, z, a, math.hypot(u - tu, v - tv)))
@@ -1533,9 +1534,12 @@ def main() -> int:
                 io.hold_close()
                 return 0
             if args.trust_first_z and locked and plan[0] is None and 0 < z < args.near_max:
-                plan[0] = max(0.0, z - args.stop_z)
-                planz[0] = float(z)
-                print("계획: %.0fmm 나아가면 무는 거리다 (지금 %.0fmm)" % (plan[0], z))
+                # ⚠ --hold-z면 준 깊이로 계획한다 — 11/04 맨 줄기: 105mm를 줬는데 첫 걸음에서 다시 잰 120mm로
+                #   계획해 45mm(=15mm 더) 나아가 토마토 안쪽 깊이 물었다(사람 관찰).
+                zp = held_z if held_z else z
+                plan[0] = max(0.0, zp - args.stop_z)
+                planz[0] = float(zp)
+                print("계획: %.0fmm 나아가면 무는 거리다 (기준 %.0fmm, 지금 잰 값 %.0fmm)" % (plan[0], zp, z))
             reached = (args.trust_first_z and plan[0] is not None
                        and gone >= plan[0] - 1.0)
             if reached:
