@@ -466,7 +466,7 @@ def build(job, args):
             a += ["--rounds", "%d" % int(num(args, "rounds", 6, 1, 20))]
             if str(args.get("avoid", "")).strip():
                 space_map.parse_avoid(str(args["avoid"]))          # 숫자 넷이 아니면 여기서 400
-                a += ["--avoid", str(args["avoid"])]
+                a += ["--avoid=" + str(args["avoid"])]     # "-3,…"를 옵션으로 읽지 않게 = 로 붙인다
         if mode in ("approach", "near", "explore"):
             a += ["--vx", "%d" % int(num(args, "vx", 200, 60, 255)),
                   "--vsecs", "%.2f" % num(args, "vsecs", 1.0, 0.2, 2.0)]
