@@ -454,7 +454,7 @@ class MotorLink:
                         self._wdt_near = _int_or(token[4:], self._wdt_near)
                     else:
                         key, eq, val = token.partition("=")
-                        if eq and key in ("estop", "rly", "lowbat", "vin", "vm", "v5", "v33"):   # STM32 v3.2
+                        if eq and key in ("estop", "rly", "lowbat", "vin", "vm", "v5", "v33", "enc"):   # STM32 v3.2 · enc=A,B,C,D(Uno v2.2는 C·D만)
                             self._fw_state[key] = val
                 self._board = "stm32" if "estop" in self._fw_state else "uno"
                 # ★ 보드 재부팅 판정 — 우리가 안 시켰는데 uptime/수신카운터가 되감겼다.

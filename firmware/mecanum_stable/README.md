@@ -46,7 +46,12 @@ F <hz>            PWM 주파수(24~1526). 소음/드라이버 튜닝용
 [`motor_link.py`](../../src/tomato_picker/hardware/motor_link.py)가 체크섬을 붙인다.
 
 응답: `ok ...`(설정계열), `nak crc`/`nak nocrc`(거부), 1초마다
-`hb <ms> rx=<수신수> bad=<거부수> v=<vx,vy,w>` 하트비트 — 이 카운터가 링크 품질 지표다.
+`hb <ms> rx=<수신수> bad=<거부수> v=<vx,vy,w> enc=<A,B,C,D>` 하트비트 — 이 카운터가 링크 품질 지표다.
+
+**엔코더(v2.2)** — 쉴드가 Uno에 물려 둔 건 M1·M2(JP1·JP2) 엔코더뿐이다(M3·M4는 NC, 회로도
+`../MecanumRobot-Arduino-Uno-master/ARDUINO_HR8833.pdf`). ENC1 B=D2 A=D3 → JP1 = PCA ch6/7 = **D(FL)**,
+ENC2 B=D4 A=D6 → JP2 = ch4/5 = **C(FR)**. PCINT2 하나로 4체배. `enc=`는 STM32와 같은 A,B,C,D 순서이고
+**A·B는 늘 0**. 부호는 `T 2 1`·`T 3 1`의 `T auto-stop enc=<1초 카운트>`가 양수가 되게 `ENC_DIR`로 맞춘다.
 
 > ⚠ **모터보드 포트는 한 프로세스만** 쓸 수 있다. 젯슨 쪽이 이제 상시 점유
 > (`exclusive=True`)하므로 `tomato-voice`(대시보드)·`base_nudge`·ROS `cmd_vel_node`를

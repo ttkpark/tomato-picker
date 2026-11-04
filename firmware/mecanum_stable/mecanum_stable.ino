@@ -26,7 +26,10 @@
 //   R <accel> <decel> 슬루 스텝(틱당 변화량 상한). 기본 6 / 12
 //   F <hz>            PWM 주파수 변경 (24~1526). 소음 튜닝용
 //   ?                 상태 1줄 출력
-// 응답: 처리 확인 "ok ...", 체크섬 오류 "nak crc", 1초 주기 "hb <ms> rx=<n> bad=<n> v=<vx,vy,w>"
+// 응답: 처리 확인 "ok ...", 체크섬 오류 "nak crc", 1초 주기 "hb <ms> rx=<n> bad=<n> v=<vx,vy,w>" enc=<A,B,C,D>
+//
+// v2.2 — 엔코더. 쉴드가 Uno에 물려 둔 앞바퀴 둘(C=FR, D=FL)을 4체배로 센다(뒷바퀴 A·B는 쉴드 NC라 0).
+//   T i 1 의 자동정지 줄이 "T auto-stop enc=<그 1초 동안 카운트>"를 싣는다.
 //
 // v2.1 — "USB 전원은 멀쩡한데 보드만 재부팅한다"를 규명하기 위한 계측 + 그 원인 차단.
 //   2026-08-11 실측: 2분 사이 보드가 28번 재부팅했는데 dmesg에 USB 이벤트가 **하나도**
@@ -169,6 +172,37 @@ uint16_t rxOk = 0, rxBad = 0;
 bool strictCrc = false;   // 올바른 체크섬을 한 번 받으면 true → 이후 무체크섬 V 거부
 
 bool testing = false;     // T 캘리브레이션 진행 중(슬루/데드맨 우회)
+uint8_t testWheel = 0;
+int32_t testEnc0 = 0;
+
+// ---------------- 엔코더 (v2.2) ----------------
+// 쉴드는 M1(JP1)·M2(JP2) 엔코더만 Uno에 물려 있다(M3·M4는 NC — 회로도 ARDUINO_HR8833.pdf):
+//   ENC1 B=D2 A=D3 → JP1 = M1 = PCA ch6/7 = 모터 D(FL)
+//   ENC2 B=D4 A=D6 → JP2 = M2 = PCA ch4/5 = 모터 C(FR)
+// 넷 다 PORTD라 PCINT2 하나로 4체배 쿼드러처를 센다. 모터 A·B(뒷바퀴)는 읽을 수 없어 0으로 보고한다.
+// 부호: 바퀴 전진 = + 가 되게 ENC_DIR을 맞춘다(T 3 1 / T 2 1 의 "T auto-stop enc="가 음수면 뒤집기).
+const int8_t ENC_DIR[4] = {1, 1, 1, 1};
+const int8_t QD[16] = {0,1,-1,0, -1,0,0,1, 1,0,0,-1, 0,-1,1,0};   // [이전(A,B)<<2 | 지금(A,B)]
+volatile int32_t encRaw[2];       // 0=D(FL) 1=C(FR)
+volatile uint8_t encPins;
+ISR(PCINT2_vect){
+  uint8_t p = PIND, q = encPins; encPins = p;
+  encRaw[0] += QD[(q>>2&2 | q>>2&1) << 2 | (p>>2&2 | p>>2&1)];   // A=PD3 B=PD2
+  encRaw[1] += QD[(q>>5&2 | q>>4&1) << 2 | (p>>5&2 | p>>4&1)];   // A=PD6 B=PD4
+}
+void encInit(){
+  DDRD &= ~(_BV(2)|_BV(3)|_BV(4)|_BV(6));
+  PORTD |= _BV(2)|_BV(3)|_BV(4)|_BV(6);   // 내부 풀업 — 모터 쪽 10k가 이미 있지만 선이 빠졌을 때 떠다니지 않게
+  encPins = PIND;
+  PCMSK2 = _BV(PCINT18)|_BV(PCINT19)|_BV(PCINT20)|_BV(PCINT22);
+  PCIFR = _BV(PCIF2); PCICR |= _BV(PCIE2);
+}
+// 바퀴 i(0=A..3=D)의 누적 카운트, 전진 = +. 읽을 수 없는 A·B는 0.
+int32_t encGet(uint8_t i){
+  if(i < 2) return 0;
+  uint8_t s = SREG; cli(); int32_t v = encRaw[i == 3 ? 0 : 1]; SREG = s;
+  return v * POL[i] * ENC_DIR[i];
+}
 
 // 한 바퀴에 부호있는 속도 s(-255..255) 인가. wheel=0..3
 void driveWheel(uint8_t w, int s){
@@ -350,6 +384,7 @@ void handleLine(char* line){
       driveWheel(i, d>=0 ? 200 : -200);
       testing = true;
       testUntil = millis()+1000;
+      testWheel = i; testEnc0 = encGet(i);
       Serial.print(F("ok T ")); Serial.print(i); Serial.print(' '); Serial.println(d);
     }
   } else if(c=='P'){
@@ -423,11 +458,12 @@ void setup(){
   }
   faboPWM.set_hz(PWM_HZ_DEFAULT); // ★ 50 → 1500Hz. 저주파 "우우웅" 제거
   hardStop();
+  encInit();
   lastCmd = lastTick = millis();
   // 배너보다 **먼저** 리셋 원인을 뱉는다 — 젯슨은 배너를 보고 "재부팅했다"고
   // 판정하므로, 그 시점엔 원인 줄이 이미 도착해 있어야 함께 로그에 남는다.
   printBootReport();
-  Serial.println(F("mecanum_stable v2.1 ready. proto: V vx vy w | S | T i d | P n | L .. | R a d | F hz | ? (+*CRC)"));
+  Serial.println(F("mecanum_stable v2.2 ready. proto: V vx vy w | S | T i d | P n | L .. | R a d | F hz | ? (+*CRC)"));
   armWatchdog();   // HW 워치독 250ms — 인터럽트 우선(원인을 남기고 리셋)
 }
 
@@ -451,7 +487,9 @@ void loop(){
   }
 
   // T 테스트 자동정지
-  if(testing && (long)(millis()-testUntil) >= 0){ hardStop(); Serial.println(F("T auto-stop")); }
+  if(testing && (long)(millis()-testUntil) >= 0){
+    hardStop(); Serial.print(F("T auto-stop enc=")); Serial.println(encGet(testWheel) - testEnc0);
+  }
 
   unsigned long now = millis();
 
@@ -488,7 +526,10 @@ void loop(){
     Serial.print(F(" i2c=")); Serial.print(i2cErr);
     Serial.print(F(" wdt=")); Serial.print(wdtNear);
     Serial.print(F(" v=")); Serial.print(curVx); Serial.print(',');
-    Serial.print(curVy); Serial.print(','); Serial.println(curW);
+    Serial.print(curVy); Serial.print(','); Serial.print(curW);
+    Serial.print(F(" enc="));   // STM32와 같은 순서 A,B,C,D — Uno는 A·B가 늘 0(쉴드 NC)
+    for(uint8_t i = 0; i < 4; i++){ Serial.print(encGet(i)); if(i < 3) Serial.print(','); }
+    Serial.println();
   }
 
   lastPhase = PH_IDLE;   // 한 바퀴를 무사히 돌았다 — 여기서 죽으면 last=idle
