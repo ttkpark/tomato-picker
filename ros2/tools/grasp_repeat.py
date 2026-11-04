@@ -66,7 +66,8 @@ def run(name, *a):
     return p.returncode, "".join(out)
 
 
-REF = "auto"      # band | stem | auto(띠 있으면 띠, 없으면 토마토 꼭대기 기준)
+REF = "auto"      # band | stem | model | auto(띠 있으면 띠, 없으면 토마토 꼭대기 기준)
+STEM_DET = os.path.expanduser("~/stem_det.json")   # {"model": 가중치 경로, "grip_ratio": 상자 안 무는 높이, "conf": 문턱}
 
 
 def frame():
@@ -125,11 +126,50 @@ def stem_u(bgr, dep, top, fy, lo_mm=4.0, hi_mm=13.0, win_mm=20.0):
     return a + float(np.median(np.nonzero(m)[1]))
 
 
+_det = {}
+
+
+def model_ref(bgr, dep):
+    """학습한 줄기 검출기(stem_autolabel.py → YOLO)로 줄기 상자를 찾아 무는 자리 (u, v, z). 못 찾으면 None.
+    u = 상자 가운데, v = 상자 위 + grip_ratio × 높이(라벨 만들 때 띠 가운데가 있던 비율),
+    z = 상자 가운데 세로줄(폭 1/3)의 유효 깊이 중앙값 — 가는 줄기라 상자 전체 중앙값은 배경이 섞인다."""
+    if "m" not in _det:
+        try:
+            cfg = json.load(open(STEM_DET))
+            from ultralytics import YOLO
+            _det.update(m=YOLO(os.path.expanduser(cfg["model"])), r=float(cfg.get("grip_ratio", 0.5)),
+                        c=float(cfg.get("conf", 0.4)))
+        except Exception as exc:                           # noqa: BLE001
+            print("  줄기 검출기를 못 불렀다(%s)" % exc)
+            _det["m"] = None
+    if _det["m"] is None:
+        return None
+    res = _det["m"].predict(bgr, conf=_det["c"], verbose=False)[0]
+    if res.boxes is None or len(res.boxes) == 0:
+        return None
+    i = int(res.boxes.conf.argmax())
+    x0, y0, x1, y1 = (float(t) for t in res.boxes.xyxy[i].tolist())
+    return box_to_ref((x0, y0, x1, y1), dep, _det["r"])
+
+
+def box_to_ref(box, dep, ratio):
+    x0, y0, x1, y1 = box
+    u, v = 0.5 * (x0 + x1), y0 + ratio * (y1 - y0)
+    w3 = max(2.0, (x1 - x0) / 6.0)
+    d = dep[int(max(0, y0)):int(y1) + 1, int(max(0, u - w3)):int(u + w3) + 1]
+    d = d[d > 0]
+    if d.size < 20:
+        return None
+    return u, v, float(np.median(d))
+
+
 def band():
-    """지금 프레임의 기준점 (u, v, z) 또는 None — 띠, 또는(REF) 맨 줄기."""
+    """지금 프레임의 기준점 (u, v, z) 또는 None — 띠, 또는(REF) 맨 줄기/학습 검출기."""
     f = frame()
     if f is None:
         return None
+    if REF == "model":
+        return model_ref(*f)
     b = gm.band_uvz(*f) if REF != "stem" else None
     if b is None and REF != "band":
         b = stem_ref(*f)
@@ -456,6 +496,11 @@ def selftest():
         p = predict_after_forward((aim(128)[0] + 10, aim(128)[1], 128.0), 25.0, aim)
         assert abs(p[0] - (aim(108)[0] + 10 * 128 / 108)) < 1e-6, p
         assert 120.0 < (start_tcp_z(START) or 0.0) < 220.0      # 시작 자세 높이(실기 FK 168mm 근처)
+        # 검출 상자 → 무는 자리: 가운데 세로줄 깊이만(배경 300mm는 상자 가장자리에)
+        dep = np.full((480, 848), 300.0)
+        dep[100:300, 415:426] = 110.0
+        r = box_to_ref((400.0, 100.0, 440.0, 300.0), dep, 0.5)
+        assert r == (420.0, 200.0, 110.0), r
         # 곧게 잡기: 나아갈 거리·집게 판정
         global run
         real_run, calls = run, []
@@ -487,8 +532,9 @@ def main():
     ap.add_argument("--hold", type=float, default=3.0, help="물었으면 이만큼 들고 있다가 놓는다(초)")
     ap.add_argument("--wait", type=float, default=0.0, help="띠를 기다리는 최대 시간(초, 0=끝없이 — 사람이 거는 데 몇 분 걸린다)")
     ap.add_argument("--no-rehang", action="store_true", help="띠가 사라졌다 다시 보이길 안 기다린다(사람 없이 반복)")
-    ap.add_argument("--ref", choices=("auto", "band", "stem"), default="auto",
-                    help="기준점: band=노란 띠만, stem=토마토 꼭대기(맨 줄기, --calib-stem 먼저), auto=띠 없으면 stem")
+    ap.add_argument("--ref", choices=("auto", "band", "stem", "model"), default="auto",
+                    help="기준점: band=노란 띠만, stem=토마토 꼭대기(맨 줄기, --calib-stem 먼저), "
+                         "model=학습한 줄기 검출기(~/stem_det.json), auto=띠 없으면 stem")
     a = ap.parse_args()
     REF = a.ref
     os.makedirs(OUT, exist_ok=True)
@@ -522,7 +568,7 @@ def main():
                    "by": "grasp_repeat"}, open(CLICK, "w"), indent=1)
         snap("%02d_start" % n)
         t0 = time.time()
-        if REF == "stem":
+        if REF in ("stem", "model"):        # 가는 맨 줄기 — stem_grasp 조각 추적은 배경으로 미끄러진다
             held, g = straight_grasp(z, a.stop_z)
         else:
             rc, out = run("stem_grasp.py", "--aim", "click", "--steps", "16", "--adv", "%.0f" % a.adv,

@@ -42,3 +42,6 @@ autopilot/secrets/
 
 # 워드 원본은 수백 MB라 GitHub 한도(100MB)를 넘는다 — 공유는 PDF로 (2026-09-26)
 *.docx
+
+# 줄기 검출 학습 데이터·결과(사진) — 저장소에 안 넣는다, stem_autolabel.py로 다시 만든다
+data/

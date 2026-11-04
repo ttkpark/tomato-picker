@@ -272,8 +272,8 @@ def build(job, args):
         if args.get("no_rehang"):
             a += ["--no-rehang"]
         ref = str(args.get("ref", "auto"))
-        if ref not in ("auto", "band", "stem"):
-            raise ValueError("ref는 auto/band/stem")
+        if ref not in ("auto", "band", "stem", "model"):
+            raise ValueError("ref는 auto/band/stem/model")
         a += ["--ref", ref]
         return a
     if job == "stem_calib":
