@@ -537,6 +537,8 @@ def main():
     ap.add_argument("--hold", type=float, default=3.0, help="물었으면 이만큼 들고 있다가 놓는다(초)")
     ap.add_argument("--wait", type=float, default=0.0, help="띠를 기다리는 최대 시간(초, 0=끝없이 — 사람이 거는 데 몇 분 걸린다)")
     ap.add_argument("--no-rehang", action="store_true", help="띠가 사라졌다 다시 보이길 안 기다린다(사람 없이 반복)")
+    ap.add_argument("--move-each", action="store_true",
+                    help="체크포인트 규약: 매 회 사람이 토마토를 옮길 때까지 기다린다(띠가 가려졌다 다시 보이거나 옮겨지면 시작)")
     ap.add_argument("--ref", choices=("auto", "band", "stem", "model"), default="auto",
                     help="기준점: band=노란 띠만, stem=토마토 꼭대기(맨 줄기, --calib-stem 먼저), "
                          "model=학습한 줄기 검출기(~/stem_det.json), auto=띠 없으면 stem")
@@ -559,7 +561,10 @@ def main():
             return 1
         look_around()
         # 물었던 다음 회만 '뗐다 다시 걸기'를 기다린다 — 빗나간 뒤엔 그대로 걸려 있으니 곧장 다시 문다
-        b = wait_band(need_gone=(last_held and not a.no_rehang), timeout=a.wait, last=last_band)
+        need = n > 1 and a.move_each or (last_held and not a.no_rehang)
+        if need:
+            print("  주사위대로 토마토를 옮겨 주세요(%d회)" % n)
+        b = wait_band(need_gone=need, timeout=a.wait, last=last_band)
         if b is None:
             print("띠가 %.0f초 안에 가만히 보이지 않았다 — 멈춘다" % a.wait)
             break
@@ -595,7 +600,7 @@ def main():
         print("  → %s (%.0f초) · 누적 %d/%d" % ("물었다" if held else "못 물었다", secs, held_n, n))
         with open(os.path.join(OUT, "log.jsonl"), "a") as f:
             f.write(json.dumps({"when": time.strftime("%Y-%m-%d %H:%M:%S"), "n": n, "held": held,
-                                "secs": round(secs, 1), "band": [round(u), round(v), round(z)]}) + "\n")
+                                "secs": round(secs, 1), "grip": round(g, 1), "band": [round(u), round(v), round(z)]}) + "\n")
         if held:
             time.sleep(a.hold)
         # 놓기 — 조작대 [놓기]와 같은 순서(열기 → 고정 턱 떼기 → 뒤로).

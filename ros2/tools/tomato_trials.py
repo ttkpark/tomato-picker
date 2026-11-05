@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """구석 토마토 접근 실험 — 자리를 바꿔 가며 N번 손목 근접을 시키고, 회차마다 숫자와 사진을 남긴다.
     ~/lerobot/.venv/bin/python ros2/tools/tomato_trials.py [--near-mm 450]
-성공 = near가 정상으로 끝나고, 끝난 뒤 다시 잰 손목 거리 250mm ~ near-mm+40 · 가로 각 ≤ 8°(250mm 아래면 토마토가 화면 밑으로 나간다).
+성공 = near가 정상으로 끝나고, 끝난 뒤 다시 잰 손목 거리 near-mm±50 · 가로 각 ≤ 15°(docs/체크포인트-2026-11.md 0차 기준).
 결과 = ~/tomato_trials/<시각>/ (trials.json + 회차별 시작·끝 사진).
 ⚠ 뒤는 카메라가 없다 — 물러나는 자리는 사람이 비워 둔다. 대기 자세(회전판 기본 자리)에서 돌린다."""
 from __future__ import annotations
@@ -22,7 +22,7 @@ from base_nudge import open_link  # noqa: E402
 # (물러날 mm, 그 뒤 돌 각도 °, +=왼쪽) — 회마다 물러나서 시작한다(제자리면 이미 가까워 접근이 아니다)
 STARTS = [(400, 0), (500, 20), (600, -20)]
 SHOTS = ("d405_color.jpg", "d405_depth.jpg", "tomato_raw.jpg", "astra_depth.jpg")
-OK_MIN_MM, OK_EXTRA_MM, OK_ANG = 250.0, 40.0, 8.0
+OK_TOL_MM, OK_ANG = 50.0, 15.0
 
 
 def snap(out: str, tag: str) -> None:
@@ -52,7 +52,7 @@ def reposition(back: float, deg: float, w: int) -> dict:
     if link is None:
         raise RuntimeError("주행 보드를 못 열었다")
     try:
-        r = sm.step_mm(link, -back, 150)
+        r = sm.step_mm(link, -back, 220)
         print("  %.0fmm 물러남 → %s %d/%d" % (back, r["state"], r["got"], r["target"]))
         got = sm.turn(link, int(math.copysign(w, deg)), 0.8, abs(deg))
         print("  %+.0f° 돌기 → IMU %+.1f°" % (deg, got))
@@ -107,7 +107,7 @@ def main() -> int:
             time.sleep(1.0)
         end = measure()
         snap(out, "%d-end" % n)
-        ok = rc == 0 and OK_MIN_MM <= end[0] <= a.near_mm + OK_EXTRA_MM and abs(end[1]) <= OK_ANG
+        ok = rc == 0 and abs(end[0] - a.near_mm) <= OK_TOL_MM and abs(end[1]) <= OK_ANG
         row.update(end=end, rc=rc, tries=tries, ok=ok, secs=round(time.time() - t0, 1))
         rows.append(row)
         print("  끝: 거리 %.0fmm · 각 %+.1f° · %d초 · 시도 %d번 → %s" % (

@@ -1515,6 +1515,8 @@ NEAR_TURN_DEG = 6.0            # 토마토가 손목 화면 가운데에서 이�
 
 WRIST_TILT_RAD = 0.278         # 대기 자세 손목 D405가 수평에서 아래로 숙인 각(11/05: 같은 토마토 v225@850mm·v373@350mm에서 풂)
 TOMATO_BELOW_MM = (80.0, 320.0)  # 대기 자세: 토마토는 손목 D405보다 이만큼 아래다(실측 ≈206). 위 = 옷걸이 조끼(≈-30), 아래 = 바닥의 빨간 통(≈415)
+NEAR_TOL_MM = 50.0             # 판정 450±50(체크포인트 0차) — 이보다 들어가면 그만큼 물러난다. 돌면 회전 중심이 뒤라 거리가 준다(432→359mm)
+NEAR_TRUST_MM = 500.0          # D405 깊이를 믿는 거리 — 이보다 멀면 여기 안쪽까지만 먼저 가서 다시 잰다
 NEAR_STEP_MAX_MM = 250.0       # 한 걸음 상한 — D405는 먼 깊이가 부풀고(850mm 읽고 440mm 가면 357mm) 차체는 440mm에 12° 돈다. 가서 다시 잰다
 PICK_WIN_PX = 120             # 직전 자리에서 이만큼 안이면 같은 열매로 본다
 
@@ -1608,8 +1610,15 @@ def wrist_front_mm(v) -> float:
 def step_mm(link, mm: float, vx: int) -> dict:
     """앞바퀴 엔코더로 mm만큼 전진(+)/후진(−). 보드가 세고 선다(펌웨어 M). 듀티 2600에서 800카운트 목표에 144~161mm(11/05 실기)."""
     link.send_raw("K %d %d 0 0 0" % (MOVE_SLOW, MOVE_MIN))
-    ticks = max(MOVE_MIN_TICKS, int(abs(mm) / MM_PER_COUNT))
-    return link.drive_ticks(ticks, int(math.copysign(vx, mm)), 0, 0, timeout=8.0)
+    target = left = max(MOVE_MIN_TICKS, int(abs(mm) / MM_PER_COUNT))
+    v = abs(vx)
+    while True:
+        r = link.drive_ticks(left, int(math.copysign(v, mm)), 0, 0, timeout=8.0)
+        left -= r["got"]
+        # 정지마찰 문턱은 시간이 지나면 오른다(11/05 오전 150 → 오후 255만 간다). 앞만 키운다 — 뒤는 카메라가 없어 걸림을 못 가린다
+        if r["state"] != "stall" or mm < 0 or v >= 255 or left < MOVE_MIN_TICKS:
+            return dict(r, got=target - left, target=target)
+        v = min(255, v + 50)
 
 
 def near_cmd(a, m) -> int:
@@ -1641,6 +1650,11 @@ def near_cmd(a, m) -> int:
                 want = after_turn_u(v, ang, turn(link, int(math.copysign(a.w, ang)), a.wsecs, abs(ang)))
                 time.sleep(TURN_SETTLE_S)
                 continue
+            if mm == mm and mm < a.near_mm - NEAR_TOL_MM:
+                r = step_mm(link, mm - a.near_mm, vx)     # 뒤는 방금 지나온 길이다
+                print("  너무 들어갔다 %.0fmm — 엔코더 후진 %s %d/%d" % (mm, r["state"], r["got"], r["target"]))
+                time.sleep(TURN_SETTLE_S)
+                continue
             if mm == mm and mm <= a.near_mm:
                 print("✅ 손목 D405에서 토마토 %.0fmm — 근접 끝" % mm)
                 return 0
@@ -1650,10 +1664,10 @@ def near_cmd(a, m) -> int:
                 print("  토마토 거리 ?(D405 50cm 너머) — 앞 아래 %.0fmm 비었으니 %.0fmm" % (front, NEAR_BLIND_MM))
                 r = step_mm(link, NEAR_BLIND_MM, vx)
             else:
-                r = step_mm(link, min(mm - a.near_mm, NEAR_STEP_MAX_MM), vx)
+                goal = NEAR_TRUST_MM - NEAR_TOL_MM / 2 if mm > NEAR_TRUST_MM else a.near_mm
+                r = step_mm(link, min(mm - goal, NEAR_STEP_MAX_MM), vx)
             print("  엔코더 이동 %s %d/%d" % (r["state"], r["got"], r["target"]))
-            if r["state"] == "stall":          # 정지마찰 — 같은 지령만 되풀이하지 않는다(11/05: 200·1.3초를 일곱 번 내도 0mm)
-                vx = min(255, vx + 30)
+            time.sleep(TURN_SETTLE_S)          # 서고 난 새 장을 본다 — 곧바로 재면 441, 가만히 재면 397이었다(11/05)
         print("⛔ 열 번 다가가도 %.0fmm에 못 닿았다" % a.near_mm)
         return 1
     finally:
@@ -1710,14 +1724,10 @@ def reach_cmd(a, m) -> int:
                 print("✅ 열매 %.0fmm — 한 걸음(%.0fmm)이 남은 %.0fmm보다 커서 여기서 멈춘다(나머지는 팔이)" % (
                     mm, last - mm, mm - a.reach_mm))
                 return 0
-            secs = a.vsecs if (last is None or mm != mm or last - mm > 10) else a.vsecs + 0.3
-            # ⚠ 255에선 1초가 10cm를 넘는다 — 11/02 첫 시도: 265→145mm(고리 안까지) 넘쳤다. 가까우면 0.5초
-            #   0.5초도 354→170mm(18cm)로 넘쳤다 — 걸음 크기가 정지마찰에 따라 들쭉날쭉하다. 가까우면 실측 있는 200·0.8초
-            #   (7~12cm/1초)로. 근본은 엔코더 위치 제어 보드(docs/stm32-자세보드-목표.md).
-            if mm != mm or mm - a.reach_mm > 250:
-                drive(link, REACH_VX, 0, 0, secs)
-            else:
-                drive(link, 200, 0, 0, 0.8)
+            # 엔코더 걸음(11/05) — 시간 주행은 265→145mm처럼 고리 안까지 넘쳤다(11/02). 남은 거리의 70%만 가고 다시 잰다.
+            r = step_mm(link, NEAR_BLIND_MM if mm != mm else min(0.7 * (mm - a.reach_mm), NEAR_STEP_MAX_MM), 150)
+            print("  엔코더 이동 %s %d/%d" % (r["state"], r["got"], r["target"]))
+            time.sleep(TURN_SETTLE_S)
             last = mm if mm == mm else last
         print("⛔ 열네 번 움직여도 잡기 거리에 못 닿았다")
         return 1
