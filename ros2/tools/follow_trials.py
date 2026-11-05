@@ -79,7 +79,7 @@ def main() -> int:
                 if rc is None:
                     kind = "시간초과"
                 elif rc != 0:
-                    kind = FAIL.get(mode, "접근 실패")
+                    kind = "못 찾음" if any("찾아 둔 토마토가 없다" in x for x in lines) else FAIL.get(mode, "접근 실패")
                 if kind:
                     break
         secs = time.time() - t0
