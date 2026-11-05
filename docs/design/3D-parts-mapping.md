@@ -87,6 +87,7 @@
 - [x] Astra Pro = 공식 165×30×40 (캘리퍼 150 한계로 154까지만 잼) · 받침대 60×23 분리 불가 · 1/4"-20 (2026-09-29)
 - [x] 아두이노+Moebius 쉴드 스택 높이 30.0 (2026-09-29)
 - [x] Astra 받침대 접었을 때 본체 밑으로 14 (2026-09-29) → 크래들을 5 올려 아두이노 스택과 5mm 여유
-- [ ] 차체 상판 길이 · TOPLeft 앞 끝 ↔ 앞 나사 줄 (없어도 케이스는 된다)
+- [x] 바퀴 지름 78.6 (2026-11-05)
+- [ ] 케이스 v2 치마용: 상판 길이 · 앞뒤/좌우 바퀴 중심 간격 · 바퀴 폭 (`hardware_design/case/README.md` 끝)
 
 → [`hardware_design/case/tomato_case.scad`](../../hardware_design/case/tomato_case.scad)의 `[실측]` 줄을 고친다.

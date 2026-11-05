@@ -449,8 +449,8 @@ def test_geometry_matches() -> None:
         m = re.search(r"^\s*" + name + r"\s*=\s*([0-9.]+)\s*;", scad_src, re.M)
         return float(m.group(1)) if m else float("nan")
 
-    cw, mdy, mgap = scad_num("case_w"), scad_num("mount_dy"), scad_num("mount_gap")
-    check("tomato_case.scad 폭이 상판 실측 151.9mm이다", abs(cw - 151.9) < 1e-6, f"case_w={cw}")
+    cw, mdy, mgap = scad_num("plate_w"), scad_num("mount_dy"), scad_num("mount_gap")
+    check("tomato_case.scad 상판 폭이 실측 151.9mm이다", abs(cw - 151.9) < 1e-6, f"plate_w={cw}")
     pitch = mgap + mdy
     check("tomato_case.scad 체결패턴: 30변=길이, 대향나사 136 → 중심간격 166, 바깥나사 195.5와 0.5mm 이내",
           abs(mdy - 30.0) < 1e-6 and abs(mgap - 136.0) < 1e-6
@@ -460,12 +460,12 @@ def test_geometry_matches() -> None:
     check("tomato_case.scad 배터리 자리가 BOTTOM 관통 터널(43×57×134, 사용자 확인)과 같다",
           re.search(r"^\s*batt\s*=\s*\[\s*134\s*,\s*43\s*,\s*57\s*\]\s*;", scad_src, re.M) is not None)
     # 2026-09-27 사용자 실측(전수): 전면 간격 56.7(BOTTOM STL 계산값 67.5는 폐기), 후면 간격 64.4.
-    check("tomato_case.scad SO-101 받침 4구멍이 실측(전면 56.7·+15.0 / 후면 64.4·-55.0)과 일치한다",
+    check("tomato_case.scad SO-101 받침 4구멍이 실측(전면 56.7·앞 15 / 후면 64.4·뒤 55, −Y=앞)과 일치한다",
           re.search(r"so101_front_gap\s*=\s*56\.7\s*;", scad_src) is not None and
-          re.search(r"so101_holes\s*=\s*\[\[\s*-so101_front_gap\s*/\s*2\s*,\s*15\.0\s*\],"
-                    r"\s*\[\s*so101_front_gap\s*/\s*2\s*,\s*15\.0\s*\],"
-                    r"\s*\[\s*-64\.4\s*/\s*2\s*,\s*-55\.0\s*\],"
-                    r"\s*\[\s*64\.4\s*/\s*2\s*,\s*-55\.0\s*\]\s*\]\s*;", scad_src) is not None)
+          re.search(r"so101_holes\s*=\s*\[\[\s*-so101_front_gap\s*/\s*2\s*,\s*-15\.0\s*\],"
+                    r"\s*\[\s*so101_front_gap\s*/\s*2\s*,\s*-15\.0\s*\],"
+                    r"\s*\[\s*-64\.4\s*/\s*2\s*,\s*55\.0\s*\],"
+                    r"\s*\[\s*64\.4\s*/\s*2\s*,\s*55\.0\s*\]\s*\]\s*;", scad_src) is not None)
     check("tomato_case.scad에 차체 길이 195.5를 박아 두지 않았다 (195.5는 나사 간 거리)",
           re.search(r"(chassis_d|case_d)\s*=\s*195\.5", scad_src) is None)
 
