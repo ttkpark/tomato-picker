@@ -3895,7 +3895,8 @@ def _eol_patterns() -> tuple[list[str], set[str]]:
 
 # 검사 대상이 아닌 곳 — 가상환경·빌드산출물, 3D(바이너리), 그리고 호스트 러너(autopilot, 비배포).
 EOL_SKIP_DIRS = {".git", ".venv", "__pycache__", ".work", "node_modules",
-                 "build", "install", "log", "3D", "autopilot"}
+                 "build", "install", "log", "3D", "autopilot",
+                 "data"}   # data/ = gitignore된 학습 산출물(ultralytics args.yaml이 CRLF) — 배포 안 된다
 
 
 def _worktree_files(patterns: list[str]) -> list[str]:
