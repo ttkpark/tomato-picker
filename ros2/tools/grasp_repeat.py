@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 import numpy as np
@@ -524,10 +525,31 @@ def selftest():
             run = real_run
     finally:
         band, time.time, time.sleep = real_band, real_time, real_sleep
+    global OUT
+    real_out, OUT = OUT, tempfile.mkdtemp()
+    log_trial(8, False, 0.0, -1.0, why="다가가다 기준 잃음")
+    rows = [json.loads(x) for x in open(os.path.join(OUT, "log.jsonl"))]
+    assert len(rows) == 1 and rows[0]["n"] == 8 and not rows[0]["held"] and rows[0]["why"], rows
+    shutil.rmtree(OUT)
+    OUT = real_out
     import tool_jog
     assert tool_jog.too_far(-380.0, 0.0, -395.0, 0.0) and not tool_jog.too_far(-436.0, 0.0, -400.0, 0.0)   # 안쪽으로는 돌아온다
     assert not tool_jog.too_far(-300.0, 0.0, -360.0, 0.0)
     print("selftest OK")
+
+
+LOST_STOP = 3       # 기준을 이만큼 연달아 잃으면 멈춘다(11/06: 13회를 헛돌며 팔만 왕복했다)
+
+
+def log_trial(n, held, secs, grip, ref=None, why=None):
+    """한 회 기록. ⚠ 닫아 보지도 못한 회도 남긴다 — 11/06 20회 중 13회가 빠져 log.jsonl이 7/7로 보였다."""
+    row = {"when": time.strftime("%Y-%m-%d %H:%M:%S"), "n": n, "held": held, "secs": round(secs, 1), "grip": round(grip, 1)}
+    if ref is not None:
+        row["band"] = [round(x) for x in ref]
+    if why:
+        row["why"] = why
+    with open(os.path.join(OUT, "log.jsonl"), "a") as f:
+        f.write(json.dumps(row) + "\n")
 
 
 def main():
@@ -556,7 +578,7 @@ def main():
     # 물고 있을 수도 있다 — 놓지 않고 시작 자세로 가면 토마토를 끌고 간다
     run("tool_jog.py", "--grip", "78", "--left", "12")
     run("tool_jog.py", "--horiz", "-35", "--dz", "10")
-    held_n, last_held, last_band = 0, False, None
+    held_n, last_held, last_band, lost = 0, False, None, 0
     start_z = start_tcp_z(a.start)
     for n in range(1, a.trials + 1):
         print("\n=== %d/%d ===" % (n, a.trials))
@@ -574,10 +596,18 @@ def main():
         b = wait_band(need_gone=need, timeout=a.wait, last=last_band)
         if b is None:
             print("띠가 %.0f초 안에 가만히 보이지 않았다 — 멈춘다" % a.wait)
+            log_trial(n, False, 0.0, -1.0, why="기준 안 보임")
             break
         b = close_in(b, a.stop_z)
         if b is None:
+            lost += 1
+            last_held = False
+            log_trial(n, False, 0.0, -1.0, why="다가가다 기준 잃음")
+            if lost >= LOST_STOP:
+                print("기준을 %d회 연달아 잃었다 — 멈춘다" % lost)
+                break
             continue
+        lost = 0
         u, v, z = b
         last_band = b
         print("  띠 (%.0f, %.0f) %.0fmm — 문다" % (u, v, z))
@@ -605,9 +635,7 @@ def main():
         held_n += held
         last_held = held
         print("  → %s (%.0f초) · 누적 %d/%d" % ("물었다" if held else "못 물었다", secs, held_n, n))
-        with open(os.path.join(OUT, "log.jsonl"), "a") as f:
-            f.write(json.dumps({"when": time.strftime("%Y-%m-%d %H:%M:%S"), "n": n, "held": held,
-                                "secs": round(secs, 1), "grip": round(g, 1), "band": [round(u), round(v), round(z)]}) + "\n")
+        log_trial(n, held, secs, g, (u, v, z))
         if held:
             time.sleep(a.hold)
         # 놓기 — 조작대 [놓기]와 같은 순서(열기 → 고정 턱 떼기 → 뒤로).
