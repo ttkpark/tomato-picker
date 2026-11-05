@@ -33,6 +33,14 @@ PY = sys.executable
 FWD = (0.0, 15.0, 30.0, 45.0)     # 45 = 잡기 직전 거리(≈105mm) — v2는 이 거리가 없어 근접 사진 12장 중 1장만 찾았다
 DZ = (-8.0, 0.0, 8.0)
 PAN = (-3.0, 0.0, 3.0)
+WIDE_PAN = (-12.0, -9.0, -6.0, -3.0, 0.0, 3.0, 6.0, 9.0, 12.0)    # 11/05: v2는 줄기가 가운데서 벗어나면(u 553) 확신 0.03
+
+
+def grid(wide):
+    """(앞, 위, 어깨) 자세 목록. wide = 줄기가 화면 가장자리까지 가게 — 가까이(앞 30 이상)선 집게가 줄기·고리에 닿으니 어깨를 좁힌다."""
+    if not wide:
+        return [(f, dz, p) for f in FWD for dz in DZ for p in PAN]
+    return [(f, dz, p) for f in FWD[:2] for dz in DZ for p in WIDE_PAN] + [(f, 0.0, p) for f in FWD[2:] for p in PAN]
 
 
 def sh(name, *a):
@@ -66,7 +74,7 @@ def snap(path):
     shutil.copy(COLOR, path)
 
 
-def capture(tag):
+def capture(tag, wide=False):
     os.makedirs(OUT, exist_ok=True)
     import grasp_repeat as gr
     gr.REF = "auto"            # 띠가 있으면 띠, 없으면 토마토 꼭대기 기준으로 줄기 정면을 잡는다(순서는 어느 쪽이 먼저여도 된다)
@@ -77,20 +85,18 @@ def capture(tag):
     gr.face_stem(b, 75.0)
     p0 = joints()
     poses = []
-    for f in FWD:
-        for dz in DZ:
-            for dp in PAN:
-                stage(p0)
-                if f or dz:
-                    sh("tool_jog.py", "--horiz", "%.1f" % f, "--dz", "%.1f" % dz)
-                if dp:
-                    j = joints()
-                    sh("arm_stage.py", "--set", "shoulder_pan=%.2f" % (j["shoulder_pan"] + dp))
-                j = joints()
-                k = len(poses)
-                snap(os.path.join(OUT, "%02d_%s.jpg" % (k, tag)))
-                poses.append({"k": k, "fwd": f, "dz": dz, "dpan": dp, "joints": j})
-                print("  %02d  앞 %+.0f 위 %+.0f 어깨 %+.0f → 찍음" % (k, f, dz, dp))
+    for f, dz, dp in grid(wide):
+        stage(p0)
+        if f or dz:
+            sh("tool_jog.py", "--horiz", "%.1f" % f, "--dz", "%.1f" % dz)
+        if dp:
+            j = joints()
+            sh("arm_stage.py", "--set", "shoulder_pan=%.2f" % (j["shoulder_pan"] + dp))
+        j = joints()
+        k = len(poses)
+        snap(os.path.join(OUT, "%02d_%s.jpg" % (k, tag)))
+        poses.append({"k": k, "fwd": f, "dz": dz, "dpan": dp, "joints": j})
+        print("  %02d  앞 %+.0f 위 %+.0f 어깨 %+.0f → 찍음" % (k, f, dz, dp))
     json.dump({"p0": p0, "poses": poses, "tag": tag, "when": time.strftime("%Y-%m-%d %H:%M:%S")},
               open(os.path.join(OUT, "poses.json"), "w"), indent=1)
     stage(p0)
@@ -164,6 +170,8 @@ def selftest():
     b = np.roll(np.roll(a, 12, axis=1), -7, axis=0)            # 오른쪽 12, 위 7
     (dx, dy), r = shift(a, b)
     assert abs(dx - 12) < 0.5 and abs(dy + 7) < 0.5 and r > 0.3, (dx, dy, r)
+    assert len(grid(False)) == 36
+    assert all(abs(p) <= 3.0 for f, _, p in grid(True) if f >= 30.0) and max(p for _, _, p in grid(True)) == 12.0
     print("selftest OK")
     return 0
 
@@ -175,9 +183,10 @@ def main():
     ap.add_argument("cmd", choices=("capture", "replay", "label"))
     ap.add_argument("args", nargs="*")
     ap.add_argument("--tag", default="")
+    ap.add_argument("--wide", action="store_true", help="capture: 어깨 ±12°까지(줄기가 화면 가장자리)")
     a = ap.parse_args()
     if a.cmd == "capture":
-        return capture(a.tag or "band")
+        return capture(a.tag or "band", a.wide)
     if a.cmd == "replay":
         return replay(a.tag or "bare")
     return label(*a.args)

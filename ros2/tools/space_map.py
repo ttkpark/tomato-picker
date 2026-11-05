@@ -1680,6 +1680,36 @@ REACH_LAT_MM = 35.0            # 가로로 이보다 어긋나면 옆걸음(시�
 GRASP_START = "1.6,93.9,115.7,-34.7,6.4"   # stem_grasp 시작 자세(10/30~11/01 물린 자세)
 
 
+REACH_LEVER_MM = 310.0         # 잡기 시작 자세에서 차체 회전 중심 → 손목 D405(arm_x 60 + TCP 326 − 카메라 뒤 75)
+
+
+def reach_turn_deg(lat_mm: float, z_mm: float) -> float:
+    """가로 lat_mm(오른쪽 +)를 없앨 차체 회전(왼쪽 +). ⚠ 팔을 뻗으면 카메라가 회전 중심에서 멀어 **옆으로 쓸린다** —
+    카메라 기준 atan(lat/z)로 돌면 z 125mm에서 ≈3.5배 넘쳐 11/06 가로 ±100mm로 여덟 번 흔들렸다."""
+    return math.degrees(math.atan2(-lat_mm, REACH_LEVER_MM + z_mm))
+
+
+def reach_turn_px(got_deg: float, z_mm: float, fx: float) -> float:
+    """차체가 got_deg(왼쪽 +) 돌았을 때 깊이 z_mm 표적이 화면에서 옮겨 가는 화소(왼쪽으로 돌면 오른쪽 +)."""
+    return fx * (REACH_LEVER_MM + z_mm) / z_mm * math.tan(math.radians(got_deg))
+
+
+def reach_tomato():
+    """잡기 시작 자세에서 본 토마토 꼭대기 → (u, 거리 mm, 가로 각 °, DepthView) | None.
+    ⚠ detect_fruits를 안 쓴다 — 이 자세에선 벽 전체(넓이 48915)가 '열매'로 잡혀 십자 옆 u 315를 쫓았고, 토마토는
+    화면 왼쪽 끝이었다(11/06). 깊이로 가까운 주황만 받는 grip_uv_measure.tomato_top_uvz가 잡기 쪽과도 같은 기준이다."""
+    from grip_uv_measure import tomato_top_uvz
+    from tomato_picker.hardware.depth_camera import DepthView
+    v = DepthView(camera="d405")
+    v.require_color_aligned()
+    dep = v.depth_raw().astype(np.float32) * float(v.meta()["depth_scale_mm"])
+    t = tomato_top_uvz(v.color_bgr(), dep)
+    if t is None:
+        return None
+    it = v.intrinsics()
+    return t[0], t[2], math.degrees(math.atan2(it.ppx - t[0], it.fx)), v
+
+
 def reach_cmd(a, m) -> int:
     """🍅 잡기 거리까지 — 팔을 잡기 시작 자세로 두고 손목 D405로 열매를 보며 옆걸음·전진으로 REACH_MM에 선다.
     그다음은 조작대 [줄기 찍기] → [잡으러 간다]. 마지막 ±40mm·수십 mm는 팔(시작 맞춤·곧장 전진)이 갚는다 —
@@ -1695,23 +1725,22 @@ def reach_cmd(a, m) -> int:
     if link is None:
         return 1
     try:
-        last, want = None, None
+        last = None
         for k in range(14):
-            got = wrist_tomato(want)
+            got = reach_tomato()
             if got is None:
-                print("⛔ 손목 D405에 열매가 안 보인다 — [🍅 정면 보기]로 먼저 돌려라")
+                print("⛔ 손목 D405에 열매가 안 보인다(250mm 안 주황 덩어리 없음) — [🍅 손목 근접]부터 다시")
                 return 1
             u, mm, _ang, v = got
             it = v.intrinsics()
             lat = (u - 420.0) * (mm if mm == mm else 600.0) / it.fx    # 십자(무는 자리) 세로줄 ≈ u 420
             print("[%d] 열매 u %.0f · %s · 가로 %+.0fmm" % (k, u, "%.0fmm" % mm if mm == mm else "거리 ?", lat))
-            want = u
             if abs(lat) > REACH_LAT_MM:
                 # ⚠ 옆걸음이 아니라 **회전**으로 맞춘다 — 11/02: vy 200·1.0초 14번에 가로 111mm 그대로(케이스 얹은
                 #   차체는 옆걸음 정지마찰이 더 크다). 회전은 IMU로 각을 재며 민다(near_cmd와 같은 길). +w = 왼쪽.
-                ang = math.degrees(math.atan2(420.0 - u, it.fx))
-                want = after_turn_u(v, math.degrees(math.atan2(it.ppx - u, it.fx)),
-                                    turn(link, int(math.copysign(a.w, ang)), a.wsecs, abs(ang)))
+                z = mm if mm == mm else 600.0
+                ang = reach_turn_deg(lat, z)
+                turn(link, int(math.copysign(a.w, ang)), a.wsecs, abs(ang))
                 time.sleep(TURN_SETTLE_S)
                 continue
             if mm == mm and mm <= a.reach_mm:
@@ -2109,6 +2138,12 @@ def selftest() -> int:
     p10 = np.c_[wall, np.full(len(ys), 0.3)]
     r10 = refine(sw, p10, m, np.array([0.0, 0.0, 0.0]))
     assert abs(r10[1]) < 0.01 and abs(r10[0]) < 0.06, ("ICP가 벽을 따라 끌렸다", r10)
+    # ⑫ 잡기 거리 회전 — 지렛대를 넣으면 돈 만큼 표적이 십자로 온다
+    lat12, z12 = 100.0, 125.0                               # 오른쪽 100mm
+    a12 = reach_turn_deg(lat12, z12)
+    assert a12 < 0 and abs(a12) < 15.0, a12                 # 오른쪽으로, 카메라 기준 atan(100/125)=39°의 절반도 안 되게
+    u12 = 420.0 + lat12 * 437.0 / z12 + reach_turn_px(a12, z12, 437.0)
+    assert abs(u12 - 420.0) < 2.0, u12
     # ⑪ 손목 열매 고르기 — 직전 자리를 따라간다(11/05 빨간 통↔토마토 번갈아 고름)
     fr = [(True, 900, 60.0, 800.0), (True, 400, 700.0, 840.0), (False, 2000, 420.0, float("nan"))]
     from types import SimpleNamespace as _NS
