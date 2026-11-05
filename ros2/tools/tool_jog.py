@@ -37,6 +37,14 @@ import arm_calib                                            # noqa: E402
 import grasp_probe as gp                                   # noqa: E402
 
 JOINTS4 = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex")
+MAX_REACH_MM = 385.0     # 손끝 수평 반경 상한(잡기 실적 ≤364mm). 11/05 r 436mm까지 뻗어 피치가 무너지고(45° 어긋남),
+                         # 돌아오다 서보가 밀려 팔이 바닥까지 내려앉았다. 안쪽으로 오는 걸음은 막지 않는다.
+
+
+def too_far(x0: float, y0: float, x1: float, y1: float) -> bool:
+    """(x0,y0) → (x1,y1) 걸음이 상한 밖으로 더 뻗는가."""
+    r0, r1 = float(np.hypot(x0, y0)), float(np.hypot(x1, y1))
+    return r1 > MAX_REACH_MM and r1 > r0
 
 
 def main() -> int:
@@ -148,6 +156,10 @@ def main() -> int:
               % (p0.x, p0.y, p0.z, want[0], want[1], want[2], total))
         if total < 0.5:
             return 0
+        if too_far(p0.x, p0.y, p0.x + want[0], p0.y + want[1]):
+            print("⛔ 손끝 반경 %.0fmm는 상한 %.0fmm 밖이다 — 안 간다(차체를 더 붙여라)"
+                  % (np.hypot(p0.x + want[0], p0.y + want[1]), MAX_REACH_MM))
+            return 1
         if args.dry:
             return 0
 

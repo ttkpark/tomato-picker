@@ -416,8 +416,9 @@ def straight_grasp(z, stop_z):
     (11/04 맨 줄기, 메모리 thin-target-tracking-fails의 재발). 나아갈 거리는 stem_grasp --trust-first-z와 같은 z − stop_z."""
     adv = float(np.clip(z - stop_z, 0.0, 45.0))
     print("  곧게 %.0fmm 나아가 닫는다(추적 없음, 기준 깊이 %.0fmm)" % (adv, z))
-    if adv >= 1.0:
-        run("tool_jog.py", "--horiz", "%.1f" % adv)
+    if adv >= 1.0 and run("tool_jog.py", "--horiz", "%.1f" % adv)[0]:
+        print("   못 나아갔다(팔 닿는 거리 밖?) — 안 닫는다")
+        return False, -1.0
     _, out = run("tool_jog.py", "--grip", "%.0f" % GRIP_SHUT)
     m = re.search(r"집게 \d+ → 지금 (-?[\d.]+)", out)
     g = float(m.group(1)) if m else -1.0
@@ -516,10 +517,16 @@ def selftest():
             calls.clear()
             run = lambda name, *a: (calls.append((name,) + a), (0, "집게 4 → 지금 4.8"))[1]                     # noqa: E731
             assert not straight_grasp(200.0, 75.0)[0] and calls[0][2] == "45.0", calls   # 45mm 상한
+            calls.clear()
+            run = lambda name, *a: (calls.append((name,) + a), (1, ""))[1]
+            assert straight_grasp(105.0, 75.0) == (False, -1.0) and len(calls) == 1, calls   # 못 나아가면 안 닫는다
         finally:
             run = real_run
     finally:
         band, time.time, time.sleep = real_band, real_time, real_sleep
+    import tool_jog
+    assert tool_jog.too_far(-380.0, 0.0, -395.0, 0.0) and not tool_jog.too_far(-436.0, 0.0, -400.0, 0.0)   # 안쪽으로는 돌아온다
+    assert not tool_jog.too_far(-300.0, 0.0, -360.0, 0.0)
     print("selftest OK")
 
 

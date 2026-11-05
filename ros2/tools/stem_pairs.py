@@ -77,7 +77,8 @@ def snap(path):
 def capture(tag, wide=False):
     os.makedirs(OUT, exist_ok=True)
     import grasp_repeat as gr
-    gr.REF = "auto"            # 띠가 있으면 띠, 없으면 토마토 꼭대기 기준으로 줄기 정면을 잡는다(순서는 어느 쪽이 먼저여도 된다)
+    # 띠 사진은 띠로, 맨 줄기 사진은 학습 검출기로 정면을 잡는다 — 토마토 꼭대기 기준은 가려지면 38mm 어긋난다(11/05)
+    gr.REF = "model" if tag == "bare" else "band"
     b = gr.wait_band(need_gone=False, timeout=20, steady_s=1.0)
     if b is None:
         print("줄기가 안 보인다 — 시작 자세에서 토마토가 보이게 하고 다시")
