@@ -1643,7 +1643,8 @@ LOOK_DIR = os.path.expanduser("~/look_around")
 LOOK_STEP_MM = 250.0           # 돌 자리가 없을 때 토마토 쪽으로 한 번에 옮길 상한
 LOOK_ROUNDS = 3                # 옮기고 다시 보기 상한 — 한 번 보는 데 45초
 LOOK_SIDE = (300, 200, 255)    # 옆걸음 (감속 카운트, 최저 지령, 지령) — 전진값(800·130·220)으로는 감속에 들자 바퀴 C가 걸렸다(11/06: 552/1111)
-LOOK_FRUIT_MM = (55.0, 95.0)   # 토마토의 실제 지름(11/06: 63~80mm) — 빨간 의자는 화면 면적이 30배, 옷장 라벨은 28mm
+LOOK_FRUIT_MM = (40.0, 95.0)   # 빨간 부분의 환산 지름(11/06: 800mm 63~80mm, 500mm 50mm — 가까우면 일부만 빨갛다) — 빨간 의자는 화면 면적이 30배, 옷장 라벨은 28mm
+LOOK_CLOSE_MM = (300.0, 600.0) # 이 안의 후보 하나는 한 장이어도 토마토로 본다(그보다 가까운 것은 11/06 가짜 265mm)
 LOOK_FRUIT_FILL = 0.4          # 외접원을 채운 비 — 어두운 장의 얼룩·의자 다리는 0.3 아래
 
 
@@ -1662,7 +1663,9 @@ def look_tomato(hits):
         if len(same) > len(best):
             best = [(b + d, mm) for d, mm in same]
     if len(best) < 2:
-        return None
+        # 가까우면 두 축의 시차가 40°까지 벌어져 한 무리로 안 묶이고, 지지대에 가려 한 장만 통과하기도 한다(11/06: 400mm). 가까운 깊이는 믿을 만하다
+        close = [h for h in hits if LOOK_CLOSE_MM[0] <= h[1] <= LOOK_CLOSE_MM[1]]
+        return (close[0][0], close[0][1], 1) if len(close) == 1 else None
     mms = [mm for _, mm in best if mm == mm]
     mid = float(np.median([b for b, _ in best]))
     return ((mid + 180.0) % 360.0 - 180.0, float(np.median(mms)) if mms else float("nan"), len(best))
@@ -1763,12 +1766,16 @@ def rear_free_mm() -> float:
 
 
 def look_axis(bearing: float, rows: list):
-    """돌 자리가 없을 때 — 토마토 쪽에 가까운 축(앞·왼·뒤·오른, 대각선은 한 앞바퀴가 서서 걸림으로 보인다)과 비어 있는 mm → (vx부호, vy부호, mm)."""
-    ax = round(bearing / 90.0) * 90.0
-    near = [r["near_mm"] for r in rows if r["near_mm"] and abs((r["bearing"] - ax + 180.0) % 360.0 - 180.0) <= 45.0]
-    t = math.radians(ax)
-    free = (min(near) - LOOK_REAR_MARGIN_MM) / LOOK_BACK_OVER if near else 0.0     # 그쪽을 못 봤으면 안 간다
-    return int(round(math.cos(t))), int(round(math.sin(t))), min(max(free, 0.0), LOOK_STEP_MM)
+    """돌 자리가 없을 때 — 토마토 양옆의 두 축(앞·왼·뒤·오른, 대각선은 한 앞바퀴가 서서 걸림으로 보인다) 가운데 더 빈 쪽 → (vx부호, vy부호, mm).
+    11/06: 토마토 −55°에서 오른쪽만 보다(뒤쪽 옷까지 ±45°로 세어) 트인 앞을 두고 멈췄다."""
+    best = (0, 0, 0.0)
+    for ax in (math.floor(bearing / 90.0) * 90.0, math.ceil(bearing / 90.0) * 90.0):
+        near = [r["near_mm"] for r in rows if r["near_mm"] and abs((r["bearing"] - ax + 180.0) % 360.0 - 180.0) <= 35.0]
+        free = (min(near) - LOOK_REAR_MARGIN_MM) / LOOK_BACK_OVER if near else 0.0  # 그쪽을 못 봤으면 안 간다
+        t = math.radians(ax)
+        if min(free, LOOK_STEP_MM) > best[2]:
+            best = (int(round(math.cos(t))), int(round(math.sin(t))), min(free, LOOK_STEP_MM))
+    return best
 
 
 def look_sweep():
@@ -2443,7 +2450,10 @@ def selftest() -> int:
     assert abs(look_bearing(90.0, -95.0, 0.0, -88.9) + 86.1) < 1e-6, "회전판 + 어깨로 오른쪽 뒤를 넘겨 본다"
     t14 = look_tomato([(112.0, 840.0), (112.0, 804.0), (113.0, float("nan")), (-150.0, 500.0)])
     assert t14[2] == 3 and abs(t14[0] - 112.0) < 1 and abs(t14[1] - 822.0) < 1, t14
-    assert look_tomato([(10.0, 500.0), (90.0, 500.0)]) is None, "한 장씩은 오검출"
+    assert look_tomato([(10.0, 900.0), (90.0, 900.0)]) is None, "먼 것은 한 장씩이면 오검출"
+    assert look_tomato([(-104.0, 402.0)])[:2] == (-104.0, 402.0), "가까운 한 장"
+    assert look_tomato([(-104.0, 402.0), (-133.0, 265.0)])[:2] == (-104.0, 402.0), "너무 가까운 가짜는 빼고"
+    assert look_tomato([(10.0, 500.0), (90.0, 500.0)]) is None, "가까운 후보가 둘이면 고르지 않는다"
     t14 = look_tomato([(179.0, 700.0), (-179.0, 700.0)])
     assert t14[2] == 2 and abs(abs(t14[0]) - 180.0) < 1, "±180 경계를 넘어도 한 무리"
     meta14 = {"min_mm": 70.0, "max_mm": 900.0}
@@ -2453,6 +2463,10 @@ def selftest() -> int:
     assert look_axis(-87.0, rows14) == (0, -1, min((500 - LOOK_REAR_MARGIN_MM) / LOOK_BACK_OVER, LOOK_STEP_MM)), "오른쪽 — 그쪽 가까운 곳까지"
     assert look_axis(170.0, rows14)[2] == 0.0, "못 본 쪽으로는 안 간다"
     assert look_axis(80.0, rows14)[2] == 0.0, "왼쪽 200mm는 막혔다"
+    rows14b = [{"bearing": -30, "near_mm": 557}, {"bearing": -60, "near_mm": 590}, {"bearing": -95, "near_mm": 366}, {"bearing": 28, "near_mm": None},
+               {"bearing": -121, "near_mm": 191}, {"bearing": 178, "near_mm": 211}]
+    ax14 = look_axis(-55.0, rows14b)
+    assert ax14[:2] == (1, 0) and abs(ax14[2] - (557 - LOOK_REAR_MARGIN_MM) / LOOK_BACK_OVER) < 1, ax14
     tom14, dark14 = (True, 1677, 743, 444.0), (False, 427, 469, float("nan"))
     assert wrist_pick_ok([tom14, dark14]) == [tom14], "11/06 — 거리 모름인 통으로 안 넘어간다"
     assert wrist_pick_ok([dark14]) == [dark14], "멀어 깊이가 없을 뿐이면 한 걸음 가 본다"
@@ -2472,6 +2486,10 @@ def selftest() -> int:
         cv2.circle(img14, (150, v14), 6, (0, 0, 60), -1)                                # 작은 라벨
         got14 = look_fruit(img14, np.full((480, 848), 800.0, np.float32), it14)
         assert len(got14) == 1 and abs(got14[0][0] - 300) < 2, got14
+        img14b = np.full((480, 848, 3), 90, np.uint8)
+        v14b = int(229 + 437 * (sum(TOMATO_BELOW_MM) / 2 / 500.0 - WRIST_TILT_RAD))
+        cv2.circle(img14b, (300, v14b), 24, (0, 0, 220), -1)                            # 500mm에서 빨간 부분만 — 환산 지름 ≈55mm → 넓이로 ≈50mm
+        assert len(look_fruit(img14b, np.full((480, 848), 500.0, np.float32), it14)) == 1, "가까운 토마토를 놓치면 안 된다"
         assert look_fruit(img14, np.zeros((480, 848), np.float32), it14) == [], "깊이 없으면 크기를 모른다"
     except ImportError:
         print("  (cv2 없음 — ⑭ 크기 거르기 건너뜀)")
