@@ -1563,6 +1563,12 @@ def tomato_height_ok(v_px: float, mm: float, it) -> bool:
     return TOMATO_BELOW_MM[0] <= below <= TOMATO_BELOW_MM[1]
 
 
+def wrist_pick_ok(cands: list) -> list:
+    """대기 자세 후보 [(깊이 있음, 넓이, u, mm)] — 거리를 아는 것이 있으면 거리 모름은 뺀다(거리 모름은 높이 검사를 그냥 통과한다).
+    ⚠ 크기로는 못 거른다: detect_fruits는 가까운 토마토를 일부만 잡아(444mm에서 1677화소 ≈ 47mm) 먼 통과 같아진다(11/06)."""
+    return [c for c in cands if c[0]] or cands
+
+
 def wrist_tomato(prefer_u=None, waiting_pose=False):
     """손목 D405(컬러=깊이 정렬)의 열매 → (u, 거리 mm, 가로 각 °, DepthView) | None.
     깊이가 잡히는(유효 거리 안) 것 가운데 가장 큰 것(prefer_u가 있으면 그 자리에 가장 가까운 것), 없으면 거리 nan.
@@ -1588,6 +1594,8 @@ def wrist_tomato(prefer_u=None, waiting_pose=False):
             if waiting_pose and not tomato_height_ok(f.position[1], mm, it):
                 continue
             fr.append((mm == mm, f.area, f.position[0], mm))
+        if waiting_pose:
+            fr = wrist_pick_ok(fr)
         if not fr:
             return None
         _, _, u, mm = pick_fruit(fr, prefer_u)
@@ -1619,6 +1627,251 @@ def step_mm(link, mm: float, vx: int) -> dict:
         if r["state"] != "stall" or mm < 0 or v >= 255 or left < MOVE_MIN_TICKS:
             return dict(r, got=target - left, target=target)
         v = min(255, v + 50)
+
+
+# 🔭 둘러보기 — 차체를 안 돌리고 회전판·어깨로 손목 D405를 돌려 사방을 본다(11/06 실기: 스캔이 막힌 작은 방, 서랍장 앞에서 토마토 방위가 다섯 장 ±1°).
+# 화면 방위 = (회전판 − 기본 자리) − 어깨 + 화면 가로 각. 어깨는 회전판과 반대 부호다(실측: 어깨 −90 ≈ 회전판 +90).
+# 회전판 ±90만으로는 앞→왼쪽→뒤(약 270°)라 오른쪽은 어깨로 메운다.
+PARK = "0.6,22,78,81,6"        # [대기 자세] 팔 — 뒤로 접혀 D405가 바로 선다(축에서 렌즈 ≈110mm라 돌아도 안 뻗는다)
+LOOK_SHOTS = [(None, p) for p in (30, 60, 95)] + [(y, 0.0) for y in (-60, -30, 0, 30, 60, 90)] + [(90, p) for p in (-30, -60, -95)]
+LOOK_STOP_MM = 150.0           # 이보다 가까이 보이면 더 안 돌린다
+LOOK_PARK_TOL = 8.0            # 대기 자세에서 이만큼 벗어나면 안 돈다(편 팔을 돌리면 가구에 걸린다, 10/23)
+LOOK_CAM_R_M = 0.11            # 렌즈~회전 중심 근사 — 깊이는 렌즈에서 잰 값이다
+LOOK_REAR_MARGIN_MM = 250.0    # 뒤 깊이에서 뺄 값(렌즈~차체 뒤끝 + 여유)
+LOOK_BACK_OVER = 1.25          # step_mm 후진이 목표를 넘는 비(11/06: 1387/1111)
+LOOK_DIR = os.path.expanduser("~/look_around")
+LOOK_STEP_MM = 250.0           # 돌 자리가 없을 때 토마토 쪽으로 한 번에 옮길 상한
+LOOK_ROUNDS = 3                # 옮기고 다시 보기 상한 — 한 번 보는 데 45초
+LOOK_SIDE = (300, 200, 255)    # 옆걸음 (감속 카운트, 최저 지령, 지령) — 전진값(800·130·220)으로는 감속에 들자 바퀴 C가 걸렸다(11/06: 552/1111)
+LOOK_FRUIT_MM = (55.0, 95.0)   # 토마토의 실제 지름(11/06: 63~80mm) — 빨간 의자는 화면 면적이 30배, 옷장 라벨은 28mm
+LOOK_FRUIT_FILL = 0.4          # 외접원을 채운 비 — 어두운 장의 얼룩·의자 다리는 0.3 아래
+
+
+def look_bearing(yaw: float, pan: float, ang: float, home: float) -> float:
+    """한 장의 가로 각 → 차체 방위(도, 왼쪽 +, 정면 0)."""
+    return (yaw - home - pan + ang + 180.0) % 360.0 - 180.0
+
+
+def look_tomato(hits):
+    """[(방위, mm)] → 가장 많은 장이 ±15°로 가리키는 무리의 (방위, mm, 장 수) | None. 한 장뿐이면 오검출로 본다.
+    회전판으로 본 장과 어깨로 본 장은 축이 달라 같은 열매가 13° 벌어진다(11/06) — 방위는 돌 곳만 정하고 끝맞춤은 근접이 한다."""
+    best = []
+    for b, _ in hits:
+        same = [((h - b + 180.0) % 360.0 - 180.0, mm) for h, mm in hits]
+        same = [(d, mm) for d, mm in same if abs(d) <= 15.0]
+        if len(same) > len(best):
+            best = [(b + d, mm) for d, mm in same]
+    if len(best) < 2:
+        return None
+    mms = [mm for _, mm in best if mm == mm]
+    mid = float(np.median([b for b, _ in best]))
+    return ((mid + 180.0) % 360.0 - 180.0, float(np.median(mms)) if mms else float("nan"), len(best))
+
+
+def look_range(dep_mm: np.ndarray, meta: dict):
+    """화면 위 2/3(아래는 집게·바닥)의 가까운 칸 깊이(mm) — 유효 칸이 모자라면 None(모른다, 비었다가 아니다).
+    24화소 칸의 가운데값으로 잔얼룩을 한 번 더 지운다(장마다 바뀌는 얼룩은 _look_frame이 지운다)."""
+    h = dep_mm.shape[0]
+    d = dep_mm[h // 6: h * 2 // 3].astype(np.float32).copy()
+    d[(d < meta["min_mm"]) | (d > meta["max_mm"])] = np.nan
+    n, c = d.shape[0] // 24, d.shape[1] // 24
+    cells = d[:n * 24, :c * 24].reshape(n, 24, c, 24).transpose(0, 2, 1, 3).reshape(n * c, -1)
+    cells = cells[np.isfinite(cells).mean(1) >= 0.4]
+    return float(np.percentile(np.nanmedian(cells, 1), 2)) if len(cells) >= 10 else None
+
+
+def look_fruit(bgr: np.ndarray, dep_mm: np.ndarray, it) -> list:
+    """어두워도 빨간 둥근 덩이 가운데 실제 지름이 토마토인 것 → [(u, mm, 넓이)] 큰 순. 대기 자세 높이도 본다.
+    여기서는 깊이 유효 범위로 자르지 않는다 — 0.9m 넘는 열매도 방위를 내는 게 먼저다."""
+    import cv2
+    gain = min(4.0, 110.0 / max(float(bgr.mean()), 1.0))
+    hsv = cv2.cvtColor(np.clip(bgr.astype(np.float32) * gain, 0, 255).astype(np.uint8), cv2.COLOR_BGR2HSV)
+    mask = (((hsv[..., 0] < 10) | (hsv[..., 0] > 170)) & (hsv[..., 1] > 110) & (hsv[..., 2] > 70)).astype(np.uint8)
+    mask = cv2.morphologyEx(cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8)), cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    out = []
+    for c in cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+        area = float(cv2.contourArea(c))
+        (u, v), r = cv2.minEnclosingCircle(c)
+        if area < 150.0 or area / (math.pi * r * r) < LOOK_FRUIT_FILL:
+            continue
+        d = dep_mm[max(int(v) - 12, 0): int(v) + 13, max(int(u) - 12, 0): int(u) + 13]
+        d = d[d > 0]
+        if d.size < 20:
+            continue
+        mm = float(np.median(d))
+        if LOOK_FRUIT_MM[0] <= 2.0 * math.sqrt(area / math.pi) * mm / it.fx <= LOOK_FRUIT_MM[1] and tomato_height_ok(v, mm, it):
+            out.append((u, mm, area))
+    return sorted(out, key=lambda f: -f[2])
+
+
+def _look_arm():
+    """(io, Calib, 대기 자세 도, 회전판 기본 자리) | None — 대기 자세가 아니면 안 연다."""
+    sys.path.insert(0, os.path.join(HERE, "..", "src", "tomato_bridge"))
+    import arm_calib
+    from tomato_bridge.follower_io import BASE_YAW_HOME_DEG, FollowerIO
+    from tomato_picker.hardware import kinematics as kin
+    if not yaw_front_ok():
+        return None
+    cal = arm_calib.Calib()
+    park = dict(zip(kin.JOINTS, (float(x) for x in PARK.split(","))))
+    io = FollowerIO(hold_torque=True)
+    now = cal.to_deg(io.read())
+    off = max(abs(now[j] - park[j]) for j in park)
+    if off > LOOK_PARK_TOL:
+        io.hold_close()
+        print("⛔ 팔이 대기 자세에서 %.0f° 벗어났다 — 편 채로 돌면 걸린다. [대기 자세]부터" % off)
+        return None
+    return io, cal, park, BASE_YAW_HOME_DEG
+
+
+def _look_frame(v):
+    """움직인 뒤 찍힌 다섯 장의 화소 중앙값 (깊이 mm, 메타). 다섯 중 셋 넘게 안 잡힌 화소는 0으로 떨어진다 —
+    D405 얼룩은 장마다 자리가 바뀐다(11/06: 트인 앞에 147·201·130mm가 번갈아). 칸 가운데값만으로는 안 지워졌다."""
+    after = time.time()
+    meta = v.meta()
+    for _ in range(50):
+        meta = v.meta()
+        if float(meta["ts"]) > after + 0.4:
+            break
+        time.sleep(0.1)
+    frames, seq = [], None
+    for _ in range(40):
+        meta = v.meta()
+        if meta["seq"] != seq:
+            seq = meta["seq"]
+            frames.append(v.depth_raw().astype(np.float32))
+            if len(frames) == 5:
+                break
+        time.sleep(0.04)
+    return np.median(frames, axis=0) * float(meta["depth_scale_mm"]), meta
+
+
+def rear_free_mm() -> float:
+    """회전판을 돌려 손목 D405로 차체 뒤를 본다 → 물러나도 되는 mm(모르면 0). 11/06: 뒤를 못 보고 물러나다 서랍장·비닐 앞에 끼었다."""
+    from tomato_picker.hardware.depth_camera import DepthView
+    arm = _look_arm()
+    if arm is None:
+        return 0.0
+    io, _, _, home = arm
+    try:
+        io.move_yaw(90.0)
+        near = look_range(*_look_frame(DepthView(camera="d405")))
+    finally:
+        io.move_yaw(home)
+        io.hold_close()
+    return 0.0 if near is None else max(0.0, (near - LOOK_REAR_MARGIN_MM) / LOOK_BACK_OVER)
+
+
+def look_axis(bearing: float, rows: list):
+    """돌 자리가 없을 때 — 토마토 쪽에 가까운 축(앞·왼·뒤·오른, 대각선은 한 앞바퀴가 서서 걸림으로 보인다)과 비어 있는 mm → (vx부호, vy부호, mm)."""
+    ax = round(bearing / 90.0) * 90.0
+    near = [r["near_mm"] for r in rows if r["near_mm"] and abs((r["bearing"] - ax + 180.0) % 360.0 - 180.0) <= 45.0]
+    t = math.radians(ax)
+    free = (min(near) - LOOK_REAR_MARGIN_MM) / LOOK_BACK_OVER if near else 0.0     # 그쪽을 못 봤으면 안 간다
+    return int(round(math.cos(t))), int(round(math.sin(t))), min(max(free, 0.0), LOOK_STEP_MM)
+
+
+def look_sweep():
+    """사방을 한 번 본다 → (rows, 토마토(방위, mm, 장 수)|None, 둘레 여유 m|None, 폴더) | None(대기 자세가 아니다)."""
+    import cv2
+    from tomato_picker.hardware.depth_camera import DepthView
+    arm = _look_arm()
+    if arm is None:
+        return None
+    io, cal, park, home = arm
+    out = os.path.join(LOOK_DIR, time.strftime("%Y%m%d-%H%M%S"))
+    os.makedirs(out)
+    v = DepthView(camera="d405")
+    it = v.intrinsics()
+    fold = park["shoulder_pan"]
+    yaw_now, pan_now, rows, hits = None, fold, [], []
+
+    def to_pan(p):
+        nonlocal pan_now
+        io.write(cal.to_norm(dict(park, shoulder_pan=p)), max(0.5, abs(p - pan_now) / 40.0))
+        pan_now = p
+
+    try:
+        for yaw, pan in LOOK_SHOTS:
+            yaw = home if yaw is None else float(yaw)
+            pan = pan or fold
+            if yaw != yaw_now:
+                if pan_now != fold:
+                    to_pan(fold)                    # 판은 어깨를 접은 채로만 돌린다
+                io.move_yaw(yaw)
+                yaw_now = yaw
+            if pan != pan_now:
+                to_pan(pan)
+            dep, meta = _look_frame(v)
+            near = look_range(dep, meta)
+            mid = look_bearing(yaw, pan, 0.0, home)
+            bgr = v.color_bgr()
+            fruit = look_fruit(bgr, dep, it)
+            got = None
+            if fruit:
+                got = (fruit[0][1], look_bearing(yaw, pan, math.degrees(math.atan2(it.ppx - fruit[0][0], it.fx)), home))
+                hits.append((got[1], got[0]))
+            name = "b%+04.0f.jpg" % mid
+            cv2.imwrite(os.path.join(out, name), bgr)
+            rows.append({"bearing": round(mid), "yaw": round(yaw, 1), "pan": round(pan, 1), "near_mm": near and round(near),
+                         "tomato": got and [round(got[1], 1), round(got[0])], "img": name})
+            print("  방위 %+4.0f° (판 %+3.0f 어깨 %+3.0f) 가까운 곳 %s%s" % (
+                mid, yaw, pan, "모름" if near is None else "%.0fmm" % near,
+                "" if got is None else " · 🍅 %+.0f° %.0fmm" % (got[1], got[0])), flush=True)
+            if near is not None and near < LOOK_STOP_MM:
+                print("⛔ %.0fmm에 물체 — 더 안 돌린다" % near)
+                break
+    finally:
+        if pan_now != fold:
+            to_pan(fold)
+        io.move_yaw(home)
+        io.hold_close()
+    found = look_tomato(hits)
+    seen = [r["near_mm"] for r in rows if r["near_mm"]]
+    clear = (min(seen) / 1000.0 + LOOK_CAM_R_M) if seen else None
+    json.dump({"when": time.strftime("%F %T"), "rows": rows, "tomato": found, "clear_m": clear},
+              open(os.path.join(out, "look.json"), "w"), ensure_ascii=False, indent=1)
+    print("둘러봄 %d장 · 둘레 여유 %s · %s" % (len(rows), "모름" if clear is None else "%.2fm" % clear, out))
+    return rows, found, clear, out
+
+
+def look_cmd(a, m) -> int:
+    """🔭 둘러보기 — 사방 사진·방향별 가까운 거리·토마토 방위를 남긴다. --face면 토마토 쪽으로 차체를 돌린다.
+    돌 자리가 없으면 메카넘이니 안 돌고 토마토 쪽 축으로 옮겨 다시 본다(11/06: 배낭·의자 사이에서 사람 없이 빠져나온 순서)."""
+    from base_nudge import open_link
+    for k in range(LOOK_ROUNDS):
+        got = look_sweep()
+        if got is None:
+            return 1
+        rows, found, clear, _ = got
+        if found is None:
+            print("🍅 토마토를 두 장 이상에서 보지 못했다")
+            return 1
+        print("🍅 토마토 방위 %+.0f° · %.0fmm · %d장" % found)
+        if not a.face:
+            return 0
+        link = open_link()
+        if link is None:
+            return 1
+        try:
+            if clear is not None and clear >= SPIN_R:
+                if abs(found[0]) > NEAR_TURN_DEG:
+                    print("  토마토 쪽으로 %+.0f° 돌았다" % turn(link, int(math.copysign(a.w, found[0])), a.wsecs, abs(found[0])))
+                return 0
+            sx, sy, mm = look_axis(found[0], rows)
+            if mm < 50.0:
+                print("⛔ 둘레 여유 %s < %.2fm 인데 토마토 쪽도 안 비었다(%.0fmm) — 멈춘다" % ("모름" if clear is None else "%.2fm" % clear, SPIN_R, mm))
+                return 1
+            slow, low, v = LOOK_SIDE if sy else (MOVE_SLOW, MOVE_MIN, 220)
+            link.send_raw("K %d %d 0 0 0" % (slow, low))
+            r = link.drive_ticks(max(MOVE_MIN_TICKS, int(mm / MM_PER_COUNT)), sx * v, sy * v, 0, timeout=8.0)
+            print("  돌 자리가 없다(여유 %s) — 토마토 쪽(앞 %+d 왼 %+d)으로 %.0fmm → %s %d/%d" % (
+                "모름" if clear is None else "%.2fm" % clear, sx, sy, mm, r["state"], r["got"], r["target"] if "target" in r else 0))
+            time.sleep(TURN_SETTLE_S)
+        finally:
+            link.close()
+    print("⛔ %d번 옮겨도 돌 자리가 안 생겼다" % LOOK_ROUNDS)
+    return 1
 
 
 def near_cmd(a, m) -> int:
@@ -2185,6 +2438,43 @@ def selftest() -> int:
         assert s13["lo"][c13] >= 2.0 and s13["lo"][tuple(idx([0.5, 0.0]))] < 0
     except ImportError:
         print("  (cv2 없음 — ⑬ 건너뜀)")
+    # ⑭ 둘러보기 — 방위 합치기·오검출 한 장 버리기·깊이 모름 ≠ 비었음
+    assert abs(look_bearing(-88.9, 0.0, 0.0, -88.9)) < 1e-6 and abs(look_bearing(-88.9, -90.0, 0.0, -88.9) - 90.0) < 1e-6
+    assert abs(look_bearing(90.0, -95.0, 0.0, -88.9) + 86.1) < 1e-6, "회전판 + 어깨로 오른쪽 뒤를 넘겨 본다"
+    t14 = look_tomato([(112.0, 840.0), (112.0, 804.0), (113.0, float("nan")), (-150.0, 500.0)])
+    assert t14[2] == 3 and abs(t14[0] - 112.0) < 1 and abs(t14[1] - 822.0) < 1, t14
+    assert look_tomato([(10.0, 500.0), (90.0, 500.0)]) is None, "한 장씩은 오검출"
+    t14 = look_tomato([(179.0, 700.0), (-179.0, 700.0)])
+    assert t14[2] == 2 and abs(abs(t14[0]) - 180.0) < 1, "±180 경계를 넘어도 한 무리"
+    meta14 = {"min_mm": 70.0, "max_mm": 900.0}
+    assert look_range(np.zeros((480, 848), np.float32), meta14) is None
+    assert abs(look_range(np.full((480, 848), 500.0, np.float32), meta14) - 500.0) < 1e-3
+    rows14 = [{"bearing": -95, "near_mm": 600}, {"bearing": -60, "near_mm": 500}, {"bearing": 88, "near_mm": 200}, {"bearing": 178, "near_mm": None}]
+    assert look_axis(-87.0, rows14) == (0, -1, min((500 - LOOK_REAR_MARGIN_MM) / LOOK_BACK_OVER, LOOK_STEP_MM)), "오른쪽 — 그쪽 가까운 곳까지"
+    assert look_axis(170.0, rows14)[2] == 0.0, "못 본 쪽으로는 안 간다"
+    assert look_axis(80.0, rows14)[2] == 0.0, "왼쪽 200mm는 막혔다"
+    tom14, dark14 = (True, 1677, 743, 444.0), (False, 427, 469, float("nan"))
+    assert wrist_pick_ok([tom14, dark14]) == [tom14], "11/06 — 거리 모름인 통으로 안 넘어간다"
+    assert wrist_pick_ok([dark14]) == [dark14], "멀어 깊이가 없을 뿐이면 한 걸음 가 본다"
+    d14 = np.full((480, 848), 800.0, np.float32)
+    d14[np.random.default_rng(14).random(d14.shape) < 0.03] = 200.0                     # 민무늬 벽의 얼룩
+    assert look_range(d14, meta14) > 750.0, "얼룩은 물체가 아니다"
+    d14[100:220, 300:420] = 300.0                                                       # 진짜 물체
+    assert look_range(d14, meta14) < 350.0, "진짜 물체는 놓치면 안 된다"
+    try:
+        import cv2
+        from types import SimpleNamespace
+        it14 = SimpleNamespace(fx=438.0, fy=437.0, ppx=422.0, ppy=229.0)
+        v14 = int(229 + 437 * (sum(TOMATO_BELOW_MM) / 2 / 800.0 - WRIST_TILT_RAD))     # 800mm에서 토마토 높이
+        img14 = np.full((480, 848, 3), 12, np.uint8)
+        cv2.circle(img14, (300, v14), 22, (0, 0, 40), -1)                              # 어두운 토마토 — 800mm에서 지름 80mm
+        img14[100:300, 600:800] = (0, 0, 60)                                            # 어두운 의자
+        cv2.circle(img14, (150, v14), 6, (0, 0, 60), -1)                                # 작은 라벨
+        got14 = look_fruit(img14, np.full((480, 848), 800.0, np.float32), it14)
+        assert len(got14) == 1 and abs(got14[0][0] - 300) < 2, got14
+        assert look_fruit(img14, np.zeros((480, 848), np.float32), it14) == [], "깊이 없으면 크기를 모른다"
+    except ImportError:
+        print("  (cv2 없음 — ⑭ 크기 거르기 건너뜀)")
     print("space_map selftest ✅ 맞춤 오차 %.3fm %.1f° · 점수 %.2f · 길 %d점" %
           (np.hypot(*(got[:2] - true[:2])), math.degrees(abs(wrap(got[2] - true[2]))), q, len(path)))
     return 0
@@ -2192,7 +2482,7 @@ def selftest() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "reach", "explore", "clear", "selftest", "replay", "selfcal"])
+    ap.add_argument("mode", choices=["snap", "scan", "go", "step", "wrist", "find", "face", "approach", "look", "near", "reach", "explore", "clear", "selftest", "replay", "selfcal"])
     ap.add_argument("file", nargs="*", help="replay·selfcal: ~/space_scans/scan-*.npz")
     ap.add_argument("--write", action="store_true", help="selfcal: 찾은 장착값을 ~/space_mount.json에 쓴다")
     ap.add_argument("--steps", type=int, default=16)
@@ -2214,6 +2504,7 @@ def main() -> int:
     ap.add_argument("--reach", type=float, default=2.0, help="explore: 한 번에 갈 길 길이 상한(m)")
     ap.add_argument("--no-find", action="store_true", help="explore: 토마토 찾기 없이 지도만")
     ap.add_argument("--avoid", default="", help="explore: 경계로 안 고를 구역 \"x0,x1,y0,y1;…\"(지도 좌표 m)")
+    ap.add_argument("--face", action="store_true", help="look: 찾은 토마토 쪽으로 차체를 돌린다")
     ap.add_argument("--near-mm", type=float, default=NEAR_MM, help="near: 손목 D405에서 토마토까지 이 거리(mm)에 선다")
     a = ap.parse_args()
     if a.mode == "selftest":
@@ -2253,6 +2544,8 @@ def main() -> int:
         return face_cmd(a, m)
     if a.mode == "approach":
         return approach_cmd(a, m)
+    if a.mode == "look":
+        return look_cmd(a, m)
     if a.mode == "near":
         return near_cmd(a, m)
     if a.mode == "reach":

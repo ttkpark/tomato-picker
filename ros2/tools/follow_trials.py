@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""체크포인트 0차 — 따라가기 판정 3회: 지도 지우기 → 스캔 → 찾기 → 앞으로 → 손목 근접. 일은 전부 조작대 API(/run)로 시킨다.
-    ~/lerobot/.venv/bin/python ros2/tools/follow_trials.py
+"""체크포인트 0차 — 따라가기 판정 3회: 둘러보기(차체 고정) → 토마토 쪽으로 돌기 → 손목 근접. 일은 전부 조작대 API(/run)로 시킨다.
+    ~/lerobot/.venv/bin/python ros2/tools/follow_trials.py          # 작은 방에서도(스캔은 가구에 막힌다, 11/06)
+    ~/lerobot/.venv/bin/python ros2/tools/follow_trials.py --scan   # 트인 곳: 지도 지우기 → 스캔 → 찾기 → 앞으로 → 근접
 성공 = 근접 종료 450±50mm · 손목 화면 가운데 ±15° · 충돌 0(사진으로 본다) · 5분 안. 지도는 회마다 지운다(옛 토마토를 쓰지 않게).
 결과 = ~/follow_trials/<시각>/table.md + 회차별 로그·사진. 실패 종류: 못 찾음 / 접근 실패 / 시간초과.
-⚠ 출발 자리로 옮길 때만 주행 포트를 직접 쓴다(측정 구간 밖). 뒤는 카메라가 없다 — 물러나는 자리는 비어 있어야 한다."""
+⚠ 출발 자리로 옮길 때만 주행 포트를 직접 쓴다(측정 구간 밖). 물러나기 전에 손목 D405로 뒤를 본다(tomato_trials.reposition)."""
 from __future__ import annotations
 
 import json
@@ -22,9 +23,10 @@ import tomato_trials as tt  # noqa: E402
 API = "http://127.0.0.1:8090"
 LIMIT_S = 300.0
 STARTS = [(300, 60), (200, -70), (300, 120)]     # (물러날 mm, 그 뒤 돌 °, +=왼쪽) — 토마토가 화면 밖에 있게 돌려 놓는다
-STEPS = [("clear", {}), ("scan", {"w": 150}), ("find", {"w": 150}),
-         ("approach", {"w": 150, "vx": 200}), ("near", {"w": 150, "vx": 150})]
-FAIL = {"scan": "못 찾음", "find": "못 찾음", "approach": "접근 실패", "near": "접근 실패"}
+SCAN_STEPS = [("clear", {}), ("scan", {"w": 150}), ("find", {"w": 150}),
+              ("approach", {"w": 150, "vx": 200}), ("near", {"w": 150, "vx": 150})]
+LOOK_STEPS = [("look", {"face": True, "w": 150}), ("near", {"w": 150, "vx": 150})]
+FAIL = {"look": "접근 실패", "scan": "못 찾음", "find": "못 찾음", "approach": "접근 실패", "near": "접근 실패"}
 
 
 def call(path, body=None):
@@ -65,12 +67,16 @@ def main() -> int:
     rows = []
     for n, (back, deg) in enumerate(STARTS, 1):
         print("\n=== %d회차 — %dmm 물러나 %+d° ===" % (n, back, deg), flush=True)
-        tt.reposition(back, deg, 150)
+        if rows and rows[-1][2] == "실패":
+            # 근접 끝자리에서 물러나는 것이 출발 자리다 — 실패한 자리에서 또 물러나면 가구로 쌓인다(11/06 300+200+300mm → 배낭)
+            print("  앞 회차가 실패 — 더 물러나지 않고 그 자리에서 시작", flush=True)
+        else:
+            tt.reposition(back, deg, 150)
         time.sleep(1.5)
         t0, kind = time.time(), ""
         tt.snap(out, "%d-start" % n)
         with open(os.path.join(out, "%d.log" % n), "w") as lf:
-            for mode, args in STEPS:
+            for mode, args in (SCAN_STEPS if "--scan" in sys.argv else LOOK_STEPS):
                 rc, lines = job(mode, args, t0 + LIMIT_S)
                 lf.write("\n## %s rc=%s\n%s\n" % (mode, rc, "\n".join(lines)))
                 lf.flush()
@@ -79,7 +85,7 @@ def main() -> int:
                 if rc is None:
                     kind = "시간초과"
                 elif rc != 0:
-                    kind = "못 찾음" if any("찾아 둔 토마토가 없다" in x for x in lines) else FAIL.get(mode, "접근 실패")
+                    kind = "못 찾음" if any("찾아 둔 토마토가 없다" in x or "보지 못했다" in x for x in lines) else FAIL.get(mode, "접근 실패")
                 if kind:
                     break
         secs = time.time() - t0

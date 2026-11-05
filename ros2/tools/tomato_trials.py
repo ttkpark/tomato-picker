@@ -3,7 +3,7 @@
     ~/lerobot/.venv/bin/python ros2/tools/tomato_trials.py [--near-mm 450]
 성공 = near가 정상으로 끝나고, 끝난 뒤 다시 잰 손목 거리 near-mm±50 · 가로 각 ≤ 15°(docs/체크포인트-2026-11.md 0차 기준).
 결과 = ~/tomato_trials/<시각>/ (trials.json + 회차별 시작·끝 사진).
-⚠ 뒤는 카메라가 없다 — 물러나는 자리는 사람이 비워 둔다. 대기 자세(회전판 기본 자리)에서 돌린다."""
+물러나기 전에 회전판을 돌려 손목 D405로 뒤를 보고, 비어 있는 만큼만 물러난다. 대기 자세(회전판 기본 자리)에서 돌린다."""
 from __future__ import annotations
 
 import argparse
@@ -48,12 +48,27 @@ def measure(n: int = 5):
 
 
 def reposition(back: float, deg: float, w: int) -> dict:
+    free = sm.rear_free_mm()
+    if free < back:
+        print("  뒤가 %.0fmm만 비었다 — %.0fmm 대신 그만큼만" % (free, back))
+        back = free
     link = open_link()
     if link is None:
         raise RuntimeError("주행 보드를 못 열었다")
     try:
-        r = sm.step_mm(link, -back, 220)
+        r = sm.step_mm(link, -back, 220) if back else {"state": "skip", "got": 0, "target": 0}
         print("  %.0fmm 물러남 → %s %d/%d" % (back, r["state"], r["got"], r["target"]))
+    finally:
+        link.close()
+    # 돌기 전에 둘레를 본다 — 11/06: 안 보고 +120° 돌다 코가 배낭에 닿았다
+    seen = sm.look_sweep() if deg else None
+    if not deg or seen is None or seen[2] is None or seen[2] < sm.SPIN_R:
+        print("  %+.0f° 돌기 생략 — 둘레 여유 %s" % (deg, seen and seen[2]))
+        return {"back": r, "turned": 0.0}
+    link = open_link()
+    if link is None:
+        raise RuntimeError("주행 보드를 못 열었다")
+    try:
         got = sm.turn(link, int(math.copysign(w, deg)), 0.8, abs(deg))
         print("  %+.0f° 돌기 → IMU %+.1f°" % (deg, got))
         return {"back": r, "turned": got}

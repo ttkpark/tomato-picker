@@ -137,7 +137,7 @@ SERVO_VIEW = os.path.expanduser("~/servo_view.json")
 GRIP_UV = (471, 395)              # 집게를 여닫아 실측한 기본값
 # 대기 자세(도) — 팔을 뒤로 접어 손목 D405가 바로 선 채 주행 정면을 본다. 회전판은 따로
 # BASE_YAW_HOME_DEG로 간다(2026-10-24 사람이 정함. 옛 값 60,65,0,-100,6은 D405가 거꾸로였다).
-PARK = "0.6,22,78,81,6"
+PARK = space_map.PARK
 
 
 def voice_active():
@@ -436,8 +436,8 @@ def build(job, args):
         # **집 안 공간 지도**(space_map.py) — 한 장 담기·제자리 스캔·목표로 가기·지우기.
         # 주행 포트를 쥐는 일이라 넛지와 같이 한 번에 하나만 돈다.
         mode = str(args.get("mode", ""))
-        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "face", "approach", "near", "reach", "explore", "clear"):
-            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|face|approach|near|reach|explore|clear")
+        if mode not in ("snap", "scan", "go", "step", "wrist", "find", "face", "approach", "look", "near", "reach", "explore", "clear"):
+            raise ValueError("space mode 는 snap|scan|go|step|wrist|find|face|approach|look|near|reach|explore|clear")
         a = [PY, T("space_map.py"), mode]
         if mode == "snap" and str(args.get("turn", "")).strip() != "":
             a += ["--turn", "%.0f" % num(args, "turn", 0, -180, 180)]
@@ -453,11 +453,13 @@ def build(job, args):
             a += ["--deg", "%.0f" % num(args, "deg", 20, 3, 45)]
         if mode == "find" and args.get("hand"):
             a += ["--hand"]                     # 바퀴 대신 사람이 돌린다
-        if mode in ("scan", "go", "find", "face", "approach", "near", "explore"):
+        if mode in ("scan", "go", "find", "face", "approach", "look", "near", "explore"):
             # find만 시계 방향을 고를 수 있다 — 한쪽이 막힌 자리(10/23 케이블)에서 반대로 돈다
             sign = -1 if (mode == "find" and args.get("cw")) else 1
             a += ["--w", "%d" % (sign * int(num(args, "w", 150, 60, 255))),
                   "--wsecs", "%.2f" % num(args, "wsecs", 0.8, 0.2, 2.0)]
+        if mode == "look" and args.get("face"):
+            a += ["--face"]
         if mode == "scan":
             a += ["--steps", "%d" % int(num(args, "steps", 16, 1, 40))]
             if args.get("hand"):
@@ -612,6 +614,8 @@ code{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
       <button title="시계 방향으로 돌며 찾는다 — 반시계 쪽이 막혔을 때" onclick="run('space',spArgs({mode:'find',cw:1}))">🍅 찾기(시계)</button>
       <button title="첫 토마토 70cm 앞까지 가서 앞 카메라 정면에 맞춘다(거리를 모르는 토마토로는 안 간다)" onclick="run('space',spArgs({mode:'approach'}))">🍅 토마토 앞으로</button>
       <button title="찾아 둔 토마토 쪽으로 차체를 돌려 앞 카메라 정면에 둔다(지도 방위 → 검출로 다듬기)" onclick="run('space',spArgs({mode:'face'}))">🍅 정면 보기</button>
+      <button title="차체는 그대로 두고 회전판·어깨로 손목 D405를 돌려 사방을 본다(약 1분). 좁은 방에서 스캔 대신. 대기 자세에서만" onclick="run('space',spArgs({mode:'look'}))">🔭 둘러보기</button>
+      <button title="둘러본 뒤 토마토 쪽으로 차체를 돌린다. 둘레 여유가 모자라면 거절한다" onclick="run('space',spArgs({mode:'look',face:true}))">🔭 보고 돌기</button>
       <button title="토마토 앞(Astra 60cm 사각)에서 손목 D405 거리로 조금씩 다가가 45cm에 선다. 대기 자세에서만(D405가 주행 정면을 볼 때)" onclick="run('space',spArgs({mode:'near'}))">🍅 손목 근접</button>
       <button title="팔을 잡기 시작 자세로 두고 손목 D405로 열매를 보며 옆걸음·전진으로 17cm에 선다 — 다음은 줄기 찍기 → 잡으러 간다" onclick="run('space',spArgs({mode:'reach'}))">🍅 잡기 거리까지</button>
       <button class="go" title="제자리 한 바퀴 스캔 → 토마토 찾기 → 지도의 경계(빈 곳과 모르는 곳 사이)로 가기를 되풀이한다(최대 6자리). 쓰러진 나무 열매도 센다. 회전판은 정면, 둘레 0.45m는 비워 둔다" onclick="run('space',spArgs({mode:'explore'}))">🧭 방 둘러보기</button>
