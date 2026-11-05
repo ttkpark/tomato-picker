@@ -1503,11 +1503,19 @@ def approach_cmd(a, m) -> int:
     return 1
 
 
+MM_PER_COUNT = 0.18            # 앞바퀴 엔코더: 손 한 바퀴 1339·1264(이론 1320 → 0.187), Astra 대조 0.174~0.185(11/05 실기, 지름 78.6mm)
+MOVE_SLOW = 800                # 끝나기 이만큼 카운트 전부터 감속 — 400이면 150mm 목표에 180~205mm까지 넘쳤다
+MOVE_MIN = 130                 # 감속해도 이 아래로 안 내린다 — 100·120은 출발이 걸렸다(듀티 2600)
+MOVE_MIN_TICKS = 120           # ≈2cm, 이보다 짧은 이동은 정지마찰에 묻힌다
+NEAR_BLIND_MM = 150.0          # 손목 깊이가 안 잡힐 때 한 걸음
 NEAR_MM = 450.0                # 🍅 손목 근접: 손목 D405에서 토마토가 이 거리(mm)가 되면 멈춘다(D405 근거리 ≤500)
 NEAR_STOP_MM = 200.0           # 화면 가운데 아래(화분 쪽)에 이보다 가까운 것이 보이면 멈춘다
 NEAR_TURN_DEG = 6.0            # 토마토가 손목 화면 가운데에서 이보다 벗어나면 먼저 돈다
 
 
+WRIST_TILT_RAD = 0.278         # 대기 자세 손목 D405가 수평에서 아래로 숙인 각(11/05: 같은 토마토 v225@850mm·v373@350mm에서 풂)
+TOMATO_BELOW_MM = (80.0, 320.0)  # 대기 자세: 토마토는 손목 D405보다 이만큼 아래다(실측 ≈206). 위 = 옷걸이 조끼(≈-30), 아래 = 바닥의 빨간 통(≈415)
+NEAR_STEP_MAX_MM = 250.0       # 한 걸음 상한 — D405는 먼 깊이가 부풀고(850mm 읽고 440mm 가면 357mm) 차체는 440mm에 12° 돈다. 가서 다시 잰다
 PICK_WIN_PX = 120             # 직전 자리에서 이만큼 안이면 같은 열매로 본다
 
 
@@ -1545,23 +1553,38 @@ def after_turn_u(v, ang_deg: float, got_deg: float) -> float:
     return it.ppx - it.fx * math.tan(math.radians(rest))
 
 
-def wrist_tomato(prefer_u=None):
+def tomato_height_ok(v_px: float, mm: float, it) -> bool:
+    """대기 자세에서 화소(v)·깊이(mm)가 토마토 높이인가. 깊이가 없으면(nan) 판단하지 않는다."""
+    if mm != mm:
+        return True
+    below = mm * ((v_px - it.ppy) / it.fy + WRIST_TILT_RAD)
+    return TOMATO_BELOW_MM[0] <= below <= TOMATO_BELOW_MM[1]
+
+
+def wrist_tomato(prefer_u=None, waiting_pose=False):
     """손목 D405(컬러=깊이 정렬)의 열매 → (u, 거리 mm, 가로 각 °, DepthView) | None.
     깊이가 잡히는(유효 거리 안) 것 가운데 가장 큰 것(prefer_u가 있으면 그 자리에 가장 가까운 것), 없으면 거리 nan.
     **익음으로 거르지 않는다** —
     가까이선 조명에 주황으로 보여 '안 익음'이 되고, 그 사이 2m 뒤 빨간 의자가 '익은 열매'로 뽑혔다(10/24).
-    대기 자세(팔을 뒤로 접음)에서만 화면이 바로 서고 주행 정면을 본다 — 화면 오른쪽 = 차체 오른쪽."""
+    대기 자세(팔을 뒤로 접음)에서만 화면이 바로 서고 주행 정면을 본다 — 화면 오른쪽 = 차체 오른쪽.
+    빨간 것이 있으면 빨간 것만 본다 — 11/05: 초록 잎(넓이 5900·490mm)이 토마토(빨강 2900·350mm)를 이겨 거리가 틀렸다.
+    waiting_pose=True면 토마토 높이 밖(조끼·바닥 빨간 통)도 뺀다 — 숙인 각이 대기 자세 값이라 다른 자세엔 쓰지 않는다."""
     from tomato_picker.hardware.depth_camera import DepthError, DepthView
     from tomato_picker.vision.color_detect import detect_fruits
     v = DepthView(camera="d405")
     v.require_color_aligned()
+    it = v.intrinsics()
     for _try in range(4):                   # 고른 열매의 깊이가 비었으면 새 장을 몇 번 더 본다(850mm 작은 열매는 깊이가 듬성하다)
         fr = []
-        for f in detect_fruits(v.color_bgr()):
+        found = detect_fruits(v.color_bgr())
+        red = [f for f in found if f.ripe]
+        for f in red or found:
             try:
                 mm = v.depth_mm_at(*f.position)
             except DepthError:
                 mm = float("nan")
+            if waiting_pose and not tomato_height_ok(f.position[1], mm, it):
+                continue
             fr.append((mm == mm, f.area, f.position[0], mm))
         if not fr:
             return None
@@ -1569,7 +1592,6 @@ def wrist_tomato(prefer_u=None):
         if mm == mm:
             break
         time.sleep(0.3)
-    it = v.intrinsics()
     return u, mm, math.degrees(math.atan2(it.ppx - u, it.fx)), v
 
 
@@ -1583,6 +1605,13 @@ def wrist_front_mm(v) -> float:
     return float(np.percentile(d, 5)) if d.size > 50 else float("inf")
 
 
+def step_mm(link, mm: float, vx: int) -> dict:
+    """앞바퀴 엔코더로 mm만큼 전진(+)/후진(−). 보드가 세고 선다(펌웨어 M). 듀티 2600에서 800카운트 목표에 144~161mm(11/05 실기)."""
+    link.send_raw("K %d %d 0 0 0" % (MOVE_SLOW, MOVE_MIN))
+    ticks = max(MOVE_MIN_TICKS, int(abs(mm) / MM_PER_COUNT))
+    return link.drive_ticks(ticks, int(math.copysign(vx, mm)), 0, 0, timeout=8.0)
+
+
 def near_cmd(a, m) -> int:
     """🍅 손목 근접 — 토마토 앞(Astra 60cm 사각)에서 손목 D405 거리로 조금씩 다가가 NEAR_MM에 선다."""
     from base_nudge import drive, open_link
@@ -1592,11 +1621,11 @@ def near_cmd(a, m) -> int:
     if link is None:
         return 1
     try:
-        last, want, vx = None, front_hint(m), a.vx
+        want, vx = front_hint(m), a.vx
         if want is not None:
             print("  앞 카메라(YOLO)가 본 매달린 토마토 → 손목 화면 u %.0f 근처를 쫓는다" % want)
         for k in range(10):
-            got = wrist_tomato(want)
+            got = wrist_tomato(want, waiting_pose=True)
             if got is None:
                 print("⛔ 손목 D405에 익은 토마토가 안 보인다 — [🍅 토마토 앞으로]로 정면에 선 뒤 다시")
                 return 1
@@ -1604,36 +1633,27 @@ def near_cmd(a, m) -> int:
             front = wrist_front_mm(v)
             print("[%d] 손목 토마토 u %.0f · %s · 가로 %+.1f° · 앞 아래 %.0fmm" % (
                 k, u, "%.0fmm" % mm if mm == mm else "거리 ?", ang, front))
-            if mm == mm and mm <= a.near_mm:
-                print("✅ 손목 D405에서 토마토 %.0fmm — 근접 끝" % mm)
-                return 0
             if front < NEAR_STOP_MM:
                 print("⛔ 손목 화면 아래 %.0fmm에 물체(화분?) — 더 안 간다" % front)
                 return 1
             want = u
-            if abs(ang) > NEAR_TURN_DEG:
+            if abs(ang) > NEAR_TURN_DEG:        # 가까이 닿았어도 정면을 먼저 맞춘다 — 끝난 뒤 각이 어긋나 있었다(11/05)
                 want = after_turn_u(v, ang, turn(link, int(math.copysign(a.w, ang)), a.wsecs, abs(ang)))
                 time.sleep(TURN_SETTLE_S)
                 continue
+            if mm == mm and mm <= a.near_mm:
+                print("✅ 손목 D405에서 토마토 %.0fmm — 근접 끝" % mm)
+                return 0
             if mm != mm:
                 # D405는 50cm 너머 작은 열매의 깊이가 자주 빈다(11/05: 850mm에서 열에 서넛) — 가운데 있고 앞 아래가
                 # 비었으면(위 NEAR_STOP 검사) 한 걸음 간다. 가까워지면 깊이가 잡힌다.
-                print("  토마토 거리 ?(D405 50cm 너머) — 앞 아래 %.0fmm 비었으니 한 걸음" % front)
-                drive(link, vx, 0, 0, a.vsecs)
-                continue
-            # 걸음을 더 줄일 수 없다(정지마찰: 0.6초는 0) — 남은 게 직전 걸음의 절반 밑이면 한 걸음 더가 더 크게 넘친다.
-            # 10/24 실기: 484mm에서 34mm 남기고 한 걸음 → 349mm(135mm 넘침)
-            if last is not None and mm - a.near_mm < 0.5 * (last - mm):
-                print("✅ 손목 D405에서 토마토 %.0fmm — 한 걸음(%.0fmm)이 남은 %.0fmm보다 커서 여기서 멈춘다" % (
-                    mm, last - mm, mm - a.near_mm))
-                return 0
-            # 정지마찰: 200·1.0초 = 7~12cm. 안 움직였으면(10mm 미만) 0.3초 늘리고 세기도 +30(255까지) —
-            # 11/05: 200·1.3초를 일곱 번 내도 0mm(같은 지령만 되풀이했다)
-            stuck = last is not None and last - mm <= 10
-            secs = a.vsecs + 0.3 if stuck else a.vsecs
-            vx = min(255, vx + 30) if stuck else vx
-            drive(link, vx, 0, 0, secs if mm - a.near_mm > 120 else max(0.7, secs * 0.7))
-            last = mm
+                print("  토마토 거리 ?(D405 50cm 너머) — 앞 아래 %.0fmm 비었으니 %.0fmm" % (front, NEAR_BLIND_MM))
+                r = step_mm(link, NEAR_BLIND_MM, vx)
+            else:
+                r = step_mm(link, min(mm - a.near_mm, NEAR_STEP_MAX_MM), vx)
+            print("  엔코더 이동 %s %d/%d" % (r["state"], r["got"], r["target"]))
+            if r["state"] == "stall":          # 정지마찰 — 같은 지령만 되풀이하지 않는다(11/05: 200·1.3초를 일곱 번 내도 0mm)
+                vx = min(255, vx + 30)
         print("⛔ 열 번 다가가도 %.0fmm에 못 닿았다" % a.near_mm)
         return 1
     finally:
@@ -2081,6 +2101,11 @@ def selftest() -> int:
     assert abs(r10[1]) < 0.01 and abs(r10[0]) < 0.06, ("ICP가 벽을 따라 끌렸다", r10)
     # ⑪ 손목 열매 고르기 — 직전 자리를 따라간다(11/05 빨간 통↔토마토 번갈아 고름)
     fr = [(True, 900, 60.0, 800.0), (True, 400, 700.0, 840.0), (False, 2000, 420.0, float("nan"))]
+    from types import SimpleNamespace as _NS
+    _it = _NS(ppy=240.0, fy=426.0)
+    assert tomato_height_ok(373, 350.0, _it) and tomato_height_ok(225, 850.0, _it)      # 11/05 토마토(가까이·멀리)
+    assert not tomato_height_ok(395, 647.0, _it) and not tomato_height_ok(96, 565.0, _it)   # 바닥 빨간 통·옷걸이 조끼
+    assert tomato_height_ok(100, float("nan"), _it)                                      # 깊이 없으면 판단 안 함
     assert pick_fruit(fr)[2] == 60.0 and pick_fruit(fr, 640.0)[2] == 700.0 and pick_fruit(fr, 420.0)[2] == 420.0
     assert pick_fruit(fr, 250.0)[2] == 60.0                 # 창 안에 없으면 깊이 있는 것 중 가까운 쪽
     assert pick_fruit([(True, 900, 60.0, 800.0), (False, 400, 470.0, float("nan"))], 469.0)[2] == 470.0

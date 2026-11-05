@@ -83,6 +83,13 @@ class Link:
     def close(self):
         pass
 
+    def send_raw(self, payload):
+        return True
+
+    def drive_ticks(self, ticks, vx=0, vy=0, w=0, timeout=10.0, resumes=2):
+        drive(self, vx, vy, w, min(timeout, ticks * 0.18 / 100.0))     # 실기 M은 앞바퀴 카운트로 끊는다 — 모의는 ≈10cm/s로 시간에 얹는다
+        return {"state": "done", "got": ticks, "target": ticks, "resumes": 0, "why": ""}
+
 
 def drive(link, vx, vy, w, secs, dither=0):
     t1 = time.monotonic()

@@ -333,7 +333,7 @@ def cp3(n, seed):
             ax = ARM_X + (START_TCP.x - CAM_BACK) / 1000
             return np.array([p[0] + ax * c, p[1] + ax * s_]), p[2]
 
-        def wrist_tomato(prefer_u=None):
+        def wrist_tomato(prefer_u=None, waiting_pose=False):
             physics()
             cam, th = cam_pose()
             d = np.array([px, py]) - cam
