@@ -2079,6 +2079,20 @@ def go_cmd(a, m) -> int:
                     print("⛔ 10걸음째 목표에 5cm도 못 다가갔다 — 막혔거나 지령이 정지마찰 아래(전진 크기·시간을 올려라)")
                     return 1
             path, why = plan(s["lo"], xy, goal, m["radius"])
+            if path is None and why.startswith("목표가 장애물") and left > a.tol + RES:
+                # 떠돌이 점유 칸 하나가 목표를 막는다 — 11/09 실기(큰 방 3회차): 트인 바닥 위 (0.8, 0.05) 칸 하나가 목표
+                # (1.02, −0.08)에서 0.26m라 부풀림(5칸)에 걸려 "길이 없다"로 끝났다. 목표를 로봇 쪽으로 5cm씩 당겨 본다
+                # (최대 0.3m — 토마토 앞 0.7m가 0.4m가 될 뿐이고, 나머지는 손목 근접이 맞춘다).
+                u = (xy - goal) / max(1e-6, left)
+                for k in range(1, 7):
+                    if k * RES > left - a.tol:
+                        break
+                    g2 = goal + u * (k * RES)
+                    path, why2 = plan(s["lo"], xy, g2, m["radius"])
+                    if path is not None:
+                        print("  목표 둘레에 점유 칸 — %.2fm 당겨 (%.2f, %.2f)로 간다" % (k * RES, g2[0], g2[1]))
+                        goal = g2
+                        break
             if path is None:
                 print("⛔", why)
                 return 1

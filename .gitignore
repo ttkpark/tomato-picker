@@ -45,3 +45,6 @@ autopilot/secrets/
 
 # 줄기 검출 학습 데이터·결과(사진) — 저장소에 안 넣는다, stem_autolabel.py로 다시 만든다
 data/
+
+# 시험 영상(수십 MB) — git엔 안 올린다, 로컬·젯슨 백업으로 보관
+docs/시험기록/영상/
