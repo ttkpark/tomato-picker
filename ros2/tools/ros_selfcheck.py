@@ -519,8 +519,59 @@ def test_geometry_matches() -> None:
     # click_server 3D 미리보기 roll 부호 ↔ handeye_collect ROLL_SIGN 일치 검증
     import handeye_collect as hc
     check("click_server.CAM_ROLL_SIGN(-1.0)이 handeye_collect.ROLL_SIGN(-1.0)과 일치한다",
-          "var CAM_ROLL_SIGN = -1.0;" in cs_src and abs(hc.ROLL_SIGN - (-1.0)) < 1e-9,
+          "EYE.roll_sign : -1.0;" in cs_src and abs(hc.ROLL_SIGN - (-1.0)) < 1e-9,
           f"CAM_ROLL_SIGN=-1.0, hc.ROLL_SIGN={hc.ROLL_SIGN}")
+
+    # ── 손-눈 채집 → 풀이 경로 (2026-11-08 거울 발견 뒤) ──────────────────
+    # 채집기가 옛 식(roll −1·거울 없음)으로 직접 풀어 frame 기록 없이 저장하면 소비자가 옛 식으로 읽는다 —
+    # 풀이·저장은 handeye_resolve(거울×roll 4조합·|t| 게이트·frame 기록) 한 곳이어야 한다.
+    hc_src = open(os.path.join(ROS2, "tools", "handeye_collect.py"), encoding="utf-8").read()
+    check("handeye_collect는 직접 저장하지 않고 handeye_resolve(--expect-t-mm·frame 기록)를 부른다",
+          "cfg.store(" not in hc_src and '"handeye_resolve.py")' in hc_src and '"--expect-t-mm"' in hc_src
+          and "--target" in hc_src and hc.EXPECT_T_MM[0] < 107 < hc.EXPECT_T_MM[1],
+          f"EXPECT_T_MM={hc.EXPECT_T_MM} (9/4 거울 풀이 |t|=107)")
+    import target_check as tcm  # noqa: E402
+    ap_src = open(os.path.join(REPO, "tools", "aruco_print.py"), encoding="utf-8").read()
+    check("ChArUco 규격이 인쇄물(aruco_print.charuco_wall)과 읽는 쪽(target_check.CHARUCO)에서 같다 (5x7·35·26·4X4_50)",
+          "sq, mk, nx, ny = 35.0, 26.0, 5, 7" in ap_src and "DICT_4X4_50" in ap_src
+          and tcm.CHARUCO == {"nx": 5, "ny": 7, "square_mm": 35.0, "marker_mm": 26.0, "dict": "DICT_4X4_50"},
+          str(tcm.CHARUCO))
+    check("4점 표적 인쇄물(dots_wall)이 target_check EXPECT_W/H(100x174.5)와 같다",
+          "w, h, dia = 100.0, 174.5, 15.0" in ap_src and tcm.EXPECT_W == 100.0 and tcm.EXPECT_H == 174.5,
+          "aruco_print.dots_wall ↔ target_check")
+    # 합성 정면 보드(300mm) → charuco_points가 모서리 수·거리(단위)·기울기를 맞게 돌려주는가
+    import cv2 as _cv  # noqa: E402
+    import numpy as _np  # noqa: E402
+    from tomato_picker.hardware.handeye import Intrinsics as _In  # noqa: E402
+    _fx, _z = 438.0, 300.0
+    _wpx, _hpx = round(5 * 35.0 * _fx / _z), round(7 * 35.0 * _fx / _z)
+    _pat = tcm.charuco_board().generateImage((_wpx, _hpx), marginSize=0, borderBits=1)
+    _canvas = _np.full((480, 848), 255, _np.uint8)
+    _ox, _oy = (848 - _wpx) // 2, (480 - _hpx) // 2
+    _canvas[_oy:_oy + _hpx, _ox:_ox + _wpx] = _pat
+    _r = tcm.charuco_points(_cv.cvtColor(_canvas, _cv.COLOR_GRAY2BGR),
+                            _In(width=848, height=480, fx=_fx, fy=_fx, ppx=424.0, ppy=240.0))
+    check("합성 ChArUco(정면 300mm)를 charuco_points가 모서리 24개·거리 300±5mm·기울기<3°로 읽는다",
+          bool(_r.get("ok")) and _r.get("n") == 24 and abs(_r["plane_mm"] - _z) < 5.0 and _r["tilt_deg"] < 3.0,
+          f"{_r.get('why') or ''} n={_r.get('n')} plane={_r.get('plane_mm', 0):.1f} tilt={_r.get('tilt_deg', 0):.2f} reproj={_r.get('reproj_px', 0):.2f}px")
+    # 그 표본을 resolve가 그대로 먹는가(점 이름 c<id>·expect_mm None) — 거울+roll+1 가짜 팔로 지어 되찾는다
+    import handeye_resolve as hr  # noqa: E402
+    _rng = _np.random.default_rng(3)
+    _Rx_true = _cv.Rodrigues(_np.array([0.4, -0.3, 0.2]))[0]
+    _tx_true = _np.array([20.0, -10.0, 60.0])
+    _geom = kin.ArmGeometry()
+    _board = _np.array([(x, y, 0.0) for x in range(6) for y in range(4)], float) * 35.0 + _np.array([250.0, -60.0, 180.0])
+    _Sm = []
+    for _ in range(12):
+        _q = {"shoulder_pan": _rng.uniform(-20, 20), "shoulder_lift": _rng.uniform(5, 35), "elbow_flex": _rng.uniform(30, 70),
+              "wrist_flex": _rng.uniform(80, 105), "wrist_roll": _rng.uniform(-60, 60)}
+        _R, _t = hr.tool_frame(_q, _geom, +1.0)
+        _pc = (_board - (_R @ _tx_true + _t)) @ (_R @ _Rx_true)          # base → cam (R_x^T R^T (p - R t_x - t))
+        _Sm.append({"label": "", "joints_deg": _q, "dots_mm": {f"c{i}": [-float(p[0]), float(p[1]), float(p[2])] for i, p in enumerate(_pc)}})
+    _got = hr.solve_global(hr.mirrored(_Sm), _geom, +1.0, ("mid",), tries=4000)
+    check("ChArUco식 표본(c0..c23·거울·roll+1)을 handeye_resolve가 무게중심으로 되찾는다 (잔차<0.5mm·t 오차<1mm)",
+          _got[0] < 0.5 and float(_np.linalg.norm(_got[2] - _tx_true)) < 1.0,
+          f"rms={_got[0]:.3f}mm t={_np.round(_got[2], 1).tolist()}")
 
     # arm_calib MOUNT_Z_MM 및 FLOOR_MARGIN_MM 일치 검증
     sys.path.insert(0, os.path.join(ROS2, "tools"))
@@ -2374,6 +2425,17 @@ def test_handeye_identifiability() -> None:
     check("그리고 |t_x|가 수백 mm로 달아난다 (09-04 표본과 같은 증상)",
           float(np.linalg.norm(mir[2])) > 400.0,
           f"|t|={np.linalg.norm(mir[2]):.0f}mm (정답 113mm)")
+    # ⑥-2 (2026-11-08) 그 증상의 처방 — handeye_resolve가 거울(x 뒤집기)까지 시험하고 det −1 R을 저장한다.
+    #   거울 세상 표본을 되찾고, 저장한 R(=Rx·MIRROR)로 원래 카메라점을 옮기면 표적 자리가 나와야 한다.
+    from tomato_picker.hardware.handeye import Rigid, tool_frame_joints
+    back = hr.solve_global(hr.mirrored(Sm), geom, +1.0, ("mid",), tries=4000)    # main()처럼 전역 — 교대는 180°에서 갇힌다
+    T = Rigid(back[1] @ hr.MIRROR, back[2])
+    tgt = np.array([420.0, 10.0, 260.0])            # _synthetic_handeye 표적 무게중심
+    e = max(float(np.linalg.norm(tool_frame_joints(s["joints_deg"], geom, +1.0).apply(
+        T.apply(np.mean(list(s["dots_mm"].values()), 0))) - tgt)) for s in Sm)
+    check("거울 표본은 handeye_resolve.mirrored로 되찾고, det −1 R이 표적을 제자리에 놓는다",
+          back[0] < 0.5 and abs(np.linalg.det(T.R) + 1.0) < 1e-6 and e < 0.5,
+          f"잔차 {back[0]:.3f}mm · det {np.linalg.det(T.R):+.3f} · 표적 오차 최대 {e:.3f}mm")
 
     # ── ⑦ solve_fixed_t는 자로 잰 t_x를 정확히 보존하고 회전을 푼다 (T10/T13/기준2) ──
     # 사람이 자로 잰 t_x(§28: -52, 0, 59 mm)를 상수로 박고 회전만 훑을 때:

@@ -64,6 +64,7 @@ from .handeye import (
     solve_fixed,
     solve_on_arm,
     tool_frame,
+    tool_frame_joints,
 )
 
 MOUNTS = ("fixed", "on_arm")
@@ -233,10 +234,27 @@ class EyeConfig:
             scope["mount"] = mount
             self._save()
 
+    @property
+    def roll_sign(self) -> float | None:
+        """`frame: joints`로 푼 보정의 roll 부호 — None이면 옛 규약(`tool_frame(pose)`, roll 없음)."""
+        sc = self._scope()
+        return float(sc.get("roll_sign", -1.0)) if sc.get("frame") == "joints" else None
+
+    def tool_frame_of(self, cart) -> Rigid:
+        """보정을 **푼 것과 같은 식**으로 지금 T_base_tool — 풀 때와 쓸 때 식이 다르면 보정이 조용히 틀린다(2026-11-08)."""
+        rs = self.roll_sign
+        if rs is None:
+            return tool_frame(cart.pose())
+        return tool_frame_joints(cart.joints_deg(), cart.config.geometry(), rs)
+
     def store(self, mount: str, fit: Fit, intrinsics: Intrinsics | None,
-              note: str = "") -> None:
+              note: str = "", frame: dict | None = None) -> None:
         with self._lock:
-            self._scope(create=True).update({
+            scope = self._scope(create=True)
+            for k in ("frame", "roll_sign", "mirror"):     # 다른 경로(대시보드)로 다시 풀면 옛 규약 표시가 남으면 안 된다
+                scope.pop(k, None)
+            scope.update(frame or {})
+            scope.update({
                 "mount": mount,
                 "camera": self._camera,
                 "transform": fit.transform.as_dict(),
@@ -455,7 +473,7 @@ class Eye:
         p = np.asarray(p_cam, dtype=float)
         if self.config.mount == "on_arm":
             # 카메라가 팔과 함께 움직인다 — 지금 손목이 어디 있는지가 매번 필요하다.
-            p = tool_frame(self._cart.pose()).apply(T.apply(p))
+            p = self.config.tool_frame_of(self._cart).apply(T.apply(p))
         else:
             p = T.apply(p)
         return (float(p[0]), float(p[1]), float(p[2]))

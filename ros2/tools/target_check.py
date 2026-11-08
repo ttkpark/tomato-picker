@@ -183,11 +183,65 @@ def fit_plane(points: np.ndarray):
     return normal, float(normal @ centroid)
 
 
-def measure() -> dict:
-    """`_measure()`를 부르고, 결과를 매번 `VIEW_OUT`에 남긴다(조작대 실시간
+# ChArUco 벽 보드 — `tools/aruco_print.py charuco_wall()`과 **같은 규격**(바꾸면 둘 다, ros_selfcheck가 맞춘다).
+# 4점 표적 대신 쓰는 이유: 모서리가 최대 24개라 한 장이 더 많이 말하고, 3D는 깊이가 아니라 보드의 아는 치수로
+# PnP를 풀어 얻으므로 검은 칸의 IR 구멍·깊이 스케일과 무관하다(handeye_sim: 4점 5~10mm vs ChArUco ≈4mm).
+CHARUCO = {"nx": 5, "ny": 7, "square_mm": 35.0, "marker_mm": 26.0, "dict": "DICT_4X4_50"}
+CHARUCO_MIN_CORNERS = 6
+CHARUCO_MAX_REPROJ_PX = 2.0      # 재투영 잔차가 이보다 크면 보드가 아니거나 구겨진 것 — 버린다
+
+
+def charuco_board():
+    aruco = cv2.aruco
+    d = aruco.getPredefinedDictionary(getattr(aruco, CHARUCO["dict"]))
+    return aruco.CharucoBoard((CHARUCO["nx"], CHARUCO["ny"]), CHARUCO["square_mm"], CHARUCO["marker_mm"], d)
+
+
+def charuco_points(bgr: np.ndarray, intr: Intrinsics) -> dict:
+    """ChArUco 보드 → 보이는 안쪽 모서리의 카메라계 3D(mm). 4점 표적 `_measure()`와 같은 꼴을 돌려준다
+    (`dots`=화소, `points_mm`=3D, `plane_mm`, `tilt_deg`) — 점 이름은 `c<모서리id>`.
+    ⚠ 왜곡계수는 안 넣는다 — D405 컬러는 inverse_brown_conrady라 OpenCV 전방 모델과 다르고 계수도 작다."""
+    board = charuco_board()
+    corners, ids, _, _ = cv2.aruco.CharucoDetector(board).detectBoard(bgr)
+    n = 0 if ids is None else len(ids)
+    if n < CHARUCO_MIN_CORNERS:
+        return {"ok": False, "why": f"ChArUco 모서리 {n}개({CHARUCO_MIN_CORNERS}개 이상 필요)", "age": None}
+    ids = ids.ravel()
+    uv = corners.reshape(-1, 2).astype(float)
+    obj = board.getChessboardCorners()[ids].astype(float)
+    K = np.array([[intr.fx, 0.0, intr.ppx], [0.0, intr.fy, intr.ppy], [0.0, 0.0, 1.0]])
+    ok, rvec, tvec = cv2.solvePnP(obj, uv, K, None, flags=cv2.SOLVEPNP_IPPE)    # 평면 표적 전용 해
+    if not ok:
+        return {"ok": False, "why": "ChArUco PnP 실패", "age": None}
+    # 정면에 가까운 평면은 기울기가 약하게 갈린다(합성 정면 보드에서 2.3°) — LM으로 다듬는다. 무게중심은 영향 없다.
+    rvec, tvec = cv2.solvePnPRefineLM(obj, uv, K, None, rvec, tvec)
+    proj = cv2.projectPoints(obj, rvec, tvec, K, None)[0].reshape(-1, 2)
+    reproj = float(np.sqrt(((proj - uv) ** 2).sum(axis=1).mean()))
+    if reproj > CHARUCO_MAX_REPROJ_PX:
+        return {"ok": False, "why": f"ChArUco 재투영 잔차 {reproj:.1f}px — 보드가 평평하지 않거나 오검출", "age": None}
+    R = cv2.Rodrigues(rvec)[0]
+    P = obj @ R.T + tvec.ravel()
+    normal = R[:, 2] if R[2, 2] > 0 else -R[:, 2]
+    keys = [f"c{int(i)}" for i in ids]
+    return {"ok": True, "dots": {k: [float(u), float(v)] for k, (u, v) in zip(keys, uv)},
+            "points_mm": {k: p.tolist() for k, p in zip(keys, P)},
+            "plane_mm": float(abs(normal @ P.mean(axis=0))),
+            "tilt_deg": float(np.degrees(np.arccos(min(1.0, abs(normal[2]))))),
+            "reproj_px": reproj, "n": int(n), "age": None}
+
+
+def _measure_charuco() -> dict:
+    meta = json.load(open(META))
+    res = charuco_points(cv2.imread(COLOR), Intrinsics.from_dict(meta["intrinsics"]))
+    res["age"] = time.time() - meta["ts"]
+    return res
+
+
+def measure(target: str = "dots") -> dict:
+    """`_measure()`(4점) 또는 `_measure_charuco()`를 부르고, 결과를 매번 `VIEW_OUT`에 남긴다(조작대 실시간
     표시용) — 실패해도(점을 못 찾아도) 남긴다, 그래야 화면에 "안 보인다"가
     뜬다."""
-    res = _measure()
+    res = _measure() if target == "dots" else _measure_charuco()
     try:
         json.dump({"ok": res.get("ok", False), "why": res.get("why"),
                    "reconstructed": res.get("reconstructed"),

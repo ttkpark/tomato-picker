@@ -6,9 +6,11 @@
 ① charuco_wall.pdf — 벽에 붙이는 ChArUco 보드(5×7칸, 칸 35mm·마커 26mm, DICT_4X4_50).
    회전판 + 손목 D405 사슬 보정용: 차체를 세워 두고 회전판을 돌리며 같은 보드를 여러 각에서 본다.
 ② home_floor.pdf — 바닥에 붙이는 HOME 마커(ID 49, 160mm — 벽 보드의 ID 0~16과 안 겹치게). 화살표 = 로봇이 서 있을 정면.
-두 장 모두 아래쪽 100mm 눈금자로 인쇄 배율을 확인한다(자로 재서 100mm가 아니면 다시 뽑는다).
+③ dots_wall.pdf — 손-눈 보정 4점 표적(100×174.5mm, target_check.py). ①도 `handeye_collect.py --target charuco`로 같은 일에 쓴다.
+세 장 모두 아래쪽 100mm 눈금자로 인쇄 배율을 확인한다(자로 재서 100mm가 아니면 다시 뽑는다).
 """
 import os
+import sys
 
 import cv2
 import numpy as np
@@ -85,6 +87,36 @@ def home_floor():
     return page, save(page, "home_floor.pdf")
 
 
+def dots_wall():
+    """손-눈 보정 4점 표적 — `ros2/tools/target_check.py`(EXPECT_W/H)가 읽는 그 종이. 점 중심 간격 가로 100 ·
+    세로 174.5mm, 지름 15mm(채집 거리 15~50cm에서 find_dots 면적 40~5000px 안). 점 둘레가 흰 종이여야 잡힌다."""
+    w, h, dia = 100.0, 174.5, 15.0
+    page = Image.new("L", A4, 255)
+    d = ImageDraw.Draw(page)
+    cx, cy = 105.0, 125.0
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            x, y = cx + sx * w / 2, cy + sy * h / 2
+            d.ellipse([((x - dia / 2) * MM, (y - dia / 2) * MM), ((x + dia / 2) * MM, (y + dia / 2) * MM)], fill=0)
+    d.text((20 * MM, 232 * MM), "손-눈 보정 4점 표적 · 점 중심 간격 100 x 174.5mm · 지름 15mm", fill=0, font=font(round(4 * MM)))
+    d.text((20 * MM, 239 * MM), "벽에 평평하게(구김 없이), 손목 카메라에서 15~50cm · 채집 중 움직이지 않게", fill=0, font=font(round(4 * MM)))
+    ruler(d, 20, 285)
+    return page, save(page, "dots_wall.pdf")
+
+
+def check_dots(page: Image.Image) -> float:
+    """인쇄할 그림을 실제 검출기(target_check.find_dots)에 넣어 네 점이 아는 직사각형으로 읽히는가 → 변 오차 mm."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ros2", "tools"))
+    import cv2 as _cv
+    import target_check as tc
+    k = 4
+    small = np.array(page.resize((page.width // k, page.height // k)))
+    dots = tc.find_dots(_cv.cvtColor(small, _cv.COLOR_GRAY2BGR))
+    if len(dots) != 4:
+        return float("inf")
+    return tc.quad_error([(u * k / MM, v * k / MM, 0.0) for u, v in dots])
+
+
 def check(page: Image.Image) -> list:
     """인쇄할 그림에서 마커가 다시 읽히는가 → 읽힌 ID들(사전·ID가 틀린 종이를 뽑지 않게)."""
     small = np.array(page.resize((page.width // 3, page.height // 3)))
@@ -93,7 +125,9 @@ def check(page: Image.Image) -> list:
 
 
 if __name__ == "__main__":
-    (wall, pw), (home, ph) = charuco_wall(), home_floor()
+    (wall, pw), (home, ph), (dots, pd) = charuco_wall(), home_floor(), dots_wall()
     assert len(check(wall)) == 17, check(wall)          # 5×7 ChArUco = 마커 17개(ID 0~16)
     assert check(home) == [HOME_ID], check(home)
-    print("만들었다(마커 다시 읽힘 확인):", os.path.normpath(pw), os.path.normpath(ph))
+    qe = check_dots(dots)
+    assert qe < 2.0, f"4점 표적 변 오차 {qe}mm"            # 실제 검출기로 읽어 100×174.5가 나오는가
+    print("만들었다(마커·점 다시 읽힘 확인):", os.path.normpath(pw), os.path.normpath(ph), os.path.normpath(pd))

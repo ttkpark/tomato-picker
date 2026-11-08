@@ -366,6 +366,26 @@ def tool_frame(pose) -> Rigid:
     return Rigid(R, np.array([pose.x, pose.y, pose.z], dtype=float))
 
 
+def tool_frame_joints(degs: dict, geom, roll_sign: float) -> Rigid:
+    """관절각 → T_base_tool, **wrist_roll 포함** — 손목 카메라 보정(`handeye_resolve`)이 풀 때와 쓸 때 같은 식.
+
+    `tool_frame(pose)`와 달리 방위각을 atan2가 아니라 `shoulder_pan` 그대로 쓴다 — 팔이 몸통 위로 접히면
+    (대기 자세·잡기 시작 자세) atan2가 180° 뒤집힌 방위를 줘서 회전이 거울상이 된다.
+    """
+    from .kinematics import forward  # 순환 import 방지
+
+    pan = math.radians(degs["shoulder_pan"])
+    a3 = math.radians(degs["shoulder_lift"] + degs["elbow_flex"] + degs["wrist_flex"])
+    approach = np.array([math.cos(a3) * math.cos(pan), math.cos(a3) * math.sin(pan), math.sin(a3)])
+    lateral = np.array([-math.sin(pan), math.cos(pan), 0.0])
+    up = np.array([-math.sin(a3) * math.cos(pan), -math.sin(a3) * math.sin(pan), math.cos(a3)])
+    roll = math.radians(roll_sign * float(degs.get("wrist_roll", 0.0)))
+    lat = lateral * math.cos(roll) + up * math.sin(roll)
+    upr = -lateral * math.sin(roll) + up * math.cos(roll)
+    p = forward(degs, geom)
+    return Rigid(np.array([approach, lat, upr], dtype=float).T, np.array([p.x, p.y, p.z], dtype=float))
+
+
 # ----------------------------------------------------------------------
 # 내부
 # ----------------------------------------------------------------------

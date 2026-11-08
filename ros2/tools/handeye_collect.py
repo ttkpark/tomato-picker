@@ -56,6 +56,7 @@ import argparse
 import json
 import math
 import os
+import subprocess
 import sys
 import time
 
@@ -69,9 +70,7 @@ sys.path.insert(0, HERE)
 
 import target_check as tc  # noqa: E402
 from tomato_picker.hardware import kinematics as kin  # noqa: E402
-from tomato_picker.hardware.handeye import (  # noqa: E402
-    CalibrationError, Rigid, solve_on_arm,
-)
+from tomato_picker.hardware.handeye import Rigid  # noqa: E402
 
 DEG_PER_TICK = 360.0 / 4096.0
 CAL = os.path.expanduser(
@@ -126,11 +125,11 @@ ELBOW_GRID = (-45.0, -30.0, -15.0, 0.0)
 # 접근축 둘레 회전. 표적을 화면에서 **회전만** 시키므로 여유를 거의 안 먹는데,
 # t_x(카메라가 도구에서 얼마나 벗어나 있는가)를 가르는 것은 이 축이다.
 ROLL_GRID = (-60.0, -30.0, 0.0, 30.0, 60.0)
-ROLL_SIGN = -1.0       # 접근축 둘레 회전의 부호 — 실측으로 정한다(해가 더 잘 맞는 쪽)
-# ⚠ 2026-09-04 확정: 09-03 새벽 표본 7개(~/handeye_samples.json)를
-#   handeye_resolve.py로 다시 풀어 보니 +1은 벽 법선 어긋남 평균 93.8°,
-#   -1은 11.4°였다 — 반대 부호가 압도적으로 맞다. 그동안 이 값이 +1로
-#   박혀 있어 손-눈 보정이 안 풀렸을 수 있다.
+ROLL_SIGN = -1.0       # 접근축 둘레 회전의 부호 — 여기서는 **진단 출력에만** 쓴다(조작대 미리보기와 같은 값)
+# ⚠ 2026-09-04엔 -1이 맞아 보였으나(법선 어긋남 11.4° vs 93.8°) 2026-11-08에 같은 표본이 **카메라 x 거울 + roll +1**
+#   (잔차 10.3mm·|t| 107mm)로 풀렸다 — 회전만 보는 검사는 거울을 못 가른다. 그래서 풀이·부호 결정·저장은 이 파일이
+#   하지 않고 `handeye_resolve.py`(거울×roll 4조합 + |t| 범위 게이트 + frame 기록 저장) 하나가 한다.
+EXPECT_T_MM = (60.0, 160.0)     # 카메라~손끝 거리 그럴듯한 범위(mm): 자로 75~80, 9/4 거울 풀이 107
 WANT_POSES = 16
 
 
@@ -142,25 +141,13 @@ def tool_frame_from_joints(degs: dict, geom: kin.ArmGeometry) -> Rigid:
     음수가 되면 FK의 (x, y)는 방위각이 180° 뒤집힌 같은 점으로 보이고, `atan2`는
     그 뒤집힌 값을 돌려준다 — 위치는 맞지만 **회전이 거울상이 된다.**
     """
-    pan = math.radians(degs["shoulder_pan"])
-    a3 = math.radians(degs["shoulder_lift"] + degs["elbow_flex"] + degs["wrist_flex"])
-    approach = np.array([math.cos(a3) * math.cos(pan),
-                         math.cos(a3) * math.sin(pan), math.sin(a3)])
-    lateral = np.array([-math.sin(pan), math.cos(pan), 0.0])
-    up = np.array([-math.sin(a3) * math.cos(pan),
-                   -math.sin(a3) * math.sin(pan), math.cos(a3)])
-
     # ⚠ **wrist_roll을 반드시 넣는다.** 카메라는 5번 관절 *뒤에* 달려 있으므로
     #   손목을 굴리면 카메라가 접근축 둘레로 돈다. 레거시의 `handeye.tool_frame`은
     #   이걸 빼고 있는데, 그러면 (가) 보정 표본에 roll을 못 쓰고 — eye-in-hand에서
     #   t_x를 가르는 게 바로 이 축이다 — (나) 보정 때와 다른 roll로 집으러 가면
-    #   카메라 좌표가 조용히 틀린다.
-    roll = math.radians(ROLL_SIGN * float(degs.get("wrist_roll", 0.0)))
-    lat = lateral * math.cos(roll) + up * math.sin(roll)
-    upr = -lateral * math.sin(roll) + up * math.cos(roll)
-    pose = kin.forward(degs, geom)
-    return Rigid(np.array([approach, lat, upr], dtype=float).T,
-                 np.array([pose.x, pose.y, pose.z], dtype=float))
+    #   카메라 좌표가 조용히 틀린다. 식은 라이브러리 하나(`handeye.tool_frame_joints`).
+    from tomato_picker.hardware.handeye import tool_frame_joints
+    return tool_frame_joints(degs, geom, ROLL_SIGN)
 
 
 def main() -> int:
@@ -168,6 +155,9 @@ def main() -> int:
     ap.add_argument("--dry", action="store_true")
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--dot", default="tl", choices=("tl", "tr", "bl", "br"))
+    ap.add_argument("--target", default="dots", choices=("dots", "charuco"),
+                    help="벽의 표적: dots = 4점 종이(docs/aruco/dots_wall.pdf) · "
+                         "charuco = ChArUco 5x7 보드(docs/aruco/charuco_wall.pdf, 모서리 최대 24개·PnP)")
     ap.add_argument("--home", default="2.8,-9.1,100.8,83.2,-3.6",
                     help="시작 자세(도): pan,lift,elbow,wflex,wroll. "
                          "'here'면 지금 자세를 그대로 쓴다")
@@ -251,7 +241,7 @@ def main() -> int:
 
     def look():
         try:
-            m = tc.measure()
+            m = tc.measure(args.target)
         except Exception as e:            # noqa: BLE001
             # 한 프레임이 나쁘다고 채집 전체가 죽으면 안 된다 — 팔은 토크가 걸린
             # 채로 남고, 그때까지 모은 표본도 함께 사라진다.
@@ -259,10 +249,13 @@ def main() -> int:
             return None
         if not m["ok"]:
             return None
-        us = [m["dots"][k][0] for k in ("tl", "tr", "bl", "br")]
-        vs = [m["dots"][k][1] for k in ("tl", "tr", "bl", "br")]
+        us = [p[0] for p in m["dots"].values()]       # 4점이든 ChArUco 모서리든
+        vs = [p[1] for p in m["dots"].values()]
         m["box"] = (min(us), min(vs), max(us), max(vs))
         return m
+
+    def centroid(m):
+        return np.mean(list(m["points_mm"].values()), axis=0)
 
     # ⚠ 붙는 순간 팔이 늘어진다 — `FollowerIO._connect`가 `disable_torque`를 하기
     #    때문이다(안전한 기본값이다: 켜자마자 힘이 들어가면 사람이 놀란다).
@@ -293,11 +286,11 @@ def main() -> int:
     move(dict(home))
     base_view = look()
     if base_view is None:
-        print("❌ 지금 자세에서 4점이 안 보인다 — 카메라를 표적 쪽으로 맞춘 뒤 다시.")
+        print(f"❌ 지금 자세에서 표적({args.target})이 안 보인다 — 카메라를 표적 쪽으로 맞춘 뒤 다시.")
         io.hold_close()
         return 1
     print(f"           표적 상자 {tuple(round(v) for v in base_view['box'])} · "
-          f"거리 {base_view['plane_mm']:.0f}mm")
+          f"거리 {base_view['plane_mm']:.0f}mm · 점 {len(base_view['dots'])}개")
 
     _K0 = json.load(open(tc.META))["intrinsics"]
     CX, CY = float(_K0["ppx"]), float(_K0["ppy"])
@@ -507,7 +500,7 @@ def main() -> int:
         io.hold_close()
         return 0
 
-    cam_pts, frames, labels, all_dots, cam_org = [], [], [], [], []
+    cam_pts, frames, labels = [], [], []
     raw = []          # ⚠ 원자료를 남긴다 — 가설 하나 시험하려고 팔을 다시 움직이지 않게.
     for a, degs, _ in picked:
         label = (f"pan{a[0]:+.0f} pit{a[1]:+.0f} lif{a[2]:+.0f} "
@@ -520,13 +513,11 @@ def main() -> int:
         if m is None:
             print(f"  {label:<34} 표적 안 보임 — 건너뜀")
             continue
-        pt = m["points_mm"][args.dot]
+        pt = m["points_mm"][args.dot] if args.target == "dots" else centroid(m)
         recon = m.get("reconstructed")   # 점 3개만 보여서 재구성한 자리 이름(있으면)
         cam_pts.append(pt)
         frames.append(tool_frame_from_joints(got, geom))
         labels.append(label)
-        all_dots.append(m["points_mm"])
-        cam_org.append(kin.forward(got, geom))
         raw.append({"label": label, "joints_deg": {k: float(v) for k, v in got.items()},
                     "dots_mm": {k: [float(c) for c in v] for k, v in m["points_mm"].items()},
                     "dots_px": {k: [float(c) for c in v] for k, v in m["dots"].items()},
@@ -534,15 +525,19 @@ def main() -> int:
                     "reconstructed": recon})
         tag = f" ⚠재구성({recon})" if recon else ""
         print(f"  {label:<34} ✓ {len(cam_pts):2}  카메라점 "
-              f"({pt[0]:7.1f},{pt[1]:7.1f},{pt[2]:7.1f}) · 거리 {m['plane_mm']:.0f}mm{tag}")
+              f"({pt[0]:7.1f},{pt[1]:7.1f},{pt[2]:7.1f}) · 거리 {m['plane_mm']:.0f}mm · "
+              f"점 {len(m['dots'])}개{tag}")
 
     print(f"\n표본 {len(cam_pts)}개")
     dump = os.path.expanduser("~/handeye_samples.json")
     with open(dump, "w", encoding="utf-8") as fh:
         json.dump({"geom": {"z0": geom.z0, "d0": geom.d0, "l1": geom.l1,
                             "l2": geom.l2, "l3": geom.l3},
-                   "expect_mm": {"w": 100.0, "h": 174.5},
-                   "marker": args.dot, "samples": raw}, fh, ensure_ascii=False, indent=1)
+                   "target": args.target,
+                   "expect_mm": {"w": tc.EXPECT_W, "h": tc.EXPECT_H} if args.target == "dots" else None,
+                   "charuco": tc.CHARUCO if args.target == "charuco" else None,
+                   "marker": args.dot if args.target == "dots" else "mid",
+                   "samples": raw}, fh, ensure_ascii=False, indent=1)
     print(f"  원자료 {dump} ({len(raw)}개) — 다시 풀 때 팔을 안 움직여도 된다")
 
     # ── 표류 검사: 처음 자리로 돌아가 같은 것을 다시 본다 ──────────────
@@ -555,9 +550,7 @@ def main() -> int:
     if again is None:
         print("  ⚠ 표류 검사 실패 — 처음 자리에서 표적이 안 보인다. 무언가 움직였다.")
     else:
-        d0 = np.mean([base_view["points_mm"][k] for k in ("tl", "tr", "bl", "br")], axis=0)
-        d1 = np.mean([again["points_mm"][k] for k in ("tl", "tr", "bl", "br")], axis=0)
-        drift = float(np.linalg.norm(np.array(d1) - np.array(d0)))
+        drift = float(np.linalg.norm(centroid(again) - centroid(base_view)))
         mark = "  ⚠ 채집 도중 무언가 움직였다 — 이 표본들은 못 믿는다" if drift > 5.0 else ""
         print(f"  표류 검사: 출발 자세에서 표적이 {drift:.1f}mm 옮겨 보인다{mark}")
     if len(cam_pts) < 8:
@@ -572,52 +565,20 @@ def main() -> int:
     print(f"  도구 원점 이동 폭 x {np.ptp(tt[:,0]):.0f} y {np.ptp(tt[:,1]):.0f} "
           f"z {np.ptp(tt[:,2]):.0f} mm")
 
-    try:
-        fit = solve_on_arm(cam_pts, frames)
-    except CalibrationError as exc:
-        print(f"❌ {exc}")
-        io.hold_close()
-        return 1
-
-    print(f"\n{fit.summary()}")
-    print(f"  T_tool_cam  t = {np.round(fit.transform.t, 1).tolist()} mm")
-    print(f"              rpy = {tuple(round(v,1) for v in fit.transform.rpy_deg)}°")
-    if fit.marker_base:
-        print(f"  표적 위치(팔 base 기준) = {tuple(round(v,1) for v in fit.marker_base)} mm")
-    w = fit.worst_index()
-    if 0 <= w < len(labels):
-        print(f"  가장 어긋난 표본: {w}번 ({labels[w]}) {fit.per_sample_mm[w]:.1f}mm")
-
-    # ⚠ 점 3개만 보여 재구성한 표본은 그 재구성된 자리가 나머지 셋의
-    #   평행사변형 등식으로 정의상 완벽히 맞아떨어진다 — 그 자리를 마커로
-    #   삼는 교차검증 칸은 "독립 관측끼리 일치하나"를 재는 게 아니게 된다.
-    #   위 ✓ 줄의 "⚠재구성(...)" 표시로 어떤 표본이 그런지 알 수 있다.
-    print("\n[교차검증] 네 점을 각각 마커로 삼아 따로 푼다")
-    sols = {}
-    for key in ("tl", "tr", "bl", "br"):
-        try:
-            f2 = solve_on_arm([dd[key] for dd in all_dots], frames)
-            sols[key] = f2
-            print(f"  {key}: 잔차 {f2.rms_mm:5.1f}mm · t = {np.round(f2.transform.t,1).tolist()}")
-        except CalibrationError as exc:
-            print(f"  {key}: 못 풀었다 — {str(exc)[:60]}")
-    if len(sols) >= 2:
-        ts = np.array([s.transform.t for s in sols.values()])
-        spread = float(np.linalg.norm(ts.max(axis=0) - ts.min(axis=0)))
-        print(f"  네 해의 카메라 위치 흩어짐 {spread:.1f}mm "
-              + ("— 잘 일치한다" if spread < 10 else "⚠ 크다"))
-
-    if args.save and fit.good:
-        from tomato_picker.hardware.eye import EyeConfig
-        cfg = EyeConfig()
-        cfg.store("on_arm", fit, None, note="handeye_collect.py (관절공간 수집)")
-        print(f"\n저장: {cfg.path}")
-    elif args.save:
-        print(f"\n잔차가 커서 저장하지 않았다 ({fit.rms_mm:.1f}mm).")
-
     print("\n⚠ 토크를 켠 채로 둔다 (여기서 끄면 팔이 떨어진다).")
     io.hold_close()          # noqa: SLF001
-    return 0
+
+    # ── 풀이·저장은 handeye_resolve.py 하나가 한다 ──────────────────────
+    # ⚠ 2026-11-08 전엔 여기서 `solve_on_arm`(roll −1·거울 없음)으로 직접 풀어 `--save`면 바로 저장했다 —
+    #   그 식이 거울상으로 판명됐고(9/4 표본: 그대로 82mm → 거울+roll+1 10.3mm), 그렇게 저장한 파일엔 어떤 식으로
+    #   풀었는지(frame) 기록도 없어 소비자가 옛 식으로 읽는다. 두 군데서 다르게 풀면 같은 표본에 답이 둘 생기므로
+    #   풀이는 resolve(거울×roll 4조합·|t| 범위 게이트·frame 기록 저장·합격선 미달 시 저장 거부) 한 곳에만 둔다.
+    cmd = [sys.executable, os.path.join(HERE, "handeye_resolve.py"), dump,
+           "--expect-t-mm", str(EXPECT_T_MM[0]), str(EXPECT_T_MM[1]), "--loo"]
+    if args.save:
+        cmd += ["--save", os.path.expanduser("~/arm_eye.json")]
+    print("\n[풀이] " + " ".join(cmd[1:]))
+    return subprocess.call(cmd)
 
 
 if __name__ == "__main__":

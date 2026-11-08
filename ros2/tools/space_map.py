@@ -285,13 +285,13 @@ def wrist_cloud(m: dict, stride: int = 4) -> np.ndarray:
     from tomato_picker.config import DEPTH_CAMERAS
     from tomato_picker.hardware.cartesian import CartesianArm
     from tomato_picker.hardware.eye import EyeConfig
-    from tomato_picker.hardware.handeye import tool_frame
     cfg = EyeConfig(camera="d405")
     if cfg.mount != "on_arm" or cfg.transform is None or not cfg.good:
         raise RuntimeError("D405 손-눈 보정(on_arm)이 없거나 나쁘다 — 먼저 보정한다")
     io = FollowerIO(hold_torque=True)
     try:
-        pose, yaw = CartesianArm(io).pose(), io.read_yaw()
+        cart = CartesianArm(io)
+        pose, yaw, frame = cart.pose(), io.read_yaw(), cfg.tool_frame_of(cart)   # 대기 자세는 접힌 팔이라 옛 atan2 틀은 회전이 거울상
     finally:
         io.hold_close()
     spec = DEPTH_CAMERAS["d405"]
@@ -310,7 +310,7 @@ def wrist_cloud(m: dict, stride: int = 4) -> np.ndarray:
     v, u = np.nonzero((d >= meta["min_mm"]) & (d <= meta["max_mm"]))
     Z = d[v, u]
     cam = np.stack([(u * stride - it["ppx"]) * Z / it["fx"], (v * stride - it["ppy"]) * Z / it["fy"], Z], 1)
-    arm = tool_frame(pose).apply(cfg.transform.apply(cam))
+    arm = frame.apply(cfg.transform.apply(cam))
     print("  손목: 회전판 %.1f° · 집게 (%.0f, %.0f, %.0f)mm · D405 %d점" % (yaw, pose.x, pose.y, pose.z, len(Z)))
     return wrist_to_body(arm, yaw, m)
 
@@ -628,7 +628,7 @@ def turn(link, w: int, secs: float, deg: float) -> float:
         while time.monotonic() - t0 < budget:
             i = imu_now()
             got = abs(math.degrees(i[1] - i0[1])) if i is not None and i[0] == i0[0] else 0.0
-            if got >= deg * COAST:
+            if got >= max(deg * COAST, deg - COAST_MAX_DEG):
                 break
             moved = moved or got > 1.0
             # 아직 1°도 못 돌았으면 0.5초마다 +30 — 정지마찰 문턱을 IMU로 더듬는다(각도로 끊으니 넘쳐도 안전)
@@ -1633,7 +1633,7 @@ def step_mm(link, mm: float, vx: int) -> dict:
 # 화면 방위 = (회전판 − 기본 자리) − 어깨 + 화면 가로 각. 어깨는 회전판과 반대 부호다(실측: 어깨 −90 ≈ 회전판 +90).
 # 회전판 ±90만으로는 앞→왼쪽→뒤(약 270°)라 오른쪽은 어깨로 메운다.
 PARK = "0.6,22,78,81,6"        # [대기 자세] 팔 — 뒤로 접혀 D405가 바로 선다(축에서 렌즈 ≈110mm라 돌아도 안 뻗는다)
-LOOK_SHOTS = [(None, p) for p in (30, 60, 95)] + [(y, 0.0) for y in (-60, -30, 0, 30, 60, 90)] + [(90, p) for p in (-30, -60, -95)]
+LOOK_SHOTS = [(None, 0.0)] + [(None, p) for p in (30, 60, 95)] + [(y, 0.0) for y in (-60, -30, 0, 30, 60, 90)] + [(90, p) for p in (-30, -60, -95)]
 LOOK_STOP_MM = 150.0           # 이보다 가까이 보이면 더 안 돌린다
 LOOK_PARK_TOL = 8.0            # 대기 자세에서 이만큼 벗어나면 안 돈다(편 팔을 돌리면 가구에 걸린다, 10/23)
 LOOK_CAM_R_M = 0.11            # 렌즈~회전 중심 근사 — 깊이는 렌즈에서 잰 값이다
@@ -1645,6 +1645,9 @@ LOOK_ROUNDS = 3                # 옮기고 다시 보기 상한 — 한 번 보�
 LOOK_SIDE = (300, 200, 255)    # 옆걸음 (감속 카운트, 최저 지령, 지령) — 전진값(800·130·220)으로는 감속에 들자 바퀴 C가 걸렸다(11/06: 552/1111)
 LOOK_FRUIT_MM = (40.0, 95.0)   # 빨간 부분의 환산 지름(11/06: 800mm 63~80mm, 500mm 50mm — 가까우면 일부만 빨갛다) — 빨간 의자는 화면 면적이 30배, 옷장 라벨은 28mm
 LOOK_CLOSE_MM = (300.0, 600.0) # 이 안의 후보 하나는 한 장이어도 토마토로 본다(그보다 가까운 것은 11/06 가짜 265mm)
+LOOK_CLOSE_SAME_MM = 100.0     # 가까운 후보 여럿이 이만큼 안의 깊이면 같은 열매(시차로 방위만 벌어진 것)
+LOOK_NEAR_OK_DEG = 30.0        # 토마토가 이 안이면 돌 자리를 따지지 않고 손목 근접에 넘긴다 — 근접이 작은 회전으로 맞춘다
+COAST_MAX_DEG = 8.0            # 회전 지령을 끊은 뒤 감속 슬루가 더 미는 양의 상한(20° 걸음: 14°에 끊어 22.2°, 11/06)
 LOOK_FRUIT_FILL = 0.4          # 외접원을 채운 비 — 어두운 장의 얼룩·의자 다리는 0.3 아래
 
 
@@ -1664,8 +1667,14 @@ def look_tomato(hits):
             best = [(b + d, mm) for d, mm in same]
     if len(best) < 2:
         # 가까우면 두 축의 시차가 40°까지 벌어져 한 무리로 안 묶이고, 지지대에 가려 한 장만 통과하기도 한다(11/06: 400mm). 가까운 깊이는 믿을 만하다
-        close = [h for h in hits if LOOK_CLOSE_MM[0] <= h[1] <= LOOK_CLOSE_MM[1]]
-        return (close[0][0], close[0][1], 1) if len(close) == 1 else None
+        close = sorted((h for h in hits if LOOK_CLOSE_MM[0] <= h[1] <= LOOK_CLOSE_MM[1]), key=lambda h: h[1])
+        if not close:
+            return None
+        # 시차로 방위만 벌어진 같은 열매(깊이가 같고 45° 안)만 묶는다 — 묶이지 않는 가까운 후보가 남으면 둘 중 무엇인지 모른다
+        same = [h for h in close if h[1] - close[0][1] <= LOOK_CLOSE_SAME_MM and abs((h[0] - close[0][0] + 180.0) % 360.0 - 180.0) <= 45.0]
+        if len(same) < len(close):
+            return None
+        return (float(np.median([b for b, _ in same])), float(np.median([mm for _, mm in same])), len(same))
     mms = [mm for _, mm in best if mm == mm]
     mid = float(np.median([b for b, _ in best]))
     return ((mid + 180.0) % 360.0 - 180.0, float(np.median(mms)) if mms else float("nan"), len(best))
@@ -1856,6 +1865,9 @@ def look_cmd(a, m) -> int:
             return 1
         print("🍅 토마토 방위 %+.0f° · %.0fmm · %d장" % found)
         if not a.face:
+            return 0
+        if abs(found[0]) <= LOOK_NEAR_OK_DEG:
+            print("  토마토가 %+.0f° — 손목 근접이 맞춘다(돌 자리 안 따짐)" % found[0])
             return 0
         link = open_link()
         if link is None:
@@ -2454,6 +2466,8 @@ def selftest() -> int:
     assert look_tomato([(-104.0, 402.0)])[:2] == (-104.0, 402.0), "가까운 한 장"
     assert look_tomato([(-104.0, 402.0), (-133.0, 265.0)])[:2] == (-104.0, 402.0), "너무 가까운 가짜는 빼고"
     assert look_tomato([(10.0, 500.0), (90.0, 500.0)]) is None, "가까운 후보가 둘이면 고르지 않는다"
+    t15 = look_tomato([(4.0, 353.0), (-10.0, 347.0)])     # narrow_sim: 같은 열매를 판·어깨 두 축이 14° 벌려 봤다
+    assert t15 and t15[2] == 2 and abs(t15[0] + 3.0) < 0.1 and abs(t15[1] - 350.0) < 0.1, t15
     t14 = look_tomato([(179.0, 700.0), (-179.0, 700.0)])
     assert t14[2] == 2 and abs(abs(t14[0]) - 180.0) < 1, "±180 경계를 넘어도 한 무리"
     meta14 = {"min_mm": 70.0, "max_mm": 900.0}

@@ -73,22 +73,12 @@ def gate(rms_mm: float, max_rms_mm: float = GOOD_RMS_MM):
 def tool_frame(degs: dict, geom: kin.ArmGeometry, roll_sign: float):
     """관절각 → (R, t).
 
-    ⚠ `handeye_collect.tool_frame_from_joints`와 **같은 식**이어야 한다.
-      여기서 고른 부호는 그쪽에도 넣어야 두 도구가 같은 것을 뜻한다.
+    식은 라이브러리 `handeye.tool_frame_joints` 하나다 — 보정을 **쓰는** 쪽(`Eye.cam_to_base`,
+    `space_map.wrist_cloud`)도 저장 파일의 `frame: joints`를 보고 같은 함수를 부른다.
     """
-    pan = math.radians(degs["shoulder_pan"])
-    a3 = math.radians(degs["shoulder_lift"] + degs["elbow_flex"] + degs["wrist_flex"])
-    approach = np.array([math.cos(a3) * math.cos(pan),
-                         math.cos(a3) * math.sin(pan), math.sin(a3)])
-    lateral = np.array([-math.sin(pan), math.cos(pan), 0.0])
-    up = np.array([-math.sin(a3) * math.cos(pan),
-                   -math.sin(a3) * math.sin(pan), math.cos(a3)])
-    roll = math.radians(roll_sign * float(degs.get("wrist_roll", 0.0)))
-    lat = lateral * math.cos(roll) + up * math.sin(roll)
-    upr = -lateral * math.sin(roll) + up * math.cos(roll)
-    p = kin.forward(degs, geom)
-    return (np.array([approach, lat, upr]).T,
-            np.array([p.x, p.y, p.z], dtype=float))
+    from tomato_picker.hardware.handeye import tool_frame_joints
+    f = tool_frame_joints(degs, geom, roll_sign)
+    return f.R, f.t
 
 
 def marker_points(s: dict, which: str) -> list:
@@ -101,7 +91,7 @@ def marker_points(s: dict, which: str) -> list:
       어떻게 섞이든 같은 물리적 점이다(치환에 불변).
     """
     if which == "mid":
-        return [list(np.mean([s["dots_mm"][k] for k in DOTS], axis=0))]
+        return [list(np.mean(list(s["dots_mm"].values()), axis=0))]     # 4점이든 ChArUco 모서리 24개든
     return [s["dots_mm"][which]]
 
 
@@ -113,10 +103,24 @@ def plane_normal(s: dict) -> np.ndarray:
     (벽의 법선)여야 한다. 안 맞으면 **회전이 틀린 것**이고, 잘 맞는데도 잔차가
     크면 틀린 곳은 회전이 아니라 평행이동·링크길이다.
     """
-    P = np.array([s["dots_mm"][k] for k in DOTS])
+    P = np.array(list(s["dots_mm"].values()), dtype=float)
     P = P - P.mean(axis=0)
     n = np.linalg.svd(P)[2][2]
     return n / np.linalg.norm(n) * (-1.0 if n[2] > 0 else 1.0)
+
+
+MIRROR = np.diag([-1.0, 1.0, 1.0])
+# ⚠ 2026-11-08: 9/4 표본 11개는 **카메라 x를 뒤집어야만** 맞는다 — 그대로는 roll−1 82.4mm·|t| 450 /
+#   roll+1 20.5mm·|t| 435(9/4 "평행이동이 실측의 4~6배"가 이것), 뒤집으면 roll+1 10.3mm·|t| 107.
+#   깊이 사슬(deproject)은 표준이라 실제로는 팔 쪽(팬·롤 방향)이 FK와 거울상일 가능성이 높다 — 같은 식이다
+#   (FK(−pan,−roll) = S·FK(pan,roll)·S). 팔 명령(IK)도 같은 FK를 쓰므로 **보정 쪽에 거울을 넣는 것**이
+#   팔 동작을 하나도 안 바꾸고 "카메라가 본 점 → IK가 갈 자리"를 맞추는 길이다. 저장되는 R은 det −1.
+
+
+def mirrored(samples: list) -> list:
+    """카메라계 점의 x를 뒤집은 표본 — 풀어서 얻은 R_x에 MIRROR를 곱하면 원래 점에 쓰는 변환이 된다."""
+    return [dict(s, dots_mm={k: [-float(v[0]), float(v[1]), float(v[2])] for k, v in s["dots_mm"].items()})
+            for s in samples]
 
 
 def scaled(degs: dict, k: dict) -> dict:
@@ -251,6 +255,16 @@ def solve_global(samples, geom, roll_sign: float, dots, tries: int = 40000, seed
         rms, sol = residual_for(Rx)
         if best is None or rms < best[0]:
             best = (rms, Rx, sol)
+    # 다듬기 — 훑기만으로는 가장 가까운 표본 회전과 정답 사이 몇 도가 남아 잔차가 수 mm 부푼다(2026-11-08: 잡음 0에서 10mm).
+    for sig in (0.05, 0.01, 0.002, 0.0004):
+        for _ in range(300):
+            w = rng.normal(scale=sig, size=3)
+            th = float(np.linalg.norm(w))
+            k = np.array([[0, -w[2], w[1]], [w[2], 0, -w[0]], [-w[1], w[0], 0]]) / th
+            Rx = (np.eye(3) + math.sin(th) * k + (1 - math.cos(th)) * k @ k) @ best[1]
+            rms, sol = residual_for(Rx)
+            if rms < best[0]:
+                best = (rms, Rx, sol)
     rms, Rx, sol = best
     P = sol[:3 * K].reshape(K, 3)
     tx = sol[3 * K:]
@@ -336,7 +350,7 @@ def report(tag, got, expect):
     print(f"   t_tool_cam = ({tx[0]:7.1f},{tx[1]:7.1f},{tx[2]:7.1f}) mm "
           f"· |t| {np.linalg.norm(tx):5.0f}mm")
     print("   rpy = (%.1f, %.1f, %.1f)°" % rpy(Rx))
-    if P.shape[0] == 4:
+    if P.shape[0] == 4 and expect:
         idx = {k: i for i, k in enumerate(DOTS)}
         want = (("tl", "tr", expect["w"]), ("bl", "br", expect["w"]),
                 ("tl", "bl", expect["h"]), ("tr", "br", expect["h"]))
@@ -345,7 +359,8 @@ def report(tag, got, expect):
         print("   표적 네 점(팔 base) " + " ".join(
             f"{k}({P[idx[k]][0]:.0f},{P[idx[k]][1]:.0f},{P[idx[k]][2]:.0f})" for k in DOTS))
     else:
-        print(f"   표적 위치(팔 base) = ({P[0][0]:.0f}, {P[0][1]:.0f}, {P[0][2]:.0f}) mm")
+        c = P.mean(axis=0)
+        print(f"   표적 {P.shape[0]}점 무게중심(팔 base) = ({c[0]:.0f}, {c[1]:.0f}, {c[2]:.0f}) mm")
     return rms
 
 
@@ -395,10 +410,18 @@ def main() -> int:
         samples = [s for i, s in enumerate(samples) if i != args.drop]
     g = data["geom"]
     geom = kin.ArmGeometry(z0=g["z0"], d0=g["d0"], l1=g["l1"], l2=g["l2"], l3=g["l3"])
-    expect = data.get("expect_mm", {"w": 100.0, "h": 174.5})
+    expect = data.get("expect_mm", {"w": 100.0, "h": 174.5})     # ChArUco 표본은 None(변 길이 검사 없음)
     marker = data.get("marker", "tl")
+    # 표본의 점 이름 — 4점 표적은 tl·tr·bl·br, ChArUco는 보이는 모서리 c<id>(표본마다 다를 수 있어 공통만 쓴다)
+    ALL = tuple(k for k in samples[0]["dots_mm"] if all(k in s["dots_mm"] for s in samples))
+    if len(ALL) < len(samples[0]["dots_mm"]):
+        samples = [dict(s, dots_mm={k: s["dots_mm"][k] for k in ALL}) for s in samples]
+        print(f"(모든 표본에 보이는 점 {len(ALL)}개만 쓴다)")
+    if not ALL:
+        print("❌ 모든 표본에 공통으로 보이는 점이 없다")
+        return 1
 
-    print(f"표본 {len(samples)}개 · 링크 z0={g['z0']} d0={g['d0']} "
+    print(f"표본 {len(samples)}개 · 점 {len(ALL)}개/표본 · 링크 z0={g['z0']} d0={g['d0']} "
           f"l1={g['l1']} l2={g['l2']} l3={g['l3']}")
     rolls = sorted({round(float(s["joints_deg"]["wrist_roll"]), 1) for s in samples})
     print(f"wrist_roll 값 {rolls}")
@@ -408,25 +431,29 @@ def main() -> int:
     # 어긋나면 회전 모델(관절→도구 자세)이 틀린 것이고, 여기가 맞는데 잔차가
     # 크면 틀린 곳은 회전이 아니다 — 평행이동이나 링크 길이다.
     print("\n[회전만] 벽 법선이 자세마다 같은 곳을 가리키는가")
+    COMBOS = [(mir, sign) for mir in (False, True) for sign in (+1.0, -1.0)]
+    view = lambda mir: mirrored(samples) if mir else samples        # noqa: E731
     rot_misfit = {}
-    for sign in (+1.0, -1.0):
-        Rt = [tool_frame(s["joints_deg"], geom, sign)[0] for s in samples]
-        nc = np.array([plane_normal(s) for s in samples])
+    for mir, sign in COMBOS:
+        S_ = view(mir)
+        Rt = [tool_frame(s["joints_deg"], geom, sign)[0] for s in S_]
+        nc = np.array([plane_normal(s) for s in S_])
         Rx = np.eye(3)
         for _ in range(200):
-            nb = np.mean([Rt[i] @ Rx @ nc[i] for i in range(len(samples))], axis=0)
+            nb = np.mean([Rt[i] @ Rx @ nc[i] for i in range(len(S_))], axis=0)
             nb /= np.linalg.norm(nb)
-            Rx = kabsch(nc, np.array([Rt[i].T @ nb for i in range(len(samples))]))[0]
+            Rx = kabsch(nc, np.array([Rt[i].T @ nb for i in range(len(S_))]))[0]
         ang = [math.degrees(math.acos(max(-1.0, min(1.0, float((Rt[i] @ Rx @ nc[i]) @ nb)))))
-               for i in range(len(samples))]
-        rot_misfit[sign] = float(np.mean(ang))
-        print(f"  roll부호 {sign:+.0f}: 어긋남 평균 {np.mean(ang):5.2f}° "
+               for i in range(len(S_))]
+        rot_misfit[(mir, sign)] = float(np.mean(ang))
+        print(f"  {'거울 ' if mir else ''}roll부호 {sign:+.0f}: 어긋남 평균 {np.mean(ang):5.2f}° "
               f"· 최대 {max(ang):5.2f}°  (벽 법선 {nb.round(3)})")
-    # ⚠ 아래 눈금·링크 맞추기가 **같은 부호를 계속 써야 한다.** 예전에는 링크
+    # ⚠ 아래 눈금·링크 맞추기가 **같은 조합을 계속 써야 한다.** 예전에는 링크
     #   맞추기가 부호를 1.0으로 못박고 있었다 — 이 로봇 데이터로는 그게 틀린
     #   부호였다(93.8° vs 11.4°, 2026-09-04). 틀린 부호로 링크 길이를 맞추면
     #   그 오차를 링크 길이가 흡수해 버려 엉뚱한 l1·l2가 "맞는 값"으로 나온다.
-    sign0 = +1.0 if rot_misfit[+1.0] <= rot_misfit[-1.0] else -1.0
+    mir0, sign0 = min(rot_misfit, key=rot_misfit.get)
+    lab = lambda k: f"{'거울 · ' if k[0] else ''}roll부호 {k[1]:+.0f} · {k[2]}"   # noqa: E731
 
     # ── 관절 눈금을 데이터로 맞춰 본다 (이름표 없는 회전 검사만 쓴다) ──
     # 회전이 5° 어긋난다면 원인 후보는 둘이다: (가) 눈금(도/정규화)이 틀렸다,
@@ -434,23 +461,23 @@ def main() -> int:
     if args.fit_scale:
         sign = sign0
         k = {j: 1.0 for j in kin.JOINTS}
-        base = normal_misfit(samples, geom, sign, k)
+        base = normal_misfit(view(mir0), geom, sign, k)
         print("")
         print(f"[눈금 맞추기] 배율 1.000 일 때 회전 어긋남 {base:.2f}°")
         for _ in range(6):
             for j in kin.JOINTS:
-                best = (normal_misfit(samples, geom, sign, k), k[j])
+                best = (normal_misfit(view(mir0), geom, sign, k), k[j])
                 # ⚠ 0까지 연다. `wrist_roll` 배율이 0으로 가면 그건 눈금이 아니라
                 #   **카메라가 그 관절보다 앞(=같이 안 도는 링크)에 달려 있다**는 뜻이다.
                 #   범위를 좁게 잡으면 하한에 붙은 값을 "8% 눈금 오차"로 오해한다.
                 for v in np.arange(0.0, 1.501, 0.005):
                     trial = dict(k)
                     trial[j] = float(v)
-                    m = normal_misfit(samples, geom, sign, trial)
+                    m = normal_misfit(view(mir0), geom, sign, trial)
                     if m < best[0] - 1e-6:
                         best = (m, float(v))
                 k[j] = best[1]
-        fin = normal_misfit(samples, geom, sign, k)
+        fin = normal_misfit(view(mir0), geom, sign, k)
         print("   " + " ".join(f"{j.split('_')[0]}x{k[j]:.3f}" for j in kin.JOINTS))
         print(f"   → 회전 어긋남 {base:.2f}° → {fin:.2f}°")
         if fin > base * 0.5:
@@ -470,8 +497,7 @@ def main() -> int:
     #   그래서 **l1, l2 만** 푼다. 이 둘은 lift·elbow가 변할 때 도구 원점을
     #   서로 다르게 움직이므로 실제로 갈린다.
     if args.fit_geom:
-        dots0 = DOTS if len(samples) >= 8 else ("mid",)
-        base_rms = solve(samples, geom, sign0, ("mid",))[0]
+        base_rms = solve(view(mir0), geom, sign0, ("mid",))[0]
         print("")
         print(f"[링크 맞추기] 실측 l1={geom.l1:.1f} l2={geom.l2:.1f} 에서 잔차 {base_rms:.1f}mm")
         # ⚠ **물리적 한계로 묶는다.** 안 묶었더니 l1=-86mm 같은 음수 길이로
@@ -485,7 +511,7 @@ def main() -> int:
                     l1 = (L1 + delta) if idx == 0 else best[1]
                     l2 = (L2 + delta) if idx == 1 else best[2]
                     g2 = kin.ArmGeometry(z0=geom.z0, d0=geom.d0, l1=l1, l2=l2, l3=geom.l3)
-                    r = solve(samples, g2, sign0, ("mid",))[0]
+                    r = solve(view(mir0), g2, sign0, ("mid",))[0]
                     if r < best[0] - 1e-6:
                         best = (r, l1, l2)
         rms2, l1, l2 = best
@@ -506,24 +532,26 @@ def main() -> int:
         # 줄어들 이유가 없다.
         print(f"\n[t_x 고정] {tuple(args.fix_t)} mm 로 고정하고 회전만 훑는다")
         name = "무게중심(t고정)"
-        for sign in (+1.0, -1.0):
-            got = solve_fixed_t(samples, geom, sign, ("mid",), args.fix_t, tries=args.tries)
-            results[(sign, name)] = report(f"roll부호 {sign:+.0f} · {name}", got, expect)
-            tmags[(sign, name)] = float(np.linalg.norm(got[2]))
-            gots[(sign, name)] = got
-        (sign, name), rms = min(results.items(), key=lambda kv: kv[1])
+        for mir, sign in COMBOS:
+            key = (mir, sign, name)
+            got = solve_fixed_t(view(mir), geom, sign, ("mid",), args.fix_t, tries=args.tries)
+            results[key] = report(lab(key), got, expect)
+            tmags[key] = float(np.linalg.norm(got[2]))
+            gots[key] = got
+        (mir, sign, name), rms = min(results.items(), key=lambda kv: kv[1])
     else:
-        for sign in (+1.0, -1.0):
-            for name, dots in (("무게중심", ("mid",)), ("네 점", DOTS)):
-                a = solve(samples, geom, sign, dots)
-                b = solve_global(samples, geom, sign, dots, tries=args.tries)
+        for mir, sign in COMBOS:
+            for name, dots in (("무게중심", ("mid",)), (f"{len(ALL)}점", ALL)):
+                key = (mir, sign, name)
+                a = solve(view(mir), geom, sign, dots)
+                b = solve_global(view(mir), geom, sign, dots, tries=args.tries)
                 got = b if b[0] < a[0] else a
                 tag = "전역" if got is b else "교대"
-                results[(sign, name)] = report(
-                    f"roll부호 {sign:+.0f} · {name} · {tag}"
+                results[key] = report(
+                    f"{lab(key)} · {tag}"
                     f" (교대 {a[0]:.1f} / 전역 {b[0]:.1f}mm)", got, expect)
-                tmags[(sign, name)] = float(np.linalg.norm(got[2]))
-                gots[(sign, name)] = got
+                tmags[key] = float(np.linalg.norm(got[2]))
+                gots[key] = got
 
         naive_key, naive_rms = min(results.items(), key=lambda kv: kv[1])
         if args.expect_t_mm:
@@ -532,23 +560,24 @@ def main() -> int:
             if not plausible:
                 print(f"\n⚠ 넷 다 |t_tool_cam|이 기대 범위({lo:.0f}~{hi:.0f}mm) 밖이다 — "
                       "잔차만으로는 답을 못 고른다. 표본을 더 넓게 흩어 다시 채집하라.")
-                (sign, name), rms = naive_key, naive_rms
+                (mir, sign, name), rms = naive_key, naive_rms
             else:
-                (sign, name), rms = min(plausible.items(), key=lambda kv: kv[1])
-                if (sign, name) != naive_key:
-                    print(f"\n⚠ 잔차만 보면 roll{naive_key[0]:+.0f}·{naive_key[1]}이 이긴다"
+                (mir, sign, name), rms = min(plausible.items(), key=lambda kv: kv[1])
+                if (mir, sign, name) != naive_key:
+                    print(f"\n⚠ 잔차만 보면 {lab(naive_key)}이 이긴다"
                           f"(잔차 {naive_rms:.2f}mm) — 그런데 |t_tool_cam| "
                           f"{tmags[naive_key]:.0f}mm로 기대 범위({lo:.0f}~{hi:.0f}mm) 밖이다. "
-                          f"범위 안에서 가장 낮은 roll{sign:+.0f}·{name}"
-                          f"(|t| {tmags[(sign, name)]:.0f}mm, 잔차 {rms:.2f}mm)를 대신 쓴다 — "
+                          f"범위 안에서 가장 낮은 {lab((mir, sign, name))}"
+                          f"(|t| {tmags[(mir, sign, name)]:.0f}mm, 잔차 {rms:.2f}mm)를 대신 쓴다 — "
                           "잔차가 낮다고 그 부호가 맞는 것은 아니다.")
         else:
-            (sign, name), rms = naive_key, naive_rms
+            (mir, sign, name), rms = naive_key, naive_rms
 
-    print(f"\n▶ 가장 잘 맞는 조합: roll부호 {sign:+.0f} · {name} (잔차 {rms:.2f}mm, "
-          f"|t_tool_cam| {tmags[(sign, name)]:.0f}mm)")
-    other = results[(-sign, name)]
-    print(f"   반대 부호는 {other:.2f}mm(|t| {tmags[(-sign, name)]:.0f}mm) — "
+    best = (mir, sign, name)
+    print(f"\n▶ 가장 잘 맞는 조합: {lab(best)} (잔차 {rms:.2f}mm, "
+          f"|t_tool_cam| {tmags[best]:.0f}mm)")
+    other = results[(mir, -sign, name)]
+    print(f"   같은 거울에서 반대 부호는 {other:.2f}mm(|t| {tmags[(mir, -sign, name)]:.0f}mm) — "
           + ("부호가 뚜렷이 갈린다" if other > rms * 1.3
              else "⚠ 잔차만 보면 둘이 비슷하다 — roll이 충분히 안 변했거나, "
                   "--expect-t-mm 없이는 부호를 못 가른다."))
@@ -558,9 +587,8 @@ def main() -> int:
     # 42mm라는 숫자만 보면 무엇을 고칠지 알 수 없다. 그런데 잔차가 특정 관절과
     # 같이 커지면 **그 관절의 모델이 틀렸다**고 말할 수 있다 — 예컨대 roll과
     # 상관이 크면 접근축 둘레 회전(부호나 축 위치)이, pitch와 크면 a3가 범인이다.
-    dots = DOTS if name == "네 점" else ("mid",)
-    _, _, _, _, res = gots[(sign, name)]
-    per = res.reshape(len(samples), -1).mean(axis=1)
+    _, _, _, _, res = gots[best]
+    per =res.reshape(len(samples), -1).mean(axis=1)
     print("\n[상관] 잔차가 어느 축과 함께 커지는가 (|r|>0.6이면 그 축의 모델을 의심)")
     for j in kin.JOINTS:
         v = np.array([float(s["joints_deg"][j]) for s in samples])
@@ -574,9 +602,9 @@ def main() -> int:
 
     if args.loo:
         print("\n[하나씩 빼 보기] 뺐을 때 잔차가 크게 떨어지면 그 표본이 문제다")
-        dots = DOTS if name == "네 점" else ("mid",)
+        dots = ("mid",) if name.startswith("무게중심") else ALL
         for i in range(len(samples)):
-            sub = [s for k, s in enumerate(samples) if k != i]
+            sub = [s for k, s in enumerate(view(mir)) if k != i]
             r = solve(sub, geom, sign, dots)[0]
             flag = "  ← 이걸 빼면 크게 좋아진다" if r < rms * 0.75 else ""
             print(f"  {i:2} {samples[i]['label']:<36} {r:6.2f}mm{flag}")
@@ -595,7 +623,9 @@ def main() -> int:
         #   생기지만 `has_calibration`이 계속 False라 "보정이 없다"는 채로
         #   조용히 남는다. `EyeConfig.store()`를 그대로 불러써서 그 함정을
         #   원천봉쇄한다 — Astra 몫(`cameras.*`)을 지우지 않는 병합도 덤으로 얻는다.
-        _, Rx, tx, _, res = gots[(sign, name)]
+        _, Rx, tx, _, res = gots[best]
+        if mir:
+            Rx = Rx @ MIRROR                 # 뒤집은 점으로 풀었다 → 원래 점에 쓰는 변환(det −1)
         sys.path.insert(0, os.path.join(REPO, "src"))
         from tomato_picker.hardware.handeye import Fit, Rigid  # noqa: E402
         from tomato_picker.hardware.eye import EyeConfig  # noqa: E402
@@ -603,12 +633,13 @@ def main() -> int:
         fit = Fit(transform=Rigid(Rx, tx), rms_mm=rms, max_mm=float(res.max()),
                   per_sample_mm=[float(v) for v in res], samples=len(samples),
                   scale_hint=1.0)
-        note = (f"handeye_resolve.py · roll부호{sign:+.0f} · {name} · "
+        note = (f"handeye_resolve.py · {lab(best)} · "
                 f"표본 {len(samples)}개" + (" · 눈금맞춤 적용" if args.fit_scale else "")
                 + (" · l1/l2 재추정" if args.fit_geom else ""))
         cfg = EyeConfig(path=args.save)
         cfg.set_mount("on_arm")
-        cfg.store("on_arm", fit, None, note=note)
+        cfg.store("on_arm", fit, None, note=note,
+                  frame={"frame": "joints", "roll_sign": sign, "mirror": bool(mir)})
         # ⚠ `fit.good`은 --max-rms를 안 본다 — 저장 파일의 합격/불합격은 이
         #   저장소의 기준(GOOD_RMS_MM) 하나로만 매긴다. CLI에서 합격선을 늘려
         #   통과시킨 해가 파일 안에서도 good으로 보이면 그게 제일 위험하다.

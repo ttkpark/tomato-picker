@@ -745,6 +745,27 @@ def _set_fps(cam, want, got) -> None:
         json.dump(meta, f)
 
 
+def test_joint_frame() -> None:
+    print("\n[손목 보정] 푼 식 그대로 쓰는가 (frame: joints, 2026-11-08)")
+    from tomato_picker.hardware.handeye import Fit, tool_frame, tool_frame_joints
+    arm, _io = fresh_arm()
+    cfg = EyeConfig(path=os.path.join(TMP, "eye_joints.json"))
+    cfg.set_mount("on_arm")
+    fit = Fit(transform=Rigid(np.diag([-1.0, 1.0, 1.0]), [0.0, 0.0, 0.0]), rms_mm=5.0, max_mm=6.0,
+              per_sample_mm=[5.0], samples=11, scale_hint=1.0)
+    check("옛 파일(frame 없음)은 옛 식", cfg.roll_sign is None
+          and np.allclose(cfg.tool_frame_of(arm).R, tool_frame(arm.pose()).R))
+    cfg.store("on_arm", fit, None, frame={"frame": "joints", "roll_sign": 1.0, "mirror": True})
+    cfg2 = EyeConfig(path=cfg.path)
+    want = tool_frame_joints(arm.joints_deg(), arm.config.geometry(), 1.0)
+    got = cfg2.tool_frame_of(arm)
+    check("저장한 roll 부호·관절 식을 다시 읽어 쓴다", cfg2.roll_sign == 1.0
+          and np.allclose(got.R, want.R) and np.allclose(got.t, want.t))
+    check("거울(det −1) R이 파일을 오가도 그대로다", abs(np.linalg.det(cfg2.transform.R) + 1.0) < 1e-9)
+    cfg2.store("on_arm", fit, None)
+    check("다른 경로로 다시 저장하면 joints 표시가 지워진다", EyeConfig(path=cfg.path).roll_sign is None)
+
+
 def main() -> int:
     print(f"보정→통합 자체검증 — 하드웨어 없이 (임시폴더 {TMP})")
     try:
@@ -759,6 +780,7 @@ def main() -> int:
         test_publisher_exposure()
         test_publish_rate()
         test_aim_freshness()
+        test_joint_frame()
     finally:
         shutil.rmtree(TMP, ignore_errors=True)
 

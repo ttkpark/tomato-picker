@@ -108,7 +108,7 @@ def _kin_constants() -> dict:
         if cfg.mount == "on_arm" and cfg.has_calibration:
             t = cfg.transform
             eye = {"R": t.R.flatten().tolist(), "t": t.t.tolist(),
-                   "rms_mm": cfg.rms_mm, "good": cfg.good}
+                   "rms_mm": cfg.rms_mm, "good": cfg.good, "roll_sign": cfg.roll_sign}
     except Exception:                                      # noqa: BLE001
         pass
     return {"geom": geom, "joints": joints, "eye": eye,
@@ -847,7 +847,7 @@ function draw(){
   //   겹쳐 그려서, 사람이 이 화면만 보고도 뭘 찾았는지/놓쳤는지 알 수 있게 한다.
   if(calibView){
     if(calibView.ok && calibView.dots){
-      var recon=calibView.reconstructed, names=['tl','tr','bl','br'], pts=[];
+      var recon=calibView.reconstructed, names=Object.keys(calibView.dots), pts=[];   // 4점(tl..br) 또는 ChArUco 모서리(c0..)
       names.forEach(function(k){
         var p=calibView.dots[k]; if(!p) return;
         pts.push(p);
@@ -999,7 +999,8 @@ var EYE = KIN.eye;   // T_tool_cam(있으면) — 손목 카메라를 3D 미리�
 //   2026-09-04 실측으로 -1 확정(+1은 벽 법선 어긋남이 93.8°, -1은 11.4°였다).
 //   `handeye.py`의 `tool_frame()`은 아예 다른 규약(roll을 안 넣는다)이니 그쪽과
 //   헷갈리지 말 것 — 여긴 손목 카메라 보정 쪽(`handeye_resolve.py`) 규약이다.
-var CAM_ROLL_SIGN = -1.0;
+//   2026-11-08~: `frame: joints`로 저장된 보정은 자기 부호를 싣고 온다(거울 보정은 +1) — 그걸 먼저 쓴다.
+var CAM_ROLL_SIGN = (EYE && EYE.roll_sign != null) ? EYE.roll_sign : -1.0;
 var JNAMES=["shoulder_pan","shoulder_lift","elbow_flex","wrist_flex","wrist_roll"];
 var JLABELS={shoulder_pan:"어깨돌림(pan)",shoulder_lift:"어깨듦(lift)",elbow_flex:"팔꿈치",
   wrist_flex:"손목숙임",wrist_roll:"손목돌림"};
