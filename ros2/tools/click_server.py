@@ -200,11 +200,11 @@ class Job:
             #   버퍼링이라, 몇 KB가 쌓이거나 끝나야 나온다 — 도는 중에 /log를
             #   봐도 몇 분째 명령줄 한 줄뿐이었다(2026-09-03, harvest_loop 디버깅
             #   중 발견). 그동안 걸음별 진행을 못 보고 완전히 끝날 때까지 기다려야 했다.
-            env = dict(os.environ, PYTHONUNBUFFERED="1")
+            env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
             self.proc = subprocess.Popen(
                 argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, cwd=os.path.join(HERE, "..", ".."),
-                env=env, preexec_fn=os.setsid)
+                text=True, encoding="utf-8", errors="replace", bufsize=1,   # Windows 기본 cp949면 _pump가 죽는다 cwd=os.path.join(HERE, "..", ".."),
+                env=env, preexec_fn=os.setsid if os.name != "nt" else None)   # Windows 트윈(twin_server.py)
             threading.Thread(target=self._pump, args=(self.proc,), daemon=True).start()
             return True, ""
 
@@ -223,10 +223,13 @@ class Job:
         if not self.running():
             return False
         try:
-            os.killpg(os.getpgid(self.proc.pid), signal.SIGINT)
-            time.sleep(1.2)
-            if self.running():
-                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+            if os.name == "nt":                            # Windows 트윈 — 프로세스 그룹이 없다
+                self.proc.terminate()
+            else:
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGINT)
+                time.sleep(1.2)
+                if self.running():
+                    os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
         except Exception:                                  # noqa: BLE001
             return False
         self.lines.append("— 사람이 끊었다")
@@ -247,6 +250,8 @@ def num(args, key, default, lo, hi):
 def build(job, args):
     """job 이름 + 인자 → 실제로 돌릴 argv. **여기서만** 명령이 정해진다."""
     T = lambda n: os.path.join(HERE, n)                     # noqa: E731
+    if job in ("park", "release") and os.name == "nt":
+        raise ValueError("%s 는 /bin/sh 체인이라 Windows 트윈에선 못 돈다 — stage/jog/grip/yaw 를 따로 보내라" % job)
     if job == "park":
         # 팔을 먼저 접고 나서 판을 돌린다 — 편 채로 돌면 가구에 걸린다(10/23). 한 프로세스 그룹이라 [멈춤]이 둘 다 끊는다.
         return ["/bin/sh", "-c", "%s %s --target=%s && %s %s home" % (
@@ -1505,8 +1510,13 @@ class Handler(BaseHTTPRequestHandler):
             if os.path.exists(ARM_POSE_VIEW):
                 try:
                     pv_ = json.load(open(ARM_POSE_VIEW))
-                    if time.time() - float(pv_.get("ts", 0)) < 5.0:
+                    # 트윈은 놀 때 더 처지지 않으니 낡아도 그대로 보인다(실기는 5초 지나면 믿지 않는다)
+                    if time.time() - float(pv_.get("ts", 0)) < 5.0 or pv_.get("twin"):
                         out["arm_pose"] = pv_["deg"]
+                        # 트윈(twin_io)이면 지령·TCP·손끝 오차도 같이 온다 — 계기판이 쓴다
+                        for k in ("tcp", "goal_tcp", "err_mm", "twin", "gripper", "yaw"):
+                            if k in pv_:
+                                out["tcp_err_mm" if k == "err_mm" else k] = pv_[k]
                 except Exception:                          # noqa: BLE001
                     pass
             self._send(200, json.dumps(out))

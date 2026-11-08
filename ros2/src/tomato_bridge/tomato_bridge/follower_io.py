@@ -30,6 +30,7 @@ PC에서 이 파일을 못 읽고, 그러면 자체검증이 통째로 죽는다
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -423,3 +424,9 @@ class FollowerIO:
         리더암을 안 쓰므로 목표가 하나뿐이다. 빈 채로 두는 것이 맞고, 그 사실을
         적어 두는 편이 다음 사람이 "빠뜨린 것 아닌가" 하고 뒤지는 것보다 낫다.
         """
+
+# ── 디지털 트윈 ──────────────────────────────────────────────────────────────
+# TOMATO_TWIN=1 이면 가짜 팔(twin_io)로 바꿔 끼운다. 도구 26개가 전부 이 이름 하나를 import하므로 여기 한 곳이다.
+# (docs/디지털트윈-구현방침-2026-11-08.md · 띄우는 법 = ros2/tools/twin_server.py)
+if os.environ.get("TOMATO_TWIN"):
+    from tomato_bridge.twin_io import FollowerIO  # noqa: F811,E402

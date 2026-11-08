@@ -33,9 +33,10 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 from tomato_picker.hardware import kinematics as kin       # noqa: E402
 
 DEG_PER_TICK = 360.0 / 4096.0
-CAL = os.path.expanduser(
+# TOMATO_CAL / TOMATO_CART — 트윈(twin_io)이 PC에서 보정 사본을 가리킬 때. 젯슨은 비워 두면 그대로.
+CAL = os.environ.get("TOMATO_CAL") or os.path.expanduser(
     "~/.cache/huggingface/lerobot/calibration/robots/so_follower/tomato_follower.json")
-CART = os.path.expanduser("~/arm_cartesian.json")
+CART = os.environ.get("TOMATO_CART") or os.path.expanduser("~/arm_cartesian.json")
 # 팔 base(마운트)가 바닥보다 이만큼 위 — 실측
 # (`ros2/src/tomato_description/config/so101_geometry.yaml`의 mount.z와 같은 값).
 MOUNT_Z_MM = 76.5
