@@ -146,13 +146,14 @@ rot_center = [cx, cy];
 // **트레이 앞 윗면 홈에 눕혀 끼우고 캡으로 눌러 나사 고정**한다(접이식 받침대의 틸트는 힘이 약해 안 쓴다 — 사용자).
 astra = [165, 30, 40];       // [DS] Orbbec Astra Pro 데이터시트 v1.2 "Size 165mm x 30mm x 40mm" (mybotshop.de/Datasheet/Orbbec_Astra_Pro_Final.pdf, 2026-11-09 확인)
                              //      orbbec.com Astra Series 페이지는 165×48×40·310g — 48은 접은 받침대까지(= 30 + 18, 실측 astra_bracket_t 14와 4 차이)
+astra_end_r = 15;            // [사진] 좌우 끝 반지름 — 높이의 반(15)이면 완전한 반원. 실물이 덜 둥글면 줄인다
 astra_fov = [60, 49.5];      // [DS] 깊이 시야 H60° × V49.5° (대각 73°). 신형 페이지는 H58.4° V45.5° — 좁은 쪽이 아니라 넓은 쪽으로 턱 검사
 astra_mount = "M6x7.2";      // [DS] 본체 밑 나사 = M6 깊이 7.2(Orbbec 포럼 공식 답변 2018-01-15) — 1/4"-20은 받침대 밑이지 본체가 아니다. 크래들은 어차피 안 쓴다
 astra_clear = 0.6;           // 홈 여유(전체)
 astra_yc = 23;               // 본체 앞뒤 중심 — 크래들 앞면이 앞벽과 한 면(y=0), 렌즈 면은 벽 안쪽 면(y=3). 2026-11-09: 사진의 옛 판처럼 앞으로 튀어나오지 않게
 astra_zc = tray_h + 5;       // 본체 중심 높이
 astra_tilt = 0;              // 위로 기울임(도). 무대가 높으면 5~10 — 홈과 캡이 같이 돈다
-astra_end_wall = 6;          // 양 끝벽 (나사가 들어간다)
+astra_end_wall = 9;          // 양 끝벽 — 나사 4개가 다 여기 든다(머리 홈 6.5에 살 1.25씩). 2026-11-09: 뒷벽 6엔 머리 홈이 안 들어가 뚫렸다
 astra_back = 6;              // 뒷벽 (나사가 들어간다, M3 탭 2.9에 살 1.5씩) — 끝벽과 같은 6. cradle_y1 = 49 유지(회전판 가장자리 50)
 astra_lip = 5;               // 앞면 아래·위 턱 높이 — 렌즈 띠는 비운다
 // 접이식 받침대(60×23, 1/4" 너트)는 분리가 안 된다(사용자) → 접은 채 본체 밑에 매달린다. 크래들 바닥 구멍으로 트레이 안에 들어간다.
@@ -168,8 +169,8 @@ cradle_z0 = astra_zc - astra[1]/2 - wall;           // 87
 cap_t = 3;
 cradle_top = astra_zc;                              // 홈 블록 윗면 = 본체 중심 높이 (캡이 여기서 시작)
 cap_h = astra[1]/2 + astra_clear/2 + cap_t;         // 캡 높이 (cradle_top 기준)
-cap_screws = [[cradle_x0 + astra_end_wall/2, astra_yc], [cradle_x0 + cradle_w - astra_end_wall/2, astra_yc],
-              [cx - 40, cradle_y1 - astra_back/2], [cx + 40, cradle_y1 - astra_back/2]];
+cap_screws = [for (x = [cradle_x0 + astra_end_wall/2, cradle_x0 + cradle_w - astra_end_wall/2], y = [cradle_y0 + 12, cradle_y1 - 12]) [x, y]];
+cap_cb_d = 6.5;                                     // 캡 나사머리 홈
 lid_notch_y = cradle_y1 + 0.5;                      // 뚜껑은 크래들을 ㄷ자로 비켜 앞 모서리까지 덮는다
 
 /* 나머지 회전부 — 옛 판과 같은 값 */
@@ -227,6 +228,7 @@ if (panel_y0 + meter_cut[0] > batt_pos[1] + 7) echo("⚠ 전압계가 배터리�
 if (imu_pos[0] + imu_size[0] > buck_x - 0.5) echo("⚠ IMU가 벅부스트에 닿는다");
 if (jetson_pos[1] + jetson_size[1] + 60 > body_d - wall) echo("⚠ 뒤 케이블 칸이 60mm 미만");
 if (cradle_y1 > rot_center[1] - plat_dia/2) echo("⚠ Astra 크래들이 회전판 밑으로 들어간다");
+if (astra_end_wall - astra_clear/2 < cap_cb_d + 2) echo("⚠ 캡 나사머리 홈이 끝벽을 뚫는다");
 if (astra[1]/2 - astra_lip < wall * tan(astra_fov[1]/2) + 3) echo("⚠ 앞 턱이 Astra 세로 시야를 가린다");   // 턱 안쪽 모서리는 렌즈 면보다 wall 앞, 중심에서 15−lip 위
 if (lid_notch_y + 3 > rot_center[1] - seat_r) echo("⚠ 뚜껑 앞 홈이 베어링 받침과 겹친다");
 if (servo_raise > lid_t - 1) echo("⚠ 서보 포켓이 뚜껑 판을 뚫는다");
@@ -267,10 +269,10 @@ module footprint(inset = 0) {
 module left_win(w) { translate([-1, w[0], w[1]]) cube([wall + 2, w[2], w[3]]); }
 
 /* ----- 0) Astra 크래들 + 캡 ----- */
-module pill(L, h, d) {   // 스타디움 단면(Y 깊이 d, Z 높이 h)을 X 방향으로 L만큼 — Astra 본체 모양
-    r = h/2;
-    hull() for (y = [-(d/2 - r), d/2 - r])
-        translate([0, y, 0]) rotate([0, 90, 0]) cylinder(h = L, r = r, center = true, $fn = 96);
+module pill(L, h, d) {   // Astra 본체 모양 — 앞에서 본 면(X 폭 L, Z 높이 h)의 좌우 끝만 반원, 앞뒤(Y 깊이 d)는 곧다
+    r = min(astra_end_r, h/2);   // 2026-11-09 사용자: 보는 방향엔 곡면이 없고 좌우로만 있다(전엔 앞뒤 모서리를 둥글렸다)
+    hull() for (x = [-(L/2 - r), L/2 - r], z = [-(h/2 - r), h/2 - r])
+        translate([x, 0, z]) rotate([90, 0, 0]) cylinder(h = d, r = r, center = true, $fn = 96);
 }
 module astra_body(clear = astra_clear) {   // 본체 자리 (홈·캡 공통, 기울임 포함)
     translate([cx, astra_yc, astra_zc]) rotate([astra_tilt, 0, 0])
@@ -300,7 +302,7 @@ module astra_cap() {   // 위에서 덮어 나사 4개로 조인다. 좌표는 �
             cube([cradle_w - 2*astra_end_wall, wall + 2, astra[1]/2 - astra_lip + 1]);
         for (c = cap_screws) {
             translate([c[0], c[1], cradle_top - 1]) cylinder(h = cap_h + 2, d = m3_clear);
-            translate([c[0], c[1], cradle_top + 10]) cylinder(h = cap_h, d = 6.5);   // 머리를 깊이 묻어 M3×20 (크래들 10 + 캡 10)
+            translate([c[0], c[1], cradle_top + 10]) cylinder(h = cap_h, d = cap_cb_d);   // 머리를 깊이 묻어 M3×20 (크래들 10 + 캡 10)
         }
     }
 }
