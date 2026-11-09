@@ -94,6 +94,8 @@ behavior the task requires stay in.
   [`docs/체크포인트-2026-11.md`](docs/체크포인트-2026-11.md) 끝 절).
 
 
+- **최신 인수인계 = [`docs/인수인계-2026-11-09.md`](docs/인수인계-2026-11-09.md)** — 0차 따라가기 2/3, 다음 = ChArUco 손-눈 재채집(종이 부착됨), 따라가기 한 회 돌리는 법·녹화(`tools/cam_record.py`).
+
 ## 하드웨어 제어 — **현재 구성 (중요: 옛 문서와 혼동 주의)**
 로봇 = **메카넘 베이스(Moebius Uno + PCA9685)** + **SO-101 팔로워(집게)** + 젯슨 Orin Nano.
 
