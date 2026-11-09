@@ -88,6 +88,7 @@
 - [x] 아두이노+Moebius 쉴드 스택 높이 30.0 (2026-09-29)
 - [x] Astra 받침대 접었을 때 본체 밑으로 14 (2026-09-29) → 크래들을 5 올려 아두이노 스택과 5mm 여유
 - [x] 바퀴 지름 78.6 (2026-11-05)
-- [ ] 케이스 v2 치마용: 상판 길이 · 앞뒤/좌우 바퀴 중심 간격 · 바퀴 폭 (`hardware_design/case/README.md` 끝)
+- [x] 바퀴 중심 간격 앞뒤 165 · 좌우 212 · 두께 37 · 뼈대 끝↔바퀴 바깥 50 (2026-11-09)
+- [ ] 케이스 v2 치마용: 상판 앞뒤 길이 (`hardware_design/case/README.md` 끝)
 
 → [`hardware_design/case/tomato_case.scad`](../../hardware_design/case/tomato_case.scad)의 `[실측]` 줄을 고친다.

@@ -54,9 +54,11 @@ riser_size = [62, 42];
 // 사진: 바퀴 윗면은 상판 밑에 있다 → 바닥은 원래 안 닿는다. 치마가 상판 옆으로 내려가며 바퀴 윗부분을 덮으므로
 // 거기만 사다리꼴로 판다(그림 2의 각진 여유). 치마는 없어도 동작한다 — 배선 가림·겉모습용.
 wheel_dia = 78.6;            // [자] 2026-11-05
-wheelbase = 160;             // [추정] 앞뒤 바퀴 중심 간격
-wheel_track = 175;           // [추정] 좌우 바퀴 중심 간격
-wheel_w = 45;                // [추정] 바퀴 폭
+wheelbase = 165;             // [자] 2026-11-09 앞뒤 바퀴 중심 간격
+wheel_track = 212;           // [자] 2026-11-09 좌우 바퀴 중심 간격 → 바퀴 바깥끼리 249, 몸통(252)은 한쪽 1.5만 더 넓다
+wheel_w = 37;                // [자] 2026-11-09 바퀴 두께
+wheel_out = 50;              // [자] 2026-11-09 알루미늄 뼈대 끝 ↔ 바퀴 바깥 끝(축+연결부+바퀴) → 뼈대 폭 149 (상판 151.9와 검산)
+wheel_gap = 3;               // [추정] 상판 밑면 ↔ 바퀴 윗면. 바퀴가 치마에 닿는지(part="clash")가 이 값에 달렸다
 skirt_h = 30;                // 바닥 밑으로 — 상판 윗면 아래 15까지
 notch_h = 25;                // 위 5mm 띠만 남긴다
 notch_side = [wheel_dia + 34, wheel_dia - 8];    // 옆벽 사다리꼴 [아래 폭, 위 폭]
@@ -210,6 +212,8 @@ lid_corners = [[12, 12], [body_w - 12, 12], [12, body_d - 12], [body_w - 12, bod
 if (body_w > bed_x || body_d - cradle_y0 > bed_y) echo("⚠ 트레이가 베드를 넘는다", body_w, body_d - cradle_y0);
 if (plat_dia > min(bed_x, bed_y)) echo("⚠ 회전판이 베드를 넘는다");
 if (body_w < plate_w + 2*wall + 2) echo("⚠ 치마가 상판에 걸린다");
+if (abs(wheel_track + wheel_w - 2*wheel_out - plate_w) > 5) echo("⚠ 바퀴 실측으로 낸 뼈대 폭이 상판과 5mm 넘게 다르다", wheel_track + wheel_w - 2*wheel_out);
+if (wheel_track + wheel_w > body_w) echo("⚠ 바퀴가 몸통 밖으로 나간다");
 if (seat_r > cx - 3) echo("⚠ 베어링 받침이 뚜껑 폭을 넘는다");
 if (stop_r + stop_pin_d/2 + 1 > brg[0]/2 - hub_wall) echo("⚠ 스토퍼 핀이 허브 벽에 닿는다");
 if (cable_r + cable_w/2 + 3 > stop_r - (stop_pin_d + 1)/2) echo("⚠ 배선 슬롯과 스토퍼 홈 사이 살이 3mm 미만");
@@ -588,7 +592,12 @@ module printed() {
     rear_cover();
     for (c = mount_centers) translate([c[0], c[1], 0]) riser();
 }
+module g_wheels() {   // 차체 바퀴 — 치마 간섭 검사용
+    for (sx = [-1, 1], sy = [-1, 1]) translate([cx + sx*wheel_track/2, cy + sy*wheelbase/2, -riser_h - 3 - wheel_gap - wheel_dia/2])
+        rotate([0, 90, 0]) cylinder(h = wheel_w, d = wheel_dia, center = true, $fn = 96);
+}
 module clash_pairs() {
+    intersection() { printed(); g_wheels(); }
     intersection() { printed(); g_stuff(); }
     intersection() { g_jetson(); g_servo(); }
     intersection() { g_jetson(); g_imu(); }
@@ -642,6 +651,5 @@ else {
     for (c = mount_centers) color("darkslategray") translate([c[0], c[1], 0]) riser();
     // 차체(유령): 상판 + 바퀴 — 치수 일부 [추정]
     %translate([cx - plate_w/2, cy - 110, -riser_h - 3]) cube([plate_w, 220, 3]);
-    %for (sx = [-1, 1], sy = [-1, 1]) translate([cx + sx*wheel_track/2, cy + sy*wheelbase/2, -riser_h - 3 - wheel_dia/2 - 3])
-        rotate([0, 90, 0]) cylinder(h = wheel_w, d = wheel_dia, center = true);
+    %g_wheels();
 }
