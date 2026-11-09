@@ -142,13 +142,16 @@ horn_cb = 3;                     // 회전판 위 혼 나사머리 카운터보�
 rot_center = [cx, cy];
 /* ===================== Astra Pro 전면 크래들 (2026-09-29, 자리만 옮김) ===================== */
 // **트레이 앞 윗면 홈에 눕혀 끼우고 캡으로 눌러 나사 고정**한다(접이식 받침대의 틸트는 힘이 약해 안 쓴다 — 사용자).
-astra = [165, 30, 40];       // [DS] Orbbec 공식 165×30×40
+astra = [165, 30, 40];       // [DS] Orbbec Astra Pro 데이터시트 v1.2 "Size 165mm x 30mm x 40mm" (mybotshop.de/Datasheet/Orbbec_Astra_Pro_Final.pdf, 2026-11-09 확인)
+                             //      orbbec.com Astra Series 페이지는 165×48×40·310g — 48은 접은 받침대까지(= 30 + 18, 실측 astra_bracket_t 14와 4 차이)
+astra_fov = [60, 49.5];      // [DS] 깊이 시야 H60° × V49.5° (대각 73°). 신형 페이지는 H58.4° V45.5° — 좁은 쪽이 아니라 넓은 쪽으로 턱 검사
+astra_mount = "M6x7.2";      // [DS] 본체 밑 나사 = M6 깊이 7.2(Orbbec 포럼 공식 답변 2018-01-15) — 1/4"-20은 받침대 밑이지 본체가 아니다. 크래들은 어차피 안 쓴다
 astra_clear = 0.6;           // 홈 여유(전체)
-astra_yc = 20;               // 본체 앞뒤 중심 — 렌즈 면이 앞벽과 나란하다(y=0). 앞으로 3만 나가 베드에 든다
+astra_yc = 23;               // 본체 앞뒤 중심 — 크래들 앞면이 앞벽과 한 면(y=0), 렌즈 면은 벽 안쪽 면(y=3). 2026-11-09: 사진의 옛 판처럼 앞으로 튀어나오지 않게
 astra_zc = tray_h + 5;       // 본체 중심 높이
 astra_tilt = 0;              // 위로 기울임(도). 무대가 높으면 5~10 — 홈과 캡이 같이 돈다
 astra_end_wall = 6;          // 양 끝벽 (나사가 들어간다)
-astra_back = 9;              // 뒷벽 (나사가 들어간다)
+astra_back = 6;              // 뒷벽 (나사가 들어간다, M3 탭 2.9에 살 1.5씩) — 끝벽과 같은 6. cradle_y1 = 49 유지(회전판 가장자리 50)
 astra_lip = 5;               // 앞면 아래·위 턱 높이 — 렌즈 띠는 비운다
 // 접이식 받침대(60×23, 1/4" 너트)는 분리가 안 된다(사용자) → 접은 채 본체 밑에 매달린다. 크래들 바닥 구멍으로 트레이 안에 들어간다.
 astra_bracket = [60, 23];    // [자] 받침대 판 (X, Y)
@@ -157,7 +160,7 @@ astra_bracket_yo = 0;        // 받침대 중심이 본체 앞뒤 중심에서 �
 astra_pocket = [astra_bracket[0] + 2, astra_bracket[1] + 3];   // 관통 구멍 (케이블도 여기로)
 cradle_w  = astra[0] + astra_clear + 2*astra_end_wall;
 cradle_x0 = cx - cradle_w/2;
-cradle_y0 = astra_yc - astra[2]/2 - wall;          // −3
+cradle_y0 = astra_yc - astra[2]/2 - wall;          // 0 — 앞벽과 한 면
 cradle_y1 = astra_yc + astra[2]/2 + astra_back;     // 49
 cradle_z0 = astra_zc - astra[1]/2 - wall;           // 87
 cap_t = 3;
@@ -220,6 +223,7 @@ if (panel_y0 + meter_cut[0] > batt_pos[1] + 7) echo("⚠ 전압계가 배터리�
 if (imu_pos[0] + imu_size[0] > buck_x - 0.5) echo("⚠ IMU가 벅부스트에 닿는다");
 if (jetson_pos[1] + jetson_size[1] + 60 > body_d - wall) echo("⚠ 뒤 케이블 칸이 60mm 미만");
 if (cradle_y1 > rot_center[1] - plat_dia/2) echo("⚠ Astra 크래들이 회전판 밑으로 들어간다");
+if (astra[1]/2 - astra_lip < wall * tan(astra_fov[1]/2) + 3) echo("⚠ 앞 턱이 Astra 세로 시야를 가린다");   // 턱 안쪽 모서리는 렌즈 면보다 wall 앞, 중심에서 15−lip 위
 if (lid_notch_y + 3 > rot_center[1] - seat_r) echo("⚠ 뚜껑 앞 홈이 베어링 받침과 겹친다");
 if (servo_raise > lid_t - 1) echo("⚠ 서보 포켓이 뚜껑 판을 뚫는다");
 if (plat_t - horn_cb < 2.5) echo("⚠ 혼 나사머리 밑 판이 너무 얇다");
