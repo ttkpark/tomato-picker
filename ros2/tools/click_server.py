@@ -458,6 +458,8 @@ def build(job, args):
             a += ["--deg", "%.0f" % num(args, "deg", 20, 3, 45)]
         if mode == "find" and args.get("hand"):
             a += ["--hand"]                     # 바퀴 대신 사람이 돌린다
+        if mode in ("scan", "find") and str(args.get("sweep", "")).strip() != "":
+            a += ["--sweep", "%.0f" % num(args, "sweep", 100, 20, 170)]   # 한 바퀴 대신 ±D° 훑기(케이블)
         if mode in ("scan", "go", "find", "face", "approach", "look", "near", "explore"):
             # find만 시계 방향을 고를 수 있다 — 한쪽이 막힌 자리(10/23 케이블)에서 반대로 돈다
             sign = -1 if (mode == "find" and args.get("cw")) else 1

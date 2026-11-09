@@ -744,6 +744,16 @@ def rebuild(s: dict, base: dict, pose0, shots, k: float, m: dict) -> None:
         s["frames"] = int(s["frames"]) + 1
 
 
+def sweep_plan(a):
+    """--sweep D(도): 한 바퀴 대신 왼 +D → 오른 −2D → 왼 +D 로 훑는다(케이블 꼬임 ≤D, 합 0, 정면 ±D).
+    11/09 큰 방: 전원 케이블을 봐줄 사람이 없어 한 바퀴를 못 돌았다. 없으면 None(한 바퀴)."""
+    sw = float(getattr(a, "sweep", 0) or 0)
+    if sw <= 0:
+        return None
+    n = max(1, int(math.ceil(sw / a.deg)))
+    return [a.deg] * n + [-a.deg] * (2 * n) + [a.deg] * n
+
+
 def scan_imu(a, m, s, link, base: dict) -> int:
     """IMU 제자리 한 바퀴 — **걸음마다 맞추지 않는다.** θ=IMU, 자리=그대로로 장을 모으고(화면엔 바로 더해
     보여 준다), 한 바퀴를 넘기면 **첫 장과 마지막 장을 맞춰(고리 닫기) IMU 스케일을 고친 뒤** 지도를 다시 짓는다.
@@ -764,9 +774,11 @@ def scan_imu(a, m, s, link, base: dict) -> int:
     pts = cloud(dep, meta, m)
     shots = [(0.0, pts, scan2d(pts, m))]
     stuck, rel = 0, 0.0
-    steps = max(a.steps, int(math.ceil(400.0 / (a.deg * COAST))))   # 걸음 수가 아니라 한 바퀴가 목표다
+    plan = sweep_plan(a)
+    steps = len(plan) if plan else max(a.steps, int(math.ceil(400.0 / (a.deg * COAST))))   # 걸음 수가 아니라 한 바퀴가 목표다
     for i in range(steps):
-        g = hand_turn(a.deg) if link is None else turn(link, a.w, a.wsecs, a.deg)
+        d = plan[i] if plan else a.deg
+        g = hand_turn(abs(d)) if link is None else turn(link, int(math.copysign(abs(a.w), d)), a.wsecs, abs(d))
         if not abs(g) >= 0.5:                       # nan(IMU 끊김) 포함
             stuck += 1
             if stuck >= 5:
@@ -799,7 +811,7 @@ def scan_imu(a, m, s, link, base: dict) -> int:
         s["imu"] = np.array(im[:2])
         save(s)
         print("[%d/%d] IMU 누적 %.1f° (이번 %.1f°) · 복셀 %d" % (i + 1, steps, math.degrees(rel), g, len(s["vox"])))
-        if abs(rel) >= 2 * math.pi + math.radians(CLOSE_DEG):
+        if plan is None and abs(rel) >= 2 * math.pi + math.radians(CLOSE_DEG):
             break
     record(shots, m)
     return close_and_build(s, base, pose0, shots, m, (i0[0], i0[1] + rel))
@@ -1299,11 +1311,12 @@ def find_cmd(a, m) -> int:
     if not yaw_front_ok():
         return 1
     th0, i0, seen, total, stuck = float(s["pose"][2]), imu_now(), [], 0.0, 0
+    plan = sweep_plan(a)
     link = None if a.hand else open_link()
     if not a.hand and link is None:
         return 1
     try:
-        for k in range(max(a.steps, int(3 * 360 / a.deg))):   # 360°를 채울 때까지 — 걸음이 1~4°로 끝나는 일이 잦다(10/23 실기 22걸음에 247°)
+        for k in range(len(plan) + 1 if plan else max(a.steps, int(3 * 360 / a.deg))):   # 360°를 채울 때까지 — 걸음이 1~4°로 끝나는 일이 잦다(10/23 실기 22걸음에 247°)
             st = tomato_fresh(time.time() + 0.3)         # 멈춘 뒤에 찍힌 판정
             i = imu_now()
             if st is None or i is None or i[0] != i0[0]:
@@ -1318,9 +1331,10 @@ def find_cmd(a, m) -> int:
                 print("    거리(렌즈) %s" % ["%.2fm" % r if r == r else "?" for r in rs])
             print("[%d] 방향 %.0f° · 토마토 %d (cx %s)" % (k + 1, math.degrees(th), len(bs),
                                                     [int(c) for c, _ in tomato_px(st)]))
-            if total >= 360:
+            if (plan is None and total >= 360) or (plan is not None and k >= len(plan)):
                 break
-            got = hand_turn(a.deg) if a.hand else turn(link, a.w, a.wsecs, a.deg)
+            d = plan[k] if plan else a.deg
+            got = hand_turn(abs(d)) if a.hand else turn(link, int(math.copysign(abs(a.w), d)), a.wsecs, abs(d))
             if math.isnan(got) or abs(got) < 2:
                 stuck += 1
                 if stuck >= 3:
@@ -1395,6 +1409,9 @@ def face_cmd(a, m) -> int:
             print("  → IMU %.1f° 돌았다" % got)
             if not math.isnan(got):
                 b -= math.copysign(abs(got), b)       # 남은 방위 — 한 넛지가 못 채우면 아래서 마저 돈다
+        # 11/09 큰 방(매끈한 마루) 2회 모두: 요청 20°가 ≈40° 돌아 ±200~400px로 여덟 번 진동했다 — 작은 회전은
+        # 지령을 낮추고(관성·슬루 코스트가 준다), 요청/실측 비를 재서 다음 요청을 그만큼 나눈다. ponytail: 비율 하나, 실측 전
+        gain, w_small = 1.0, int(math.copysign(max(90, min(abs(a.w), 110)), a.w))
         for k in range(8):
             cx, w = tomato_cx()
             if cx is None:
@@ -1411,7 +1428,11 @@ def face_cmd(a, m) -> int:
                 return 0
             f = (w / 2) / math.tan(math.radians(m["tcam_hfov"]) / 2)
             d = math.degrees(math.atan2(err, f))
-            turn(link, int(math.copysign(a.w, d)), a.wsecs, max(5.0, abs(d)))
+            want = max(4.0, abs(d) / gain)
+            got = turn(link, int(math.copysign(abs(a.w) if want >= 15 else abs(w_small), d)), a.wsecs, want)
+            if not math.isnan(got) and abs(got) >= 1.0:
+                gain = min(4.0, max(0.5, abs(got) / want))
+                print("    요청 %.0f° → 실측 %.1f° (비 %.2f)" % (want, got, gain))
         print("⛔ 여덟 번 다듬어도 정면에 안 왔다")
         return 1
     finally:
@@ -1469,7 +1490,8 @@ def approach_cmd(a, m) -> int:
         return 1
     # 먼저 정면 보기 — 자리 맞춤을 두 번(시작·끝) 하고 토마토를 정면에 둔다. 그 **뒤의** 자세로 거리를 잰다.
     # 첫 맞춤만 믿었더니 겹친 점 40/115짜리 자세가 0.36m 앞이라 '이미 도착'으로 보고 안 갔다(10/23).
-    if face_cmd(a, m) != 0:
+    faced, moved = face_cmd(a, m) == 0, False
+    if not faced:
         print("  (정면 맞추기 실패 — 그래도 지도 길로 간다)")
     # 둘레 여유에 도착 허용 오차를 더한다 — 목표는 0.45 넘게 잡았는데 0.13m 못 미쳐 서니 0.42가 됐다(11/03 가상 3차 6회).
     # 가서 보니 좁으면(가며 지도가 자라 상자 모서리가 드러난다) 새 지도로 자리를 한 번 더 고른다.
@@ -1481,13 +1503,26 @@ def approach_cmd(a, m) -> int:
             if math.hypot(gx - s["pose"][0], gy - s["pose"][1]) > a.tol:
                 print("가기 → (%.2f, %.2f) · 그 자리 둘레 %.2fm" % (gx, gy, clearance(s["lo"], (gx, gy))))
                 a.x, a.y = gx, gy
+                moved = True
                 if go_cmd(a, m) != 0:
                     return 1
             else:
                 print("이미 토마토 %.1fm 앞이다" % APPROACH_STANDOFF)
             s = load()
             if clearance(s["lo"], s["pose"][:2]) >= m.get("spin_r", SPIN_R):
-                return face_cmd(a, m)
+                if face_cmd(a, m) == 0:
+                    return 0
+                cx, w = tomato_cx()
+                if cx is not None:
+                    # 11/09: 다듬기 8번 진동으로 끝났지만 끝 거리 574~646mm·cx는 화면 안이었다 — 손목 근접(D405 화각 87°)이 겨눈다
+                    print("⚠ 정면 다듬기는 못 맞췄지만 토마토가 화면에 있다(cx %.0f) — 손목 근접이 겨눈다" % cx)
+                    return 0
+                if wrist_tomato(waiting_pose=True) is not None:
+                    # 11/09 2회차: 찾기 자리가 0.3m 멀어 0.4m 앞까지 가 버렸다 — Astra 사각(<60cm)이라 앞 카메라는 못 보지만
+                    # 손목 D405는 본다(399mm). 근접이 450mm로 물러나며 맞춘다
+                    print("⚠ 앞 카메라는 못 보지만(Astra 사각) 손목 D405가 토마토를 본다 — 손목 근접으로")
+                    return 0
+                return 1
             print("  둘레 %.2fm — 좁다, 자리를 다시 고른다" % clearance(s["lo"], s["pose"][:2]))
             a.tol = tol0 / 2             # 두 번째는 반만 봐준다 — 0.12m 옆의 트인 자리를 '이미 거기'로 치고 안 갔다
     finally:
@@ -1495,6 +1530,10 @@ def approach_cmd(a, m) -> int:
     cx, w = tomato_cx()
     if cx is not None and abs(w / 2 - cx) < FACE_TOL_PX:
         print("✅ 토마토 앞이고 정면이다(cx %.0f) — 둘레가 좁아 더 돌지 않는다" % cx)
+        return 0
+    if faced and not moved:
+        # 11/09: 이미 0.55m 앞이라 안 갔고 정면도 맞췄는데, 가까워 토마토가 화면 위로 잘려 cx가 비자 실패로 끝났다 — 손목 근접 차례다
+        print("✅ 이미 토마토 앞이고 정면을 맞췄다(지금 cx %s) — 손목 근접으로" % ("못 봄" if cx is None else "%.0f" % cx))
         return 0
     gap, at = nearest_occ(s["lo"], s["pose"][:2])
     print("⚠ 토마토 앞에 왔지만 둘레 %.2fm가 좁아 돌지 않는다(가장 가까운 칸 %s · 토마토 %s) — 토마토 cx %s"
@@ -2536,6 +2575,7 @@ def main() -> int:
     ap.add_argument("--wsecs", type=float, default=0.8, help="회전 넛지 시간(IMU 있으면 최대 ×2.5까지 --deg를 채운다)")
     ap.add_argument("--deg", type=float, default=20.0, help="IMU 있을 때 회전 넛지 한 번의 목표(도)")
     ap.add_argument("--hand", action="store_true", help="scan: 바퀴 대신 사람이 손으로 돌린다(IMU 필요, 멈출 때마다 한 장)")
+    ap.add_argument("--sweep", type=float, default=0.0, help="scan·find: 한 바퀴 대신 왼 +D → 오른 −2D → 왼 +D(케이블 꼬임 ≤D, 고리 닫기 없음)")
     ap.add_argument("--vx", type=int, default=200, help="전진 넛지 크기 — 150·1.2초는 0, 200·1.0초는 7~12cm(10/23 실기, 케이스 얹은 차체)")
     ap.add_argument("--vsecs", type=float, default=1.0)   # 0.6은 슬루 램프가 못 올라가 0(10/22), 0.8도 150에선 0(10/23)
     ap.add_argument("--vy", type=int, default=0, help="step: 옆걸음(+=왼쪽)")
