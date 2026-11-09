@@ -40,6 +40,10 @@ static void t_boot(void) {
     { const char *p = seen(" vin="); int vin = p ? atoi(p + 5) : 0; CHECK(vin > 11900 && vin < 12100, "vin %d", vin); }
     CHECK(seen(" estop=0") && seen(" rly=1") && seen(" st=02"), "hb 상태(조용 → 소프트 데드맨 비트1)");
     CHECK(fk_wdt_kicks > 900, "워치독은 ISR이 살아 있을 때 준다(%u)", fk_wdt_kicks);
+    // 제어 인터럽트가 죽으면(틱 없이 main만 돈다) 명령이 계속 와도 워치독을 안 준다
+    uint32_t k0 = fk_wdt_kicks;
+    for (int i = 0; i < 50; i++) { fk_ms++; fk_rx_crc("V 0 0 0"); core_poll(); }
+    CHECK(fk_wdt_kicks - k0 <= 1, "죽은 제어 인터럽트를 50Hz 지령이 가리지 않는다(%u)", fk_wdt_kicks - k0);
 }
 
 static void t_boot_lost_fault(void) {

@@ -73,7 +73,8 @@ static bool pll_on(bool hse) {
     RCC->CR &= ~RCC_CR_PLLON;
     while (RCC->CR & RCC_CR_PLLRDY) {}
     // VCO 입력 2MHz: HSE 8/4, HSI 16/8. ×168 = 336MHz, /2 = 168MHz, /7 = 48MHz
-    RCC->PLLCFGR = (hse ? (4u | RCC_PLLCFGR_PLLSRC_HSE) : 8u) | (168u << RCC_PLLCFGR_PLLN_Pos) |
+    RCC->PLLCFGR = (1u << 29) |                       // 예약 비트 — 리셋값(1)을 지킨다
+                   (hse ? (4u | RCC_PLLCFGR_PLLSRC_HSE) : 8u) | (168u << RCC_PLLCFGR_PLLN_Pos) |
                    (0u << RCC_PLLCFGR_PLLP_Pos) | (7u << RCC_PLLCFGR_PLLQ_Pos);
     RCC->CR |= RCC_CR_PLLON;
     for (uint32_t t = 0; !(RCC->CR & RCC_CR_PLLRDY); t++) if (t > 2000000u) return false;
@@ -156,12 +157,15 @@ void hw_pwm_out(int w, int32_t d) {
     if (d > 0) { *MOT[w].c2 = 0; *MOT[w].c1 = ccr; }
     else if (d < 0) { *MOT[w].c1 = 0; *MOT[w].c2 = ccr; }
     else { *MOT[w].c1 = 0; *MOT[w].c2 = 0; }
+    if (estop_hit) { *MOT[w].c1 = 0; *MOT[w].c2 = 0; }   // 위 검사와 쓰기 사이에 E-stop이 끼었으면 되돌린다
 }
 void hw_pwm_zero_all(void) { pwm_regs_zero(); }
 
 void hw_drv_enable(bool en) {
-    if (en && !estop_hit) GPIOB->BSRR = 1u << 12;   // tWAKE ≈1ms 동안은 어차피 출력이 0
-    else nsleep_low();
+    if (en && !estop_hit) {
+        GPIOB->BSRR = 1u << 12;                      // tWAKE ≈1ms 동안은 어차피 출력이 0
+        if (estop_hit) nsleep_low();                 // 검사와 쓰기 사이에 E-stop 인터럽트가 끼었다 — 그쪽이 이긴다
+    } else nsleep_low();
 }
 
 static void pwm_tim_init(TIM_TypeDef *t, bool four) {
@@ -455,20 +459,23 @@ static const cfgstore_io_t CFGIO = {
 bool hw_cfg_load(cfg_t *c) { return cfgstore_load(&CFGIO, c, sizeof *c) >= 0; }
 // 128KB 섹터 지우기는 최대 ≈2초다. 그동안 CPU는 플래시에서 명령을 못 읽어 멈추므로(제어 인터럽트 포함) core가
 // 바퀴를 세운 뒤에만 부른다. 워치독은 잠깐 32초로 늘린다.
+// 드라이버는 저장 전 상태로 되돌린다 — 래치 중이었으면 계속 자야 한다(core가 정한 상태를 hw가 뒤집지 않는다)
 int32_t hw_cfg_save(const cfg_t *c) {
+    bool awake = (GPIOB->ODR & (1u << 12)) != 0;
     nsleep_low();
     iwdg_set(6u, 4095u);
     int32_t seq = cfgstore_save(&CFGIO, c, sizeof *c);
     iwdg_set(3u, 249u);
-    hw_drv_enable(true);
+    hw_drv_enable(awake);
     return seq;
 }
 bool hw_cfg_erase(void) {
+    bool awake = (GPIOB->ODR & (1u << 12)) != 0;
     nsleep_low();
     iwdg_set(6u, 4095u);
     bool ok = cfgstore_wipe(&CFGIO);
     iwdg_set(3u, 249u);
-    hw_drv_enable(true);
+    hw_drv_enable(awake);
     return ok;
 }
 

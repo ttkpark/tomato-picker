@@ -99,6 +99,10 @@ static bool strict_crc;
 static uint32_t last_loop_ms, wdt_near, last_hb_ms, last_100_ms;
 static uint32_t nak_ms[4];            // 0=estop 1=lowbat 2=nocalib 3=guard — 반복 nak 억제
 static volatile uint32_t isr_alive;
+static uint32_t alive_seen;
+// 워치독은 main과 제어 인터럽트가 **둘 다** 살아 있을 때만 준다. 명령마다 주면(계약 §10.3) 50Hz 지령이
+// 죽은 제어 인터럽트를 가려 버린다 — 출력이 마지막 듀티에 얼어붙은 채로. 그래서 명령마다도 이 검사를 거친다.
+static void wdt_kick_checked(void) { if (isr_alive != alive_seen) { alive_seen = isr_alive; hw_wdt_kick(); } }
 
 // ---------------- 이벤트 큐(ISR → main) ----------------
 enum { EV_MV_DONE = 1, EV_MV_STALL, EV_MV_ABORT, EV_CLFAULT, EV_DEADMAN, EV_TEST, EV_GUARD };
@@ -614,7 +618,7 @@ static void emit_events(void) {
 
 // ---------------- 명령 ----------------
 static void handle_line(char *line) {
-    hw_wdt_kick();                        // 명령 하나마다 워치독 예산(계약 §10.3)
+    wdt_kick_checked();                   // 명령 하나마다 워치독 예산(계약 §10.3) — 제어 인터럽트가 살아 있을 때만
     hw_phase(PH_RX);
     uint32_t now = hw_ms();
     out_t o = { .n = 0 };
@@ -905,12 +909,10 @@ void core_init(const boot_info_t *bi) {
 }
 
 void core_poll(void) {
-    static uint32_t alive_seen;
     uint32_t now = hw_ms();
     if (now - last_loop_ms > 200u) wdt_near++;   // 리셋까진 안 갔지만 아슬아슬했다
     last_loop_ms = now;
-    // 워치독은 main과 제어 인터럽트가 **둘 다** 살아 있을 때만 준다
-    if (isr_alive != alive_seen) { alive_seen = isr_alive; hw_wdt_kick(); }
+    wdt_kick_checked();
 
     int ch;
     while ((ch = hw_rx()) >= 0) {
