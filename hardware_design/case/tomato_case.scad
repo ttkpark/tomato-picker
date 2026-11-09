@@ -13,13 +13,16 @@
 //   뒤   : 비움 — USB 케이블 칸(젯슨 단자가 이쪽). 뒷벽은 떼는 판(rear_cover)
 //
 // 부품별 STL: openscad -D 'part="tray"' -o tray.stl tomato_case.scad
-//   part = assembly | inside | tray | lid | clamp | platform | astra_cap | riser | skirt | rear_cover | fit_test | clash
+//   part = assembly | inside | tray | lid | clamp | platform | astra_cap | riser | skirt | rear_cover | fit_test | clash | step
 //   clash = 부품끼리 겹치는 곳만 남긴다. 비어 있어야 정상.
 //
 // 값의 출처: [STL] 3D/ 원본 · [DS] 데이터시트 · [자] 줄자·캘리퍼 실측
 //            [추정] 사진에서 바퀴 지름 78.6으로 환산(11/05) — 출력 전 자로 잰다(README "출력 전 실측")
 
 part = "assembly";
+step = 17;          // part="step" 조립 단계(1~17). make_assembly.py가 단계마다 하나씩 뽑는다
+explode = false;    // part="step"에서 모든 부품을 조립 방향으로 띄운다(분해도)
+ex = 45;            // 띄우는 거리
 
 /* ===================== 공통 ===================== */
 wall   = 3;      // [STL] 기존 파츠 벽·판 두께
@@ -614,6 +617,75 @@ module clash_pairs() {
     intersection() { g_usb(); g_servo(); }
 }
 
+/* ===================== 조립 단계 (part="step") — make_assembly.py → docs/design/case-assembly-guide.html ===================== */
+// 단계 번호는 make_assembly.py의 STEPS와 같다. 그 단계에 새로 붙는 것만 주황, 조립 방향으로 ex만큼 띄운다.
+// 11~14는 뚜껑 위 작업대(트레이 없이), 15에서 뚜껑 묶음째 트레이에 얹는다.
+hi_col = [0.89, 0.34, 0.10];
+scr_col = [0.17, 0.36, 0.56];
+bench = (step >= 11 && step <= 14) && !explode;
+lid_grp = [11, 12, 13, 14];
+function is_new(i) = !explode && (step == i || (step == 15 && len([for (g = lid_grp) if (g == i) 1]) > 0));
+// 지금 단계에서 이 부품 묶음을 얼마나 띄우나. d = 그 단계의 조립 방향, e = 분해도 자리
+function lift_of(i, d, e) = explode ? e
+    : (step == 3 && i <= 2) ? [0, 0, 1.4*ex]            // 기둥 단계: 트레이를 들어 올려 기둥이 보이게
+    : (step == 15 && is_new(i)) ? [0, 0, 1.6*ex]
+    : is_new(i) ? d : [0, 0, 0];
+// hl = false: 그 단계의 기준 부품(트레이·뚜껑) — 주황으로 칠하지 않는다. 뚜껑은 15단계에서만 묶음째 움직인다
+module it(i, c, d = [0, 0, 0], e = undef, hl = true) {
+    shown = explode || (step >= i && (!bench || i >= 11));
+    nw = hl ? is_new(i) : (!explode && step == 15 && i == 11);
+    lf = explode ? (e == undef ? d : e) : (step == 3 && i <= 2) ? [0, 0, 1.4*ex] : nw && step == 15 ? [0, 0, 1.6*ex] : [0, 0, 0];
+    if (shown) color(nw ? hi_col : c) translate(hl ? lift_of(i, d, e == undef ? d : e) : lf) children();
+}
+module scr(L) { color(scr_col) { cylinder(h = L, d = 3, $fn = 16); translate([0, 0, -3]) cylinder(h = 3, d = 5.5, $fn = 24); } }   // 머리가 밑, 나사가 +Z
+module scr_dn(L) mirror([0, 0, 1]) scr(L);                                   // 머리가 위
+module only_at(i) if (!explode && step == i) children();
+module steps() {
+    lz = tray_h + lid_t;
+    rc = [rot_center[0], rot_center[1]];
+    // 차체 — 기둥 단계부터 늘 보인다
+    if (!bench && (explode || step >= 3)) translate(explode ? [0, 0, -1.3*ex] : [0, 0, 0]) {
+        color([0.25, 0.27, 0.28]) translate([cx - plate_w/2, cy - 110, -riser_h - 3]) cube([plate_w, 220, 3]);
+        color([0.18, 0.18, 0.2]) g_wheels();
+    }
+    it(1, [0.86, 0.87, 0.86], hl = false) tray();
+    // 01 인서트 12개 — 기둥 위 6(뚜껑) · 아래 6(치마)
+    it(1, [0.8, 0.65, 0.25], [0, 0, 25], [0, 0, 0]) for (c = lid_corners) translate([c[0], c[1], tray_h - 5]) cylinder(h = 5, d = 4);
+    it(1, [0.8, 0.65, 0.25], [0, 0, -25], [0, 0, 0]) for (c = lid_corners) translate([c[0], c[1], 0]) cylinder(h = 5, d = 4);
+    // 02 치마
+    it(2, [0.42, 0.44, 0.45], [0, 0, -ex], [0, 0, -0.55*ex]) skirt();
+    only_at(2) for (c = lid_corners) translate([c[0], c[1], -8 - ex - 14]) scr(12);
+    // 03 받침 기둥 + 차체 나사(상판 밑에서 위로, 너트는 트레이 안)
+    it(3, [0.35, 0.38, 0.38], [0, 0, 0], [0, 0, -0.65*ex]) for (c = mount_centers) translate([c[0], c[1], 0]) riser();
+    only_at(3) for (c = mount_centers, sx = [-1, 1], sy = [-1, 1]) translate([c[0] + sx*mount_dx/2, c[1] + sy*mount_dy/2, -riser_h - 3 - 14]) scr(25);
+    it(4, [0.36, 0.42, 0.75], [0, 0, ex], [0, 0, 0]) g_bucks();
+    it(5, [0.2, 0.5, 0.62], [0, 0, ex], [0, 0, 0]) g_board();
+    it(6, [0.5, 0.3, 0.6], [0, 0, ex], [0, 0, 0]) g_imu();
+    it(7, [0.3, 0.55, 0.35], [0, 0, ex], [0, 0, 0]) g_battery();
+    it(8, [0.15, 0.15, 0.15], [0, 0, ex], [0, 0, 0]) g_jetson();
+    it(9, [0.1, 0.1, 0.1], [-ex, 0, 0]) g_panel();
+    // 10 Astra + 캡
+    it(10, [0.12, 0.12, 0.13], [0, 0, ex], [0, -0.3*ex, 0.9*ex]) g_astra();
+    it(10, [0.9, 0.78, 0.3], [0, 0, 2*ex], [0, -0.3*ex, 1.7*ex]) astra_cap();
+    only_at(10) for (c = cap_screws) translate([c[0], c[1], cradle_top + 10 + 2*ex + 22]) scr_dn(20);
+    // 11~14 뚜껑 작업대
+    it(11, [0.75, 0.77, 0.78], [0, 0, 0], [0, 0, 2.6*ex], hl = false) translate([0, 0, tray_h]) lid();
+    it(11, [0.23, 0.25, 0.28], [0, 0, -ex], [0, 0, 1.8*ex]) g_servo();
+    it(12, [0.55, 0.57, 0.6], [0, 0, ex], [0, 0, 3.3*ex]) translate([rc[0], rc[1], lz + seat_shoulder_h])
+        difference() { cylinder(h = brg[2], d = brg[1], $fn = 96); translate([0, 0, -1]) cylinder(h = brg[2] + 2, d = brg[0], $fn = 96); }
+    it(12, [0.4, 0.42, 0.44], [0, 0, 2*ex], [0, 0, 3.8*ex]) translate([rc[0], rc[1], lz + seat_shoulder_h + brg[2]]) clamp();
+    only_at(12) for (i = [0:3]) translate([rc[0], rc[1], lz + seat_shoulder_h + brg[2] + clamp_t + 2*ex + 18]) rotate(45 + 90*i) translate([clamp_screw_r, 0, 0]) scr_dn(12);
+    it(13, [0.78, 0.78, 0.82], [0, 0, ex], [0, 0, 2.2*ex]) translate([rc[0], rc[1], tray_h + servo_raise + horn_top - 4.5]) cylinder(h = 4.5, d = horn_dia);
+    it(14, [0.95, 0.63, 0.31], [0, 0, ex], [0, 0, 4.6*ex]) translate([rc[0], rc[1], lz + plat_z]) platform();
+    only_at(14) for (i = [0:3]) translate([rc[0], rc[1], lz + plat_z + plat_t - horn_cb + ex + 22]) rotate(45 + 90*i) translate([horn_pcd/2, 0, 0]) scr_dn(20);
+    only_at(15) for (c = lid_corners) translate([c[0], c[1], lz + 1.6*ex + 20]) scr_dn(12);
+    // 16 뒷판
+    it(16, [0.55, 0.57, 0.58], [0, ex, 0]) rear_cover();
+    only_at(16) for (sc = cover_screws) translate([sc[0], body_d + cover_t + ex + 18, sc[1]]) rotate([90, 0, 0]) scr(12);
+    // 17 SO-101 받침 나사 자리 (회전판 인서트에 이미 박혀 있다)
+    it(17, [0.8, 0.65, 0.25], [0, 0, ex], [0, 0, 4.6*ex]) for (h = so101_holes) translate([rc[0] + h[0], rc[1] + h[1], lz + plat_z + plat_t]) cylinder(h = 30, d = 4);
+}
+
 /* ===================== 출력 ===================== */
 if (part == "tray") tray();
 else if (part == "lid") lid();
@@ -625,6 +697,7 @@ else if (part == "skirt") translate([0, 0, skirt_h]) skirt();
 else if (part == "rear_cover") rotate([-90, 0, 0]) translate([0, -body_d - cover_t, 0]) rear_cover();   // 눕혀 베드에
 else if (part == "astra_cap") rotate([180, 0, 0]) translate([0, 0, -(cradle_top + cap_h)]) astra_cap();   // 뒤집어 베드에
 else if (part == "clash") clash_pairs();
+else if (part == "step") steps();
 else if (part == "inside") {     // 뚜껑 뗀 모습 — 배치 확인용
     color("lightgray") tray();
     color("dimgray") skirt();

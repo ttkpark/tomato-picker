@@ -7,7 +7,8 @@
 ![뒤](../../docs/design/case-v2-rear.png)
 ![뚜껑 뗀 모습](../../docs/design/case-v2-inside.png)
 
-⚠ [`case-assembly-guide.html`](../../docs/design/case-assembly-guide.html)과 `case-render-*.png`는 옛 판 기준이다.
+**조립도** = [`case-assembly-guide.html`](../../docs/design/case-assembly-guide.html)(v2, 17단계·분해도·출력물·나사). scad를 고치면 `python hardware_design/case/make_assembly.py`로 다시 만든다(`part="step"` 장면을 OpenSCAD로 뽑는다, 10초).
+⚠ `case-render-*.png`는 옛 판 기준이다.
 
 ## 구조 — 몸통 252 × 250 × 104 (상판 위 회전판 윗면까지 141)
 | 부품 | 무엇 |
