@@ -1315,21 +1315,29 @@ def find_cmd(a, m) -> int:
     link = None if a.hand else open_link()
     if not a.hand and link is None:
         return 1
+    def look():
+        """멈춘 뒤 한 장 → seen에 더한다. (차체 방위, 토마토 수, 상태) | None(검출·IMU 끊김)."""
+        st = tomato_fresh(time.time() + 0.3)             # 멈춘 뒤에 찍힌 판정
+        i = imu_now()
+        if st is None or i is None or i[0] != i0[0]:
+            print("⛔ 검출이나 IMU가 끊겼다")
+            return None
+        th = wrap(th0 + i[1] - i0[1])
+        bs = tomato_bearings(st, m)
+        lens = to_world([s["pose"][0], s["pose"][1], th], np.array([[m["x"], m["y"]]]))[0]
+        rs = tomato_ranges(m, bs, float(st["ts"]), tomato_elevations(st, m)) if bs else []
+        seen.extend((lens[0], lens[1], wrap(th + b), r) for b, r in zip(bs, rs))
+        if bs:
+            print("    거리(렌즈) %s" % ["%.2fm" % r if r == r else "?" for r in rs])
+        return th, len(bs), st
+
     try:
         for k in range(len(plan) + 1 if plan else max(a.steps, int(3 * 360 / a.deg))):   # 360°를 채울 때까지 — 걸음이 1~4°로 끝나는 일이 잦다(10/23 실기 22걸음에 247°)
-            st = tomato_fresh(time.time() + 0.3)         # 멈춘 뒤에 찍힌 판정
-            i = imu_now()
-            if st is None or i is None or i[0] != i0[0]:
-                print("⛔ 검출이나 IMU가 끊겼다")
+            got_look = look()
+            if got_look is None:
                 return 1
-            th = wrap(th0 + i[1] - i0[1])
-            bs = tomato_bearings(st, m)
-            lens = to_world([s["pose"][0], s["pose"][1], th], np.array([[m["x"], m["y"]]]))[0]
-            rs = tomato_ranges(m, bs, float(st["ts"]), tomato_elevations(st, m)) if bs else []
-            seen += [(lens[0], lens[1], wrap(th + b), r) for b, r in zip(bs, rs)]
-            if bs:
-                print("    거리(렌즈) %s" % ["%.2fm" % r if r == r else "?" for r in rs])
-            print("[%d] 방향 %.0f° · 토마토 %d (cx %s)" % (k + 1, math.degrees(th), len(bs),
+            th, nb, st = got_look
+            print("[%d] 방향 %.0f° · 토마토 %d (cx %s)" % (k + 1, math.degrees(th), nb,
                                                     [int(c) for c, _ in tomato_px(st)]))
             if (plan is None and total >= 360) or (plan is not None and k >= len(plan)):
                 break
@@ -1342,6 +1350,23 @@ def find_cmd(a, m) -> int:
                     break
                 continue
             stuck, total = 0, total + abs(got)
+        # 한 방향에서만 봤으면 그쪽으로 돌아 두 장 더 본다 — 11/09 20:17: 훑기 끝(−134°)에서 0.69m로 한 번 보고 '못 찾음'.
+        # 같은 자리 세 장이 다 보면 오검출이 아니다(가짜는 한 장짜리였다)
+        if seen and link is not None and not len(place_tomatoes(s, [tuple(q) for q in s["seen"]] + seen)):
+            b = max(seen, key=lambda q: not math.isnan(q[3]))[2]
+            cur = look()
+            if cur is None:
+                return 1
+            d = math.degrees(wrap(b - cur[0]))
+            print("한 방향에서만 봤다 — 그쪽으로 %+.0f° 돌아 다시 본다" % d)
+            if abs(d) > 3:
+                turn(link, int(math.copysign(abs(a.w), d)), a.wsecs, abs(d))
+                time.sleep(TURN_SETTLE_S)
+            for _ in range(2):
+                cur = look()
+                if cur is None:
+                    return 1
+                print("  확인 방향 %.0f° · 토마토 %d" % (math.degrees(cur[0]), cur[1]))
     finally:
         if link is not None:
             link.close()
@@ -1446,6 +1471,11 @@ def face_cmd(a, m) -> int:
 
 
 APPROACH_STANDOFF = 0.7        # 토마토에서 이만큼 앞에 선다 — 도착 허용 0.2 + 차체 앞 0.2 + 여유
+STRAIGHT_MAX_M = 1.0           # 정면을 맞춘 뒤 (짐작 거리 − STRAIGHT_STOP_M)이 이 안이면 지도 길 대신 엔코더로 곧장 간다(그 너머는 지도 길)
+STRAIGHT_STOP_M = 1.2          # 곧장 갈 때 토마토 짐작 자리에서 이만큼 앞에 선다 — 찾기 거리는 실제보다 0.3~0.5m 멀게 나온다. 모자라면 손목
+                               #   근접이 D405 깊이로 150mm씩 메우지만 넘치면 화분 위다(11/09 20:11 0.7 앞 노려 손목 313mm · 20:50 0.9 앞 노려 254mm)
+STRAIGHT_OVER = 1.14           # step_mm이 목표보다 더 가는 비(11/09: 4129/3687 · 3090/2692 · 3236/2825)
+AHEAD_DEG = 25.0              # 가서 둘레가 좁아도 토마토가 이 방위 안이면 비켜 서지 않는다(손목 근접이 작게 돌며 맞춘다)
 
 
 def approach_goal(s: dict, standoff: float = APPROACH_STANDOFF, need: float = 0.0):
@@ -1493,6 +1523,34 @@ def approach_cmd(a, m) -> int:
     faced, moved = face_cmd(a, m) == 0, False
     if not faced:
         print("  (정면 맞추기 실패 — 그래도 지도 길로 간다)")
+    else:
+        # 11/09 19:08·19:20: 정면을 맞추고 0.4~0.5m만 가면 되는데 지도 길로 갔다가 걸음 뒤 자세 맞춤이 미끄러져(일치 0.39·x +0.32m 튐)
+        # 38°+24° 엉뚱하게 돌아 짐더미로 갔다. 정면이고 그 선이 트였으면 맞춤 없이 엔코더로 곧장 간다
+        s = load()
+        t, p = s["tomato"][0], s["pose"]
+        dist = math.hypot(t[0] - p[0], t[1] - p[1])
+        go = dist - STRAIGHT_STOP_M
+        ux, uy = (t[0] - p[0]) / dist, (t[1] - p[1]) / dist
+        line = [(p[0] + ux * k * 0.05, p[1] + uy * k * 0.05) for k in range(1, int(go / 0.05) + 1)]
+        if go <= STRAIGHT_MAX_M and all(clearance(s["lo"], q, 0.3) >= m.get("radius", 0.22) for q in line):
+            if go > a.tol:
+                print("정면이다 — 지도 길 대신 엔코더로 곧장 %.2fm" % go)
+                from base_nudge import open_link
+                link = open_link()
+                if link is None:
+                    return 1
+                try:
+                    r = step_mm(link, go * 1000.0 / STRAIGHT_OVER, a.vx)
+                finally:
+                    link.close()
+                print("  → %s %d/%d" % (r["state"], r["got"], r["target"]))
+            else:                      # 이미 짐작 자리 1.4m 안 — 지도 길(걸음마다 맞춤)이 미끄러져 엉뚱하게 돌았다(11/09 두 번)
+                print("정면이고 이미 토마토 짐작 %.2fm 앞 — 더 안 간다" % dist)
+            # 여기서 face_cmd를 부르지 않는다 — 지도 자세가 직진 전 그대로라 방위를 반대로 쟀다(11/09 19:38: 44° 엉뚱하게 돌았다).
+            # 직진 전에 이미 정면이었고, 남은 가로 오차는 손목 근접이 6°씩 맞춘다
+            print("✅ 정면으로 곧장 왔다(앞 cx %s · 손목 %s) — 손목 근접으로"
+                  % (tomato_cx()[0], "봄" if wrist_tomato(waiting_pose=True) is not None else "못 봄"))
+            return 0
     # 둘레 여유에 도착 허용 오차를 더한다 — 목표는 0.45 넘게 잡았는데 0.13m 못 미쳐 서니 0.42가 됐다(11/03 가상 3차 6회).
     # 가서 보니 좁으면(가며 지도가 자라 상자 모서리가 드러난다) 새 지도로 자리를 한 번 더 고른다.
     tol0 = a.tol
@@ -1523,6 +1581,14 @@ def approach_cmd(a, m) -> int:
                     print("⚠ 앞 카메라는 못 보지만(Astra 사각) 손목 D405가 토마토를 본다 — 손목 근접으로")
                     return 0
                 return 1
+            t, p = s["tomato"][0], s["pose"]
+            b = math.degrees(wrap(math.atan2(t[1] - p[1], t[0] - p[0]) - p[2]))
+            if moved and abs(b) < AHEAD_DEG:
+                # 11/09 19:08: 0.13m 남기고 토마토를 +2°에 두고 섰는데 '좁다'며 −90° 옆자리로 떠나 지도 맞춤이 무너졌다 —
+                # 정면이면 크게 돌 일이 없다. 손목 근접은 6°씩만 돈다
+                print("✅ 둘레 %.2fm로 좁지만 토마토가 거의 정면(지도 방위 %+.0f°) — 비켜 서지 않고 손목 근접으로"
+                      % (clearance(s["lo"], p[:2]), b))
+                return 0
             print("  둘레 %.2fm — 좁다, 자리를 다시 고른다" % clearance(s["lo"], s["pose"][:2]))
             a.tol = tol0 / 2             # 두 번째는 반만 봐준다 — 0.12m 옆의 트인 자리를 '이미 거기'로 치고 안 갔다
     finally:

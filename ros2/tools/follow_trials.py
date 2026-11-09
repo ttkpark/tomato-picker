@@ -71,7 +71,8 @@ def main() -> int:
     rows = []
     rc, lines = job_raw("park", {}, time.time() + 60)   # 앞 벌의 근접이 팔을 78° 벗어난 채 남겼다(11/09) — 둘러보기·근접은 대기 자세가 전제
     print("대기 자세 rc=%s · %s" % (rc, lines[-2] if len(lines) > 1 else lines), flush=True)
-    for n, (back, deg) in enumerate(STARTS, 1):
+    # --here: 사람이 출발 자리를 놓고 한 회만(11/09 — 실패 자리에서 이어 시작하면 화분 0.4m 앞 사각에서 출발했다)
+    for n, (back, deg) in enumerate([(0, 0)] if "--here" in sys.argv else STARTS, 1):
         print("\n=== %d회차 — %dmm 물러나 %+d° ===" % (n, back, deg), flush=True)
         if rows and rows[-1][2] == "실패":
             # 근접 끝자리에서 물러나는 것이 출발 자리다 — 실패한 자리에서 또 물러나면 가구로 쌓인다(11/06 300+200+300mm → 배낭)
@@ -83,8 +84,8 @@ def main() -> int:
         tt.snap(out, "%d-start" % n)
         with open(os.path.join(out, "%d.log" % n), "w") as lf:
             steps = SCAN_STEPS if "--scan" in sys.argv else LOOK_STEPS
-            if "--sweep" in sys.argv:          # 케이블 때문에 한 바퀴를 못 돌 때 — 스캔·찾기를 ±100°로
-                steps = [(md, dict(ar, sweep=100) if md in ("scan", "find") else ar) for md, ar in steps]
+            if "--sweep" in sys.argv:          # 케이블 때문에 한 바퀴를 못 돌 때 — 스캔·찾기를 ±120°로(11/09 B1: ±100이면 105°의 토마토를 가장자리에서 한 번씩만 봤다)
+                steps = [(md, dict(ar, sweep=120) if md in ("scan", "find") else ar) for md, ar in steps]
             for mode, args in steps:
                 rc, lines = job(mode, args, t0 + LIMIT_S)
                 lf.write("\n## %s rc=%s\n%s\n" % (mode, rc, "\n".join(lines)))
