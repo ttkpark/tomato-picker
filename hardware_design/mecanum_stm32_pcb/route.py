@@ -1,34 +1,42 @@
-# 자동배선 (KiCad 9 python + Freerouting). gen_pcb.py로 배치한 **직후의 빈 판**에서:
-#   python route.py prep     → 넷클래스(.kicad_pro) + mecanum_stm32.dsn
-#   java -jar freerouting.jar -de mecanum_stm32.dsn -do mecanum_stm32.ses --router.autorouter.max_passes=60 --router.optimizer.enabled=false --gui.enabled=false
-#   python route.py finish   → .ses의 선·비아를 판에 넣고 GND 동박(양면) 채워 저장
+# 자동배선 (KiCad 9 python + Freerouting). gen_pcb.py로 배치한 **직후의 판**(미리 깐 모터선만 있음)에서 두 단계로:
+#   FR="java -jar freerouting-2.5.0.jar --router.autorouter.max_passes=60 --router.optimizer.enabled=false --gui.enabled=false"
+#   python route.py prep                → 넷클래스·설계규칙(.kicad_pro) + mecanum_stm32.dsn (전원 면 = 무른 plane)
+#   $FR -de mecanum_stm32.dsn -do stage1.ses
+#   python route.py prep2 stage1.ses    → 전원 면 = F.Cu 금지 구역, 면을 침범한 1단계 배선만 빼고 씨앗으로
+#   $FR -de mecanum_stm32.dsn -do mecanum_stm32.ses
+#   python route.py finish   → .ses의 선·비아를 판에 넣고 가는 조각 굵히기 → 전원 동박(F.Cu) + GND 동박(양면) 채워 저장
+#   python route.py check    → 저장된 판을 다시 열어 굵기·드릴·절연 간격·디커플링·전원 면 최소 폭(0이 아니면 종료코드 1)
+#   ⚠ Freerouting은 좁은 핀 사이에서 선을 ×0.75로 깎는다(넥다운, 0.15→0.112) → finish의 widen()이 간격이 되는 곳은 0.127mm 이상으로 되돌린다.
+#     넥다운을 끄면(--router.automatic_neckdown=false) LQFP 0.5mm 피치에 못 들어가 배선이 발산했다(11/09).
 #
 # 왜 DSN을 직접 쓰나: 이 빌드(9.0.4)의 pcbnew.ExportSpecctraDSN은 헤드리스 파이썬에서 **멈춘다**(보이지 않는
-# assert 창). 그래서 패드 모양(절대좌표 다각형)·넷·넷클래스·GND 평면만 Specctra 문법으로 쓴다.
+# assert 창). 그래서 패드 모양(절대좌표 다각형)·넷·넷클래스·전원 면(plane)·미리 깐 선(protect)만 Specctra 문법으로 쓴다.
 # ⚠ 이 빌드에선 b.Remove()가 SWIG 타입을 깨뜨린다 → 지우지 말고 gen_pcb.py부터 다시 돌린다.
-# 절연: GND 동박은 두 칸 — USB 칸(GNDU, ADuM1201 중심선 왼쪽·y<ISO_Y)과 나머지(GND), 사이 간격 ISO_GAP.
+# 절연: GND 동박은 두 칸 — USB 칸(GNDU, x<ISO_X·y<ISO_Y)과 나머지(GND). 사이 ISO_GAP 해자는 Freerouting에도 금지 구역으로 준다.
 import json, os, re, sys
 import pcbnew
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PCB, PRO = os.path.join(HERE, "mecanum_stm32.kicad_pcb"), os.path.join(HERE, "mecanum_stm32.kicad_pro")
 DSN, SES = PCB[:-10] + ".dsn", PCB[:-10] + ".ses"
-from gen_pcb import W, H, ISO_Y              # 판 크기·절연 칸은 한 곳(gen_pcb)에서만
-ISO_GAP = 1.5
+from gen_pcb import W, H, ISO_X, ISO_Y, ISO_GAP, POWER_ZONES, PREROUTES, iso_check, decap_check, _dist   # 한 곳(gen_pcb)에서만
 
-# (이름, 선폭, 간격, 비아지름, 비아드릴 mm, 넷 패턴)
-# 선폭은 **핀에 들어갈 수 있는 굵기**로 배선한다 — DRV8874는 0.65mm, MCU는 0.5mm 피치라 0.8mm 선은 핀 사이 간격을
-# 못 지켜 Freerouting이 통째로 포기한다(첫 시도: 미배선 145). 굵기는 배선 뒤 widen()이 간격이 되는 구간만 키운다.
-DEFAULT = (0.18, 0.15, 0.6, 0.3)   # 0.18/0.15mm = 일반 업체 기본 공정(JLC 최소 0.1/0.1) 안. 0.2면 신호 2개가 못 지나간다
+# (이름, 선폭, 간격, 비아지름, 비아드릴 mm, 넷 패턴). 2층 일반 공정: 선 ≥0.127(신호 0.2), 드릴 ≥0.3
+DEFAULT = (0.15, 0.15, 0.6, 0.3)   # 신호 0.15mm(2층 공정 0.127 이상) — 0.2면 MCU 둘레가 막혀 11연결이 남았다(11/09)
 CLASSES = [
-    ("Power", 0.4, 0.2, 0.8, 0.4, ["VBAT_IN", "VBAT_R", "VBAT_P", "VLOG", "SW5"]),
-    # VM은 24핀이 판 전체에 퍼져 0.4mm·0.8비아로는 길을 못 찾는다(3회 연속 VM만 18연결 실패) → 가늘게 잇고 widen이 키운다
-    ("Motor", 0.26, 0.15, 0.6, 0.3, ["VM", "M?+", "M?-"]),   # 모터 출력도(4차: MC− 1개만 실패, 0.3은 11/02 전원스위치 판에서 MD− 1개 실패 → 0.26)
-    ("Supply", 0.25, 0.15, 0.6, 0.3, ["5V", "3V3", "VBUS", "ISO_V1", "COIL", "GND", "GNDU"]),
+    ("Power", 0.4, 0.2, 0.8, 0.4, ["VBAT_IN", "VBAT_R", "VBAT_P", "VM", "VLOG", "SW5"]),   # 큰 전류는 동박 면이 나른다 — 선은 곁가지(감지·스너버)
+    ("Motor", 1.0, 0.2, 0.8, 0.4, ["M?+", "M?-"]),                                          # gen_pcb가 미리 깐다(Freerouting은 손대지 않음)
+    ("Supply", 0.3, 0.15, 0.6, 0.3, ["5V", "3V3", "VBUS", "ISO_V1", "COIL", "ESTOP5", "FLYK", "GND", "GNDU"]),
 ]
-WIDEN = {"Power": [0.8, 0.6], "Motor": [0.8, 0.6, 0.4], "Supply": [0.5]}   # 배선 후 시도할 굵기(큰 것부터)
+WIDEN = {"Power": [0.8, 0.6], "Supply": [0.5]}   # 배선 후 시도할 굵기(큰 것부터)
+# DRC 간격은 배선 간격(0.15)보다 조금 느슨하게 0.13 — Freerouting 넥다운 조각(0.112)을 0.127로 되돌리면 한쪽 0.0075씩 줄기 때문.
+# (2층 일반 공정 최소 간격 0.1~0.127 안). 배선 자체는 0.15로 한다.
+DRC_CLEARANCE = {"Default": 0.13, "Supply": 0.13}
+RULES = dict(min_track_width=0.127, min_through_hole_diameter=0.3, min_via_diameter=0.6, min_via_annular_width=0.13,
+             min_clearance=0.13, min_hole_clearance=0.25, min_copper_edge_clearance=0.5)
 SCREW_RING = 6.5   # mm, 고정구멍 둘레 동박 금지 지름(M3 나사머리 ≈5.5) — H2는 USB(GNDU) 칸 안이라 특히 중요
 UM = 1000.0  # DSN 단위 = µm (resolution um 1)
+PAD_NECK = 1.5     # 전원 면 최소 폭을 잴 때 패드에서 이만큼은 넥으로 친다(검사 기준)
 
 
 def set_netclasses():
@@ -36,11 +44,13 @@ def set_netclasses():
     ns = d["net_settings"]
     base = next(c for c in ns["classes"] if c["name"] == "Default")
     base.update(track_width=DEFAULT[0], clearance=DEFAULT[1], via_diameter=DEFAULT[2], via_drill=DEFAULT[3])
-    ns["classes"] = [base] + [dict(base, name=n, track_width=tw, clearance=cl, via_diameter=vd, via_drill=vdr, priority=i)
+    base.update(clearance=DRC_CLEARANCE["Default"])
+    ns["classes"] = [base] + [dict(base, name=n, track_width=tw, clearance=DRC_CLEARANCE.get(n, cl), via_diameter=vd, via_drill=vdr, priority=i)
                               for i, (n, tw, cl, vd, vdr, _) in enumerate(CLASSES)]
     ns["netclass_patterns"] = [{"netclass": n, "pattern": p} for n, *_, pats in CLASSES for p in pats]
-    # 방열 스포크 최소 1 — GND 패드는 선으로도 이어져 있어 스포크가 하나뿐이어도 연결이 끊기지 않는다
-    d["board"]["design_settings"]["rules"]["min_resolved_spokes"] = 1
+    r = d["board"]["design_settings"]["rules"]
+    r.update(RULES)
+    r["min_resolved_spokes"] = 1   # GND 패드는 선으로도 이어져 있어 스포크가 하나뿐이어도 연결이 끊기지 않는다
     json.dump(d, open(PRO, "w", encoding="utf8"), indent=2)
 
 
@@ -51,12 +61,26 @@ def class_of(net):
     return ("Default",) + DEFAULT
 
 
-def iso_x(b):
-    return pcbnew.ToMM(next(f for f in b.GetFootprints() if f.GetReference() == "U5").GetPosition().x)
+def poly_union(polys):
+    """mm 다각형들 → 합친 SHAPE_POLY_SET(nm)."""
+    s = pcbnew.SHAPE_POLY_SET()
+    for poly in polys:
+        c = pcbnew.SHAPE_LINE_CHAIN()
+        for x, y in poly: c.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+        c.SetClosed(True); t = pcbnew.SHAPE_POLY_SET(); t.AddOutline(c); s.BooleanAdd(t)
+    s.Simplify()
+    return s
 
 
-def pour_polys(b):
-    ix, e, g = iso_x(b), 0.4, ISO_GAP / 2
+def moat():
+    """USB 칸 둘레 ISO_GAP 폭 띠(양면 금지) — 어떤 넷도 경계를 넘지 못한다(U5 몸통 밑 포함)."""
+    g = ISO_GAP / 2
+    return [(ISO_X - g, 0.0, ISO_X + g, ISO_Y + g), (0.0, ISO_Y - g, ISO_X + g, ISO_Y + g)]
+
+
+def pour_polys():
+    e, g = 0.4, ISO_GAP / 2
+    ix = ISO_X
     return [("GNDU", [(e, e), (ix - g, e), (ix - g, ISO_Y - g), (e, ISO_Y - g)], 1),
             ("GND", [(ix + g, e), (W - e, e), (W - e, H - e), (e, H - e), (e, ISO_Y + g), (ix + g, ISO_Y + g)], 0)]
 
@@ -64,22 +88,33 @@ def pour_polys(b):
 # ---------------- DSN 쓰기 ----------------
 def q(s): return '"' + s.replace('"', "") + '"'
 def xy(v): return f"{v.x / UM:.1f} {-v.y / UM:.1f}"          # nm → µm, y 위로
-def mm(x, y): return f"{x * 1000:.1f} {-y * 1000:.1f}"
+def mmxy(x, y): return f"{x * 1000:.1f} {-y * 1000:.1f}"
 
 
-def export_dsn(b):
+def export_dsn(b, hard):
     L = ['(pcb "mecanum_stm32"', ' (parser (string_quote ") (space_in_quoted_tokens on) (host_cad "KiCad") (host_version "9"))',
          ' (resolution um 1) (unit um)', ' (structure', '  (layer F.Cu (type signal) (property (index 0)))',
          '  (layer B.Cu (type signal) (property (index 1)))',
          f'  (boundary (rect pcb 0 {-H * 1000:.0f} {W * 1000:.0f} 0))']
-    # GND 평면은 DSN에 안 넣는다 — 넣으면 Freerouting이 그 층 전체를 장애물로 봐서 2층 판이 1층이 된다
-    # (2차 시도: 미배선 68에서 정체). GND도 선으로 잇고, 동박은 배선 뒤 add_pours()가 양면에 채운다.
+    # 전원 면(F.Cu)만 plane으로 — Freerouting이 그 넷의 동박으로 보고 다른 넷은 비켜 간다. GND 평면은 넣지 않는다
+    # (판 전체를 덮어 2층이 1층이 된다). GND는 선으로 잇고 동박은 배선 뒤 add_pours()가 채운다.
+    # 전원 면 — 두 단계로 다룬다(11/09). Freerouting의 plane은 '나중에 다시 채울 동박'이라 다른 넷이 그 위로 지나가 면이 끊기고,
+    # 처음부터 금지 구역으로 주면 배선이 발산한다(미배선 30~170 사이를 오감).
+    #  1단계 hard=False: plane(무른 면) → 거의 다 배선된다.
+    #  2단계 hard=True : F.Cu 금지 구역 + 전원 넷은 배선 안 함(패드는 전부 면 안 — gen_pcb 배치 몫) + 1단계 결과 중
+    #                    면을 침범하지 않은 선·비아만 씨앗으로 → Freerouting은 침범했던 몇 넷만 비켜 다시 낸다.
+    for net, polys in POWER_ZONES.items():
+        s = poly_union(polys)
+        for i in range(s.OutlineCount()):
+            o = s.Outline(i)
+            pts = " ".join(xy(o.CPoint(k)) for k in range(o.PointCount()))
+            L.append(f'  (keepout "" (polygon F.Cu 0 {pts}))' if hard else f"  (plane {q(net)} (polygon F.Cu 0 {pts}))")
     vias = {}
     for name, tw, cl, vd, vdr in [("Default",) + DEFAULT] + [c[:5] for c in CLASSES]:
         vias[name] = f"Via[0-1]_{vd * 1000:.0f}:{vdr * 1000:.0f}_um"
     L.append("  (via " + " ".join(q(v) for v in dict.fromkeys(vias.values())) + ")")
     L.append(f"  (rule (width {DEFAULT[0] * 1000:.0f}) (clearance {DEFAULT[1] * 1000:.0f}) (clearance 150 (type smd_smd)))")
-    for x0, y0, x1, y1 in [(0, 0, W, 0.5), (0, H - 0.5, W, H), (0, 0, 0.5, H), (W - 0.5, 0, W, H)]:   # 판 가장자리 0.5mm 띠
+    for x0, y0, x1, y1 in [(0, 0, W, 0.5), (0, H - 0.5, W, H), (0, 0, 0.5, H), (W - 0.5, 0, W, H)] + moat():   # 가장자리 0.5mm 띠 + 절연 해자
         L.append(f'  (keepout "" (rect signal {x0 * 1000:.0f} {-y1 * 1000:.0f} {x1 * 1000:.0f} {-y0 * 1000:.0f}))')
     holes = []
     comps, imgs, stacks, nets = [], [], [], {}
@@ -89,9 +124,9 @@ def export_dsn(b):
         for k, pad in enumerate(fp.Pads()):
             pos = pad.GetPosition()
             if pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:   # 고정구멍·커넥터 위치핀
-                d = max(pad.GetDrillSize().x, pad.GetSize(pcbnew.F_Cu).x) + pcbnew.FromMM(0.6)   # 구멍 간격 0.3mm 여유
+                d = max(pad.GetDrillSize().x, pad.GetSize(pcbnew.F_Cu).x) + pcbnew.FromMM(0.6)
                 if fp.GetReference().startswith("H"):
-                    d = pcbnew.FromMM(SCREW_RING)   # 고정나사 머리·스탠드오프가 동박에 닿지 않게
+                    d = pcbnew.FromMM(SCREW_RING)
                 holes.append(f'  (keepout "" (circle signal {d / UM:.0f} {xy(pos)}))')
                 continue
             if not pad.GetNumber():                            # 페이스트 창(번호 없음) — 동박 아님
@@ -109,7 +144,7 @@ def export_dsn(b):
             if not shapes: continue
             stacks.append(f"  (padstack {q(ps)} " + " ".join(shapes) + " (attach off))")
             pins.append(f"   (pin {q(ps)} {q(pid)} {xy(pos)})")
-            if pad.GetNetname():
+            if pad.GetNetname() and not (hard and pad.GetNetname() in POWER_ZONES):
                 nets.setdefault(pad.GetNetname(), []).append(f"{ref}-{pid}")
         imgs.append(f"  (image {q('img_' + ref)}\n" + "\n".join(pins) + ")")
         comps.append(f'  (component {q("img_" + ref)} (place {q(ref)} 0 0 front 0))')
@@ -119,13 +154,23 @@ def export_dsn(b):
         L.append(f"  (padstack {q(v)} (shape (circle F.Cu {vd * 1000:.0f})) (shape (circle B.Cu {vd * 1000:.0f})) (attach off))")
     L += [" )", " (network"]
     for n, pins in nets.items():
-        L.append(f"  (net {q(n)} (pins " + " ".join(pins) + "))")   # 핀 참조는 따옴표 없이(REF-핀)
+        L.append(f"  (net {q(n)} (pins " + " ".join(pins) + "))")
     groups = {}
     for n in nets: groups.setdefault(class_of(n), []).append(n)
     for (name, tw, cl, vd, vdr), ns in groups.items():
         L.append(f"  (class {q(name)} " + " ".join(q(n) for n in ns) +
                  f" (circuit (use_via {q(vias[name])})) (rule (width {tw * 1000:.0f}) (clearance {cl * 1000:.0f})))")
-    L += [" )", " (wiring)", ")"]
+    L += [" )", " (wiring"]
+    for t in b.GetTracks():   # gen_pcb가 미리 깐 선(모터 출력·EP 접지) = 고정(protect), 씨앗 배선 = 보통(route)
+        if t.GetFlags() & pcbnew.SKIP_STRUCT: continue
+        if t.Type() == pcbnew.PCB_TRACE_T:
+            fixed = is_preroute(t)
+            lname = "F.Cu" if t.GetLayer() == pcbnew.F_Cu else "B.Cu"
+            L.append(f"  (wire (path {lname} {t.GetWidth() / UM:.0f} {xy(t.GetStart())} {xy(t.GetEnd())}) (net {q(t.GetNetname())}) (type {'protect' if fixed else 'route'}))")
+        elif t.Type() == pcbnew.PCB_VIA_T:
+            v = vias[class_of(t.GetNetname())[0]]
+            L.append(f"  (via {q(v)} {xy(t.GetPosition())} (net {q(t.GetNetname())}) (type route))")
+    L += [" )", ")"]
     open(DSN, "w", encoding="utf8").write("\n".join(L))
     return len(nets), len(stacks)
 
@@ -146,12 +191,34 @@ def find(node, key):
         if isinstance(c, list) and c and c[0] == key: yield c
 
 
+def intrudes(t, planes):
+    """선(F.Cu)·비아가 전원 면 다각형(+0.2mm)을 침범하는가."""
+    if t.Type() == pcbnew.PCB_TRACE_T and t.GetLayer() != pcbnew.F_Cu: return False
+    return any(pl.Collide(t.GetEffectiveShape(pcbnew.F_Cu), pcbnew.FromMM(0.2)) for pl in planes)
+
+
+def drop_intruders(b):
+    """2단계 씨앗 거르기: 전원 넷 선·비아 전부와, 전원 면을 침범한 다른 넷 선·비아를 지운다(b.Remove 대신 넷 0 + 0폭 표시 → 내보내기에서 뺀다)."""
+    planes = [poly_union(ps) for ps in POWER_ZONES.values()]
+    n = 0
+    for t in list(b.GetTracks()):
+        if (t.GetNetname() in POWER_ZONES or intrudes(t, planes)) and not is_preroute(t):
+            t.SetFlags(pcbnew.SKIP_STRUCT); n += 1
+    return n
+
+
+def is_preroute(t):
+    return t.Type() == pcbnew.PCB_TRACE_T and t.GetLayer() == pcbnew.F_Cu and         (t.GetNetname(), round(pcbnew.ToMM(t.GetWidth()), 2)) in {(n, w) for n, w, _ in PREROUTES}
+
+
 def import_ses(b):
     s = sexp(open(SES, encoding="utf8", errors="ignore").read())
     routes = next(find(s, "routes"))
     res = next(find(routes, "resolution"), ["resolution", "um", "1"])
     k = 1000.0 / float(res[2]) if res[1] == "um" else 1e6 / float(res[2])   # SES 단위 → nm
     layers = {"F.Cu": pcbnew.F_Cu, "B.Cu": pcbnew.B_Cu}
+    have = {(t.GetNetname(), t.GetLayer(), *sorted([(t.GetStart().x // 1000, t.GetStart().y // 1000), (t.GetEnd().x // 1000, t.GetEnd().y // 1000)]))
+            for t in b.GetTracks()}   # 미리 깐 선은 SES에 다시 나와도 두 번 넣지 않는다
     vsz = {}
     for ps in find(next(find(routes, "library_out"), []), "padstack"):
         circ = next(find(next(find(ps, "shape")), "circle"))
@@ -165,6 +232,8 @@ def import_ses(b):
             c = [float(v) * k for v in p[3:]]
             pts = [pcbnew.VECTOR2I(int(c[i]), int(-c[i + 1])) for i in range(0, len(c), 2)]
             for a, z in zip(pts, pts[1:]):
+                key = (net[1], lay, *sorted([(a.x // 1000, a.y // 1000), (z.x // 1000, z.y // 1000)]))
+                if key in have: continue
                 t = pcbnew.PCB_TRACK(b); t.SetStart(a); t.SetEnd(z); t.SetWidth(int(wd)); t.SetLayer(lay); t.SetNet(ni)
                 b.Add(t); nt += 1
         for v in find(net, "via"):
@@ -175,13 +244,12 @@ def import_ses(b):
 
 
 def widen(b):
-    """배선 뒤 전원선 굵히기 — 다른 넷 동박·NPTH·판 가장자리와 간격이 되는 선분만 WIDEN 순서로 키운다.
-    핀 근처 선분은 실패해서 가늘게 남는다(=자연스러운 넥다운). ponytail: O(선분×물체) bbox 거르기 — 이 판 크기면 수 초."""
+    """배선 뒤 굵히기 — 다른 넷 동박·전원 면·NPTH·판 가장자리와 간격이 되는 선분만 WIDEN 순서로 키운다.
+    ponytail: O(선분×물체) bbox 거르기 — 이 판 크기면 수 초."""
     edge = pcbnew.FromMM(0.5)
-    objs = []   # (bbox, layerset, net, shape-getter)
     tracks = list(b.GetTracks())
     objs = [(p, p.GetNetCode()) for p in b.GetPads()] + [(t, t.GetNetCode()) for t in tracks]
-    # ⚠ bbox는 매번 새로 잰다 — 미리 재 두면 나중에 굵어진 이웃을 못 봐서 간격 위반이 났다(1차 결과 5건)
+    planes = [(b.FindNet(n).GetNetCode(), poly_union(ps)) for n, ps in POWER_ZONES.items()]   # 아직 동박이 없으니 면 다각형으로
     ring = pcbnew.FromMM(SCREW_RING / 2)
     rings = [f.GetPosition() for f in b.GetFootprints() if f.GetReference().startswith("H")]
     done = {}
@@ -189,18 +257,22 @@ def widen(b):
         if t.Type() != pcbnew.PCB_TRACE_T: continue
         cls = class_of(t.GetNetname())
         tries = WIDEN.get(cls[0])
+        if t.GetWidth() < pcbnew.FromMM(RULES["min_track_width"]):   # Freerouting 넥다운(×0.75) 조각 → 공정 최소 이상으로
+            tries = [0.15, RULES["min_track_width"]]
         if not tries: continue
         lay, orig = t.GetLayer(), t.GetWidth()
         for w in tries:
             t.SetWidth(pcbnew.FromMM(w))
-            bb = t.GetBoundingBox(); clr = pcbnew.FromMM(max(cls[2], 0.2))   # 굵힌 선은 0.2mm 이상 띄운다
+            thin = w < 0.2
+            bb = t.GetBoundingBox(); clr = pcbnew.FromMM(DRC_CLEARANCE.get(cls[0], cls[2]) + 0.005 if thin else max(cls[2], 0.2))   # 굵힌 선은 0.2mm 이상 띄운다
             ok = bb.GetLeft() > edge and bb.GetTop() > edge and bb.GetRight() < pcbnew.FromMM(W) - edge and bb.GetBottom() < pcbnew.FromMM(H) - edge
             if ok:
                 sh = t.GetEffectiveShape(lay)
-                # 고정구멍은 구멍보다 넓은 나사머리 고리(SCREW_RING)가 금지 구역 — 구멍 bbox로 거르면 못 본다(VM이 고리를 0.01mm 물었다)
                 ok = not any(sh.Collide(c, ring) for c in rings)
+                if ok and lay == pcbnew.F_Cu:
+                    ok = not any(nc != t.GetNetCode() and pl.Collide(sh, pcbnew.FromMM(0.3)) for nc, pl in planes)
                 bb.Inflate(clr)
-                for o, net in objs:
+                for o, net in objs if ok else []:
                     if o is t or not bb.Intersects(o.GetBoundingBox()): continue
                     if o.Type() == pcbnew.PCB_PAD_T and o.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
                         if o.GetEffectiveHoleShape().Collide(sh, clr): ok = False; break
@@ -213,20 +285,31 @@ def widen(b):
     return done
 
 
+def zone(b, net, lay, outline, prio, conn, clearance=0.3):
+    z = pcbnew.ZONE(b)
+    z.SetLayer(lay); z.SetNet(b.FindNet(net)); z.SetAssignedPriority(prio)
+    z.SetLocalClearance(pcbnew.FromMM(clearance)); z.SetMinThickness(pcbnew.FromMM(0.25))
+    z.SetPadConnection(conn)
+    z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)   # 아무 데도 안 붙은 동박 조각 제거
+    z.SetThermalReliefGap(pcbnew.FromMM(0.3)); z.SetThermalReliefSpokeWidth(pcbnew.FromMM(0.5))
+    c = outline if isinstance(outline, pcbnew.SHAPE_LINE_CHAIN) else None
+    if c is None:
+        c = pcbnew.SHAPE_LINE_CHAIN()
+        for x, y in outline: c.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+    c.SetClosed(True)   # 안 닫으면 assert 창이 떠서 헤드리스에선 멈춘다
+    z.Outline().AddOutline(c)
+    b.Add(z)
+
+
 def add_pours(b):
-    for net, pts, prio in pour_polys(b):
+    for net, polys in POWER_ZONES.items():   # 전원 면 — F.Cu, GND보다 우선, 패드 통째 연결
+        s = poly_union(polys)
+        for i in range(s.OutlineCount()):
+            zone(b, net, pcbnew.F_Cu, pcbnew.SHAPE_LINE_CHAIN(s.Outline(i)), 2, pcbnew.ZONE_CONNECTION_FULL, 0.2)   # Freerouting plane 간격과 같게(0.3이면 핀 입구 넥이 끊겼다)
+    for net, pts, prio in pour_polys():
         for lay in (pcbnew.F_Cu, pcbnew.B_Cu):
-            z = pcbnew.ZONE(b)
-            z.SetLayer(lay); z.SetNet(b.FindNet(net)); z.SetAssignedPriority(prio)
-            z.SetLocalClearance(pcbnew.FromMM(0.3)); z.SetMinThickness(pcbnew.FromMM(0.25))
-            z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
-            z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)   # 아무 데도 안 붙은 동박 조각 제거
-            z.SetThermalReliefGap(pcbnew.FromMM(0.3)); z.SetThermalReliefSpokeWidth(pcbnew.FromMM(0.5))
-            c = pcbnew.SHAPE_LINE_CHAIN()
-            for x, y in pts: c.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
-            c.SetClosed(True)   # 안 닫으면 assert 창이 떠서 헤드리스에선 멈춘다
-            z.Outline().AddOutline(c)
-            b.Add(z)
+            zone(b, net, lay, pts, prio, pcbnew.ZONE_CONNECTION_THERMAL)
+    import math
     for fp in b.GetFootprints():          # 고정구멍 둘레: 동박·선·비아 금지 구역(양면)
         if not fp.GetReference().startswith("H"): continue
         z = pcbnew.ZONE(b); z.SetIsRuleArea(True)
@@ -234,27 +317,107 @@ def add_pours(b):
         z.SetDoNotAllowPads(False); z.SetDoNotAllowFootprints(False)
         ls = pcbnew.LSET(); ls.AddLayer(pcbnew.F_Cu); ls.AddLayer(pcbnew.B_Cu); z.SetLayerSet(ls)
         c = pcbnew.SHAPE_LINE_CHAIN(); p = fp.GetPosition(); r = pcbnew.FromMM(SCREW_RING / 2)
-        import math
         for k in range(24):
             c.Append(int(p.x + r * math.cos(k * math.pi / 12)), int(p.y + r * math.sin(k * math.pi / 12)))
         c.SetClosed(True); z.Outline().AddOutline(c); b.Add(z)
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())
 
 
+# ---------------- 검사 ----------------
+def net_copper(b, net, lay=pcbnew.F_Cu):
+    """한 넷의 동박(면 채움 + 선 + 패드) 합집합."""
+    s = pcbnew.SHAPE_POLY_SET()
+    for z in b.Zones():
+        if not z.GetIsRuleArea() and z.GetNetname() == net and z.IsOnLayer(lay):
+            s.BooleanAdd(z.GetFilledPolysList(lay))
+    for t in b.GetTracks():
+        if t.Type() == pcbnew.PCB_TRACE_T and t.GetNetname() == net and t.GetLayer() == lay:
+            t.TransformShapeToPolygon(s, lay, 0, pcbnew.FromMM(0.005), pcbnew.ERROR_INSIDE)
+    for p in b.GetPads():
+        if p.GetNetname() == net and p.IsOnLayer(lay):
+            p.TransformShapeToPolygon(s, lay, 0, pcbnew.FromMM(0.005), pcbnew.ERROR_INSIDE)
+    s.Simplify()
+    return s
+
+
+def min_width(cu, a, z):
+    """동박 cu 안에서 점 a·z가 폭 w로 이어지는 가장 큰 w(mm). 반폭만큼 깎아도 두 점이 같은 덩어리에 남는지 이분 탐색."""
+    def joined(r):
+        e = cu.CloneDropTriangulation(); e.Deflate(pcbnew.FromMM(r), pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS, pcbnew.FromMM(0.01))
+        pa, pz = pcbnew.VECTOR2I_MM(*a), pcbnew.VECTOR2I_MM(*z)
+        for i in range(e.OutlineCount()):
+            one = pcbnew.SHAPE_POLY_SET(e.Outline(i))
+            for h in range(e.HoleCount(i)): one.AddHole(e.Hole(i, h))
+            if one.Contains(pa) and one.Contains(pz): return True
+        return False
+    if not joined(0.01): return 0.0
+    lo, hi = 0.01, 6.0
+    for _ in range(14):
+        mid = (lo + hi) / 2
+        if joined(mid): lo = mid
+        else: hi = mid
+    return 2 * lo
+
+
+def power_paths(b):
+    """전원 넷별 (이름, 시작점, 끝점) — 패드에서 PAD_NECK 밖의 점끼리 잰다(패드 입구 넥은 제외)."""
+    from gen_pcb import L
+    pos = lambda r, n: next((pcbnew.ToMM(p.GetPosition().x), pcbnew.ToMM(p.GetPosition().y)) for p in b.FindFootprintByReference(r).Pads() if p.GetNumber() == str(n))
+    out = [("VBAT_IN", "J1.1 → Q1 드레인", pos("J1", 1), (9.6, 56.2)),
+           ("VBAT_R", "Q1 소스 → Q4 소스", (14.6, 58.0), (17.6, 57.0)),
+           ("VBAT_P", "Q4 드레인 → K1 COM", (22.8, 56.0), pos("K1", 1)),
+           ("VBAT_P", "Q4 드레인 → C1", (22.8, 56.0), pos("C1", 1)),
+           ("VBAT_P", "Q4 드레인 → C14", (22.8, 56.0), pos("C14", 1))]
+    for n, w in enumerate("ABCD"):
+        out.append(("VM", f"K1 NO → U1{n}({w}) VM 탭", pos("K1", 3), L(f"U1{n}", 9.3, -2.0)))
+        out.append(("VM", f"U1{n}({w}) 탭 → C42(핀11 끝+1.65mm)", L(f"U1{n}", 9.3, -2.0), L(f"U1{n}", 6.45, 1.35)))
+    return out
+
+
+def check(b):
+    fails = []
+    mm = pcbnew.ToMM
+    thin = [t for t in b.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T and mm(t.GetWidth()) < 0.127]
+    print(f"0.127mm 미만 선: {len(thin)}  (최소 선폭 {min(mm(t.GetWidth()) for t in b.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T):.3f}mm)")
+    drills = [mm(v.GetDrillValue()) for v in b.GetTracks() if v.Type() == pcbnew.PCB_VIA_T] + \
+             [mm(p.GetDrillSize().x) for p in b.GetPads() if p.GetDrillSize().x]
+    print(f"0.3mm 미만 드릴: {sum(d < 0.3 - 1e-6 for d in drills)}  (최소 {min(drills):.2f}mm, 비아 {sum(1 for v in b.GetTracks() if v.Type() == pcbnew.PCB_VIA_T)}개)")
+    if thin or min(drills) < 0.3 - 1e-6: fails.append("굵기/드릴")
+    iso, worst = iso_check(b, copper=True)
+    print(f"절연: 위반 {len(iso)}, USB 넷 ↔ 나머지 최소 {worst[0]:.2f}mm ({worst[1]})"); print("\n".join(iso[:10]))
+    if iso: fails.append("절연")
+    dbad, dw = decap_check(b)
+    print(f"디커플링 거리 위반 {len(dbad)} (최악 {dw:.2f}mm)")
+    if dbad: fails.append("디커플링")
+    cu = {}
+    print("전원 면 최소 폭(F.Cu, 패드 입구 넥 제외):")
+    for net, what, a, z in power_paths(b):
+        if net not in cu: cu[net] = net_copper(b, net)
+        print(f"  {net:8s} {what:28s} {min_width(cu[net], a, z):.2f}mm")
+    for w in "+-":
+        ws = sorted({round(mm(t.GetWidth()), 2) for t in b.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T and re.fullmatch(rf"M.\{w}", t.GetNetname())})
+        print(f"  M?{w} 선폭 종류 {ws} (0.4 = 패드에서 {0.755:.2f}mm 넥)")
+    return fails
+
+
 if __name__ == "__main__":
     step = sys.argv[1]
-    set_netclasses()   # ⚠ 판을 열기 전에 — gen_pcb.py가 저장하며 .kicad_pro 넷클래스를 기본값으로 덮어쓴다(500건 위반의 원인)
+    if step == "check":
+        b = pcbnew.LoadBoard(PCB)
+        sys.exit(1 if check(b) else 0)
+    set_netclasses()   # ⚠ 판을 열기 전에 — gen_pcb.py가 저장하며 .kicad_pro 넷클래스를 기본값으로 덮어쓴다
     b = pcbnew.LoadBoard(PCB)
-    assert not len(b.Zones()) and not len(b.GetTracks()), "gen_pcb.py를 먼저 다시 돌릴 것(배치 직후의 빈 판)"
-    if step == "prep":
-        print("DSN nets/padstacks", export_dsn(b))
+    assert not len(b.Zones()) and not any(t.Type() == pcbnew.PCB_VIA_T for t in b.GetTracks()), \
+        "gen_pcb.py를 먼저 다시 돌릴 것(배치 직후의 판)"
+    if step == "prep":     # 1단계: 무른 전원 면
+        print("DSN nets/padstacks", export_dsn(b, False))
+    elif step == "prep2":  # 2단계: route.py prep2 1단계.ses — 단단한 전원 면 + 침범 안 한 1단계 배선을 씨앗으로
+        SES = sys.argv[2]; print("seed SES tracks/vias", import_ses(b)); print("dropped", drop_intruders(b))
+        print("DSN nets/padstacks", export_dsn(b, True))
     elif step == "finish":
         print("SES tracks/vias", import_ses(b))
         b.BuildConnectivity()
         print("widened", widen(b))
-        out = os.environ.get("ROUTE_NOPOUR")   # 보고서용: 동박을 안 채운 판(배선만 보이게)을 따로 저장
-        if out:
-            pcbnew.SaveBoard(out, b); sys.exit(0)
         add_pours(b)
         b.BuildConnectivity()
         pcbnew.SaveBoard(PCB, b)
