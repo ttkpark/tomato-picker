@@ -47,7 +47,9 @@ from tomato_perception.stem_cut import (
     find_cut_point,
     sample_stem_depth,
     compute_cutting_pose,
+    transform_cut_pose,
     plan_dual_action_trajectory,
+    CutPose3D,
 )
 
 class AutonomousTomatoHarvester:
@@ -99,6 +101,13 @@ class AutonomousTomatoHarvester:
         P_base = T_base_cam.apply(P_cam_mm)
         return (float(P_base[0]), float(P_base[1]), float(P_base[2]))
 
+    def transform_cut_pose_to_arm_base(self, cut_pose_cam: CutPose3D, current_joints: dict[str, float]) -> CutPose3D | None:
+        """카메라 광학 좌표계 6-DoF CutPose3D -> 팔 베이스 arm_base 좌표계 CutPose3D 동적 강체 변환 (T_base_cam)."""
+        fk = kin.forward(current_joints)
+        T_base_tool = tool_frame(fk)
+        T_base_cam = T_base_tool.compose(self.T_tool_cam)
+        return transform_cut_pose(cut_pose_cam, T_base_cam)
+
     def detect_target(self, color_bgr: np.ndarray, depth_img_raw: np.ndarray, current_joints: dict[str, float]):
         """
         토마토 과실 및 줄기 검출, 3D 로컬라이제이션 및 6-DoF 절단 포즈 도출
@@ -132,11 +141,35 @@ class AutonomousTomatoHarvester:
                 P_cam = self.deproject_to_camera_frame(u, v, d_mm)
                 P_base = self.transform_to_arm_base(P_cam, current_joints)
 
+                # 줄기 세그멘테이션 마스크로부터 6-DoF 절단 포즈 도출
+                cut_pose_base = None
+                px_per_mm = self.intr.fx / d_mm
+                fruit_mask = np.zeros(depth_mm.shape, dtype=bool)
+                cv2.drawContours(fruit_mask.view(np.uint8), [pts], -1, 1, thickness=-1)
+                cut_pt = find_cut_point(fruit_mask, fruit_mask, px_per_mm=px_per_mm, cut_offset_mm=12.0)
+                if cut_pt is not None:
+                    cut_pose_cam = compute_cutting_pose(cut_pt, d_mm, self.intr)
+                    if cut_pose_cam is not None:
+                        cut_pose_base = self.transform_cut_pose_to_arm_base(cut_pose_cam, current_joints)
+
+                # 줄기 미검출 시 상향(+Z) 줄기 기준 공칭 3D 절단 포즈 폴백 합성
+                if cut_pose_base is None:
+                    p_cut_nom = (P_base[0], P_base[1], P_base[2] + 30.0)
+                    cut_pose_base = CutPose3D(
+                        position_mm=p_cut_nom,
+                        rotation_matrix=np.eye(3),
+                        x_cut=(1.0, 0.0, 0.0),
+                        y_cut=(0.0, 1.0, 0.0),
+                        z_cut=(0.0, 0.0, 1.0),
+                        depth_mm=d_mm,
+                    )
+
                 targets.append({
                     'pixel': (u, v),
                     'depth_mm': d_mm,
                     'pos_cam_mm': P_cam,
                     'pos_base_mm': P_base,
+                    'cut_pose_base': cut_pose_base,
                 })
 
         return targets
@@ -219,10 +252,10 @@ python tools/eye_check.py
 # 3. 직교 제어 및 기구학 처짐 피드백 검증 (93개 테스트)
 python tools/arm_cartesian_check.py
 
-# 4. ROS 2 스택 및 보드 통신 종합 검증 (576개 테스트)
+# 4. ROS 2 스택 및 보드 통신 종합 검증 (577개 테스트)
 python ros2/tools/ros_selfcheck.py
 
-# 5. 복합 엔드이펙터 궤적 및 줄기 절단 검증 (126개 테스트)
+# 5. 복합 엔드이펙터 궤적 및 줄기 절단 검증 (127개 테스트)
 python ros2/tools/stem_cut_check.py
 ```
 

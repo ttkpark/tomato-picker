@@ -427,6 +427,18 @@ def test_transform_cut_pose() -> None:
     check("t 차원 불일치(size!=3) 또는 형변환 실패 시 None(예외 삼킴 없이 방어)",
           transform_cut_pose(pose, (R_z90, np.array([1.0, 2.0]))) is None and
           transform_cut_pose(pose, (R_z90, "bad_t")) is None)
+    # 4. Rigid 객체 (hasattr R, t - handeye.py Rigid 클래스 호환) 입력 검증
+    class _DummyRigid:
+        def __init__(self, r_mat: np.ndarray, t_arr: np.ndarray):
+            self.R = r_mat
+            self.t = t_arr
+    rigid_obj = _DummyRigid(R_z90, t_vec)
+    t_rigid_pose = transform_cut_pose(pose, rigid_obj)
+    check("Rigid 객체(hasattr R, t) 입력으로 동적 Eye-in-Hand 강체 변환을 정상 산출한다",
+          t_rigid_pose is not None and
+          abs(t_rigid_pose.position_mm[0] - 95.0) < 1e-4 and
+          abs(t_rigid_pose.x_cut[1] - (-1.0)) < 1e-4)
+
     check("cut_pose=None 또는 transform 결함 시 None",
           transform_cut_pose(None, (R_z90, t_vec)) is None and
           transform_cut_pose(pose, "invalid_transform") is None)
