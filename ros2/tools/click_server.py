@@ -111,20 +111,29 @@ def _kin_constants() -> dict:
                    "rms_mm": cfg.rms_mm, "good": cfg.good, "roll_sign": cfg.roll_sign}
     except Exception:                                      # noqa: BLE001
         pass
-    # 트윈이면 역보정 모형(kincal_solve → ~/twin/kincal.json)의 장면(책상·보드·벽 종이)과 보정된 링크·영점으로 그린다.
-    # 실기 조작대는 그대로다(실기 반영은 사람 승인 뒤) — 계산(kinForward·조그)은 어느 쪽이든 도면 기구학 그대로.
-    scene = cal = None
+    # 트윈이면 역보정 모형(kincal_solve → ~/twin/kincal.json)으로 그린다: 공식 SO-101 URDF 사슬 + 풀어낸 영점·손목 카메라,
+    # 실측 장면(책상·보드·벽 종이). 실기 조작대는 그대로다(실기 반영은 사람 승인 뒤) — 계산(kinForward·조그)은 어느 쪽이든
+    # 도면 기구학 그대로이고, 바뀌는 건 **그림**뿐이다.
+    scene = urdf = None
     if os.environ.get("TOMATO_TWIN"):
         try:
-            import kincal_model
+            import kincal_model as km
             m = json.load(open(os.environ.get("TOMATO_KINCAL") or os.path.expanduser("~/twin/kincal.json"),
                                encoding="utf-8"))
-            scene = kincal_model.scene(m["P"], m["charuco"], m["print_scale"], m.get("dots_mm"))
-            cal = {"geom": {k: m["P"][k] for k in ("z0", "d0", "l1", "l2", "l3")},
-                   "off": [m["P"]["off_lift"], m["P"]["off_elbow"], m["P"]["off_wrist"]]}
+            P = m["P"]
+            scene = km.scene(P, m["charuco"], m["print_scale"], m.get("dots_mm"))
+            cam = [[0.0] * 4 for _ in range(4)]
+            Rc = km.rodrigues(P["cam_r"])
+            for r in range(3):
+                cam[r] = [float(v) for v in Rc[r]] + [float(P["cam_t"][r])]
+            cam[3] = [0.0, 0.0, 0.0, 1.0]
+            urdf = {"F": [np.asarray(f).tolist() for f in km.frames(P)], "tcp": km._F_TCP.tolist(), "cam": cam,
+                    "A": m["tick_map"][0], "B": m["tick_map"][1], "sgn": [P[k] for k in km._SGN],
+                    "off": [0.0, P["off_lift"], P["off_elbow"], P["off_wrist"], 0.0],
+                    "rms_px": m.get("rms_px"), "holdout_px": m.get("holdout_px")}
         except Exception:                                  # noqa: BLE001
-            scene = cal = None
-    return {"geom": geom, "joints": joints, "eye": eye, "scene": scene, "cal": cal,
+            scene = urdf = None
+    return {"geom": geom, "joints": joints, "eye": eye, "scene": scene, "urdf": urdf,
             "floor": -arm_calib.MOUNT_Z_MM + arm_calib.FLOOR_MARGIN_MM}
 
 
@@ -1022,15 +1031,29 @@ var JLABELS={shoulder_pan:"어깨돌림(pan)",shoulder_lift:"어깨듦(lift)",el
 var curJ={shoulder_pan:59.6,shoulder_lift:65,elbow_flex:0,wrist_flex:-100,wrist_roll:6};
 var tgtJ={shoulder_pan:59.6,shoulder_lift:65,elbow_flex:0,wrist_flex:-100,wrist_roll:6};
 
-// 트윈: 역보정 모형의 링크·영점으로 **그리기만** 한다(KIN.cal). 실물이 FK와 거울상이면(KIN.scene.mirror) 그림 전체를
-// 한 번 뒤집어 실제 좌우로 보이게 한다 — 장면(책상·보드)은 서버가 도면 FK 좌표로 맞춰 보낸다.
-var CALD = KIN.cal || {geom:KIN.geom, off:[0,0,0]};
-var MIR = (KIN.scene && KIN.scene.mirror) ? -1 : 1;
+// 트윈: 역보정 모형(KIN.urdf = 공식 SO-101 URDF 사슬 + 풀어낸 영점)이 있으면 그걸로 **그린다**. 좌표는 URDF base_link.
+function m4mul(a,b){var r=[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+  for(var i=0;i<4;i++)for(var k=0;k<4;k++){var v=0;for(var n=0;n<4;n++)v+=a[i][n]*b[n][k];r[i][k]=v;} return r;}
+function rz4(t){var c=Math.cos(t),s=Math.sin(t);return [[c,-s,0,0],[s,c,0,0],[0,0,1,0],[0,0,0,1]];}
+function urdfChain(j){
+  // 조작대의 관절 도(Calib.to_deg) → 서보 눈금 도(A·deg+B) → URDF 각(sgn·q+off). kincal_model.chain()과 같은 식.
+  var U=KIN.urdf, T=[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]], pts=[[0,0,0]];
+  for(var i=0;i<5;i++){
+    T=m4mul(T,U.F[i]); pts.push([T[0][3],T[1][3],T[2][3]]);
+    T=m4mul(T,rz4((U.sgn[i]*(U.A[i]*j[JNAMES[i]]+U.B[i])+U.off[i])*Math.PI/180));
+  }
+  var Tt=m4mul(T,U.tcp); pts.push([Tt[0][3],Tt[1][3],Tt[2][3]]);
+  return {pts:pts, Tg:T};
+}
 function fk(j){
+  if(KIN.urdf){            // [밑동, 어깨(lift 축), 팔꿈치, 손목, 무는 자리]
+    var c=urdfChain(j).pts;
+    return [c[0],c[2],c[3],c[4],c[6]].map(function(p){return baseToDraw(p[0],p[1],p[2]);});
+  }
   var d=Math.PI/180;
-  var pan=j.shoulder_pan*d, lift=(j.shoulder_lift+CALD.off[0])*d, elbow=(j.elbow_flex+CALD.off[1])*d, wrist=(j.wrist_flex+CALD.off[2])*d;
+  var pan=j.shoulder_pan*d, lift=j.shoulder_lift*d, elbow=j.elbow_flex*d, wrist=j.wrist_flex*d;
   var a1=lift, a2=lift+elbow, a3=lift+elbow+wrist;
-  var g=CALD.geom;
+  var g=KIN.geom;
   var rz=[[0,0],[g.d0,g.z0]];
   rz.push([rz[1][0]+g.l1*Math.cos(a1), rz[1][1]+g.l1*Math.sin(a1)]);
   rz.push([rz[2][0]+g.l2*Math.cos(a2), rz[2][1]+g.l2*Math.sin(a2)]);
@@ -1038,7 +1061,7 @@ function fk(j){
   // ⚠ 화면 좌우(X)만 뒤집는다 — 그리는 용도뿐이라(야코비안 계산은
   //   kinForward()가 따로 한다) 안전하다. 2026-09-03: 실물과 비교해보니
   //   미리보기가 좌우 반전으로 보였다.
-  return rz.map(function(p){return new THREE.Vector3(-p[0]*Math.cos(pan), p[1], -p[0]*Math.sin(pan)*MIR);});
+  return rz.map(function(p){return new THREE.Vector3(-p[0]*Math.cos(pan), p[1], -p[0]*Math.sin(pan));});
 }
 function kinForward(j){
   // kinematics.py forward()를 그대로 — (x,y,z,pitch)를 KIN 좌표(회전 전)로.
@@ -1136,10 +1159,16 @@ function mul3(M9,v){
 }
 function baseToDraw(x,y,z){
   // fk()가 쓰는 것과 **같은** base→그리기 사영(주석 참조): (x,y,z) → (-x,z,-y).
-  return new THREE.Vector3(-x, z, -y*MIR);
+  if(KIN.urdf) return new THREE.Vector3(x, z, -y);   // URDF base_link(z 위) → three(y 위), 손방향 그대로
+  return new THREE.Vector3(-x, z, -y);
 }
 function camWorld(j){
   // 손목 카메라의 base 좌표 위치 + 광학축(조준) 방향 — 없으면 null.
+  if(KIN.urdf){            // 역보정 모형의 카메라(T_gripper_link→cam) — 광학축 150mm를 그린다(보드에 닿는 게 보인다)
+    var Tc=m4mul(urdfChain(j).Tg, KIN.urdf.cam);
+    return {pos:baseToDraw(Tc[0][3],Tc[1][3],Tc[2][3]),
+            aim:baseToDraw(Tc[0][3]+Tc[0][2]*150,Tc[1][3]+Tc[1][2]*150,Tc[2][3]+Tc[2][2]*150)};
+  }
   if(!EYE) return null;
   var Rcols=toolAxesBase(j);         // Rcols[k] = approach/lat/up의 base 성분
   var p0=kinForward(j);
@@ -1202,7 +1231,8 @@ function k3dCamUpdate(){
 }
 function k3dWhy(){
   var msgs=[];
-  if(!EYE) msgs.push('손목 카메라 보정 없음(~/arm_eye.json) — 카메라 마커 안 보임');
+  if(KIN.urdf) msgs.push('트윈: SO-101 URDF + 역보정(남겨 둔 자세 '+(KIN.urdf.holdout_px||0).toFixed(1)+'px)으로 그림');
+  else if(!EYE) msgs.push('손목 카메라 보정 없음(~/arm_eye.json) — 카메라 마커 안 보임');
   else if(!EYE.good) msgs.push('카메라 보정 잔차 '+EYE.rms_mm.toFixed(0)+'mm(기준 15mm 초과) — 마커 위치를 믿지 말 것');
   JNAMES.slice(0,4).forEach(function(n){
     var bad=jointBad(n,tgtJ[n]);
@@ -1212,7 +1242,7 @@ function k3dWhy(){
       msgs.push(JLABELS[n]+' 한계 근처('+tgtJ[n].toFixed(0)+'° / 한계 '+l.min.toFixed(0)+'~'+l.max.toFixed(0)+'°)');}
   });
   var tp=fk(tgtJ)[4];
-  if(tp.y < KIN.floor+5) msgs.push('목표 손끝이 바닥 근처/아래 (높이 '+tp.y.toFixed(0)+'mm)');
+  if(tp.y < (KIN.scene ? KIN.scene.table_z : KIN.floor)+5) msgs.push('목표 손끝이 바닥 근처/아래 (높이 '+tp.y.toFixed(0)+'mm)');
   document.getElementById('k3dWhy').textContent = msgs.length? ('⚠ 이래서 그쪽으로 안 된다 — '+msgs.join(' · '))
     : '목표가 관절 한계 안입니다 — 이 방향은 갈 수 있습니다.';
 }

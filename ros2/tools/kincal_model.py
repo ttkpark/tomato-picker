@@ -13,6 +13,13 @@
 
   sgn_*             관절마다 서보가 느는 방향 ↔ URDF 축 방향(±1) — 풀이가 조합을 다 본다
   off_lift·elbow·wrist  관절 영점(도): URDF의 0 ↔ 서보 눈금 2048. pan은 표적 방위가, roll은 카메라 자세가 흡수한다
+  geo_lift·elbow·wrist·roll  **이 팔이 CAD와 다른 만큼** — 관절 틀을 자기 틀에서 조금 옮기고(dx,dy[,dz] mm) 축을 조금
+                    기울인다(rx,ry rad). 좁은 자세만 보면 영점이 다 메워 주지만 넓게 움직이면 드러난다(11/12: 좁은 쪽 1.7px일 때
+                    넓은 쪽 5~35px). 자기 축 둘레 회전은 영점과 같고, 나란한 세 축(lift·elbow·wrist)의 축 방향 이동은 하나만
+                    보이고, roll의 축 방향 이동은 카메라 자리가 흡수하므로 뺐다 → 5+4+4+4 = 17개
+  play_*            **넘어가는 유격** — 팔 무게중심이 어깨 축 뒤로 넘어가면(어깨 중력 토크가 play_tau0 아래로) 팔 전체가
+                    어깨 축과 나란한 축 둘레로 play_deg만큼 덜컥 넘어간다(11/12 실측: 토크 0 근처에서 −7~−8° 계단, 엔코더엔 안 보임).
+                    회전 중심(어깨 축에서 play_pr·play_pz mm)도 푼다 — 어깨 축이면 관절 체결 유격, 발치면 밑동이 까딱이는 것
   sag_*             엔코더가 못 보는 처짐(도 / 중력토크 kg·mm) — 링크·기어가 휘는 몫
   bl_*              백래시(도) × 마지막 접근 방향(±1)
   cam_r·cam_t       T_gripper_link→카메라 (손-눈)
@@ -47,11 +54,18 @@ URDF = (
     ("wrist_roll", (0.0, -61.1, 18.1), (1.5708, 0.0486795, 3.14159)),
 )
 URDF_TCP = ((-7.9, -0.218121, -98.1274), (0.0, 3.14159, 0.0))     # gripper_link → gripper_frame_link(무는 자리, z = 찌르는 방향)
+# **밑동이 넘어가는 자세** — 팔 밑동이 책상에 고정돼 있지 않으면, 팔 무게중심이 어깨 축 뒤로 넘어갈 때(어깨 중력 토크가
+# 0 근처 아래로) 밑동이 발판 모서리를 축으로 까딱 넘어간다. 2026-11-12 실측: 토크 ≲ 5 kg·mm에서 팔 전체가 7~11° 돌았고
+# (회전 중심 = 어깨 축 77mm 아래·78mm 옆 = 발판 모서리), 10~17에서도 가끔 1° 안팎 흔들렸다. 엔코더엔 안 보인다.
+# 수집기는 이 아래로 안 가고(가는 길에도), 풀이는 이 아래 자세를 뺀다. 밑동을 고정하면 0으로 내려도 된다.
+ROCK_TAU = 18.0
 TIP_MM = 15.0                                                     # 무는 자리에서 손끝까지(안전 여유용 어림)
 
 DEFAULT = {
     "sgn_pan": 1.0, "sgn_lift": 1.0, "sgn_elbow": 1.0, "sgn_wrist": 1.0, "sgn_roll": 1.0, "roll_scale": 1.0,
     "off_lift": 0.0, "off_elbow": 0.0, "off_wrist": 0.0,
+    "geo_lift": [0.0] * 5, "geo_elbow": [0.0] * 4, "geo_wrist": [0.0] * 4, "geo_roll": [0.0] * 4,
+    "play_deg": 0.0, "play_tau0": 0.0, "play_w": 4.0, "play_pr": 0.0, "play_pz": 0.0,
     "sag_lift": 0.0, "sag_elbow": 0.0, "sag_wrist": 0.0,
     "bl_pan": 0.0, "bl_lift": 0.0, "bl_elbow": 0.0, "bl_wrist": 0.0, "bl_roll": 0.0,
     "cam_r": [0.0, 0.0, 0.0], "cam_t": [0.0, 0.0, 0.0],
@@ -144,15 +158,51 @@ def _rz(th: np.ndarray) -> np.ndarray:
     return T
 
 
-def _fk(th: np.ndarray):
+def frames(P: dict) -> list:
+    """이 팔의 관절 틀 5개(부모 링크 → 관절, 4×4) = URDF 값 · 풀어낸 어긋남(geo_*). 없으면 URDF 그대로."""
+    F = [_F[0]]
+    for i, k in ((1, "geo_lift"), (2, "geo_elbow"), (3, "geo_wrist"), (4, "geo_roll")):
+        g = P.get(k)
+        if g is None or not np.any(g):
+            F.append(_F[i])
+            continue
+        dx, dy = g[0], g[1]
+        dz, rx, ry = (g[2], g[3], g[4]) if len(g) == 5 else (0.0, g[2], g[3])
+        D = np.eye(4)
+        D[:3, :3] = rodrigues([rx, ry, 0.0])
+        D[:3, 3] = [dx, dy, dz]
+        F.append(_F[i] @ D)
+    return F
+
+
+def _fk(th: np.ndarray, F=_F):
     """관절각(rad, N×5) → (관절 틀 5개(회전 전, N×4×4), gripper_link 틀)."""
     T = np.broadcast_to(np.eye(4), (len(th), 4, 4))
     O = []
     for i in range(5):
-        T = T @ _F[i]
+        T = T @ F[i]
         O.append(T)
         T = T @ _rz(th[:, i])
     return O, T
+
+
+def _gravity(O, Tg) -> list:
+    """관절 틀들 → 중력 토크 [어깨, 팔꿈치, 손목] (kg·mm, 각 관절 축 +방향 둘레, 그 관절보다 바깥 질량만)."""
+    p = [o[:, :3, 3] for o in O]
+    tcp = (Tg @ _F_TCP)[:, :3, 3]
+    hand = tcp - p[3]
+    hand = p[3] + HAND_D * hand / np.linalg.norm(hand, axis=1, keepdims=True)
+    mass = ((M1, (p[1] + p[2]) / 2), (M_ELBOW, p[2]), (M2, (p[2] + p[3]) / 2), (M_HAND, hand))
+    down = np.array([0.0, 0.0, -1.0])
+    return [sum(m * np.einsum("nj,nj->n", np.cross(x - p[i], down), O[i][:, :3, 2]) for m, x in outer)
+            for i, outer in ((1, mass), (2, mass[2:]), (3, mass[3:]))]
+
+
+def lift_torque(P: dict, q) -> np.ndarray:
+    """자세마다 어깨 축 둘레 중력 토크(kg·mm) — `ROCK_TAU` 판정용. 양수 = 팔이 앞으로 쏠림."""
+    q = np.atleast_2d(np.asarray(q, float))
+    deg = np.array([P[k] for k in _SGN]) * q + [0.0, P["off_lift"], P["off_elbow"], P["off_wrist"], 0.0]
+    return _gravity(*_fk(np.radians(deg), frames(P)))[0]
 
 
 def chain(P: dict, q, dirs=None) -> dict:
@@ -165,25 +215,37 @@ def chain(P: dict, q, dirs=None) -> dict:
     scale = np.array([1.0, 1.0, 1.0, 1.0, P["roll_scale"]])
     deg = sg * q * scale + off + bl * d
     sag = np.array([P["sag_lift"], P["sag_elbow"], P["sag_wrist"]])
-    if np.any(sag != 0.0):                                      # 처짐: 처짐 없는 자세에서 중력 토크를 재서 한 번 고친다
-        O, Tg = _fk(np.radians(deg))
-        p = [o[:, :3, 3] for o in O]
-        tcp = (Tg @ _F_TCP)[:, :3, 3]
-        hand = tcp - p[3]
-        hand = p[3] + HAND_D * hand / np.linalg.norm(hand, axis=1, keepdims=True)
-        mass = ((M1, (p[1] + p[2]) / 2), (M_ELBOW, p[2]), (M2, (p[2] + p[3]) / 2), (M_HAND, hand))
-        down = np.array([0.0, 0.0, -1.0])
-        for k, (i, outer) in enumerate(((1, mass), (2, mass[2:]), (3, mass[3:]))):     # 관절 i보다 바깥쪽 질량만
-            tau = sum(m * np.einsum("nj,nj->n", np.cross(x - p[i], down), O[i][:, :3, 2]) for m, x in outer)
-            deg[:, i] = deg[:, i] + sag[k] * tau
-    O, Tg = _fk(np.radians(deg))
+    F = frames(P)
+    play = float(P.get("play_deg") or 0.0)
+    tau = None
+    if np.any(sag != 0.0) or play:                              # 중력 토크는 처짐 없는 자세에서 한 번 잰다
+        tau = _gravity(*_fk(np.radians(deg), F))
+        for k, i in enumerate((1, 2, 3)):
+            deg[:, i] = deg[:, i] + sag[k] * tau[k]
+    O, Tg = _fk(np.radians(deg), F)
     Tt = Tg @ _F_TCP
     R_g, p_g = Tg[:, :3, :3], Tg[:, :3, 3]
     tcp = Tt[:, :3, 3]
     R_gc, t_gc = rodrigues(P["cam_r"]), np.asarray(P["cam_t"], float)
-    return {"shoulder": O[1][:, :3, 3], "elbow": O[2][:, :3, 3], "wrist": O[3][:, :3, 3], "roll": O[4][:, :3, 3],
-            "tcp": tcp, "tip": tcp + TIP_MM * Tt[:, :3, 2], "R_bt": R_g, "p_g": p_g,
-            "R_bc": R_g @ R_gc, "t_bc": p_g + R_g @ t_gc}
+    out = {"shoulder": O[1][:, :3, 3], "elbow": O[2][:, :3, 3], "wrist": O[3][:, :3, 3], "roll": O[4][:, :3, 3],
+           "tcp": tcp, "tip": tcp + TIP_MM * Tt[:, :3, 2], "R_bt": R_g, "p_g": p_g,
+           "R_bc": R_g @ R_gc, "t_bc": p_g + R_g @ t_gc}
+    if play:                                                    # 넘어가는 유격: 어깨 축과 나란한 축 둘레로 팔 전체를 돌린다
+        s_ = 0.5 * (1.0 - np.tanh((tau[0] - P["play_tau0"]) / max(0.5, abs(P["play_w"]))))
+        ang = np.radians(play) * s_
+        a = O[1][:, :3, 2]
+        er = np.cross(a, [0.0, 0.0, 1.0])
+        er = er / np.linalg.norm(er, axis=1, keepdims=True)     # 팔 평면 안의 수평 방향
+        c = out["shoulder"] + P["play_pr"] * er + P["play_pz"] * np.array([0.0, 0.0, 1.0])
+        K = np.zeros((len(q), 3, 3))
+        K[:, 0, 1], K[:, 0, 2], K[:, 1, 0], K[:, 1, 2], K[:, 2, 0], K[:, 2, 1] = -a[:, 2], a[:, 1], a[:, 2], -a[:, 0], -a[:, 1], a[:, 0]
+        Rp = np.eye(3) + np.sin(ang)[:, None, None] * K + (1 - np.cos(ang))[:, None, None] * (K @ K)
+        for k in ("shoulder", "elbow", "wrist", "roll", "tcp", "tip", "p_g", "t_bc"):
+            out[k] = c + np.einsum("nij,nj->ni", Rp, out[k] - c)
+        for k in ("R_bt", "R_bc"):
+            out[k] = Rp @ out[k]
+        out["play"] = s_
+    return out
 
 
 def project(P: dict, intr: dict, R_bc, t_bc, X_base, idx=None):
@@ -253,6 +315,13 @@ def _selftest() -> None:
         ang = np.degrees(np.arctan2(ra[0] * rb[1] - ra[1] * rb[0], ra @ rb))
         assert abs(abs(ang) - 30.0) < 1e-3, ang                 # (URDF pan 축은 아래를 본다 — 부호는 풀이가 정한다)
     assert np.allclose(a["R_bt"][0] @ a["R_bt"][0].T, np.eye(3), atol=1e-9)
+    # geo: 팔꿈치 틀을 자기 x로 5mm 옮기면 그 바깥(손목·무는 자리)만 정확히 5mm 간다. 축 기울기는 길이를 안 바꾼다.
+    g = chain(dict(DEFAULT, geo_elbow=[5.0, 0.0, 0.0, 0.0]), q)
+    assert np.allclose(g["shoulder"], a["shoulder"]) and abs(np.linalg.norm(g["elbow"][0] - a["elbow"][0]) - 5.0) < 1e-9
+    assert abs(np.linalg.norm(g["tcp"][0] - a["tcp"][0]) - 5.0) < 1e-9
+    g = chain(dict(DEFAULT, geo_wrist=[0.0, 0.0, 0.03, -0.02]), q)
+    assert np.allclose(g["wrist"], a["wrist"]) and not np.allclose(g["tcp"], a["tcp"], atol=0.5)
+    assert abs(np.linalg.norm(g["roll"][0] - g["wrist"][0]) - np.linalg.norm(a["roll"][0] - a["wrist"][0])) < 1e-9
     # lift·elbow·wrist는 한 평면 안에서 돈다(축이 서로 나란하다) — roll만 그 평면 밖
     O, _ = _fk(np.radians(q))
     assert all(abs(abs(O[1][0, :3, 2] @ O[i][0, :3, 2]) - 1.0) < 1e-4 for i in (2, 3))
@@ -264,6 +333,12 @@ def _selftest() -> None:
     z0 = chain(DEFAULT, qs)["tcp"][0, 2]
     z1 = chain(dict(DEFAULT, sag_lift=0.03, sag_elbow=0.03, sag_wrist=0.03), qs)["tcp"][0, 2]
     assert z1 < z0 - 1.0, (z0, z1, flat)
+    # 넘어가는 유격: 문턱보다 토크가 한참 크면 아무 일도 없고, 한참 작으면 어깨 축 둘레로 play_deg만큼 — 어깨 영점을 그만큼 옮긴 것과 같다
+    pl = dict(DEFAULT, play_deg=-7.0, play_tau0=1e6, play_w=2.0)
+    assert np.allclose(chain(pl, q)["tcp"], chain(dict(DEFAULT, off_lift=-7.0), q)["tcp"], atol=1e-6)
+    assert np.allclose(chain(dict(pl, play_tau0=-1e6), q)["tcp"], a["tcp"], atol=1e-6)
+    far = chain(dict(pl, play_pz=-100.0), q)                    # 회전 중심이 발치 쪽이면 어깨 축도 같이 움직인다
+    assert np.linalg.norm(far["shoulder"][0] - a["shoulder"][0]) > 5.0
     # tick_map: 젯슨 실값(2026-11-12)으로 왕복 — 정규값 0 ↔ 범위 가운데 틱
     cal = {"shoulder_pan": {"range_min": 560, "range_max": 3330}, "shoulder_lift": {"range_min": 1009, "range_max": 3350},
            "elbow_flex": {"range_min": 808, "range_max": 3159}, "wrist_flex": {"range_min": 735, "range_max": 3099},

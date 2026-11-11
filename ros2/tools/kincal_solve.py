@@ -10,7 +10,9 @@
 기구학 뼈대는 공식 SO-101 URDF(치수는 안 푼다, kincal_model 머리말). 책상 보드는 밑동과 한 평면으로 묶는다.
 단계(뒤로 갈수록 미지수가 는다) — **남겨 둔 자세(20%)에서의 오차**가 줄 때만 다음 단계를 받아들인다.
 최소자승은 미지수를 늘리면 맞춘 쪽 잔차는 언제나 준다. 그건 증거가 아니다.
-  A 손-눈 6 + 보드(방위·자리·작은 기울기) + 관절 영점 3     B + 처짐 3 · 백래시 5     C + 초점·왜곡·roll 눈금
+  A 손-눈 6 + 보드(방위·자리·작은 기울기) + 관절 영점 3     B + 관절 틀이 CAD와 다른 만큼(geo 17)
+  C + 처짐 3 · 백래시 5     D + 초점·왜곡·roll 눈금
+밑동이 넘어가는 자세(어깨 토크 < ROCK_TAU)는 빼고 푼다 — 그건 팔이 아니라 놓인 상태의 문제다.
 서보 방향 ↔ URDF 축 부호 32조합은 A에서 다 풀어 가장 낮은 것을 고른다.
 """
 from __future__ import annotations
@@ -28,20 +30,23 @@ sys.path.insert(0, HERE)
 import kincal_model as km  # noqa: E402
 
 A = ["cam_r", "cam_t", "board_yaw", "board_t", "board_tilt", "off_lift", "off_elbow", "off_wrist"]
-B = A + ["sag_lift", "sag_elbow", "sag_wrist", "bl_pan", "bl_lift", "bl_elbow", "bl_wrist", "bl_roll"]
-C = B + ["f_scale", "k1", "roll_scale"]
-STAGES = {"A": A, "B": B, "C": C}
+B = A + ["geo_lift", "geo_elbow", "geo_wrist", "geo_roll"]
+C = B + ["sag_lift", "sag_elbow", "sag_wrist", "bl_pan", "bl_lift", "bl_elbow", "bl_wrist", "bl_roll"]
+D = C + ["f_scale", "k1", "roll_scale"]
+STAGES = {"A": A, "B": B, "C": C, "D": D}
+PLAY = ["play_deg", "play_tau0", "play_w", "play_pr", "play_pz"]     # 진단용(--play): 밑동이 넘어가는 크기·회전 중심
+GEO_SIGMA = {5: [5.0, 5.0, 5.0, 0.035, 0.035], 4: [5.0, 5.0, 0.035, 0.035]}     # 옮김 5mm · 기울기 2°
 # 사전값(σ) — 자료가 말해 주면 묻히고, 자료가 못 보는 방향에서만 값을 붙든다.
 # board_tilt만은 **물리 사실**이다: 팔 밑동과 종이가 같은 책상 위에 평평히 있다(11/12 사진 확인) → ±1.5°.
 # 책상 높이도 마찬가지: URDF base_link의 z=0이 밑동 바닥이고 그 바닥이 책상에 닿아 있다 → 보드 z = 0 ± 10mm.
 # 이 둘은 관측 수에 비례해 세게 건다(STRONG) — 약하게 걸었더니 영점 175°·책상 z +183mm인 "뒤집힌 세계" 해로 빠졌다.
-PRIOR = {"off_lift": 20.0, "off_elbow": 20.0, "off_wrist": 20.0, "board_tilt": 0.026,
+PRIOR = {"play_deg": 15.0, "play_tau0": 20.0, "play_w": 6.0, "play_pr": 100.0, "play_pz": 100.0, "off_lift": 20.0, "off_elbow": 20.0, "off_wrist": 20.0, "board_tilt": 0.026,
          "sag_lift": 0.05, "sag_elbow": 0.05, "sag_wrist": 0.05,
          "bl_pan": 1.5, "bl_lift": 1.5, "bl_elbow": 1.5, "bl_wrist": 1.5, "bl_roll": 1.5,
          "f_scale": 0.02, "k1": 0.1, "roll_scale": 0.03}
 STRONG_Z_MM = 40.0           # 밑동 아래에 발판이 있다(사진) — 책상이 base_link z=0보다 수 cm 아래일 수 있다
 # **넘을 수 없는 담** — 사전값(무게)만으로는 기울기가 170°로 넘어가 뒤집힌 해에 앉았다. 물리적으로 불가능한 쪽은 아예 막는다.
-BOUND = {"board_tilt": 0.06, "off_lift": 45.0, "off_elbow": 45.0, "off_wrist": 45.0}
+BOUND = {"play_deg": 20.0, "play_tau0": 40.0, "play_pr": 200.0, "play_pz": 200.0, "board_tilt": 0.06, "off_lift": 45.0, "off_elbow": 45.0, "off_wrist": 45.0}
 BOARD_Z = (-90.0, 30.0)
 XSCALE = {"cam_r": 1.0, "cam_t": 50.0, "board_yaw": 1.0, "board_t": 50.0}
 LOSS_PX = 2.0
@@ -122,9 +127,11 @@ def fit(P0, names, Dt, frames=None, max_nfev=400):
         return np.concatenate([e.ravel() / LOSS_PX]
                               + [np.atleast_1d(np.asarray(P[n]) - np.asarray(km.DEFAULT[n])) / PRIOR[n] * (w if n == "board_tilt" else 1.0)
                                  for n in pri]
+                              + [np.asarray(P[n]) / GEO_SIGMA[len(P[n])] for n in names if n.startswith("geo_")]
                               + ([[w * P["board_t"][2] / STRONG_Z_MM]] if "board_t" in names else []))
 
-    xs = np.concatenate([[XSCALE.get(n, PRIOR.get(n, 1.0))] * len(np.atleast_1d(P0[n])) for n in names])
+    xs = np.concatenate([GEO_SIGMA[len(P0[n])] if n.startswith("geo_") else
+                         [XSCALE.get(n, PRIOR.get(n, 1.0))] * len(np.atleast_1d(P0[n])) for n in names])
     lb, ub = [], []
     for n in names:
         m = len(np.atleast_1d(P0[n]))
@@ -132,6 +139,8 @@ def fit(P0, names, Dt, frames=None, max_nfev=400):
         lo, hi = [-b] * m, [b] * m
         if n == "board_t":
             lo[2], hi[2] = BOARD_Z
+        if n == "play_w":
+            lo, hi = [1.0], [20.0]
         lb += lo
         ub += hi
     x0 = np.clip(_pack(P0, names), np.array(lb) + 1e-9, np.array(ub) - 1e-9)
@@ -209,13 +218,18 @@ def solve(Dt, stage="auto", seed=0, quiet=False):
     PA = cands[0][1]
     if cands[1][0] < cands[0][0] * 1.3:
         say("  ⚠ 1등과 2등이 30%% 안이다(%.2f vs %.2f) — 자세가 좁아 부호를 아직 못 가른다" % (cands[0][0], cands[1][0]))
-    # 썩은 장을 먼저 뺀다 — 한 장이 30px씩 틀리면(오검출·팔이 덜 멈춤·무언가에 닿음) 남겨 둔 쪽 RMS를 혼자 끌어올린다.
+    # 썩은 장만 뺀다(오검출 수준, 60px 넘게). ⚠ 11/12 처음엔 "중앙값의 4배(8px) 넘으면 이상치"로 뺐더니 **새로 간 넓은 자세가
+    #   전부 버려졌다** — 모형이 못 맞히는 자세는 이상치가 아니라 모형이 틀렸다는 증거다. 그건 남겨서 풀이가 받아내게 한다.
     e0 = reproj(PA, Dt)[0]
     per0 = np.array([rms(e0[Dt["fidx"] == f]) for f in range(F)])
-    cut = max(8.0, 4.0 * float(np.median(per0)))
-    good = np.flatnonzero(per0 <= cut)
-    if len(good) < F:
-        say("  이상치 %d장 뺌(자세 RMS > %.1fpx): %s" % (F - len(good), cut, ", ".join(
+    cut = 60.0
+    tau0 = km.lift_torque(PA, Dt["q"])
+    good = np.flatnonzero((per0 <= cut) & (tau0 >= km.ROCK_TAU))
+    if (tau0 < km.ROCK_TAU).any():
+        say("  밑동이 넘어가는 자세 %d장 뺌(어깨 중력 토크 < %.0f kg·mm — kincal_model.ROCK_TAU)" % ((tau0 < km.ROCK_TAU).sum(), km.ROCK_TAU))
+        PA = fit(PA, A, Dt, good)
+    if (per0 > cut).any():
+        say("  썩은 장 %d장 뺌(자세 RMS > %.0fpx): %s" % (F - len(good), cut, ", ".join(
             "%s#%d %.0fpx" % (os.path.basename(os.path.normpath(Dt["meta"][f][0])), Dt["meta"][f][1], per0[f])
             for f in np.flatnonzero(per0 > cut)[:8])))
     rng = np.random.default_rng(seed)
@@ -223,7 +237,7 @@ def solve(Dt, stage="auto", seed=0, quiet=False):
     train = np.setdiff1d(good, test)
     say("\n[단계] 맞춘 80%% / 남겨 둔 20%%(%d자세) 재투영 RMS px" % len(test))
     P, hold, chosen, table = PA, None, "A", {}
-    for name in "ABC":
+    for name in "ABCD":
         Q = fit(P if name != "A" else PA, STAGES[name], Dt, train)
         tr, te = rms(reproj(Q, Dt, train)[0]), rms(reproj(Q, Dt, test)[0])
         table[name] = (tr, te)
@@ -244,16 +258,29 @@ def solve(Dt, stage="auto", seed=0, quiet=False):
     e, zc = reproj(P, Dt, good)
     mm = float(np.sqrt((((e / Dt["intr"]["fx"]) * zc[:, None]) ** 2).sum(axis=1).mean()))
     ctr = km.target_base(P, "board", Dt["bp"]).mean(axis=0)
-    say("\n[결과] 단계 %s · 전체 재투영 %.2f px ≈ 표적 위 %.2f mm · 남겨 둔 자세 %.2f px" % (chosen, rms(e), mm, hold))
+    pg = per[good]
+    say("\n[결과] 단계 %s · 전체 재투영 %.2f px ≈ 표적 위 %.2f mm · 남겨 둔 자세 %.2f px · 자세별 중앙 %.1f / 90%% %.1f / 최대 %.1f px" % (
+        chosen, rms(e), mm, hold, np.median(pg), np.percentile(pg, 90), pg.max()))
+    rock_n = int((tau0 < km.ROCK_TAU).sum())
+    if rock_n >= 8:                                             # 뺀 자세들로 "넘어가는 크기·회전 중심"만 따로 풀어 알려 준다(모형엔 안 넣는다)
+        R = fit(dict(P, play_deg=-5.0, play_tau0=3.0), PLAY, Dt, np.flatnonzero(per0 <= cut))
+        say("  밑동 넘어감(뺀 %d자세로 진단): %.1f° · 어깨 토크 %.1f kg·mm 아래에서 · 회전 중심 = 어깨 축에서 수평 %+.0f / 높이 %+.0f mm"
+            " (높이가 −60~−120이면 발판이 까딱이는 것 · 0 근처면 어깨 체결 유격)" % (
+                rock_n, R["play_deg"], R["play_tau0"], R["play_pr"], R["play_pz"]))
+    for k in ("geo_lift", "geo_elbow", "geo_wrist", "geo_roll"):
+        if k in STAGES[chosen]:
+            g = P[k]
+            say("  %-9s 옮김 %s mm · 축 기울기 %s°" % (k, np.round(g[:len(g) - 2], 1).tolist(), np.round(np.degrees(g[-2:]), 2).tolist()))
     say("  부호 %s · 손-눈 |t| %.1fmm t=%s (gripper_link 기준)" % (
         " ".join("%+d" % P[k] for k in km._SGN), np.linalg.norm(P["cam_t"]), np.round(P["cam_t"], 1).tolist()))
     say("  보드: 중심 base (%.0f, %.0f, %.1f)mm · 기울기 %.2f° — 책상이 밑동과 한 평면이면 z≈0·기울기≈0이어야 한다" % (
         ctr[0], ctr[1], ctr[2], np.degrees(np.hypot(*P["board_tilt"]))))
     say("  " + " · ".join("%s %+.3f" % (k, P[k] - km.DEFAULT[k]) for k in STAGES[chosen] if k in PRIOR and k != "board_tilt"))
+    say("  자세별 px(이 값이 넓은 자세에서만 크면 모형 구조가 모자란 것): 중앙 %.1f" % np.median(pg))
     worst = np.argsort(-per)[:5]
     say("  가장 나쁜 자세: " + ", ".join("#%d %.1fpx" % (Dt["meta"][f][1], per[f]) for f in worst))
     return {"P": P, "intr": Dt["intr"], "stage": chosen, "servo": servo_fit(Dt, quiet) if "servo" in Dt else None,
-            "rms_px": rms(e), "rms_mm": mm, "holdout_px": hold, "stages": table, "frames": F, "outliers": int(F - len(good)),
+            "rms_px": rms(e), "rms_mm": mm, "holdout_px": hold, "stages": table, "frames": F, "outliers": int((per0 > cut).sum()), "rocking": rock_n,
             "print_scale": Dt["ses"]["print_scale"], "charuco": Dt["ses"].get("charuco"), "dots_mm": Dt["ses"].get("dots_mm"),
             "tick_map": [x.tolist() for x in km.tick_map(Dt["ses"]["cal"], Dt["ses"]["cart"])] if "cal" in Dt["ses"] else None,
             "kinematics": "so101_new_calib.urdf", "signs_px": [[list(sg), c] for c, _, sg in cands]}
@@ -441,7 +468,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("dirs", nargs="*")
     ap.add_argument("--out", default="")
-    ap.add_argument("--stage", default="auto", choices=("auto", "A", "B", "C"))
+    ap.add_argument("--stage", default="auto", choices=("auto", "A", "B", "C", "D"))
     ap.add_argument("--overlay", default="", help="사진 위에 예측을 겹쳐 그릴 폴더(세션 폴더에 img/가 있어야 한다)")
     ap.add_argument("--wallplane", default="", help="깊이 영상으로 찾은 벽 평면 json({n, d}) — 모형 파일에 실어 수집기 안전 검사가 쓴다")
     ap.add_argument("--selftest", action="store_true")

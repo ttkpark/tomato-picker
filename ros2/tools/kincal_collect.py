@@ -45,7 +45,7 @@ J = km.J
 STEP_DEG, STEP_SEC, SETTLE_SEC, BACKOFF_DEG = 10.0, 0.8, 1.0, 6.0
 MAX_TRACK_ERR = 6.0          # 평소 0.3~2.1°(처짐). 책상에 닿으면 서보가 밀려 이게 먼저 벌어진다
 TEMP_PAUSE, TEMP_RESUME, VOLT_MIN = 58, 50, 110          # °C, °C, 0.1V
-ROLL_LIMIT = 110.0                                       # 손목 카메라 케이블이 감기지 않게
+ROLL_RANGE = (-70.0, 110.0)                              # 손목 굴림: 11/12 −91.5 지령에 −77.9에서 섰다(카메라 케이블/스토퍼) — 음수 쪽은 −70까지만
 SEED_SPAN = np.array([30.0, 25.0, 25.0, 30.0, 35.0])     # 씨앗: 시작 자세에서 이 이상 안 벗어난다
 SEED_STEP = np.array([10.0, 8.0, 8.0, 10.0, 20.0])
 MIN_CORNERS = 8
@@ -104,6 +104,8 @@ class Planner:
             m = np.minimum(m, (X - foot) @ self.u + 100.0)       # 몸통 뒤로 10cm까지만
             m = np.minimum(m, LEFT_MM - (X - foot) @ self.left)
         m = np.minimum(m, 250.0 - self._rad(c["tcp"]))
+        # 밑동이 넘어가는 자세(팔 무게중심이 어깨 뒤로)는 안 간다 — 가는 길에 지나가도 밑동이 까딱이며 자리를 옮길 수 있다
+        m = np.minimum(m, km.lift_torque(self.P, self.A * np.atleast_2d(deg) + self.B) - km.ROCK_TAU)
         zs = c["shoulder"][:, 2]                                 # 자기 몸(밑동·어깨 서보) 둘레: 가까우면 어깨 축보다 위에 있어야 한다
         for k, r_min, z_min in (("tcp", 95.0, 50.0), ("tip", 95.0, 50.0), ("t_bc", 95.0, 50.0), ("roll", 60.0, 40.0)):
             X = c[k]
@@ -148,7 +150,7 @@ def main() -> int:
     lims = np.array([cal.joint_range(j) for j in J])
     pad = (lims[:, 1] - lims[:, 0]) * arm_calib.LIMIT_MARGIN
     lo, hi = lims[:, 0] + pad, lims[:, 1] - pad
-    lo[4], hi[4] = max(lo[4], -ROLL_LIMIT), min(hi[4], ROLL_LIMIT)
+    lo[4], hi[4] = max(lo[4], ROLL_RANGE[0]), min(hi[4], ROLL_RANGE[1])
     meta0 = json.load(open(tc.META))
     intr = meta0["intrinsics"]
     plan = None
