@@ -280,7 +280,7 @@ def scene(P: dict, spec: dict, scale: float, wall_half: float | None = None, wal
     c = (board.mean(axis=0) + foot) / 2
     table = np.array([c + a * 380 * Rb[:, 0] + b * 380 * Rb[:, 1] - 1.0 * up for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1))])
     quads = [{"name": "table", "pts": table, "color": 0x6b7785, "opacity": 0.35},
-             {"name": "board", "pts": board + 0.5 * up, "color": 0xf4f4f4, "opacity": 0.95}]
+             {"name": "board", "pts": board + 2.0 * up, "color": 0xf4f4f4, "opacity": 0.95}]
     if wallplane:                                               # 깊이로 찾은 벽 — 책상과 만나는 선에서 위로 350mm
         nw, dw = np.asarray(wallplane["n"], float), float(wallplane["d"])
         along = np.cross(up, nw)
@@ -364,7 +364,7 @@ def _selftest() -> None:
                      np.eye(3)[None], np.zeros((1, 3)), [[10.0, -20.0, 100.0]])
     assert np.allclose(uv, [[360.0, 160.0]]) and zc[0] == 100.0
     sc = scene(dict(DEFAULT, board_t=[200.0, 50.0, -10.0]), {"nx": 5, "ny": 7, "square_mm": 35.0}, 1.0)
-    assert sc["tilt_deg"] == 0.0 and sc["table_z"] == -10.0 and sc["quads"][1]["pts"][0] == [200.0, 50.0, -9.5], sc
+    assert sc["tilt_deg"] == 0.0 and sc["table_z"] == -10.0 and sc["quads"][1]["pts"][0] == [200.0, 50.0, -8.0], sc
     print("kincal_model OK")
 
 

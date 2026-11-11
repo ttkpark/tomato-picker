@@ -1330,7 +1330,7 @@ function k3dInit(){
     KIN.scene.quads.forEach(function(q){
       var g=new THREE.BufferGeometry().setFromPoints(q.pts.map(function(p){return baseToDraw(p[0],p[1],p[2]);}));
       g.setIndex([0,1,2,0,2,3]);
-      k3dScene.add(new THREE.Mesh(g,new THREE.MeshBasicMaterial({color:q.color,transparent:true,opacity:q.opacity,side:THREE.DoubleSide})));
+      k3dScene.add(new THREE.Mesh(g,new THREE.MeshBasicMaterial({color:q.color,transparent:q.opacity<0.9,opacity:q.opacity,side:THREE.DoubleSide})));
       k3dScene.add(new THREE.LineLoop(g,new THREE.LineBasicMaterial({color:0x202830})));
     });
   }
