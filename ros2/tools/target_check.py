@@ -48,9 +48,19 @@ META = "/dev/shm/d405_meta.json"
 # handeye_collect.py처럼 SSH로만 돌리는 작업도 사람이 웹에서 지켜볼 수 있게.
 VIEW_OUT = os.path.expanduser("~/target_view.json")
 
+# **인쇄 배율** — 프린터가 "용지에 맞춤"으로 줄여 찍으면 종이의 100mm 눈금자가 100이 아니다(2026-11-12 실측 94.5mm).
+# 종이와 같이 사는 값이라 그 종이를 보는 기계의 `~/target_print.json` {"scale": 0.945} 에 둔다(없으면 1.0 = 100% 인쇄).
+# 4점 간격과 ChArUco 칸·마커에 똑같이 곱한다. 안 넣으면 PnP 거리가 그 비율만큼 통째로 틀린다.
+try:
+    PRINT_SCALE = float(json.load(open(os.path.expanduser("~/target_print.json")))["scale"])
+    if not 0.5 < PRINT_SCALE < 1.5:
+        raise ValueError(PRINT_SCALE)
+except OSError:
+    PRINT_SCALE = 1.0
+
 # 벽에 붙인 표적의 **실측 간격**
-EXPECT_W = 100.0
-EXPECT_H = 174.5
+EXPECT_W = 100.0 * PRINT_SCALE
+EXPECT_H = 174.5 * PRINT_SCALE
 # 여섯 쌍거리가 아는 직사각형에서 이만큼 넘게 벗어나면 표적이 아니다.
 QUAD_TOL_MM = 12.0
 
@@ -194,7 +204,8 @@ CHARUCO_MAX_REPROJ_PX = 2.0      # 재투영 잔차가 이보다 크면 보드�
 def charuco_board():
     aruco = cv2.aruco
     d = aruco.getPredefinedDictionary(getattr(aruco, CHARUCO["dict"]))
-    return aruco.CharucoBoard((CHARUCO["nx"], CHARUCO["ny"]), CHARUCO["square_mm"], CHARUCO["marker_mm"], d)
+    return aruco.CharucoBoard((CHARUCO["nx"], CHARUCO["ny"]), CHARUCO["square_mm"] * PRINT_SCALE,
+                              CHARUCO["marker_mm"] * PRINT_SCALE, d)
 
 
 def charuco_points(bgr: np.ndarray, intr: Intrinsics) -> dict:

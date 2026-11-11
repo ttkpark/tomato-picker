@@ -111,7 +111,20 @@ def _kin_constants() -> dict:
                    "rms_mm": cfg.rms_mm, "good": cfg.good, "roll_sign": cfg.roll_sign}
     except Exception:                                      # noqa: BLE001
         pass
-    return {"geom": geom, "joints": joints, "eye": eye,
+    # 트윈이면 역보정 모형(kincal_solve → ~/twin/kincal.json)의 장면(책상·보드·벽 종이)과 보정된 링크·영점으로 그린다.
+    # 실기 조작대는 그대로다(실기 반영은 사람 승인 뒤) — 계산(kinForward·조그)은 어느 쪽이든 도면 기구학 그대로.
+    scene = cal = None
+    if os.environ.get("TOMATO_TWIN"):
+        try:
+            import kincal_model
+            m = json.load(open(os.environ.get("TOMATO_KINCAL") or os.path.expanduser("~/twin/kincal.json"),
+                               encoding="utf-8"))
+            scene = kincal_model.scene(m["P"], m["charuco"], m["print_scale"], m.get("dots_mm"))
+            cal = {"geom": {k: m["P"][k] for k in ("z0", "d0", "l1", "l2", "l3")},
+                   "off": [m["P"]["off_lift"], m["P"]["off_elbow"], m["P"]["off_wrist"]]}
+        except Exception:                                  # noqa: BLE001
+            scene = cal = None
+    return {"geom": geom, "joints": joints, "eye": eye, "scene": scene, "cal": cal,
             "floor": -arm_calib.MOUNT_Z_MM + arm_calib.FLOOR_MARGIN_MM}
 
 
@@ -1009,11 +1022,15 @@ var JLABELS={shoulder_pan:"어깨돌림(pan)",shoulder_lift:"어깨듦(lift)",el
 var curJ={shoulder_pan:59.6,shoulder_lift:65,elbow_flex:0,wrist_flex:-100,wrist_roll:6};
 var tgtJ={shoulder_pan:59.6,shoulder_lift:65,elbow_flex:0,wrist_flex:-100,wrist_roll:6};
 
+// 트윈: 역보정 모형의 링크·영점으로 **그리기만** 한다(KIN.cal). 실물이 FK와 거울상이면(KIN.scene.mirror) 그림 전체를
+// 한 번 뒤집어 실제 좌우로 보이게 한다 — 장면(책상·보드)은 서버가 도면 FK 좌표로 맞춰 보낸다.
+var CALD = KIN.cal || {geom:KIN.geom, off:[0,0,0]};
+var MIR = (KIN.scene && KIN.scene.mirror) ? -1 : 1;
 function fk(j){
   var d=Math.PI/180;
-  var pan=j.shoulder_pan*d, lift=j.shoulder_lift*d, elbow=j.elbow_flex*d, wrist=j.wrist_flex*d;
+  var pan=j.shoulder_pan*d, lift=(j.shoulder_lift+CALD.off[0])*d, elbow=(j.elbow_flex+CALD.off[1])*d, wrist=(j.wrist_flex+CALD.off[2])*d;
   var a1=lift, a2=lift+elbow, a3=lift+elbow+wrist;
-  var g=KIN.geom;
+  var g=CALD.geom;
   var rz=[[0,0],[g.d0,g.z0]];
   rz.push([rz[1][0]+g.l1*Math.cos(a1), rz[1][1]+g.l1*Math.sin(a1)]);
   rz.push([rz[2][0]+g.l2*Math.cos(a2), rz[2][1]+g.l2*Math.sin(a2)]);
@@ -1021,7 +1038,7 @@ function fk(j){
   // ⚠ 화면 좌우(X)만 뒤집는다 — 그리는 용도뿐이라(야코비안 계산은
   //   kinForward()가 따로 한다) 안전하다. 2026-09-03: 실물과 비교해보니
   //   미리보기가 좌우 반전으로 보였다.
-  return rz.map(function(p){return new THREE.Vector3(-p[0]*Math.cos(pan), p[1], -p[0]*Math.sin(pan));});
+  return rz.map(function(p){return new THREE.Vector3(-p[0]*Math.cos(pan), p[1], -p[0]*Math.sin(pan)*MIR);});
 }
 function kinForward(j){
   // kinematics.py forward()를 그대로 — (x,y,z,pitch)를 KIN 좌표(회전 전)로.
@@ -1119,7 +1136,7 @@ function mul3(M9,v){
 }
 function baseToDraw(x,y,z){
   // fk()가 쓰는 것과 **같은** base→그리기 사영(주석 참조): (x,y,z) → (-x,z,-y).
-  return new THREE.Vector3(-x, z, -y);
+  return new THREE.Vector3(-x, z, -y*MIR);
 }
 function camWorld(j){
   // 손목 카메라의 base 좌표 위치 + 광학축(조준) 방향 — 없으면 null.
@@ -1277,6 +1294,15 @@ function k3dInit(){
     new THREE.MeshBasicMaterial({color:0x2a323d,transparent:true,opacity:0.25,side:THREE.DoubleSide}));
   fm.rotation.x=-Math.PI/2; fm.position.y=KIN.floor; k3dScene.add(fm);
   k3dScene.add(new THREE.AxesHelper(120));
+  if(KIN.scene){            // 실측 장면이 있으면 가짜 바닥 격자 대신 그걸 그린다
+    grid.visible=false; fm.visible=false;
+    KIN.scene.quads.forEach(function(q){
+      var g=new THREE.BufferGeometry().setFromPoints(q.pts.map(function(p){return baseToDraw(p[0],p[1],p[2]);}));
+      g.setIndex([0,1,2,0,2,3]);
+      k3dScene.add(new THREE.Mesh(g,new THREE.MeshBasicMaterial({color:q.color,transparent:true,opacity:q.opacity,side:THREE.DoubleSide})));
+      k3dScene.add(new THREE.LineLoop(g,new THREE.LineBasicMaterial({color:0x202830})));
+    });
+  }
   curGroup=new THREE.Group(); tgtGroup=new THREE.Group();
   k3dScene.add(curGroup); k3dScene.add(tgtGroup);
   var dragging=false,lastX=0,lastY=0;

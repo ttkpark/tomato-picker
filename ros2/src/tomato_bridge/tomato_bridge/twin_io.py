@@ -80,13 +80,30 @@ def gravity(q: dict, geom) -> dict:
     return {"shoulder_lift": lift, "elbow_flex": elbow, "wrist_flex": wrist}
 
 
-def settle(q: dict, goal_deg: dict, geom, K: float = K, f: float = F) -> dict:
+KINCAL = os.environ.get("TOMATO_KINCAL", os.path.join(TWIN_DIR, "kincal.json"))
+
+
+def servo_params() -> tuple:
+    """(K, f, bias) — 실기에서 맞춘 관절별 값(`kincal_solve.servo_fit` → ~/twin/kincal.json)이 있으면 그것,
+    없으면 11/08 전역값. 관절별 dict나 숫자 하나나 settle이 다 받는다."""
+    try:
+        sv = json.load(open(KINCAL, encoding="utf-8"))["servo"]
+        return ({j: sv["K"].get(j) or K for j in kin.JOINTS}, {j: abs(sv["f"][j]) for j in kin.JOINTS},
+                {j: sv["bias"][j] for j in kin.JOINTS})
+    except (OSError, ValueError, KeyError, TypeError):
+        return K, F, 0.0
+
+
+def settle(q: dict, goal_deg: dict, geom, K=K, f=F, bias=0.0) -> dict:
+    """K·f·bias는 숫자 하나(전 관절 공통)거나 관절별 dict."""
+    def per(v, j):
+        return v[j] if isinstance(v, dict) else v
     q = dict(q)
     for _ in range(30):                     # 토크가 자세에 달려 있어 고정점을 찾는다
         tau = gravity(q, geom)
         for j in kin.JOINTS:
-            eq = goal_deg[j] - tau.get(j, 0.0) / K
-            q[j] = min(max(q[j], eq - f), eq + f)
+            eq = goal_deg[j] + per(bias, j) - tau.get(j, 0.0) / per(K, j)
+            q[j] = min(max(q[j], eq - per(f, j)), eq + per(f, j))
     return q
 
 
@@ -103,7 +120,7 @@ class FollowerIO:
     def __init__(self, port: str = "", arm_id: str = "", move_fps: int = 30, hold_torque: bool = False) -> None:
         self._lock = threading.RLock()
         self.calib = _calib()
-        self.K, self.f = K, F
+        self.K, self.f, self.bias = servo_params()
         self._load()
 
     # ── 상태 파일 ──────────────────────────────────────────────
@@ -115,7 +132,7 @@ class FollowerIO:
             self.q = dict(START)
             self.g = dict(self.calib.to_norm(START), gripper=40.0)
             self.yaw = BASE_YAW_HOME_DEG
-            self.q = settle(self.q, self.calib.to_deg(self.g), self.calib.geom, self.K, self.f)
+            self.q = settle(self.q, self.calib.to_deg(self.g), self.calib.geom, self.K, self.f, self.bias)
             self._save()
 
     def _save(self) -> None:
@@ -177,7 +194,7 @@ class FollowerIO:
                     per = self.calib.per(j)
                     v = round(v * per / TICK) * TICK / per
                 self.g[j] = v
-            self.q = settle(self.q, self.calib.to_deg({j: self.g[j] for j in kin.JOINTS}), self.calib.geom, self.K, self.f)
+            self.q = settle(self.q, self.calib.to_deg({j: self.g[j] for j in kin.JOINTS}), self.calib.geom, self.K, self.f, self.bias)
             self._save()
 
     def read_yaw(self) -> float:
@@ -225,6 +242,10 @@ def _selftest() -> None:
     io.write({"elbow_flex": io.goal()["elbow_flex"] + 0.01 * TICK / per}, 0.1)      # 틱 아래 지령 = 0
     assert abs(io.goal()["elbow_flex"] - io2.goal()["elbow_flex"]) < 1e-9
     assert sum(1 for _ in open(LOG)) >= 4
+    Kj = {j: 40.0 for j in kin.JOINTS}                                              # 관절별 값도 같은 식으로 먹는다
+    a = settle(dict(START), dict(START), io.calib.geom, Kj, {j: 0.5 for j in kin.JOINTS}, {j: 0.3 for j in kin.JOINTS})
+    b = settle(dict(START), dict(START), io.calib.geom, 40.0, 0.5, 0.3)
+    assert a == b and abs(a["shoulder_pan"] - START["shoulder_pan"]) < 1e-9, (a, b)   # 시작 자리가 평형±f 안이면 안 움직인다
     print("twin_io OK  처짐 lift %.2f° elbow %.2f°  err %.1fmm" % (
         45.0 - got["shoulder_lift"], 0.0 - got["elbow_flex"], v["err_mm"]))
 
