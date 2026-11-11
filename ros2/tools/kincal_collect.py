@@ -51,54 +51,69 @@ SEED_STEP = np.array([10.0, 8.0, 8.0, 10.0, 20.0])
 MIN_CORNERS = 8
 STOP_FILE = os.path.expanduser("~/kincal/STOP")
 POSE_VIEW = os.path.expanduser("~/arm_pose_view.json")
+LEFT_MM = 130.0                                          # 보드를 볼 때 왼쪽(가방 쪽)으로 pan 축에서 이만큼까지만
 # 책상 위 여유(mm) — 팔꿈치·손목·무는점·손끝·카메라
-CLEAR = {"elbow": 60.0, "wrist": 55.0, "tcp": 50.0, "tip": 45.0, "t_bc": 55.0}      # 책상에 투명 관(높이 ~25mm)이 남아 있다
+CLEAR = {"elbow": 50.0, "wrist": 45.0, "roll": 40.0, "tcp": 35.0, "tip": 30.0, "t_bc": 40.0}   # 투명 관은 신경 쓰지 않는다(사용자 11/12)
 
 
 class Planner:
-    """모형(P)으로 '이 자세가 안전한가 · 표적이 보이나'를 한꺼번에(N자세) 계산한다."""
+    """모형(P)으로 '이 자세가 안전한가 · 표적이 보이나'를 한꺼번에(N자세) 계산한다. 자세는 `Calib.to_deg` 도로 받는다."""
 
-    def __init__(self, P: dict, intr: dict):
+    def __init__(self, P: dict, intr: dict, cal: dict, cart: dict, wallplane: dict | None = None):
         self.P, self.intr = P, intr
+        self.A, self.B = km.tick_map(cal, cart)
         self.board = km.target_base(P, "board", km.board_points(tc.CHARUCO, tc.PRINT_SCALE))
-        Rb, tb = km.rodrigues(P["board_r"]), np.asarray(P["board_t"], float)
-        n = Rb[:, 2]
-        self.n = n if n @ (np.array([P["d0"], 0.0, P["z0"]]) - tb) > 0 else -n      # 어깨 쪽 = 위
+        Rb, tb = km.board_R(P), np.asarray(P["board_t"], float)
+        self.n = Rb[:, 2] if Rb[2, 2] > 0 else -Rb[:, 2]          # 위(base +z 쪽)
         self.d = float(self.n @ tb)
-        ctr = self.board.mean(axis=0)
-        u = np.array([ctr[0], ctr[1], 0.0])
+        self.axis = np.array([km.PAN_XY[0], km.PAN_XY[1]])
+        u = np.array([*(self.board.mean(axis=0)[:2] - self.axis), 0.0])
         self.u = u / np.linalg.norm(u)
-        # ponytail: 벽 평면을 아직 모른다 — 종이가 벽과 나란히 붙었다고 보고 보드의 바깥쪽 두 변을 벽으로 친다(보수적).
-        # 사진(11/12)에서 벽은 종이 끝 바로 너머(안쪽 모서리에서 ~6cm)다 — 가장 바깥 모서리 줄 10mm 안쪽까지만 간다.
-        self.walls = []
-        for a in (Rb[:, 0], Rb[:, 1]):
-            a = a if a @ self.u >= 0 else -a
-            self.walls.append((a, float((self.board @ a).max()) - 10.0))
+        self.left = np.cross([0.0, 0.0, 1.0], self.u)            # 보드를 보고 섰을 때 왼쪽 — 가방·맥미니가 있는 쪽(11/12 사진)
+        # 벽: 깊이 영상으로 찾은 평면(kincal_solve --wallplane, n·X = d)이 있으면 그 45mm 앞까지. 없으면 종이가 벽과 나란하다고
+        # 보고 보드의 바깥쪽 두 변을 벽으로 친다(보수적 — 11/12 깊이 실측: 벽은 끝 모서리 줄에서 70mm 너머였다).
+        if wallplane:
+            self.walls = [(np.asarray(wallplane["n"], float), float(wallplane["d"]) - 45.0)]
+        else:
+            self.walls = []
+            for a in (Rb[:, 0], Rb[:, 1]):
+                a = a if a @ self.u >= 0 else -a
+                self.walls.append((a, float((self.board @ a).max()) - 10.0))
         self.wall_pts = None
         if P.get("wall_r") is not None:
             w, h = tc.EXPECT_W, tc.EXPECT_H
             self.wall_pts = km.target_base(P, "wall", [[0, 0, 0], [w, 0, 0], [0, h, 0], [w, h, 0]])
 
+    def chain(self, deg) -> dict:
+        return km.chain(self.P, self.A * np.atleast_2d(deg) + self.B)
+
+    def _rad(self, X) -> np.ndarray:
+        """pan 축에서 잰 수평 거리."""
+        return np.hypot(X[:, 0] - self.axis[0], X[:, 1] - self.axis[1])
+
     def margin(self, deg) -> np.ndarray:
         """자세마다 가장 빠듯한 여유(mm). 0 이상이면 안전."""
-        c = km.chain(self.P, deg)
+        c = self.chain(deg)
         m = np.full(len(c["tcp"]), 1e9)
+        foot = np.array([self.axis[0], self.axis[1], 0.0])
         for k, need in CLEAR.items():
             X = c[k]
             m = np.minimum(m, X @ self.n - self.d - need)
             for a, lim in self.walls:
                 m = np.minimum(m, lim - X @ a)
-            m = np.minimum(m, X @ self.u + 100.0)
-        m = np.minimum(m, 240.0 - np.hypot(c["tcp"][:, 0], c["tcp"][:, 1]))
-        for k, r_min, z_min in (("tcp", 95.0, 50.0), ("tip", 95.0, 50.0), ("t_bc", 95.0, 50.0), ("wrist", 60.0, 40.0)):
+            m = np.minimum(m, (X - foot) @ self.u + 100.0)       # 몸통 뒤로 10cm까지만
+            m = np.minimum(m, LEFT_MM - (X - foot) @ self.left)
+        m = np.minimum(m, 250.0 - self._rad(c["tcp"]))
+        zs = c["shoulder"][:, 2]                                 # 자기 몸(밑동·어깨 서보) 둘레: 가까우면 어깨 축보다 위에 있어야 한다
+        for k, r_min, z_min in (("tcp", 95.0, 50.0), ("tip", 95.0, 50.0), ("t_bc", 95.0, 50.0), ("roll", 60.0, 40.0)):
             X = c[k]
-            m = np.minimum(m, np.maximum(np.hypot(X[:, 0], X[:, 1]) - r_min, X[:, 2] - (self.P["z0"] + z_min)))
+            m = np.minimum(m, np.maximum(self._rad(X) - r_min, X[:, 2] - (zs + z_min)))
         return m
 
     def seen(self, deg, pts=None) -> np.ndarray:
         """자세마다 화면 안(가장자리 25px 안쪽)에 들어오는 표적 점 수. 너무 가깝거나 비스듬하면 0."""
         pts = self.board if pts is None else pts
-        c = km.chain(self.P, deg)
+        c = self.chain(deg)
         N, M = len(c["tcp"]), len(pts)
         idx = np.repeat(np.arange(N), M)
         uv, zc = km.project(self.P, self.intr, c["R_bc"], c["t_bc"], np.tile(pts, (N, 1)), idx)
@@ -138,7 +153,9 @@ def main() -> int:
     intr = meta0["intrinsics"]
     plan = None
     if args.model:
-        plan = Planner(json.load(open(os.path.expanduser(args.model)))["P"], intr)
+        model = json.load(open(os.path.expanduser(args.model)))
+        plan = Planner(model["P"], intr, json.load(open(arm_calib.CAL)), json.load(open(arm_calib.CART)),
+                       model.get("wallplane"))
     visited = np.array([json.loads(line)["deg"] for d in args.near
                         for line in open(os.path.join(os.path.expanduser(d), "samples.jsonl"), encoding="utf-8")]
                        or np.zeros((0, 5)))
@@ -175,15 +192,25 @@ def main() -> int:
         io.write(cal.to_norm(dic(park)), 0.4)
     if plan is None:                                           # 씨앗은 시작 자세 둘레다 — 시작 자세가 여유 밖이어도 거기까진 쓴다
         lo, hi = np.minimum(lo, park), np.maximum(hi, park)
-    nom = km.chain(km.DEFAULT, park[None])
-    seed_floor = {k: float(nom[k][0, 2]) - 3.0 for k in ("wrist", "tcp", "tip")}
+    from tomato_picker.hardware import kinematics as kin
+
+    def nominal(q):
+        """모형이 없을 때(씨앗)의 어림 — 도면 평면 FK의 손목·무는점 높이와 수평 거리. 상대 비교에만 쓴다."""
+        a1 = np.radians(q[:, 1])
+        a2 = a1 + np.radians(q[:, 2])
+        a3 = a2 + np.radians(q[:, 3])
+        g = kin.ArmGeometry()
+        zw = g.z0 + g.l1 * np.sin(a1) + g.l2 * np.sin(a2)
+        return {"wrist": zw, "tcp": zw + g.l3 * np.sin(a3),
+                "r": g.d0 + g.l1 * np.cos(a1) + g.l2 * np.cos(a2) + g.l3 * np.cos(a3)}
+
+    seed_floor = {k: float(nominal(park[None])[k][0]) - 3.0 for k in ("wrist", "tcp")}
 
     def seed_ok(q) -> bool:
         q = np.atleast_2d(q)
-        c = km.chain(km.DEFAULT, q)
+        c = nominal(q)
         return bool(np.all(q >= lo - 1e-6) and np.all(q <= hi + 1e-6) and np.all(np.abs(q - park) <= SEED_SPAN + 1e-6)
-                    and all(np.all(c[k][:, 2] >= z) for k, z in seed_floor.items())
-                    and np.all(np.hypot(c["tcp"][:, 0], c["tcp"][:, 1]) <= 210.0))
+                    and all(np.all(c[k] >= z) for k, z in seed_floor.items()) and np.all(np.abs(c["r"]) <= 210.0))
 
     def path_ok(a, b) -> bool:
         if plan is not None:
@@ -271,7 +298,7 @@ def main() -> int:
             kind = "wall"
         elif plan.wall_pts is None and rng.random() < 0.15:
             # 벽 4점 종이 찾기: 카메라가 거의 수평으로 보드 바깥(벽 쪽)을 보는 자세
-            c = km.chain(plan.P, cand)
+            c = plan.chain(cand)
             ax = c["R_bc"][:, :, 2]
             toward = np.max(np.stack([ax @ a for a, _ in plan.walls]), axis=0)
             pick = safe & (toward > 0.8) & (np.abs(ax @ plan.n) < 0.4) & (c["t_bc"] @ plan.n - plan.d > 110.0)
@@ -300,9 +327,15 @@ def main() -> int:
                 break
             # ── 건강 검사 ──
             temp, volt, load = reg("Present_Temperature"), reg("Present_Voltage"), reg("Present_Load")
-            if min(volt.values()) < VOLT_MIN:
-                stop["why"] = "전압 %.1fV" % (min(volt.values()) / 10.0)
+            # ⚠ 전압은 **서보 여섯의 중앙값**으로 본다 — 공급 전압이 처지면 여섯이 다 처진다. 하나만 10.8V인 건 오독이다
+            #   (11/12: 474장 중 전 서보 12.0~12.3V, 한 서보만 11.1·11.2·11.5V가 한 번씩. 그 한 번에 3라운드가 멈췄다).
+            vmed = sorted(volt.values())[len(volt) // 2]
+            if vmed < VOLT_MIN:
+                stop["why"] = "전압 %.1fV" % (vmed / 10.0)
                 break
+            if max(temp.values()) >= TEMP_PAUSE:
+                time.sleep(3.0)                                 # 온도는 3초 만에 20°C 못 오른다 — 다시 읽어도 뜨거울 때만 믿는다
+                temp = reg("Present_Temperature")
             if max(temp.values()) >= TEMP_PAUSE:
                 print("  서보 %d°C — 기준 자세에서 식힌다" % max(temp.values()), flush=True)
                 if path_ok(at["q"], hub):
@@ -377,7 +410,7 @@ def main() -> int:
             log.flush()
             print("%5d %-5s %s  모서리 %2d 점 %d  오차 %.1f°  %d°C %.1fV" % (
                 i, kind, " ".join("%6.1f" % v for v in target), len(ch), len(dots), err,
-                max(temp.values()), min(volt.values()) / 10.0), flush=True)
+                max(temp.values()), vmed / 10.0), flush=True)
             i += 1
             if err > MAX_TRACK_ERR:
                 bad_track += 1

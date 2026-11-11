@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
-"""**팔 + 손목 카메라 관측 모형** — 관절 읽음값 → "고정 표적의 점이 화면 어디에 찍히나". numpy뿐.
+"""**팔(SO-101) + 손목 카메라 관측 모형** — 관절 읽음값 → "고정 표적의 점이 화면 어디에 찍히나". numpy뿐.
 
     python ros2/tools/kincal_model.py        # 자체검증
 
 수집기(kincal_collect: 계획·안전), 풀이(kincal_solve: 맞춤), 트윈이 **같은 식**을 쓴다.
-기구학 뼈대는 `kinematics.forward` + `handeye.tool_frame_joints` 그대로이고(자체검증이 일치를 본다),
-그 위에 실물이 도면과 다른 만큼만 얹는다:
 
-  sgn_pan·sgn_roll  FK와 실물의 거울상(9/4 "평행이동 3~5배"의 원인) — ±1, 풀이가 4조합을 다 본다
-  off_*             관절 영점 오차(도). pan은 표적 자세가, roll은 카메라 자세가 흡수하므로 없다
-  d0·l1·l2          링크 길이. z0는 표적 높이가, l3는 카메라 평행이동이 흡수하므로 못 푼다(고정)
-  sag_*             엔코더가 못 보는 처짐(도 / 중력토크) — 링크·기어가 휘는 몫
+뼈대 = **공식 SO-101 URDF**(TheRobotStudio/SO-ARM100 `Simulation/SO101/so101_new_calib.urdf`)의 관절 사슬 그대로.
+2026-11-12 처음엔 `kinematics.forward`의 평면 근사(z0·d0·l1·l2·l3)로 풀었는데 d0가 −31.5 → +31mm로 뒤집히고
+책상이 13° 기운 것으로 나왔다(사진으로는 밑동이 평평하다). 평면 근사에 없는 것 — 상완이 28mm 꺾여 있고
+(팔꿈치 축이 링크 선에서 14° 벗어남), 어깨 축이 pan 축 옆으로 18mm 비켜 있고, 손목 굴림 축이 61·18mm 어긋나 있다 —
+을 풀이가 영점·링크·책상 기울기로 메우고 있었다. CAD 치수는 믿고(안 푼다), 실물이 CAD와 다른 것만 푼다:
+
+  sgn_*             관절마다 서보가 느는 방향 ↔ URDF 축 방향(±1) — 풀이가 조합을 다 본다
+  off_lift·elbow·wrist  관절 영점(도): URDF의 0 ↔ 서보 눈금 2048. pan은 표적 방위가, roll은 카메라 자세가 흡수한다
+  sag_*             엔코더가 못 보는 처짐(도 / 중력토크 kg·mm) — 링크·기어가 휘는 몫
   bl_*              백래시(도) × 마지막 접근 방향(±1)
-  cam_r·cam_t       T_tool_cam (손-눈)
-  board_*·wall_*    T_base_표적 (책상 ChArUco · 벽 4점)
-  f_scale·k1        카메라 초점 배율·방사 왜곡(공장값 검사용)
+  cam_r·cam_t       T_gripper_link→카메라 (손-눈)
+  board_yaw·board_t·board_tilt  책상 ChArUco: **책상은 밑동과 한 평면**이라 방위 1 + 자리 3, 기울기는 ±1.5° 사전값 안
+  wall_r·wall_t     벽 4점 종이(자유 6)
+  f_scale·k1·roll_scale  카메라 초점 배율·방사 왜곡·roll 눈금(공장값 검사용)
+
+관절 입력 q = **서보 눈금 도**((틱 − 2048)·360/4096). `Calib.to_deg` 도에서 오는 길은 `tick_map`.
 """
 from __future__ import annotations
 
@@ -32,17 +38,28 @@ _G = kin.ArmGeometry()
 # 중력 토크 모양 — twin_io.gravity와 같은 질량(kg)·손 무게중심(mm). 바꾸면 둘 다.
 M1, M_ELBOW, M2, M_HAND, HAND_D = 0.06, 0.055, 0.115, 0.21, 70.0
 
+# so101_new_calib.urdf의 관절 origin (xyz mm, rpy rad) — 부모 링크 틀에서 본 관절 틀. 축은 전부 그 틀의 z.
+URDF = (
+    ("shoulder_pan", (38.8353, -8.97657e-06, 62.4), (3.14159, 4.18253e-17, -3.14159)),
+    ("shoulder_lift", (-30.3992, -18.2778, -54.2), (-1.5708, -1.5708, 0.0)),
+    ("elbow_flex", (-112.57, -28.0, 0.0), (0.0, 0.0, 1.5708)),
+    ("wrist_flex", (-134.9, 5.2, 0.0), (0.0, 0.0, -1.5708)),
+    ("wrist_roll", (0.0, -61.1, 18.1), (1.5708, 0.0486795, 3.14159)),
+)
+URDF_TCP = ((-7.9, -0.218121, -98.1274), (0.0, 3.14159, 0.0))     # gripper_link → gripper_frame_link(무는 자리, z = 찌르는 방향)
+TIP_MM = 15.0                                                     # 무는 자리에서 손끝까지(안전 여유용 어림)
+
 DEFAULT = {
-    "sgn_pan": 1.0, "sgn_roll": 1.0, "roll_scale": 1.0,
+    "sgn_pan": 1.0, "sgn_lift": 1.0, "sgn_elbow": 1.0, "sgn_wrist": 1.0, "sgn_roll": 1.0, "roll_scale": 1.0,
     "off_lift": 0.0, "off_elbow": 0.0, "off_wrist": 0.0,
-    "z0": _G.z0, "d0": _G.d0, "l1": _G.l1, "l2": _G.l2, "l3": _G.l3,
     "sag_lift": 0.0, "sag_elbow": 0.0, "sag_wrist": 0.0,
     "bl_pan": 0.0, "bl_lift": 0.0, "bl_elbow": 0.0, "bl_wrist": 0.0, "bl_roll": 0.0,
     "cam_r": [0.0, 0.0, 0.0], "cam_t": [0.0, 0.0, 0.0],
-    "board_r": [0.0, 0.0, 0.0], "board_t": [0.0, 0.0, 0.0],
+    "board_yaw": 0.0, "board_tilt": [0.0, 0.0], "board_t": [0.0, 0.0, 0.0], "board_flip": -1.0,
     "wall_r": None, "wall_t": None,
     "f_scale": 1.0, "k1": 0.0,
 }
+_SGN = ("sgn_pan", "sgn_lift", "sgn_elbow", "sgn_wrist", "sgn_roll")
 
 
 def rodrigues(r) -> np.ndarray:
@@ -70,6 +87,43 @@ def rotvec(R) -> np.ndarray:
     return np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / (2 * np.sin(th)) * th
 
 
+def _fixed(xyz, rpy) -> np.ndarray:
+    """URDF origin → 4×4. rpy는 고정축 XYZ(= Rz·Ry·Rx)."""
+    r, p, y = rpy
+    T = np.eye(4)
+    T[:3, :3] = rodrigues([0, 0, y]) @ rodrigues([0, p, 0]) @ rodrigues([r, 0, 0])
+    T[:3, 3] = xyz
+    return T
+
+
+_F = [_fixed(xyz, rpy) for _, xyz, rpy in URDF]
+_F_TCP = _fixed(*URDF_TCP)
+PAN_XY = _F[0][:2, 3].copy()                   # pan 축이 base_link 원점에서 비켜 있다(x 38.8mm)
+
+
+def tick_map(cal: dict, cart: dict):
+    """`Calib.to_deg` 도 → 서보 눈금 도.  q = A·deg + B  (관절 5개).
+
+    ⚠ **팔 드라이버가 주는 값은 이미 도(度)다** — lerobot `SOFollowerRobotConfig.use_degrees` 기본값이 True라
+      읽음값 = (틱 − 범위 가운데)·360/4095 이다(2026-11-12 젯슨 설치본에서 확인). 그런데 `arm_calib.Calib.to_deg`는
+      그 값을 −100..100 정규값으로 보고 `per = 범위폭/200`을 한 번 더 곱한다 → to_deg의 도는 실제보다
+      pan ×1.217 · lift ×1.029 · elbow ×1.033 · wrist ×1.039 크다(roll만 0.999로 실측해 덮어써 뒀다).
+      평면 모형이 링크를 7% 짧게, 책상을 13° 기울게 푼 것이 이 눈금 오차를 메우던 것이다.
+      그래서 여기서는 to_deg를 **되돌려**(읽음값 = zero + sign·(deg − ref)/per) 눈금에서 바로 도를 만든다."""
+    A, B = [], []
+    over = cart.get("deg_per_norm") or {}
+    for j in J:
+        v = (cart.get("signs") or {}).get(j)
+        sg = -1.0 if (v is not None and float(v) < 0) else 1.0
+        ref, zero = float(cart["ref_deg"].get(j, 0.0)), float(cart["zero"].get(j, 0.0))
+        mn, mx = float(cal[j]["range_min"]), float(cal[j]["range_max"])
+        per = abs(float(over[j])) if over.get(j) else (mx - mn) * 360.0 / 4096.0 / 200.0
+        k = 4095.0 / 4096.0                                     # lerobot은 360/4095로 나눈다
+        A.append(sg / per * k)
+        B.append((zero - sg * ref / per) * k + ((mn + mx) / 2.0 - 2048.0) * 360.0 / 4096.0)
+    return np.array(A), np.array(B)
+
+
 def board_points(spec: dict, scale: float) -> np.ndarray:
     """ChArUco 안쪽 모서리 id → 보드 좌표(mm). OpenCV 규약: id = 행×(nx−1)+열, 자리 = ((열+1)·칸, (행+1)·칸, 0)."""
     sq = spec["square_mm"] * scale
@@ -77,42 +131,59 @@ def board_points(spec: dict, scale: float) -> np.ndarray:
                      for r in range(spec["ny"] - 1) for c in range(spec["nx"] - 1)])
 
 
-def chain(P: dict, deg, dirs=None) -> dict:
-    """관절 읽음값(도, N×5 · `Calib.to_deg` 결과) → 팔 위 점들과 카메라 자세(전부 base 좌표, mm)."""
-    q = np.atleast_2d(np.asarray(deg, float))
+def board_R(P: dict) -> np.ndarray:
+    """보드 틀 → base. 책상 위에 누운 종이: z축이 base ±z(board_flip), 방위 yaw, 기울기는 작은 값."""
+    tx, ty = P["board_tilt"]
+    return rodrigues([0, 0, P["board_yaw"]]) @ rodrigues([tx, ty, 0.0]) @ np.diag([1.0, P["board_flip"], P["board_flip"]])
+
+
+def _rz(th: np.ndarray) -> np.ndarray:
+    T = np.zeros((len(th), 4, 4))
+    c, s = np.cos(th), np.sin(th)
+    T[:, 0, 0], T[:, 0, 1], T[:, 1, 0], T[:, 1, 1], T[:, 2, 2], T[:, 3, 3] = c, -s, s, c, 1.0, 1.0
+    return T
+
+
+def _fk(th: np.ndarray):
+    """관절각(rad, N×5) → (관절 틀 5개(회전 전, N×4×4), gripper_link 틀)."""
+    T = np.broadcast_to(np.eye(4), (len(th), 4, 4))
+    O = []
+    for i in range(5):
+        T = T @ _F[i]
+        O.append(T)
+        T = T @ _rz(th[:, i])
+    return O, T
+
+
+def chain(P: dict, q, dirs=None) -> dict:
+    """서보 눈금 도(N×5) → 팔 위 점들과 카메라 자세(전부 base_link 좌표, mm)."""
+    q = np.atleast_2d(np.asarray(q, float))
     d = np.zeros_like(q) if dirs is None else np.atleast_2d(np.asarray(dirs, float))
-    pan = np.radians(P["sgn_pan"] * q[:, 0] + P["bl_pan"] * d[:, 0])
-    # 처짐: 엔코더가 읽은 각 기준의 중력 토크(자기 자신에 걸린 보정은 2차라 무시)
-    a1n = np.radians(q[:, 1])
-    a2n = a1n + np.radians(q[:, 2])
-    a3n = a2n + np.radians(q[:, 3])
-    tw = M_HAND * HAND_D * np.cos(a3n)
-    te = tw + (M_HAND + M2 / 2) * P["l2"] * np.cos(a2n)
-    tl = te + (M_HAND + M2 + M_ELBOW + M1 / 2) * P["l1"] * np.cos(a1n)
-    a1 = np.radians(q[:, 1] + P["off_lift"] - P["sag_lift"] * tl + P["bl_lift"] * d[:, 1])
-    a2 = a1 + np.radians(q[:, 2] + P["off_elbow"] - P["sag_elbow"] * te + P["bl_elbow"] * d[:, 2])
-    a3 = a2 + np.radians(q[:, 3] + P["off_wrist"] - P["sag_wrist"] * tw + P["bl_wrist"] * d[:, 3])
-    roll = np.radians(P["sgn_roll"] * P["roll_scale"] * q[:, 4] + P["bl_roll"] * d[:, 4])
-    cp, sp, z = np.cos(pan), np.sin(pan), np.zeros(len(q))
-
-    def at(r, h):
-        return np.stack([r * cp, r * sp, h], axis=1)
-
-    r1 = P["d0"] + P["l1"] * np.cos(a1)
-    z1 = P["z0"] + P["l1"] * np.sin(a1)
-    r2, z2 = r1 + P["l2"] * np.cos(a2), z1 + P["l2"] * np.sin(a2)
-    r3, z3 = r2 + P["l3"] * np.cos(a3), z2 + P["l3"] * np.sin(a3)
-    approach = np.stack([np.cos(a3) * cp, np.cos(a3) * sp, np.sin(a3)], axis=1)
-    lateral = np.stack([-sp, cp, z], axis=1)
-    up = np.stack([-np.sin(a3) * cp, -np.sin(a3) * sp, np.cos(a3)], axis=1)
-    cr, sr = np.cos(roll)[:, None], np.sin(roll)[:, None]
-    lat, upr = lateral * cr + up * sr, -lateral * sr + up * cr
-    R_bt = np.stack([approach, lat, upr], axis=2)                 # 열 = approach·lateral·up
-    tcp = at(r3, z3)
-    R_tc, t_tc = rodrigues(P["cam_r"]), np.asarray(P["cam_t"], float)
-    return {"shoulder": at(np.full(len(q), P["d0"]), np.full(len(q), P["z0"])), "elbow": at(r1, z1),
-            "wrist": at(r2, z2), "tcp": tcp, "tip": tcp + 35.0 * approach,
-            "R_bt": R_bt, "R_bc": R_bt @ R_tc, "t_bc": tcp + R_bt @ t_tc}
+    sg = np.array([P[k] for k in _SGN])
+    off = np.array([0.0, P["off_lift"], P["off_elbow"], P["off_wrist"], 0.0])
+    bl = np.array([P["bl_pan"], P["bl_lift"], P["bl_elbow"], P["bl_wrist"], P["bl_roll"]])
+    scale = np.array([1.0, 1.0, 1.0, 1.0, P["roll_scale"]])
+    deg = sg * q * scale + off + bl * d
+    sag = np.array([P["sag_lift"], P["sag_elbow"], P["sag_wrist"]])
+    if np.any(sag != 0.0):                                      # 처짐: 처짐 없는 자세에서 중력 토크를 재서 한 번 고친다
+        O, Tg = _fk(np.radians(deg))
+        p = [o[:, :3, 3] for o in O]
+        tcp = (Tg @ _F_TCP)[:, :3, 3]
+        hand = tcp - p[3]
+        hand = p[3] + HAND_D * hand / np.linalg.norm(hand, axis=1, keepdims=True)
+        mass = ((M1, (p[1] + p[2]) / 2), (M_ELBOW, p[2]), (M2, (p[2] + p[3]) / 2), (M_HAND, hand))
+        down = np.array([0.0, 0.0, -1.0])
+        for k, (i, outer) in enumerate(((1, mass), (2, mass[2:]), (3, mass[3:]))):     # 관절 i보다 바깥쪽 질량만
+            tau = sum(m * np.einsum("nj,nj->n", np.cross(x - p[i], down), O[i][:, :3, 2]) for m, x in outer)
+            deg[:, i] = deg[:, i] + sag[k] * tau
+    O, Tg = _fk(np.radians(deg))
+    Tt = Tg @ _F_TCP
+    R_g, p_g = Tg[:, :3, :3], Tg[:, :3, 3]
+    tcp = Tt[:, :3, 3]
+    R_gc, t_gc = rodrigues(P["cam_r"]), np.asarray(P["cam_t"], float)
+    return {"shoulder": O[1][:, :3, 3], "elbow": O[2][:, :3, 3], "wrist": O[3][:, :3, 3], "roll": O[4][:, :3, 3],
+            "tcp": tcp, "tip": tcp + TIP_MM * Tt[:, :3, 2], "R_bt": R_g, "p_g": p_g,
+            "R_bc": R_g @ R_gc, "t_bc": p_g + R_g @ t_gc}
 
 
 def project(P: dict, intr: dict, R_bc, t_bc, X_base, idx=None):
@@ -131,69 +202,86 @@ def project(P: dict, intr: dict, R_bc, t_bc, X_base, idx=None):
 
 
 def target_base(P: dict, which: str, pts_local) -> np.ndarray:
-    return np.asarray(pts_local, float) @ rodrigues(P[which + "_r"]).T + np.asarray(P[which + "_t"], float)
+    R = board_R(P) if which == "board" else rodrigues(P[which + "_r"])
+    return np.asarray(pts_local, float) @ R.T + np.asarray(P[which + "_t"], float)
 
 
 def scene(P: dict, spec: dict, scale: float, dots_wh=None) -> dict:
-    """트윈 3D 미리보기에 그릴 장면 — 책상 평면·보드 종이·(알면) 벽 종이. 사각형 꼭짓점 mm.
-
-    ⚠ 좌표는 **도면 FK 좌표**다(조작대 JS의 fk()·kinematics.forward가 그리는 그 틀). 실물이 FK와 거울상이면
-      (sgn_pan < 0) 실제 좌표의 y를 뒤집어 준다 — 그래야 도면 FK로 그린 팔과 장면이 서로 맞는다. `mirror`가 그걸 알린다.
-    """
+    """트윈 3D 미리보기에 그릴 장면(base_link 좌표 mm) — 책상 평면·보드 종이·(알면) 벽 종이의 사각형 꼭짓점."""
     sq = spec["square_mm"] * scale
     W, H = spec["nx"] * sq, spec["ny"] * sq
-    Rb, tb = rodrigues(P["board_r"]), np.asarray(P["board_t"], float)
+    Rb, tb = board_R(P), np.asarray(P["board_t"], float)
     board = target_base(P, "board", [[0, 0, 0], [W, 0, 0], [W, H, 0], [0, H, 0]])
-    n = Rb[:, 2]
-    foot = -(n @ (np.zeros(3) - tb)) * n                        # pan 축 발치(원점)를 책상 평면에 내린 점
+    up = Rb[:, 2] if Rb[2, 2] > 0 else -Rb[:, 2]
+    foot = np.array([PAN_XY[0], PAN_XY[1], 0.0])
+    foot = foot - ((foot - tb) @ up) * up                        # pan 축 발치를 책상 평면에 내린 점
     c = (board.mean(axis=0) + foot) / 2
-    ex, ey = Rb[:, 0], Rb[:, 1]
-    up = n if n @ (np.array([P["d0"], 0.0, P["z0"]]) - tb) > 0 else -n
-    table = np.array([c + a * 380 * ex + b * 380 * ey - 1.0 * up for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1))])
+    table = np.array([c + a * 380 * Rb[:, 0] + b * 380 * Rb[:, 1] - 1.0 * up for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1))])
     quads = [{"name": "table", "pts": table, "color": 0x6b7785, "opacity": 0.35},
              {"name": "board", "pts": board + 0.5 * up, "color": 0xf4f4f4, "opacity": 0.95}]
     if P.get("wall_r") is not None and dots_wh:
         w, h = dots_wh
         quads.append({"name": "wall", "color": 0xfff3c4, "opacity": 0.95,
                       "pts": target_base(P, "wall", [[-25, -25, 0], [w + 25, -25, 0], [w + 25, h + 25, 0], [-25, h + 25, 0]])})
-    mir = P["sgn_pan"] < 0
-    for q in quads:
-        q["pts"] = (q["pts"] * ([1.0, -1.0, 1.0] if mir else [1.0, 1.0, 1.0])).round(1).tolist()
-    return {"mirror": bool(mir), "quads": quads, "table_n": up.round(4).tolist(),
-            "tilt_deg": round(float(np.degrees(np.arccos(min(1.0, abs(up[2]))))), 1)}
+    for qd in quads:
+        qd["pts"] = np.asarray(qd["pts"]).round(1).tolist()
+    return {"quads": quads, "table_z": round(float(foot[2]), 1),
+            "tilt_deg": round(float(np.degrees(np.arccos(min(1.0, abs(up[2]))))), 2)}
 
 
 def _selftest() -> None:
-    from tomato_picker.hardware.handeye import tool_frame_joints
-    rng = np.random.default_rng(0)
-    for _ in range(50):
-        deg = dict(zip(J, rng.uniform((-90, -10, -10, -90, -150), (90, 170, 170, 90, 150))))
-        for rs in (1.0, -1.0):
-            P = dict(DEFAULT, sgn_roll=rs)
-            c = chain(P, [deg[j] for j in J])
-            T = tool_frame_joints(deg, _G, rs)
-            assert np.allclose(c["R_bt"][0], T.R, atol=1e-9) and np.allclose(c["tcp"][0], T.t, atol=1e-9)
     R = rodrigues([0.3, -1.2, 2.0])
     assert np.allclose(rodrigues(rotvec(R)), R, atol=1e-9)
     assert np.allclose(rodrigues(rotvec(rodrigues([np.pi, 0, 0]))), rodrigues([np.pi, 0, 0]), atol=1e-6)
     try:                                                        # 모서리 번호 규약이 OpenCV와 같은가(cv2가 있으면)
         import cv2
-        spec = {"nx": 5, "ny": 7, "square_mm": 35.0, "marker_mm": 26.0}
         b = cv2.aruco.CharucoBoard((5, 7), 35.0 * 0.945, 26.0 * 0.945,
                                    cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50))
-        assert np.allclose(b.getChessboardCorners(), board_points(spec, 0.945), atol=1e-4)
+        assert np.allclose(b.getChessboardCorners(), board_points({"nx": 5, "ny": 7, "square_mm": 35.0}, 0.945), atol=1e-4)
     except ImportError:
         pass
-    # 거울: FK(−pan, −roll) = S·FK(pan, roll)·S  (S = y 뒤집기)
-    q = np.array([[20.0, 50, 60, -30, 40]])
-    a, b = chain(DEFAULT, q), chain(dict(DEFAULT, sgn_pan=-1.0, sgn_roll=-1.0), q)
-    S = np.diag([1.0, -1.0, 1.0])
-    assert np.allclose(b["R_bt"][0], S @ a["R_bt"][0] @ S, atol=1e-9) and np.allclose(b["tcp"][0], S @ a["tcp"][0])
+    # URDF 사슬: 0 자세에서 어깨 축 높이 = 62.4+54.2, 상완·전완 길이 = CAD 값, pan은 PAN_XY 둘레의 수직축 회전
+    c0 = chain(DEFAULT, np.zeros((1, 5)))
+    assert abs(c0["shoulder"][0, 2] - 116.6) < 1e-3, c0["shoulder"]
+    assert abs(np.linalg.norm(c0["elbow"][0] - c0["shoulder"][0]) - np.hypot(112.57, 28.0)) < 1e-6
+    assert abs(np.linalg.norm(c0["wrist"][0] - c0["elbow"][0]) - np.hypot(134.9, 5.2)) < 1e-6
+    q = np.array([[25.0, 40.0, -30.0, 20.0, 50.0]])
+    a, b = chain(DEFAULT, q), chain(DEFAULT, q + [[30.0, 0, 0, 0, 0]])
+    for k in ("elbow", "wrist", "tcp"):
+        ra, rb = a[k][0, :2] - PAN_XY, b[k][0, :2] - PAN_XY
+        assert abs(np.linalg.norm(ra) - np.linalg.norm(rb)) < 1e-2 and abs(a[k][0, 2] - b[k][0, 2]) < 1e-2, k   # URDF의 π가 3.14159로 잘려 있다
+        ang = np.degrees(np.arctan2(ra[0] * rb[1] - ra[1] * rb[0], ra @ rb))
+        assert abs(abs(ang) - 30.0) < 1e-3, ang                 # (URDF pan 축은 아래를 본다 — 부호는 풀이가 정한다)
+    assert np.allclose(a["R_bt"][0] @ a["R_bt"][0].T, np.eye(3), atol=1e-9)
+    # lift·elbow·wrist는 한 평면 안에서 돈다(축이 서로 나란하다) — roll만 그 평면 밖
+    O, _ = _fk(np.radians(q))
+    assert all(abs(abs(O[1][0, :3, 2] @ O[i][0, :3, 2]) - 1.0) < 1e-4 for i in (2, 3))
+    # 처짐: 수평으로 뻗으면 중력 쪽으로(끝이 내려간다), 양의 compliance에서
+    flat = min((chain(DEFAULT, [[0.0, l, e, 0.0, 0.0]])["tcp"][0, 2], l, e) for l in range(-90, 91, 10) for e in range(-90, 91, 10))
+    hi = max((np.hypot(*(chain(DEFAULT, [[0.0, l, e, 0.0, 0.0]])["tcp"][0, :2] - PAN_XY)), l, e)
+             for l in range(-90, 91, 10) for e in range(-90, 91, 10))
+    qs = [[0.0, hi[1], hi[2], 0.0, 0.0]]
+    z0 = chain(DEFAULT, qs)["tcp"][0, 2]
+    z1 = chain(dict(DEFAULT, sag_lift=0.03, sag_elbow=0.03, sag_wrist=0.03), qs)["tcp"][0, 2]
+    assert z1 < z0 - 1.0, (z0, z1, flat)
+    # tick_map: 젯슨 실값(2026-11-12)으로 왕복 — 정규값 0 ↔ 범위 가운데 틱
+    cal = {"shoulder_pan": {"range_min": 560, "range_max": 3330}, "shoulder_lift": {"range_min": 1009, "range_max": 3350},
+           "elbow_flex": {"range_min": 808, "range_max": 3159}, "wrist_flex": {"range_min": 735, "range_max": 3099},
+           "wrist_roll": {"range_min": 0, "range_max": 4095}}
+    cart = {"zero": {"shoulder_pan": -11.516, "shoulder_lift": -18.242, "elbow_flex": -60.352, "wrist_flex": -1.758, "wrist_roll": 0.0},
+            "ref_deg": {"shoulder_lift": 90.0}, "signs": {}, "deg_per_norm": {"wrist_roll": 0.999}}
+    A, B = tick_map(cal, cart)
+    per = (3350 - 1009) * 360.0 / 4096.0 / 200.0
+    read = 30.0                                                 # 드라이버가 준 값(도) = (틱 − 가운데)·360/4095
+    tick = (1009 + 3350) / 2 + read * 4095 / 360
+    to_deg = 90.0 + (read - (-18.242)) * per                    # Calib.to_deg가 그 값을 바꿔 놓은 도
+    assert abs(A[1] * to_deg + B[1] - (tick - 2048) * 360 / 4096) < 1e-9
+    assert abs(A[4] * (50.0 * 0.999) + B[4] - (2047.5 + 50.0 * 4095 / 360 - 2048) * 360 / 4096) < 1e-9
     uv, zc = project(DEFAULT, {"fx": 400.0, "fy": 400.0, "ppx": 320.0, "ppy": 240.0},
                      np.eye(3)[None], np.zeros((1, 3)), [[10.0, -20.0, 100.0]])
     assert np.allclose(uv, [[360.0, 160.0]]) and zc[0] == 100.0
-    sc = scene(dict(DEFAULT, sgn_pan=-1.0, board_t=[200.0, 50.0, -10.0]), {"nx": 5, "ny": 7, "square_mm": 35.0}, 1.0)
-    assert sc["mirror"] and sc["quads"][1]["pts"][0] == [200.0, -50.0, -9.5] and sc["tilt_deg"] == 0.0, sc
+    sc = scene(dict(DEFAULT, board_t=[200.0, 50.0, -10.0]), {"nx": 5, "ny": 7, "square_mm": 35.0}, 1.0)
+    assert sc["tilt_deg"] == 0.0 and sc["table_z"] == -10.0 and sc["quads"][1]["pts"][0] == [200.0, 50.0, -9.5], sc
     print("kincal_model OK")
 
 
