@@ -268,7 +268,7 @@ def target_base(P: dict, which: str, pts_local) -> np.ndarray:
     return np.asarray(pts_local, float) @ R.T + np.asarray(P[which + "_t"], float)
 
 
-def scene(P: dict, spec: dict, scale: float, dots_wh=None) -> dict:
+def scene(P: dict, spec: dict, scale: float, wall_half: float | None = None, wallplane: dict | None = None) -> dict:
     """트윈 3D 미리보기에 그릴 장면(base_link 좌표 mm) — 책상 평면·보드 종이·(알면) 벽 종이의 사각형 꼭짓점."""
     sq = spec["square_mm"] * scale
     W, H = spec["nx"] * sq, spec["ny"] * sq
@@ -281,10 +281,18 @@ def scene(P: dict, spec: dict, scale: float, dots_wh=None) -> dict:
     table = np.array([c + a * 380 * Rb[:, 0] + b * 380 * Rb[:, 1] - 1.0 * up for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1))])
     quads = [{"name": "table", "pts": table, "color": 0x6b7785, "opacity": 0.35},
              {"name": "board", "pts": board + 0.5 * up, "color": 0xf4f4f4, "opacity": 0.95}]
-    if P.get("wall_r") is not None and dots_wh:
-        w, h = dots_wh
+    if wallplane:                                               # 깊이로 찾은 벽 — 책상과 만나는 선에서 위로 350mm
+        nw, dw = np.asarray(wallplane["n"], float), float(wallplane["d"])
+        along = np.cross(up, nw)
+        along = along / np.linalg.norm(along)
+        o = c + (dw - nw @ c) * nw                              # 책상 가운데를 벽 평면에 내린 점
+        o = o - ((o - tb) @ up) * up
+        quads.append({"name": "wallplane", "color": 0xcfc8b8, "opacity": 0.3,
+                      "pts": np.array([o - 380 * along, o + 380 * along, o + 380 * along + 350 * up, o - 380 * along + 350 * up])})
+    if P.get("wall_r") is not None and wall_half:               # 벽의 마커 종이(마커 중심이 원점)
+        hh = wall_half * 1.25
         quads.append({"name": "wall", "color": 0xfff3c4, "opacity": 0.95,
-                      "pts": target_base(P, "wall", [[-25, -25, 0], [w + 25, -25, 0], [w + 25, h + 25, 0], [-25, h + 25, 0]])})
+                      "pts": target_base(P, "wall", [[-hh, -hh, 0], [hh, -hh, 0], [hh, hh, 0], [-hh, hh, 0]])})
     for qd in quads:
         qd["pts"] = np.asarray(qd["pts"]).round(1).tolist()
     return {"quads": quads, "table_z": round(float(foot[2]), 1),

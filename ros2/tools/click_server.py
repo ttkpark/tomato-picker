@@ -121,7 +121,8 @@ def _kin_constants() -> dict:
             m = json.load(open(os.environ.get("TOMATO_KINCAL") or os.path.expanduser("~/twin/kincal.json"),
                                encoding="utf-8"))
             P = m["P"]
-            scene = km.scene(P, m["charuco"], m["print_scale"], m.get("dots_mm"))
+            scene = km.scene(P, m["charuco"], m["print_scale"], 80.0 * m["print_scale"] if m.get("wall") else None,
+                             m.get("wallplane"))
             cam = [[0.0] * 4 for _ in range(4)]
             Rc = km.rodrigues(P["cam_r"])
             for r in range(3):

@@ -59,7 +59,7 @@ CLEAR = {"elbow": 50.0, "wrist": 45.0, "roll": 40.0, "tcp": 35.0, "tip": 30.0, "
 class Planner:
     """모형(P)으로 '이 자세가 안전한가 · 표적이 보이나'를 한꺼번에(N자세) 계산한다. 자세는 `Calib.to_deg` 도로 받는다."""
 
-    def __init__(self, P: dict, intr: dict, cal: dict, cart: dict, wallplane: dict | None = None):
+    def __init__(self, P: dict, intr: dict, cal: dict, cart: dict, wallplane: dict | None = None, wall_pts=None):
         self.P, self.intr = P, intr
         self.A, self.B = km.tick_map(cal, cart)
         self.board = km.target_base(P, "board", km.board_points(tc.CHARUCO, tc.PRINT_SCALE))
@@ -79,10 +79,7 @@ class Planner:
             for a in (Rb[:, 0], Rb[:, 1]):
                 a = a if a @ self.u >= 0 else -a
                 self.walls.append((a, float((self.board @ a).max()) - 10.0))
-        self.wall_pts = None
-        if P.get("wall_r") is not None:
-            w, h = tc.EXPECT_W, tc.EXPECT_H
-            self.wall_pts = km.target_base(P, "wall", [[0, 0, 0], [w, 0, 0], [0, h, 0], [w, h, 0]])
+        self.wall_pts = None if wall_pts is None else np.asarray(wall_pts, float)   # 벽 마커의 네 모서리(풀이가 찾은 것)
 
     def chain(self, deg) -> dict:
         return km.chain(self.P, self.A * np.atleast_2d(deg) + self.B)
@@ -157,7 +154,7 @@ def main() -> int:
     if args.model:
         model = json.load(open(os.path.expanduser(args.model)))
         plan = Planner(model["P"], intr, json.load(open(arm_calib.CAL)), json.load(open(arm_calib.CART)),
-                       model.get("wallplane"))
+                       model.get("wallplane"), (model.get("wall") or {}).get("wall_pts"))
     visited = np.array([json.loads(line)["deg"] for d in args.near
                         for line in open(os.path.join(os.path.expanduser(d), "samples.jsonl"), encoding="utf-8")]
                        or np.zeros((0, 5)))
@@ -270,7 +267,7 @@ def main() -> int:
     hub = park
     if plan is not None:
         cand = draw(40000)
-        good = (plan.margin(cand) > 30.0) & (plan.seen(cand) >= 16)
+        good = (plan.margin(cand) > 5.0) & (plan.seen(cand) >= 14)     # 여유가 가장 큰 것을 아래서 고른다(여유엔 토크 항도 섞여 있다)
         if not good.any():
             print("❌ 모형으로는 안전하면서 보드가 보이는 자세가 없다 — 모형이 틀렸다.")
             io.hold_close()

@@ -13,7 +13,9 @@ J="server@100.85.187.87"; K="-i /c/Users/parkg/.ssh/id_ed25519 -o ConnectTimeout
 D=data/kincal
 export PYTHONIOENCODING=utf-8
 
-pull() { mkdir -p "$D/$1"; scp $K -q "$J:kincal/$1/samples.jsonl" "$J:kincal/$1/session.json" "$D/$1/"; }
+# 사진은 한 번만(세션이 끝난 뒤) 통째로 — 벽 마커 독립 검증과 겹쳐 그리기가 사진을 본다. 실패해도 풀이는 간다.
+pull() { mkdir -p "$D/$1"; scp $K -q "$J:kincal/$1/samples.jsonl" "$J:kincal/$1/session.json" "$D/$1/" || return 1
+         [ -e "$D/$1/img.done" ] || { scp $K -q -r "$J:kincal/$1/img" "$D/$1/" && touch "$D/$1/img.done"; } || true; }
 
 while :; do
   for s in "${SES[@]}"; do pull "$s" || { echo "가져오기 실패 $s"; exit 1; }; done

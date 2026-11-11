@@ -58,7 +58,6 @@ def load(dirs: list) -> dict:
     """세션 폴더들 → 관측 배열. 관절은 수집기가 적은 `deg`(read2를 그 세션 보정표로 바꾼 도)를 서보 눈금 도 q로 옮겨 쓴다."""
     q, dr, uv, cid, fidx, meta = [], [], [], [], [], []
     servo = []                                                  # (지령 도, 읽음 도, 접근 방향) — 보드가 안 보여도 쓴다
-    wall = []                                                   # (q, 접근 방향, 벽 점 화소들, 세션, 번호) — 보드가 안 보인 장의 검은 점
     ses = None
     for d in dirs:
         s = json.load(open(os.path.join(d, "session.json"), encoding="utf-8"))
@@ -73,8 +72,6 @@ def load(dirs: list) -> dict:
             servo.append((r["goal_deg"], r["deg"], r["dirs"]))
             qq = (Am * np.array(r["deg"]) + Bm).tolist()
             if len(r["ch"]) < MIN_CORNERS:
-                if 3 <= len(r.get("dots", [])) <= 4:
-                    wall.append((qq, r["dirs"], r["dots"], d, r["i"]))
                 continue
             k = len(q)
             q.append(qq)
@@ -87,7 +84,7 @@ def load(dirs: list) -> dict:
     if ses is None or not q:
         raise SystemExit("쓸 표본이 없다")
     return {"q": np.array(q), "dirs": np.array(dr), "uv": np.array(uv), "cid": np.array(cid),
-            "fidx": np.array(fidx), "meta": meta, "intr": ses["intrinsics"], "ses": ses, "servo": np.array(servo), "wall": wall,
+            "fidx": np.array(fidx), "meta": meta, "intr": ses["intrinsics"], "ses": ses, "servo": np.array(servo),
             "bp": km.board_points(ses["charuco"], ses["print_scale"])}
 
 
@@ -318,83 +315,99 @@ def servo_fit(Dt, quiet=False) -> dict:
     return out
 
 
-def wall_fit(M: dict, Dt: dict, quiet=False):
-    """**벽 4점 종이 = 독립 검증.** 팔·카메라 모형(M)은 책상 보드만으로 맞춘 그대로 두고, 벽 종이의 자세 6개만 푼다.
-    그러고도 벽 점이 예측 자리에 찍히면 모형이 보드에 끼워 맞춘 게 아니라 **다른 방향·다른 거리에서도 맞는다**는 뜻이다.
-    점 이름은 모른다(화면엔 점 3~4개뿐) — 예측 4점과 가장 싸게 짝짓고, 12px 넘게 어긋나는 장은 표적이 아닌 것으로 버린다."""
-    import itertools
+MARKER_ID, MARKER_MM = 49, 160.0     # 벽의 HOME 마커(docs/aruco/home_floor.pdf, DICT_4X4_50) — 인쇄 배율은 세션 값을 곱한다
+
+
+def marker_fit(M: dict, dirs: list, quiet=False):
+    """**벽의 ArUco 마커 = 독립 검증.** 팔·카메라 모형(M)은 책상 보드만으로 맞춘 그대로 두고, 벽 마커의 자세 6개만 푼다.
+    그러고도 마커 네 모서리가 예측 자리에 찍히면, 모형이 보드에 끼워 맞춘 게 아니라 **다른 평면·다른 방향·다른 거리에서도 맞는다.**
+    마커는 사진에서 다시 찾는다(세션 폴더에 img/가 있어야 한다, 결과는 aruco<id>.json에 적어 두고 다시 쓴다).
+    깊이로 찾은 벽 평면(M["wallplane"])이 있으면 마커가 그 평면 위에 있는지도 본다 — 서로 다른 세 가지 측정이 한 벽을 가리키는가."""
     import cv2
-    W = Dt["wall"]
     say = (lambda *a: None) if quiet else print
-    if len(W) < 6:
-        say("\n[벽] 벽 점이 보인 장이 %d장 — 아직 못 푼다" % len(W))
-        return None
-    P, it = dict(M["P"]), Dt["intr"]
-    c = km.chain(P, np.array([w[0] for w in W]), np.array([w[1] for w in W]))
-    w_mm, h_mm = Dt["ses"]["dots_mm"]
-    L = np.array([[0, 0, 0], [w_mm, 0, 0], [0, h_mm, 0], [w_mm, h_mm, 0.0]])
-    K = np.array([[it["fx"], 0, it["ppx"]], [0, it["fy"], it["ppy"]], [0, 0, 1.0]])
-    obs = [np.array(w[2]) for w in W]
-
-    def match(Q):
-        """장마다 (예측 4점 중 어느 것, 관측 화소) 짝과 평균 어긋남 px."""
-        X = km.target_base(Q, "wall", L)
-        out = []
-        for f, o in enumerate(obs):
-            uv, zc = km.project(Q, it, c["R_bc"][f:f + 1], c["t_bc"][f:f + 1], X)
-            if np.any(zc < 30):
-                out.append((None, 1e9))
+    P, it = M["P"], M["intr"]
+    det = cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50))
+    q, dr, obs, tag = [], [], [], []
+    scale = M["print_scale"]
+    for d in dirs:
+        ses = json.load(open(os.path.join(d, "session.json"), encoding="utf-8"))
+        Am, Bm = km.tick_map(ses["cal"], ses["cart"])
+        cache_path = os.path.join(d, "aruco%d.json" % MARKER_ID)
+        cache = json.load(open(cache_path)) if os.path.exists(cache_path) else {}
+        dirty = False
+        for line in open(os.path.join(d, "samples.jsonl"), encoding="utf-8"):
+            r = json.loads(line)
+            key = str(r["i"])
+            if key not in cache:
+                img = cv2.imread(os.path.join(d, r["img"]))
+                if img is None:
+                    continue                                     # 사진을 아직 안 가져왔다 — 다음에 다시 본다
+                mc, mi, _ = det.detectMarkers(img)
+                cache[key] = None if mi is None else next(
+                    (c.reshape(4, 2).tolist() for c, k in zip(mc, mi.ravel()) if int(k) == MARKER_ID), None)
+                dirty = True
+            if cache[key] is None or max(abs(r["read1"][j] - r["read2"][j]) for j in km.J) > MAX_READ_JITTER:
                 continue
-            best = min(((float(np.linalg.norm(uv[list(pm)] - o, axis=1).mean()), pm)
-                        for pm in itertools.permutations(range(4), len(o))), key=lambda t: t[0])
-            out.append((best[1], best[0]))
-        return out
+            q.append(Am * np.array(r["deg"]) + Bm)
+            dr.append(r["dirs"])
+            obs.append(cache[key])
+            tag.append((d, r["i"]))
+        if dirty:
+            json.dump(cache, open(cache_path, "w"))
+    if len(q) < 6:
+        say("\n[벽 마커] ArUco %d가 보인 장이 %d장 — 아직 못 푼다(사진을 가져왔는가)" % (MARKER_ID, len(q)))
+        return None
+    q, dr, obs = np.array(q), np.array(dr), np.array(obs)
+    keep = km.lift_torque(P, q) >= km.ROCK_TAU                  # 밑동이 넘어가는 자세는 여기서도 뺀다
+    q, dr, obs, tag = q[keep], dr[keep], obs[keep], [t for t, k in zip(tag, keep) if k]
+    if len(q) < 6:
+        say("\n[벽 마커] 쓸 수 있는 장이 %d장 — 아직 못 푼다" % len(q))
+        return None
+    c = km.chain(P, q, dr)
+    h = MARKER_MM * scale / 2.0
+    L = np.array([[-h, h, 0], [h, h, 0], [h, -h, 0], [-h, -h, 0.0]])     # OpenCV 마커 모서리 순서(좌상·우상·우하·좌하)
+    K = np.array([[it["fx"] * P["f_scale"], 0, it["ppx"]], [0, it["fy"] * P["f_scale"], it["ppy"]], [0, 0, 1.0]])
+    fi = np.repeat(np.arange(len(q)), 4)
+    li = np.tile(np.arange(4), len(q))
+    o = obs.reshape(-1, 2)
 
-    cands = []
-    for f, o in enumerate(obs):
-        if len(o) != 4:
+    def res(x):
+        Q = dict(P, wall_r=x[:3].tolist(), wall_t=x[3:].tolist())
+        return (km.project(Q, it, c["R_bc"], c["t_bc"], km.target_base(Q, "wall", L)[li], fi)[0] - o).ravel()
+
+    best = None
+    for f in np.linspace(0, len(q) - 1, min(len(q), 12)).astype(int):       # 몇 장에서 초기값을 세워 가장 잘 맞는 것
+        ok, rv, tv = cv2.solvePnP(L, obs[f], K, None, flags=cv2.SOLVEPNP_IPPE_SQUARE)
+        if not ok:
             continue
-        o4 = o[np.lexsort((o[:, 0], o[:, 1]))]                   # 위 둘·아래 둘
-        o4 = np.vstack([o4[:2][np.argsort(o4[:2, 0])], o4[2:][np.argsort(o4[2:, 0])]])
-        for Lc in (L, L[[2, 0, 3, 1]]):                          # 종이가 세로로/가로로 보이는 두 이름 붙이기
-            n, rvs, tvs, _ = cv2.solvePnPGeneric(Lc, o4, K, None, flags=cv2.SOLVEPNP_IPPE)
-            for rv, tv in zip(rvs, tvs):
-                Rbw = c["R_bc"][f] @ cv2.Rodrigues(rv)[0]
-                Q = dict(P, wall_r=km.rotvec(Rbw).tolist(), wall_t=(c["R_bc"][f] @ tv.ravel() + c["t_bc"][f]).tolist())
-                cands.append((sum(1 for _, e in match(Q) if e < 12.0), Q))
-    if not cands:
-        say("\n[벽] 점 4개가 다 보인 장이 없다")
-        return None
-    Q = max(cands, key=lambda t: t[0])[1]
-    for _ in range(3):                                           # 짝짓기 ↔ 맞춤 번갈아
-        mt = match(Q)
-        inl = [f for f, (pm, e) in enumerate(mt) if e < 12.0]
-        if len(inl) < 4:
-            break
-        fi = np.concatenate([[f] * len(obs[f]) for f in inl])
-        li = np.concatenate([list(mt[f][0]) for f in inl])
-        o = np.vstack([obs[f] for f in inl])
-
-        def res(x, Q=Q):
-            Qx = dict(Q, wall_r=x[:3].tolist(), wall_t=x[3:].tolist())
-            return (km.project(Qx, it, c["R_bc"], c["t_bc"], km.target_base(Qx, "wall", L)[li], fi)[0] - o).ravel()
-
-        r = least_squares(res, np.concatenate([Q["wall_r"], Q["wall_t"]]), loss="soft_l1", x_scale=[1, 1, 1, 50, 50, 50])
-        Q = dict(Q, wall_r=r.x[:3].tolist(), wall_t=r.x[3:].tolist())
-    mt = match(Q)
-    inl = [f for f, (pm, e) in enumerate(mt) if e < 12.0]
-    if len(inl) < 4:
-        say("\n[벽] 벽 종이를 못 찾았다(맞는 장 %d/%d)" % (len(inl), len(W)))
-        return None
-    e = np.array([mt[f][1] for f in inl])
+        x0 = np.concatenate([km.rotvec(c["R_bc"][f] @ cv2.Rodrigues(rv)[0]), c["R_bc"][f] @ tv.ravel() + c["t_bc"][f]])
+        r = least_squares(res, x0, loss="soft_l1", f_scale=3.0, x_scale=[1, 1, 1, 50, 50, 50])
+        if best is None or r.cost < best.cost:
+            best = r
+    e = res(best.x).reshape(-1, 4, 2)
+    per = np.sqrt((e ** 2).sum(axis=2).mean(axis=1))
+    Q = dict(P, wall_r=best.x[:3].tolist(), wall_t=best.x[3:].tolist())
+    pts = km.target_base(Q, "wall", L)
+    zc = np.linalg.norm(pts.mean(axis=0) - c["t_bc"], axis=1)
+    mm = float(np.sqrt(((per / it["fx"] * zc) ** 2).mean()))
     n = km.rodrigues(Q["wall_r"])[:, 2]
-    nb = km.board_R(P)[:, 2]
-    ang = float(np.degrees(np.arccos(min(1.0, abs(n @ nb)))))
-    say("\n[벽] 독립 검증 — 벽 종이 자세 6개만 풀고 팔 모형은 그대로: %d/%d장이 맞고 평균 어긋남 %.2f px (최대 %.1f)" % (
-        len(inl), len(W), e.mean(), e.max()))
-    say("  벽 종이 원점 base (%.0f, %.0f, %.0f)mm · 책상 보드와 이루는 각 %.1f° (벽이 책상에 수직이면 90)" % (*Q["wall_t"], ang))
-    return {"wall_r": Q["wall_r"], "wall_t": Q["wall_t"], "frames": len(inl), "of": len(W), "px": float(e.mean()),
-            "angle_to_board_deg": ang}
+    out = {"wall_r": Q["wall_r"], "wall_t": Q["wall_t"], "wall_pts": pts.tolist(), "frames": int(len(q)),
+           "px": float(np.sqrt((per ** 2).mean())), "px_median": float(np.median(per)), "mm": mm,
+           "angle_to_table_deg": float(np.degrees(np.arccos(min(1.0, abs(n @ km.board_R(P)[:, 2])))))}
+    say("\n[벽 마커] 독립 검증 — ArUco %d 자세 6개만 풀고 팔 모형은 그대로: %d장 · 모서리 RMS %.2f px(자세별 중앙 %.2f) ≈ 마커 위 %.1f mm · 거리 %d~%dmm" % (
+        MARKER_ID, len(q), out["px"], out["px_median"], mm, zc.min(), zc.max()))
+    msg = "  마커 중심 base (%.0f, %.0f, %.0f)mm · 책상과 이루는 각 %.1f° (벽이 수직이면 90)" % (*Q["wall_t"], out["angle_to_table_deg"])
+    wp = M.get("wallplane")
+    if wp:
+        dist = np.array(wp["n"]) @ pts.T - wp["d"]
+        out["to_depth_wall_mm"] = [float(dist.min()), float(dist.max())]
+        out["angle_to_depth_wall_deg"] = float(np.degrees(np.arccos(min(1.0, abs(n @ np.array(wp["n"]))))))
+        msg += " · 깊이로 찾은 벽 평면까지 %+.0f~%+.0fmm, 그 평면과 %.1f° (같은 벽이면 0mm·0°)" % (
+            dist.min(), dist.max(), out["angle_to_depth_wall_deg"])
+    say(msg)
+    worst = np.argsort(-per)[:4]
+    say("  가장 나쁜 장: " + ", ".join("%s#%d %.1fpx" % (os.path.basename(os.path.normpath(tag[f][0])), tag[f][1], per[f]) for f in worst))
+    return out
 
 
 def overlay(M: dict, Dt: dict, out: str, n: int = 9) -> None:
@@ -480,11 +493,11 @@ def main() -> int:
         ap.error("세션 폴더를 달라")
     Dt = load(a.dirs)
     M = solve(Dt, a.stage)
-    M["wall"] = wall_fit(M, Dt)
-    if M["wall"]:
-        M["P"]["wall_r"], M["P"]["wall_t"] = M["wall"]["wall_r"], M["wall"]["wall_t"]
     if a.wallplane:
         M["wallplane"] = json.load(open(a.wallplane))
+    M["wall"] = marker_fit(M, a.dirs)
+    if M["wall"]:
+        M["P"]["wall_r"], M["P"]["wall_t"] = M["wall"]["wall_r"], M["wall"]["wall_t"]
     if a.overlay:
         overlay(M, Dt, a.overlay)
     if a.out:
