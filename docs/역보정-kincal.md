@@ -72,6 +72,10 @@ sudo systemctl start click-server
 실제 사진과 같은 관절값에서 그린 화면의 보드 모서리 차이 = 중앙 1.4~4.0px(5장), 실기 검출기(`target_check`)가 트윈 화면에서 그대로 돈다.
 ⚠ 그리는 건 모형이 아는 평면(책상·보드·벽·HOME 마커)뿐 — 집게 손가락·토마토·조명·깊이 잡음은 없다. 기하는 믿고, 검출 성패는 실기에서.
 
+**기존 손-눈 풀이기로도 확인했다**(11/12 오후, [`kincal_export.py`](../ros2/tools/kincal_export.py) → `handeye_resolve.py`, 같은 80표본·평면 FK 그대로):
+옛 눈금 잔차 9.1mm → **고친 눈금 3.5mm**(거울 · roll +1 · |t| 89mm). 지금 실기의 `~/arm_eye.json`은 13.9mm(9/4, 7표본).
+적용 준비물: 도(度)로 박힌 자세 환산 = [`docs/kincal/conv_deg_scale.py`](kincal/conv_deg_scale.py)(시험 실행만 함 — `--apply`는 젯슨 설정과 **같이**).
+
 실기 반영은 **아직 안 했다**(11/12 사용자: 다른 팀이 팔을 다 쓰고 준비되면 적용). 순서 제안:
 1. ①은 설정 한 군데로 고친다 — `~/arm_cartesian.json`의 `deg_per_norm`에 다섯 관절 다 `0.99976`(=4095/4096). ⚠ 영점·프리셋·
    3D 좌표 이동의 각도 뜻이 바뀌므로 영점을 다시 잡고(`/settings`) 자체검증을 돌린 뒤에.
