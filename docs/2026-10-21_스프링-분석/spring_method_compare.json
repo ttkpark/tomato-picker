@@ -1,0 +1,1530 @@
+{
+ "P": {
+  "s": 24.0,
+  "rib_prof": [
+   [
+    0.0,
+    10.0
+   ],
+   [
+    1.0,
+    7.1
+   ],
+   [
+    2.0,
+    5.4
+   ],
+   [
+    3.0,
+    4.3
+   ],
+   [
+    12.7,
+    2.3
+   ]
+  ],
+  "rib_end": 32.3,
+  "notch_x": 30.35,
+  "notch_w": 25.0,
+  "fe": 12.0,
+  "fe_gap": 5.0,
+  "fl": 15.0,
+  "rim_h": 12.7,
+  "ax": 9.0,
+  "half_w": 8.0,
+  "height": 12.7,
+  "eng": 1.5,
+  "sag": 9.0,
+  "mass": 24.0,
+  "mu": 0.2,
+  "zeta": 0.3,
+  "tf": 2.0,
+  "fz": 2.0,
+  "open": 1.5,
+  "only": "",
+  "flat": 0,
+  "fingers": "ends"
+ },
+ "stages": [
+  "1-가 테이블에서 포개기",
+  "1-나 4개 묶음을 칸에 넣기",
+  "2-가 세트 하나를 칸에 넣기",
+  "2-나 칸 안에서 포개기(아래 세트 가운데)",
+  "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)",
+  "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)"
+ ],
+ "rows": [
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=0 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": 1.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=0 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": 0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=0 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dx h=0 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 4.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=3 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 0
+   },
+   "win": 1.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=3 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=3 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dx h=3 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=8 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 0
+   },
+   "win": 1.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=8 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 1
+   },
+   "win": 0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=8 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 2
+   },
+   "win": 0.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dx h=8 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 3.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=12 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 0
+   },
+   "win": 1.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=12 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 1
+   },
+   "win": 0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dy h=12 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 2
+   },
+   "win": 0.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-가 테이블에서 포개기|dx h=12 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top",
+    "flat": 1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12
+   },
+   "win": 3.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=0 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=0 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=0 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dx h=0 yaw=0",
+   "axis": "dx",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 5.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=3 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=3 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 1
+   },
+   "win": 0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=3 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dx h=3 yaw=0",
+   "axis": "dx",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 5.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=8 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=8 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=8 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dx h=8 yaw=0",
+   "axis": "dx",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 5.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=12 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=12 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 1
+   },
+   "win": 2.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dy h=12 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 2
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "1-나 4개 묶음을 칸에 넣기|dx h=12 yaw=0",
+   "axis": "dx",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 12
+   },
+   "win": 6.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=0 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=0 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=0 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dx h=0 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 5.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=3 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=3 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=3 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dx h=3 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 5.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=8 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=8 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=8 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dx h=8 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 5.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=12 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=12 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 1
+   },
+   "win": 2.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dy h=12 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 2
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-가 세트 하나를 칸에 넣기|dx h=12 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "bot"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12
+   },
+   "win": 6.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=0 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": 1.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=0 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": 0.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=0 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dx h=0 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 4.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=3 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 0
+   },
+   "win": 1.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=3 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 1
+   },
+   "win": 0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=3 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dx h=3 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=8 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 0
+   },
+   "win": 1.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=8 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=8 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dx h=8 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 3.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=12 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 0
+   },
+   "win": 1.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=12 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dy h=12 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 2
+   },
+   "win": 1.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 가운데)|dx h=12 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12
+   },
+   "win": 3.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=0 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": 0.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=0 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=0 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dx h=0 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=3 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 3,
+    "yaw": 0
+   },
+   "win": 0.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=3 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 3,
+    "yaw": 1
+   },
+   "win": 0.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=3 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 3,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dx h=3 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 2.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=8 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 8,
+    "yaw": 0
+   },
+   "win": 0.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=8 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 8,
+    "yaw": 1
+   },
+   "win": 0.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=8 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 8,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dx h=8 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=12 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 12,
+    "yaw": 0
+   },
+   "win": 0.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=12 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 12,
+    "yaw": 1
+   },
+   "win": 0.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy h=12 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 12,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dx h=12 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 1.0,
+    "mode": "drop",
+    "h": 12
+   },
+   "win": 2.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=0 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": 0.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=0 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=0 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dx h=0 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=3 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 3,
+    "yaw": 0
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=3 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 3,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=3 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 3,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dx h=3 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 3
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=8 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 8,
+    "yaw": 0
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=8 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 8,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=8 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 8,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dx h=8 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 8
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=12 yaw=0",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 12,
+    "yaw": 0
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=12 yaw=1",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 12,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy h=12 yaw=2",
+   "axis": "dy",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 12,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dx h=12 yaw=0",
+   "axis": "dx",
+   "p": {
+    "only": "top"
+   },
+   "kw": {
+    "by": 2.0,
+    "mode": "drop",
+    "h": 12
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  }
+ ],
+ "best": {
+  "1-가 테이블에서 포개기|dy|0": [
+   1.5,
+   0,
+   "RIB"
+  ],
+  "1-가 테이블에서 포개기|dy|1": [
+   1.0,
+   3,
+   "SKIP"
+  ],
+  "1-가 테이블에서 포개기|dy|2": [
+   0.0,
+   8,
+   "SKIP"
+  ],
+  "1-가 테이블에서 포개기|dx|0": [
+   4.0,
+   0,
+   "SKIP"
+  ],
+  "1-나 4개 묶음을 칸에 넣기|dy|0": [
+   3.0,
+   0,
+   "RIB"
+  ],
+  "1-나 4개 묶음을 칸에 넣기|dy|1": [
+   2.0,
+   12,
+   "RIB"
+  ],
+  "1-나 4개 묶음을 칸에 넣기|dy|2": [
+   1.0,
+   12,
+   "RIB"
+  ],
+  "1-나 4개 묶음을 칸에 넣기|dx|0": [
+   6.0,
+   12,
+   "RIB"
+  ],
+  "2-가 세트 하나를 칸에 넣기|dy|0": [
+   3.0,
+   0,
+   "RIB"
+  ],
+  "2-가 세트 하나를 칸에 넣기|dy|1": [
+   2.0,
+   12,
+   "RIB"
+  ],
+  "2-가 세트 하나를 칸에 넣기|dy|2": [
+   1.0,
+   12,
+   "RIB"
+  ],
+  "2-가 세트 하나를 칸에 넣기|dx|0": [
+   6.0,
+   12,
+   "RIB"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 가운데)|dy|0": [
+   1.5,
+   0,
+   "RIB"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 가운데)|dy|1": [
+   1.0,
+   8,
+   "SKIP"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 가운데)|dy|2": [
+   1.0,
+   12,
+   "SKIP"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 가운데)|dx|0": [
+   4.0,
+   0,
+   "SKIP"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy|0": [
+   0.5,
+   0,
+   "RIB"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy|1": [
+   0.0,
+   3,
+   "SKIP"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dy|2": [
+   -0.5,
+   0,
+   "FINGER"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 1mm 치우침)|dx|0": [
+   3.5,
+   0,
+   "RIB"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy|0": [
+   0.0,
+   0,
+   "RIB"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy|1": [
+   -0.5,
+   0,
+   "SKIP"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dy|2": [
+   -0.5,
+   0,
+   "FINGER"
+  ],
+  "2-나 칸 안에서 포개기(아래 세트 2mm 치우침)|dx|0": [
+   2.5,
+   0,
+   "RIB"
+  ]
+ },
+ "summary": {
+  "1": {
+   "dy0": 1.5,
+   "dy1": 1.0,
+   "dy2": 0.0,
+   "dx0": 4.0
+  },
+  "2": {
+   "dy0": 0.0,
+   "dy1": -0.5,
+   "dy2": -0.5,
+   "dx0": 2.5
+  }
+ }
+}

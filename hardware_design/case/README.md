@@ -1,13 +1,13 @@
 # 케이스 v2 (넓은 몸통 + 각진 바퀴 여유 + 180° 회전판)
 
-원본 = [`tomato_case.scad`](tomato_case.scad) (OpenSCAD 2021.01). 스케치 = [`case-sketch-2026-11-05.png`](../../docs/design/case-sketch-2026-11-05.png). 치수 출처 = [`3D-parts-mapping.md`](../../docs/design/3D-parts-mapping.md).
+원본 = [`tomato_case.scad`](tomato_case.scad) (OpenSCAD 2021.01). 스케치 = [`case-sketch-2026-11-05.png`](../../docs/2026-09-24_케이스-설계/design/case-sketch-2026-11-05.png). 치수 출처 = [`3D-parts-mapping.md`](../../docs/2026-09-24_케이스-설계/design/3D-parts-mapping.md).
 옛 판(폭 151.9, 젯슨 밑 벅부스트)은 git 이력에 있고 지금 로봇에 달려 있다. **아직 출력 전이다.**
 
-![앞](../../docs/design/case-v2-front.png)
-![뒤](../../docs/design/case-v2-rear.png)
-![뚜껑 뗀 모습](../../docs/design/case-v2-inside.png)
+![앞](../../docs/2026-09-24_케이스-설계/design/case-v2-front.png)
+![뒤](../../docs/2026-09-24_케이스-설계/design/case-v2-rear.png)
+![뚜껑 뗀 모습](../../docs/2026-09-24_케이스-설계/design/case-v2-inside.png)
 
-**조립도** = [`case-assembly-guide.html`](../../docs/design/case-assembly-guide.html)(v2, 17단계·분해도·출력물·나사). scad를 고치면 `python hardware_design/case/make_assembly.py`로 다시 만든다(`part="step"` 장면을 OpenSCAD로 뽑는다, 10초).
+**조립도** = [`case-assembly-guide.html`](../../docs/2026-09-24_케이스-설계/design/case-assembly-guide.html)(v2, 17단계·분해도·출력물·나사). scad를 고치면 `python hardware_design/case/make_assembly.py`로 다시 만든다(`part="step"` 장면을 OpenSCAD로 뽑는다, 10초).
 ⚠ `case-render-*.png`는 옛 판 기준이다.
 
 ## 구조 — 몸통 252 × 250 × 104 (상판 위 회전판 윗면까지 141)
@@ -82,7 +82,7 @@
   - 정면 = **2048**(Homing_Offset 1690, 사용자가 정면에 맞춘 자리 — 신뢰 기준). 경계 0/4095는 뒤쪽 180°.
   - 손으로 잰 끝: raw 581(왼쪽 +129°, 여유 있음) · raw 3138(오른쪽 −96°, 끝). **Min/Max_Position_Limit = 1024/3072 (±90°)**.
   - **raw가 늘면 위에서 봐 시계방향(오른쪽)** — 소프트웨어 각은 pan과 같게 왼쪽 +라 부호를 뒤집는다(`follower_io._YAW_SIGN`).
-  - ⚠ **2048(사용자가 정한 '정면')의 팔은 주행 정면(Astra 쪽)이 아니라 차체 오른쪽 ≈−90°를 본다**(2026-10-23 손목 화면 9각도 실측, docs/작업판-2026-10-23.md). 주행 정면은 회전판 ≈+90°(한계 끝).
+  - ⚠ **2048(사용자가 정한 '정면')의 팔은 주행 정면(Astra 쪽)이 아니라 차체 오른쪽 ≈−90°를 본다**(2026-10-23 손목 화면 9각도 실측, docs/2026-10-22_공간지도-집안탐색/2026-10-23_작업판.md). 주행 정면은 회전판 ≈+90°(한계 끝).
   - ⚠ **스토퍼 핀은 조립 전에 부러져 없다** — 기계식 멈춤이 없으므로 서보 한계(EEPROM)가 유일한 하드 리밋이다.
 - 출처: [RobotShop STS3215 12V 30kg](https://www.robotshop.com/products/feetech-12v-30kgcm-magnetic-encoding-servo-sts3215) ·
   [Robo9 백래시·반복정밀도 실측](https://robonine.com/testing-of-feetech-sts3215-servomotor-backlash-repeatability-and-torque/)

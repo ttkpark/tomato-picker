@@ -1,0 +1,1892 @@
+{
+ "P": {
+  "s": 24.0,
+  "rib_prof": [
+   [
+    0.0,
+    10.0
+   ],
+   [
+    1.0,
+    7.1
+   ],
+   [
+    2.0,
+    5.4
+   ],
+   [
+    3.0,
+    4.3
+   ],
+   [
+    12.7,
+    2.3
+   ]
+  ],
+  "rib_end": 32.3,
+  "notch_x": 30.35,
+  "notch_w": 25.0,
+  "fe": 12.0,
+  "fe_gap": 5.0,
+  "fl": 15.0,
+  "rim_h": 12.7,
+  "ax": 9.0,
+  "half_w": 8.0,
+  "height": 12.7,
+  "eng": 1.5,
+  "sag": 9.0,
+  "mass": 24.0,
+  "mu": 0.2,
+  "zeta": 0.3,
+  "tf": 2.0,
+  "fz": 2.0,
+  "open": 1.5,
+  "fingers": "ends"
+ },
+ "pitch": 8.47,
+ "L": 279.51000000000005,
+ "rows": [
+  {
+   "tag": "핑거 ends|drop h=0 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=0 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=0 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 ends|drop h=1 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 1,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=1 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 1,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=1 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 1,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 ends|drop h=2 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 2,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=2 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 2,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=2 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 2,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 ends|drop h=3 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=3 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 1
+   },
+   "win": 0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "핑거 ends|drop h=3 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 ends|drop h=5 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 5,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=5 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 5,
+    "yaw": 1
+   },
+   "win": 0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "핑거 ends|drop h=5 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 5,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 ends|drop h=8 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=8 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=8 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 ends|drop h=12 yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=12 yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 1
+   },
+   "win": 2.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|drop h=12 yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 2
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|tilt 4° yaw=0",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "tilt",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|tilt 4° yaw=1",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "tilt",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 ends|tilt 4° yaw=2",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "tilt",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 gaps|drop h=0 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=0 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=0 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=1 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 1,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=1 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 1,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=1 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 1,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "핑거 gaps|drop h=2 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 2,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=2 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 2,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=2 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 2,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=3 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=3 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 1
+   },
+   "win": 0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "핑거 gaps|drop h=3 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=5 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 5,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=5 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 5,
+    "yaw": 1
+   },
+   "win": 0.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "핑거 gaps|drop h=5 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 5,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=8 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=8 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=8 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 2
+   },
+   "win": 0.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=12 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=12 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 1
+   },
+   "win": 2.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|drop h=12 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 2
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|tilt 4° yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "tilt",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|tilt 4° yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "tilt",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 gaps|tilt 4° yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "gaps"
+   },
+   "kw": {
+    "mode": "tilt",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 long|drop h=0 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=0 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=0 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=1 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 1,
+    "yaw": 0
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=1 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 1,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=1 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 1,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=2 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 2,
+    "yaw": 0
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=2 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 2,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=2 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 2,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=3 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 0
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=3 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=3 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=5 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 5,
+    "yaw": 0
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=5 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 5,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=5 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 5,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=8 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 0
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=8 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=8 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|drop h=12 yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 0
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 long|drop h=12 yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 1
+   },
+   "win": 2.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 long|drop h=12 yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 12,
+    "yaw": 2
+   },
+   "win": 1.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "핑거 long|tilt 4° yaw=0",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "tilt",
+    "h": 0,
+    "yaw": 0
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|tilt 4° yaw=1",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "tilt",
+    "h": 0,
+    "yaw": 1
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "핑거 long|tilt 4° yaw=2",
+   "axis": "dy",
+   "p": {
+    "fingers": "long"
+   },
+   "kw": {
+    "mode": "tilt",
+    "h": 0,
+    "yaw": 2
+   },
+   "win": -0.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "길이 방향 오차(ends)|drop h=0",
+   "axis": "dx",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 5.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "길이 방향 오차(ends)|drop h=3",
+   "axis": "dx",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 5.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "길이 방향 오차(ends)|drop h=8",
+   "axis": "dx",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 5.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "길이 방향 오차(ends)|tilt 4°",
+   "axis": "dx",
+   "p": {},
+   "kw": {
+    "mode": "tilt",
+    "h": 0
+   },
+   "win": 5.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=0 v=20",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "v": 20
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=0 v=80",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "v": 80
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=0 v=200",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "v": 200
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=0 v=400",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 0,
+    "v": 400
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=3 v=20",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "v": 20
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=3 v=80",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "v": 80
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=3 v=200",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "v": 200
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=3 v=400",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 3,
+    "v": 400
+   },
+   "win": 2.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=8 v=20",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "v": 20
+   },
+   "win": 2.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=8 v=80",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "v": 80
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=8 v=200",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "v": 200
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "내리는 속도(ends)|drop h=8 v=400",
+   "axis": "dy",
+   "p": {},
+   "kw": {
+    "mode": "drop",
+    "h": 8,
+    "v": 400
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|s=21 drop h=0",
+   "axis": "dy",
+   "p": {
+    "s": 21
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 1.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|s=21 drop h=3",
+   "axis": "dy",
+   "p": {
+    "s": 21
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 1.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|s=21 drop h=8",
+   "axis": "dy",
+   "p": {
+    "s": 21
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 1.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|s=27 drop h=0",
+   "axis": "dy",
+   "p": {
+    "s": 27
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 4.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|s=27 drop h=3",
+   "axis": "dy",
+   "p": {
+    "s": 27
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 4.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|s=27 drop h=8",
+   "axis": "dy",
+   "p": {
+    "s": 27
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 4.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|eng=0.7 drop h=0",
+   "axis": "dy",
+   "p": {
+    "eng": 0.7
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|eng=0.7 drop h=3",
+   "axis": "dy",
+   "p": {
+    "eng": 0.7
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|eng=0.7 drop h=8",
+   "axis": "dy",
+   "p": {
+    "eng": 0.7
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|eng=3.0 drop h=0",
+   "axis": "dy",
+   "p": {
+    "eng": 3.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|eng=3.0 drop h=3",
+   "axis": "dy",
+   "p": {
+    "eng": 3.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|eng=3.0 drop h=8",
+   "axis": "dy",
+   "p": {
+    "eng": 3.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|zeta=0.15 drop h=0",
+   "axis": "dy",
+   "p": {
+    "zeta": 0.15
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|zeta=0.15 drop h=3",
+   "axis": "dy",
+   "p": {
+    "zeta": 0.15
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|zeta=0.15 drop h=8",
+   "axis": "dy",
+   "p": {
+    "zeta": 0.15
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|zeta=0.6 drop h=0",
+   "axis": "dy",
+   "p": {
+    "zeta": 0.6
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.5,
+   "why": "SKIP"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|zeta=0.6 drop h=3",
+   "axis": "dy",
+   "p": {
+    "zeta": 0.6
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|zeta=0.6 drop h=8",
+   "axis": "dy",
+   "p": {
+    "zeta": 0.6
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|mu=0.1 drop h=0",
+   "axis": "dy",
+   "p": {
+    "mu": 0.1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|mu=0.1 drop h=3",
+   "axis": "dy",
+   "p": {
+    "mu": 0.1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|mu=0.1 drop h=8",
+   "axis": "dy",
+   "p": {
+    "mu": 0.1
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|mu=0.4 drop h=0",
+   "axis": "dy",
+   "p": {
+    "mu": 0.4
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|mu=0.4 drop h=3",
+   "axis": "dy",
+   "p": {
+    "mu": 0.4
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|mu=0.4 drop h=8",
+   "axis": "dy",
+   "p": {
+    "mu": 0.4
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|tf=1.0 drop h=0",
+   "axis": "dy",
+   "p": {
+    "tf": 1.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|tf=1.0 drop h=3",
+   "axis": "dy",
+   "p": {
+    "tf": 1.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|tf=1.0 drop h=8",
+   "axis": "dy",
+   "p": {
+    "tf": 1.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|tf=3.0 drop h=0",
+   "axis": "dy",
+   "p": {
+    "tf": 3.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|tf=3.0 drop h=3",
+   "axis": "dy",
+   "p": {
+    "tf": 3.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|tf=3.0 drop h=8",
+   "axis": "dy",
+   "p": {
+    "tf": 3.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|open=1.0 drop h=0",
+   "axis": "dy",
+   "p": {
+    "open": 1.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|open=1.0 drop h=3",
+   "axis": "dy",
+   "p": {
+    "open": 1.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|open=1.0 drop h=8",
+   "axis": "dy",
+   "p": {
+    "open": 1.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|open=3.0 drop h=0",
+   "axis": "dy",
+   "p": {
+    "open": 3.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 2.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|open=3.0 drop h=3",
+   "axis": "dy",
+   "p": {
+    "open": 3.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 2.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|open=3.0 drop h=8",
+   "axis": "dy",
+   "p": {
+    "open": 3.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "FINGER"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|fe=6.0 drop h=0",
+   "axis": "dy",
+   "p": {
+    "fe": 6.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|fe=6.0 drop h=3",
+   "axis": "dy",
+   "p": {
+    "fe": 6.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.0,
+   "why": "SKIP"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|fe=6.0 drop h=8",
+   "axis": "dy",
+   "p": {
+    "fe": 6.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|fe=16.0 drop h=0",
+   "axis": "dy",
+   "p": {
+    "fe": 16.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|fe=16.0 drop h=3",
+   "axis": "dy",
+   "p": {
+    "fe": 16.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|fe=16.0 drop h=8",
+   "axis": "dy",
+   "p": {
+    "fe": 16.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 2.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|half_w=7.5 drop h=0",
+   "axis": "dy",
+   "p": {
+    "half_w": 7.5
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 3.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|half_w=7.5 drop h=3",
+   "axis": "dy",
+   "p": {
+    "half_w": 7.5
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 3.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|half_w=7.5 drop h=8",
+   "axis": "dy",
+   "p": {
+    "half_w": 7.5
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 3.0,
+   "why": "RIB"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|half_w=9.0 drop h=0",
+   "axis": "dy",
+   "p": {
+    "half_w": 9.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 0
+   },
+   "win": 2.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|half_w=9.0 drop h=3",
+   "axis": "dy",
+   "p": {
+    "half_w": 9.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 3
+   },
+   "win": 2.0,
+   "why": "FINGER"
+  },
+  {
+   "tag": "모르는 치수 민감도(ends)|half_w=9.0 drop h=8",
+   "axis": "dy",
+   "p": {
+    "half_w": 9.0
+   },
+   "kw": {
+    "mode": "drop",
+    "h": 8
+   },
+   "win": 1.5,
+   "why": "RIB"
+  },
+  {
+   "tag": "push|vx=50",
+   "out": "OK",
+   "rel": [
+    0.02,
+    0.0,
+    -0.0
+   ],
+   "hop": 0.0
+  },
+  {
+   "tag": "push|vx=100",
+   "out": "OK",
+   "rel": [
+    0.05,
+    0.0,
+    -0.0
+   ],
+   "hop": 0.0
+  },
+  {
+   "tag": "push|vx=200",
+   "out": "OK",
+   "rel": [
+    -1.3,
+    -0.0,
+    -0.0
+   ],
+   "hop": 0.13
+  },
+  {
+   "tag": "push|vx=300",
+   "out": "OK",
+   "rel": [
+    -1.42,
+    0.0,
+    0.0
+   ],
+   "hop": 0.81
+  },
+  {
+   "tag": "push|vx=500",
+   "out": "SKIP",
+   "rel": [
+    -9.77,
+    -0.0,
+    -0.0
+   ],
+   "hop": 3.7
+  },
+  {
+   "tag": "push|vx=700",
+   "out": "SKIP",
+   "rel": [
+    -9.26,
+    -0.0,
+    -0.0
+   ],
+   "hop": 7.44
+  },
+  {
+   "tag": "push|vx=1000",
+   "out": "SKIP",
+   "rel": [
+    -6.99,
+    -0.0,
+    -0.0
+   ],
+   "hop": 16.66
+  }
+ ]
+}

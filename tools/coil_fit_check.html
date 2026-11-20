@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8"><!-- 코일 포갬 간섭 검사: 브라우저로 열면(1~2분) 세트·묶음의 안 뚫는 자세를 RESULT로 찍는다. 결과를 coil-sim.js의 SETP·BZ·BH에 옮긴다. -->
+<pre id="o">계산 중…</pre>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="../docs/2026-10-21_스프링-분석/2026-11-13_coil-sim.js"></script>
+<script>
+const C=CoilSim,P=C.P,D=2*C.R,base=C.centerline(90).map(p=>[p.x,p.y+C.R,p.z]);
+const coil=(f,k)=>{const o=[];for(let i=-k;i<=k;i++)for(const p of base)o.push(f([p[0]+i*P,p[1],p[2]]));return o;};
+const mind=(A,B,dx,dy,dz)=>{let m=1e9;for(const b of B){const x=b[0]+dx,y=b[1]+dy,z=b[2]+dz;for(const a of A){const d=(a[0]-x)**2+(a[1]-y)**2+(a[2]-z)**2;if(d<m)m=d;}}return Math.sqrt(m);};
+const id=p=>p, up=(dx,dy,dz)=>p=>[p[0]+dx,p[1]+dy,p[2]+dz], flip=p=>[-p[0],-p[1],p[2]];
+// 위에서 내려 처음 닿는 높이. dx·dz마다 구한다. floor = B의 가장 낮은 점이 바닥(R) 아래로 못 간다.
+function settle(A,B,y0,dzs,ndx,step){const minB=Math.min(...B.map(b=>b[1]));const all=[];for(let i=0;i<ndx;i++){const dx=i*P/ndx;for(const dz of dzs){let y=y0;if(mind(A,B,dx,y,dz)<D){all.push({dx,dz,dy:null});continue;}while(y+minB-step>=C.R-1e-9&&mind(A,B,dx,y-step,dz)>=D)y-=step;all.push({dx:+dx.toFixed(2),dz,dy:+y.toFixed(2)});}}return all;}
+const rng=(a,b,s)=>{const o=[];for(let v=a;v<=b+1e-9;v+=s)o.push(+v.toFixed(2));return o;};
+const out={};
+// 세트는 축 방향으로 밀어 넣어 만든다(위에서 못 내려온다) → 내려앉기 대신, 겹친 자리 근처에서 안 뚫는 자세 중 가장 덜 어긋난 것을 찾는다.
+const A1=coil(id,2),B1=coil(id,0),c=[];for(let i=0;i<12;i++)for(const dy of rng(0,3,0.25))for(const dz of rng(-2,2,0.25)){const dx=i*P/12,m=mind(A1,B1,dx,dy,dz);if(m>=D)c.push({dx:+dx.toFixed(2),dy,dz,clear:+(m-D).toFixed(2),off:+Math.hypot(dy,dz).toFixed(2)});}
+c.sort((a,b)=>a.off-b.off||b.clear-a.clear);out.set_best=c.slice(0,6);const s=c[0];
+const setA=coil(id,2).concat(coil(up(s.dx,s.dy,s.dz),2)), setB=coil(flip,0).concat(coil(p=>flip(up(s.dx,s.dy,s.dz)(p)),0));
+const s2=settle(setA,setB,32,rng(-5,5,0.5),6,0.1).filter(r=>r.dy!=null);
+out.bundle_by_dz=rng(-5,5,0.5).map(dz=>{const r=s2.filter(q=>q.dz==dz).sort((a,b)=>a.dy-b.dy)[0];return r?[dz,r.dy,r.dx]:[dz,null];});
+document.getElementById("o").textContent="RESULT "+JSON.stringify(out);
+</script>

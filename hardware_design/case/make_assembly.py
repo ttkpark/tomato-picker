@@ -1,6 +1,6 @@
 """케이스 v2 조립도 생성기 — tomato_case.scad의 part="step" 장면을 OpenSCAD로 뽑아 HTML 한 장에 넣는다.
 
-    python hardware_design/case/make_assembly.py      → docs/design/case-assembly-guide.html
+    python hardware_design/case/make_assembly.py      → docs/2026-09-24_케이스-설계/design/case-assembly-guide.html
 
 scad를 고쳤으면 다시 돌린다. 그림은 data: URI로 박혀 파일 하나로 오프라인에서 열린다.
 """

@@ -7,7 +7,7 @@
     → curl -s localhost:8090/state   # arm_pose · tcp · tcp_err_mm · twin:true
 
 주소·JSON·409·로그가 실기와 **구조적으로** 같다(같은 코드다). 보내는 쪽은 상대가 가짜인지 몰라도 된다.
-가짜 팔 상태 = ~/twin_arm.json, 보정 사본 = ~/twin/{cal,cart}.json (docs/디지털트윈-구현방침-2026-11-08.md).
+가짜 팔 상태 = ~/twin_arm.json, 보정 사본 = ~/twin/{cal,cart}.json (docs/2026-11-08_디지털트윈/2026-11-08_디지털트윈-구현방침.md).
 가짜 눈 = twin_cam.py(~/twin/kincal.json이 있을 때): 손목 D405의 컬러·깊이를 depth-cam과 같은 파일(/dev/shm, 윈도우는 C: 드라이브의 /dev/shm)로 낸다.
 """
 import os

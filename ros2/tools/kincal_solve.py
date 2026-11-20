@@ -315,7 +315,7 @@ def servo_fit(Dt, quiet=False) -> dict:
     return out
 
 
-MARKER_ID, MARKER_MM = 49, 160.0     # 벽의 HOME 마커(docs/aruco/home_floor.pdf, DICT_4X4_50) — 인쇄 배율은 세션 값을 곱한다
+MARKER_ID, MARKER_MM = 49, 160.0     # 벽의 HOME 마커(docs/2026-11-09_손눈보정-역보정/aruco/home_floor.pdf, DICT_4X4_50) — 인쇄 배율은 세션 값을 곱한다
 
 
 def marker_fit(M: dict, dirs: list, quiet=False):

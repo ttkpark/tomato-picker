@@ -94,7 +94,7 @@ def main() -> int:
     ap.add_argument("--no-settle", action="store_true",
                     help="마지막 걸음 뒤 되먹임(처짐 지우기)을 하지 않는다")
     ap.add_argument("--record", default="",
-                    help="되먹임 기록 jsonl 경로 (기본 docs/시험기록/settle-<오늘>.jsonl)")
+                    help="되먹임 기록 jsonl 경로 (기본 docs/2026-08-22_로봇팔-제어-잡기/시험기록/settle-<오늘>.jsonl)")
     args = ap.parse_args()
 
     spans, zero, ref, signs, over = load_frame()

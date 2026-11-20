@@ -125,7 +125,7 @@ class FrameConfig:
 
     부호를 왜 파일로 빼나 — 서보를 어느 방향으로 조립했는지는 팔마다 다르고,
     코드를 읽어서는 알 수 없다. **힘 빼고 손으로 움직이며 화면 숫자를 보는 것**이
-    유일하게 확실한 확인법이고(docs/arm-cartesian.md), 그 결과를 여기 남긴다.
+    유일하게 확실한 확인법이고(docs/2026-08-22_로봇팔-제어-잡기/2026-08-22_arm-cartesian.md), 그 결과를 여기 남긴다.
     """
 
     def __init__(self, path: str = ARM_CART_FILE) -> None:
@@ -603,7 +603,7 @@ class CartesianArm:
           (`elbow_flex` 정규화 −124~−133, 한계 ±98). 목표는 5/5 통과한
           뒤였다. 그래서 여기는 길을 **둘** 가진다: 직교 직선을 먼저 걸어
           보고, 막히면 관절공간 보간으로 돌아간다(`plan_joint_steps`).
-          고르는 이유는 docs/arm-cartesian.md §4에 적어 뒀다.
+          고르는 이유는 docs/2026-08-22_로봇팔-제어-잡기/2026-08-22_arm-cartesian.md §4에 적어 뒀다.
         """
         norms, now = self._require_state()
         self.last_settle = None   # 이번 이동의 기록만 남는다(직전 것이 새지 않게)

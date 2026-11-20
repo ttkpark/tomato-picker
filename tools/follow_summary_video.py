@@ -3,7 +3,7 @@
 젯슨 영상(~/follow_trials/follow-*-H?.mp4)은 실행 폴더의 jv/에 먼저 받아 둔다. RUNS·자막은 벌마다 고친다."""
 import sys, cv2, numpy as np
 from PIL import Image, ImageDraw, ImageFont
-REPO = r"C:/Users/parkg/Desktop/AIWorkspace/tomato-picker/docs/시험기록/영상/"
+REPO = r"C:/Users/parkg/Desktop/AIWorkspace/tomato-picker/docs/2026-08-22_로봇팔-제어-잡기/시험기록/영상/"
 JV = "jv/"
 RUNS = [("H1", "follow-20261109-205556-H1.mp4", "1회 — 성공 · 148초 · 끝 434mm · +4.0°", True),
         ("H2", "follow-20261109-210328-H2.mp4", "2회 — 성공 · 143초 · 끝 435mm · +3.2°", True),

@@ -33,7 +33,7 @@ tomato_base:
     # duty 환산 — ⚠ Ks만 실측이고 Kv는 아니다.
     #   Ks=90은 CLAUDE.md의 실측 정지마찰 문턱(회전 w=75→0.00°, 100→0.20°).
     #   Kv는 아무도 안 쟀다. duty_measured가 false인 동안 m/s의 절대 크기는
-    #   못 믿는다(방향과 비율은 맞다). 재는 법: docs/ros2-이행계획.md
+    #   못 믿는다(방향과 비율은 맞다). 재는 법: docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md
     duty_ks: 90
     duty_kv: 0.35
     duty_ks_w: 90

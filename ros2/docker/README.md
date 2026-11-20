@@ -121,7 +121,7 @@ ros2 service call /arm/move_to_point tomato_msgs/srv/MoveToPoint \
 
 ## 시각대 — 컨테이너는 UTC다, 기록 이름은 날짜다 (2026-09-18)
 
-`move5_check.py`는 매 시도를 `docs/시험기록/move-to-point-<날짜>.jsonl`에 남긴다.
+`move5_check.py`는 매 시도를 `docs/2026-08-22_로봇팔-제어-잡기/시험기록/move-to-point-<날짜>.jsonl`에 남긴다.
 그런데 도커 기본 시각대는 UTC라서 **한국 자정~09시에 돌리면 어제 파일에 붙는다**
 (실측: 호스트 `Fri Sep 18 03:10 KST` ↔ 컨테이너 `Thu Sep 17 18:10 UTC`). 다음
 사이클은 파일 이름을 사실로 믿으므로, 하루치 실기가 어제 것으로 읽힌다.

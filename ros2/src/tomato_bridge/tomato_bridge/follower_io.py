@@ -427,6 +427,6 @@ class FollowerIO:
 
 # ── 디지털 트윈 ──────────────────────────────────────────────────────────────
 # TOMATO_TWIN=1 이면 가짜 팔(twin_io)로 바꿔 끼운다. 도구 26개가 전부 이 이름 하나를 import하므로 여기 한 곳이다.
-# (docs/디지털트윈-구현방침-2026-11-08.md · 띄우는 법 = ros2/tools/twin_server.py)
+# (docs/2026-11-08_디지털트윈/2026-11-08_디지털트윈-구현방침.md · 띄우는 법 = ros2/tools/twin_server.py)
 if os.environ.get("TOMATO_TWIN"):
     from tomato_bridge.twin_io import FollowerIO  # noqa: F811,E402

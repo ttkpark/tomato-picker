@@ -169,7 +169,7 @@ class ArmNode(Node):
 
         # 스탠드오프 — 접근축 **반대로** 물러난 지점까지만 간다. 열매에 바로
         # 꽂으면 오차가 곧 충돌이므로, 먼저 근처에 서고 마지막 몇 mm는 2단계
-        # (시각 서보잉)가 닫는다. docs/ros2-이행계획.md 참고.
+        # (시각 서보잉)가 닫는다. docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md 참고.
         standoff_mm = float(req.standoff_m) * 1000.0
         if standoff_mm:
             dx, dy, dz = kin.offset_in_tool_frame(pose, -standoff_mm, 0.0, 0.0)

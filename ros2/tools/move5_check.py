@@ -13,7 +13,7 @@
         표적을 눈으로 보고 정한 자리를 그대로 넣는다 — 무작위로 만들지 않는다.
         기본(파일 없음)은 forward()로 만든 사거리 안 임의 점 5개를 쓴다.
 
-매 시도를 `docs/시험기록/move-to-point-<오늘날짜>.jsonl`에 한 줄로 남긴다
+매 시도를 `docs/2026-08-22_로봇팔-제어-잡기/시험기록/move-to-point-<오늘날짜>.jsonl`에 한 줄로 남긴다
 (⚠ `--dry-run`은 **연습 자리**(임시 디렉터리)에 남긴다 — 연습 한 번이 그날의 진짜
 기록을 오염시킨 적이 있다, T43. 연습도 진짜 기록에 남기려면 `--record`):
     trial, commanded{x,y,z,pitch}, standoff_mm, ok, reached{x,y,z}(관절 FK),

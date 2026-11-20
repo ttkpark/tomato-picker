@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """구석 토마토 접근 실험 — 자리를 바꿔 가며 N번 손목 근접을 시키고, 회차마다 숫자와 사진을 남긴다.
     ~/lerobot/.venv/bin/python ros2/tools/tomato_trials.py [--near-mm 450]
-성공 = near가 정상으로 끝나고, 끝난 뒤 다시 잰 손목 거리 near-mm±50 · 가로 각 ≤ 15°(docs/체크포인트-2026-11.md 0차 기준).
+성공 = near가 정상으로 끝나고, 끝난 뒤 다시 잰 손목 거리 near-mm±50 · 가로 각 ≤ 15°(docs/2026-08-22_로봇팔-제어-잡기/2026-11-03_체크포인트-2026-11.md 0차 기준).
 결과 = ~/tomato_trials/<시각>/ (trials.json + 회차별 시작·끝 사진).
 물러나기 전에 회전판을 돌려 손목 D405로 뒤를 보고, 비어 있는 만큼만 물러난다. 대기 자세(회전판 기본 자리)에서 돌린다."""
 from __future__ import annotations

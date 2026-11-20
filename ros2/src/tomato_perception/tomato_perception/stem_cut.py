@@ -1,6 +1,6 @@
 """줄기(peduncle) 2D 마스크 → 절단점 3D 좌표. numpy만 쓴다(cv2도 rclpy도 없다).
 
-study 문서(`docs/study/04_END_EFFECTOR_MANIPULATION.md` §2)가 제안하는 방식을
+study 문서(`docs/2026-09-21_학습자료/study/04_END_EFFECTOR_MANIPULATION.md` §2)가 제안하는 방식을
 그대로 따른다: 3D 점군에서 직접 원통을 피팅하면 줄기(1~3mm)가 노이즈에 묻혀
 끊긴다(2026-09-11 개발일지 — 가는 표적은 조각 정합이 배경을 따라간다, 실측
 0/10). 대신 **2D 세그멘테이션 마스크에서 먼저 스켈레톤을 뽑고, 그 위의 한 점만
@@ -101,7 +101,7 @@ class CutPoint:
 class CutPose3D:
     """줄기 위 3D 절단점 및 6-DoF 절단 자세 (카메라 광학 좌표계 기준).
 
-    docs/study/04_END_EFFECTOR_MANIPULATION.md §2.2 명세 준수:
+    docs/2026-09-21_학습자료/study/04_END_EFFECTOR_MANIPULATION.md §2.2 명세 준수:
     - position_mm: (x, y, z) 3D 절단 위치 (mm)
     - rotation_matrix: 3x3 직교 회전 행렬 [x_cut, y_cut, z_cut]
     - x_cut: 진입/접근(approach) 단위 벡터 (v_cam과 z_cut에 수직인 횡방향)
@@ -325,7 +325,7 @@ def compute_cutting_pose(
 ) -> CutPose3D | None:
     """2D/3D 절단점(CutPoint) + 깊이(mm) + 카메라 내부파라미터 → 6-DoF 절단 자세.
 
-    docs/study/04_END_EFFECTOR_MANIPULATION.md §2.2 수학 공식 구현:
+    docs/2026-09-21_학습자료/study/04_END_EFFECTOR_MANIPULATION.md §2.2 수학 공식 구현:
     1. 3D 역투영: P_cut = deproject(u, v, depth_mm) (카메라 광학 좌표계)
     2. 줄기 축 단위 벡터 z_cut: 접선 (tu, tv[, tz]) 정규화 (t_stem)
     3. 접근 벡터 x_cut: 카메라 시선 v_cam=(0,0,1)과 z_cut의 외적 정규화
@@ -444,7 +444,7 @@ def compute_pre_grasp_pose(
 ) -> tuple[float, float, float] | None:
     """절단점 진입 전 대기 위치 (Pre-grasp Pose).
 
-    docs/study/04_END_EFFECTOR_MANIPULATION.md §5 Step 3 명세:
+    docs/2026-09-21_학습자료/study/04_END_EFFECTOR_MANIPULATION.md §5 Step 3 명세:
     - 2차 절단 날 기준(cutter_offset_up_mm=0.0):
       P_pre_cut = P_cut - standoff_mm * x_cut
     - 1차 파지 TCP 기준(cutter_offset_up_mm > 0.0):
@@ -495,7 +495,7 @@ def compute_retract_pose(
 ) -> tuple[float, float, float] | None:
     """절단 완료 후 과실 안전 후퇴 위치 (Retract Pose).
 
-    docs/study/04_END_EFFECTOR_MANIPULATION.md §5 Step 9 명세:
+    docs/2026-09-21_학습자료/study/04_END_EFFECTOR_MANIPULATION.md §5 Step 9 명세:
     - 2차 절단 날 기준(cutter_offset_up_mm=0.0):
       P_retract_cut = P_cut - retract_mm * x_cut
     - 1차 파지 TCP 기준(cutter_offset_up_mm > 0.0):
@@ -647,7 +647,7 @@ def evaluate_5dof_cut_alignment(
        arm_base(로봇 팔 마운트 평면 z=0, 1번 pan 회전축 원점) 기준이다.
        (pan_deg = atan2(y, x)가 1번 shoulder_pan 모터 각도와 일치하기 위한 필수 조건).
 
-    docs/study/04_END_EFFECTOR_MANIPULATION.md §3 명세 준수:
+    docs/2026-09-21_학습자료/study/04_END_EFFECTOR_MANIPULATION.md §3 명세 준수:
     1. SO-101은 손목 독립 Yaw가 없어, 팔의 접근 방위각(pan)은 위치 (x, y)에 고정된다:
        pan_deg = atan2(y, x)
     2. 원하는 절단 접근 벡터 x_cut과의 수평 방위각 편차:
@@ -761,7 +761,7 @@ def compute_dual_action_target(
     ⚠ 좌표계 규약: 모든 좌표(cut_pose_base, 반환값 P_grip)는 base_link(차체 바닥)가 아니라
        arm_base(로봇 팔 마운트 평면 z=0, 1번 pan 회전축 원점) 기준이다.
 
-    docs/study/04_END_EFFECTOR_MANIPULATION.md §4 & §5 명세 준수:
+    docs/2026-09-21_학습자료/study/04_END_EFFECTOR_MANIPULATION.md §4 & §5 명세 준수:
     - 흡착 컵(1차 파지 TCP, l3=168.0mm) 상단 cutter_offset_up_mm(기본 30.0mm) 위치에
       소형 스테인리스 전단 가위 날이 배치됨.
     - 커터 날이 줄기 절단점(cut_pose_base.position_mm)에 도달하기 위해, 로봇 팔의
@@ -819,7 +819,7 @@ def verify_dual_action_compatibility(
 ) -> dict[str, Any] | None:
     """과실 3D 위치와 줄기 절단점 3D 위치 간의 복합 엔드이펙터 기하 정합성 평가.
 
-    docs/study/04_END_EFFECTOR_MANIPULATION.md §4 & §5 명세 준수:
+    docs/2026-09-21_학습자료/study/04_END_EFFECTOR_MANIPULATION.md §4 & §5 명세 준수:
     1. 과실-절단점 3D 거리 d = ||P_cut - P_fruit||
     2. 공구 고정 오프셋과의 거리 잔차 residual_mm = |d - cutter_offset_up_mm|
     3. 줄기 축 stem_axis(z_cut) 정합성:
@@ -1001,7 +1001,7 @@ def plan_dual_action_trajectory(
     ⚠ 좌표계 규약: fruit_pos_base, cut_pose_base, waypoints 등 모든 좌표는
        base_link(차체 바닥)가 아니라 arm_base(로봇 팔 마운트 평면 z=0, 1번 pan 회전축 원점) 기준이다.
 
-    docs/study/04_END_EFFECTOR_MANIPULATION.md §4 및 §5 명세 준수:
+    docs/2026-09-21_학습자료/study/04_END_EFFECTOR_MANIPULATION.md §4 및 §5 명세 준수:
     1단계: Pre-grasp (과실 파지 TCP 대기 자세 - 접근 반대방향 standoff 후퇴)
     2단계: Grasp (과실 파지/흡착 접촉 자세)
     3단계: Cut (전단 가위 절단 자세 - 과실 파지 유지 상태에서 날 진입)

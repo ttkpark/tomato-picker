@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""체크포인트 1·2·3차(docs/체크포인트-2026-11.md)를 **가상 3D 공간에서** 규약대로 돌려 판정하고, 사람이 돌려 볼 수 있는
-3D 재생 페이지(docs/checkpoint_sim.html — 브라우저로 열면 된다, 서버 없음)를 만든다. PC에서, 장치 없이.
+"""체크포인트 1·2·3차(docs/2026-08-22_로봇팔-제어-잡기/2026-11-03_체크포인트-2026-11.md)를 **가상 3D 공간에서** 규약대로 돌려 판정하고, 사람이 돌려 볼 수 있는
+3D 재생 페이지(docs/2026-08-22_로봇팔-제어-잡기/2026-11-03_checkpoint_sim.html — 브라우저로 열면 된다, 서버 없음)를 만든다. PC에서, 장치 없이.
 
     PYTHONIOENCODING=utf-8 python ros2/tools/checkpoint_sim.py              # 셋 다 (3차 10회 포함, 몇 분)
     python ros2/tools/checkpoint_sim.py 1 3 --n 5 --seed 1                  # 1차·3차만 5회씩
@@ -50,7 +50,7 @@ ap.add_argument("--only", type=int, nargs="*", default=[], help="이 회(1부터
 ap.add_argument("--seed", type=int, default=0)
 ap.add_argument("--yaw", choices=("enc", "imu", "both"), default="both", help="2차 요 출처(기본 둘 다 돌려 나란히 보인다)")
 ap.add_argument("--html-only", action="store_true", help="지난 결과(임시 JSON)로 페이지만 다시 쓴다")
-ap.add_argument("--out", default=os.path.join(HERE, "..", "..", "docs", "checkpoint_sim.html"))
+ap.add_argument("--out", default=os.path.join(HERE, "..", "..", "docs", "2026-11-03_checkpoint_sim.html"))
 A = ap.parse_args()
 sys.argv = [sys.argv[0], "imu", "0"]          # space_map_sim은 argv로 IMU 유무를 정한다
 import space_map as sm                          # noqa: E402

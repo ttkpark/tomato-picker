@@ -8,7 +8,7 @@
     ~/lerobot/.venv/bin/python ros2/tools/space_map.py clear
     python ros2/tools/space_map.py selftest                          # PC, 장치 없이
 
-조작대(click_server, job=space)와 이 명령줄이 같은 경로다. 왜·한계 = docs/space-map.md.
+조작대(click_server, job=space)와 이 명령줄이 같은 경로다. 왜·한계 = docs/2026-10-22_공간지도-집안탐색/2026-10-22_space-map.md.
 
 ⚠ **자세는 바퀴가 아니라 지도와 맞춰서 안다** — 이 차체엔 엔코더가 없고, 넛지 한 번이
   얼마나 가는지는 정지마찰이 정한다(CLAUDE.md 1번 병). 깊이 한 장을 바닥 위 띠만
@@ -58,6 +58,9 @@ MOUNT = {"x": 0.12, "y": 0.0, "yaw_deg": 0.0, "h": 0.15, "tilt_deg": 0.0, "floor
          # 손목 D405용: 회전판 축이 차체 원점에서 얼마나 앞(arm_x)·바닥에서 얼마나 위(arm_z)인가.
          # so101_geometry.yaml mount(60·76.5mm)와 같은 값 — ⚠ 케이스 장착 전 값이라 실측해서 덮어라.
          "arm_x": 0.06, "arm_z": 0.0765,
+         # 회전판 축이 차체 가운데에서 왼쪽(+)으로 arm_y, 회전판 읽기가 arm_yaw0일 때 팔이 차체 정면.
+         # 둘 다 0이면 옛 가정(축 = 정중앙, 읽기 = 차체 각) — 11/05 틀린 것으로 드러남. turntable_calib.py가 푼다.
+         "arm_y": 0.0, "arm_yaw0": 0.0,
          # 토마토 검출 카메라(tomato-vision): 가로 화각과 정면 대비 방향(왼쪽 +). ⚠ 실측 전 추정값 —
          # 정면에 토마토를 두고 [토마토 찾기]의 cx가 화면 가운데인지, 옆에 두고 각이 맞는지로 맞춘다.
          "tcam_hfov": 66.0, "tcam_yaw_deg": 0.0}
@@ -120,6 +123,8 @@ def empty() -> dict:
             "imu": np.full(2, np.nan),
             "tomato": np.zeros((0, 4)),
             "seen": np.zeros((0, 4)),
+            "home": np.full(3, np.nan),   # 바닥 HOME ArUco(ID 49)의 지도 자세 (x, y, θ) — 보일 때마다 차체 자세를 여기에 묶는다(aruco_pose.py)
+            "home_ts": 0.0,
             "flat": np.zeros((N, N), np.uint8)}   # 컬러로 본 납작한 물건(수건·매트) 칸마다 본 횟수 — 깊이로는 5cm 아래가 안 보인다     # 토마토 관측 (렌즈 x, y, 세계 방위, 거리|nan) — 자리를 옮겨 찾아도 쌓인다(둘러보기)   # 찾은 토마토 (x, y, 본 횟수, 거리 아는가 1/0)  # 지금 자세를 정할 때의 IMU (boot, yaw rad) — 다음 회전 짐작의 기준
 
 
@@ -268,21 +273,26 @@ def mark_flat(s: dict, m: dict) -> int:
     return len(hit)
 
 
-def wrist_to_body(p_arm_mm: np.ndarray, yaw_deg: float, m: dict) -> np.ndarray:
-    """팔 base 좌표(mm, 회전판 위) → 차체 좌표(m). URDF와 같은 사슬: 회전판 축에서 Rz(yaw)."""
-    t = math.radians(yaw_deg)
+def wrist_rigid(yaw_deg: float, m: dict):
+    """회전판 위 팔 base → 차체, **mm 강체 변환**(handeye.Rigid). 축 (arm_x, arm_y, arm_z), 각 = 읽기 − arm_yaw0.
+    URDF와 같은 사슬(축에서 Rz). ③ 보정(turntable_calib.py)이 arm_y·arm_yaw0를 채운다 — 비면 옛 가정."""
+    from tomato_picker.hardware.handeye import Rigid
+    t = math.radians(yaw_deg - m.get("arm_yaw0", 0.0))
     c, s = math.cos(t), math.sin(t)
-    p = np.asarray(p_arm_mm, float) / 1000.0
-    return np.stack([m["arm_x"] + c * p[:, 0] - s * p[:, 1],
-                     s * p[:, 0] + c * p[:, 1],
-                     m["arm_z"] + p[:, 2]], 1)
+    return Rigid([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]],
+                 [m["arm_x"] * 1000.0, m.get("arm_y", 0.0) * 1000.0, m["arm_z"] * 1000.0])
 
 
-def wrist_cloud(m: dict, stride: int = 4) -> np.ndarray:
-    """손목 D405 한 장 → 차체 좌표 점(m). 팔 자세·회전판·손-눈 보정을 그 자리에서 읽는다."""
+def wrist_to_body(p_arm_mm: np.ndarray, yaw_deg: float, m: dict) -> np.ndarray:
+    """팔 base 좌표(mm, 회전판 위) → 차체 좌표(m)."""
+    return wrist_rigid(yaw_deg, m).apply(np.asarray(p_arm_mm, float).reshape(-1, 3)) / 1000.0
+
+
+def wrist_chain(m: dict):
+    """손목 D405 사슬을 **그 자리에서** 읽는다 → (차체←카메라 Rigid mm, 회전판 °, 집게 pose, 읽은 시각).
+    회전판(wrist_rigid) ∘ FK(손-눈을 푼 식 그대로) ∘ 손-눈(T_tool_cam). 팔 포트를 잠깐 연다(한 프로세스만)."""
     sys.path.insert(0, os.path.join(HERE, "..", "src", "tomato_bridge"))
     from tomato_bridge.follower_io import FollowerIO
-    from tomato_picker.config import DEPTH_CAMERAS
     from tomato_picker.hardware.cartesian import CartesianArm
     from tomato_picker.hardware.eye import EyeConfig
     cfg = EyeConfig(camera="d405")
@@ -294,8 +304,14 @@ def wrist_cloud(m: dict, stride: int = 4) -> np.ndarray:
         pose, yaw, frame = cart.pose(), io.read_yaw(), cfg.tool_frame_of(cart)   # 대기 자세는 접힌 팔이라 옛 atan2 틀은 회전이 거울상
     finally:
         io.hold_close()
+    return wrist_rigid(yaw, m).compose(frame).compose(cfg.transform), yaw, pose, time.time()
+
+
+def wrist_cloud(m: dict, stride: int = 4) -> np.ndarray:
+    """손목 D405 한 장 → 차체 좌표 점(m). 팔 자세·회전판·손-눈 보정을 그 자리에서 읽는다."""
+    from tomato_picker.config import DEPTH_CAMERAS
+    T, yaw, pose, after = wrist_chain(m)    # 팔을 읽은 뒤에 찍힌 장이어야 그 자세의 화면이다
     spec = DEPTH_CAMERAS["d405"]
-    after = time.time()                     # 팔을 읽은 뒤에 찍힌 장이어야 그 자세의 화면이다
     for _ in range(30):
         meta = json.load(open(spec["meta"]))
         if float(meta["ts"]) > after:
@@ -310,9 +326,8 @@ def wrist_cloud(m: dict, stride: int = 4) -> np.ndarray:
     v, u = np.nonzero((d >= meta["min_mm"]) & (d <= meta["max_mm"]))
     Z = d[v, u]
     cam = np.stack([(u * stride - it["ppx"]) * Z / it["fx"], (v * stride - it["ppy"]) * Z / it["fy"], Z], 1)
-    arm = frame.apply(cfg.transform.apply(cam))
     print("  손목: 회전판 %.1f° · 집게 (%.0f, %.0f, %.0f)mm · D405 %d점" % (yaw, pose.x, pose.y, pose.z, len(Z)))
-    return wrist_to_body(arm, yaw, m)
+    return T.apply(cam) / 1000.0
 
 
 def integrate_near(s: dict, pts: np.ndarray, m: dict) -> int:
@@ -2421,6 +2436,10 @@ def selftest() -> int:
     w9 = wrist_to_body(np.array([[100.0, 0.0, 50.0]]), 90.0, m)[0]
     assert np.allclose(w0[0], [m["arm_x"], 0, m["arm_z"]]) and np.allclose(w0[1], [m["arm_x"] + 0.1, 0, m["arm_z"] + 0.05])
     assert np.allclose(w9, [m["arm_x"], 0.1, m["arm_z"] + 0.05]), w9
+    m4 = dict(m, arm_y=0.05, arm_yaw0=-88.9)      # ③ 보정값이 있으면 축 자리와 영점이 바뀐다 — 읽기 −88.9가 정면
+    w4 = wrist_to_body(np.array([[100.0, 0.0, 0.0]]), -88.9, m4)[0]
+    assert np.allclose(w4, [m["arm_x"] + 0.1, 0.05, m["arm_z"]]), w4
+    assert np.allclose(wrist_rigid(1.1, m4).apply([100.0, 0.0, 0.0]) / 1000.0, [m["arm_x"], 0.15, m["arm_z"]])
     s2 = empty()
     k = integrate_near(s2, np.array([[0.3, 0.0, 0.2], [0.3, 0.0, 0.01]]), m)
     assert k == 1 and s2["lo"][tuple(idx([0.3, 0.0]))] > 0 and len(s2["vox"]) == 2, "바닥 점은 장애물이 아니다"

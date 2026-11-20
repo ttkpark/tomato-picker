@@ -18,13 +18,13 @@ behavior the task requires stay in.
   픽셀과 무대 학습을 버리고 **D405 깊이 + 손-눈 보정 + TF**로 좌표를 만든다 —
   무대를 옮기거나 카메라를 다시 달아도 안 무너지게 하려는 것.
   왜·무엇을 = [`ros2/README.md`](ros2/README.md) · 단계와 태그 규칙 =
-  [`docs/ros2-이행계획.md`](docs/ros2-이행계획.md) · 젯슨에서 띄우기 =
+  [`docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md`](docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md) · 젯슨에서 띄우기 =
   [`ros2/docker/README.md`](ros2/docker/README.md).
   **경계 한 줄: 계산과 실측값은 공유하고, 장치·상태의 소유권은 ROS가 가지며,
   웹 서비스에는 붙지 않는다.** 기구학을 다시 짜면 같은 팔을 두 계통이 다르게 믿는다 —
   그래서 `kinematics`·`handeye`·`cartesian`·`eye.EyeConfig`는 계속 쓴다(라이브러리다).
   반대로 팔을 여는 일은 ROS가 가져왔다(`tomato_bridge/follower_io.py`).
-  졸업표 = [`docs/ros2-이행계획.md`](docs/ros2-이행계획.md) §4, **강제** = `ros_selfcheck`의 [경계] 검사.
+  졸업표 = [`docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md`](docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md) §4, **강제** = `ros_selfcheck`의 [경계] 검사.
   ⚠ **둘을 동시에 못 켠다** — 팔(`tomato-voice`/`click-server`)·주행(`tomato-voice`)·**D405(`depth-cam`)**
   셋(**Astra `astra-cam`** 포함) 다 한 프로세스만 연다. ROS를 띄우기 전에 끈다. `arm_mode:=proxy`는 배선 확인용
   임시 경로일 뿐이다(HTTP 폴링이라 TF 시각 정렬이 안 된다, ros.3에서 삭제).
@@ -37,7 +37,7 @@ behavior the task requires stay in.
   못 보고, Astra는 60cm 아래를 못 본다. 발행기가 각각 하나씩
   ([`tools/depth_cam.py`](tools/depth_cam.py) `depth-cam` /
   [`tools/astra_cam.py`](tools/astra_cam.py) `astra-cam`)이고, 읽는 쪽은
-  `DepthView(camera=...)` 이름만 다르다. 자세히 = [`docs/depth-camera.md`](docs/depth-camera.md).
+  `DepthView(camera=...)` 이름만 다르다. 자세히 = [`docs/2026-08-28_ROS2-이행/2026-09-03_depth-camera.md`](docs/2026-08-28_ROS2-이행/2026-09-03_depth-camera.md).
   ⚠ **깊이 단위·유효 거리·정렬 여부를 읽는 코드에 박지 않는다** — 전부 meta.json이
   말한다(D405 0.1mm / Astra 1mm를 상수로 박으면 거리가 10배가 된다).
   ⚠ **Astra는 컬러가 깊이와 정렬돼 있지 않다**(RGB가 별개 USB, 공장 D2C값이 NaN).
@@ -62,16 +62,16 @@ behavior the task requires stay in.
   팔 포트를 둘 다 다투므로 **부팅 자동실행은 `click-server` 하나뿐**이다(voice는 disable).
   이제 `sudo systemctl start tomato-voice`는 조작대를 먼저 내리고 **실제로 뜬다** —
   예전엔 조용히 실패하며 3초마다 되살아났다(재부팅 1회에 2425번). 되돌리려면
-  `sudo systemctl start click-server`. 정책 = `docs/인수인계-2026-09-03.md` §1 ·
+  `sudo systemctl start click-server`. 정책 = `docs/2026-08-28_ROS2-이행/2026-09-03_인수인계.md` §1 ·
   강제 = `ros_selfcheck`의 [서비스].
   ⚠ 표적 클릭은 **그 프레임의 화소 자리**다 — 팔이 움직였으면 다시 찍어야 한다.
   잡기 본체 = [`ros2/tools/stem_grasp.py`](ros2/tools/stem_grasp.py),
   손끝 조그 = [`ros2/tools/tool_jog.py`](ros2/tools/tool_jog.py).
-  **인수인계·함정 목록 = [`docs/인수인계-2026-09-03.md`](docs/인수인계-2026-09-03.md)** — 만지기 전에 읽어라.
+  **인수인계·함정 목록 = [`docs/2026-08-28_ROS2-이행/2026-09-03_인수인계.md`](docs/2026-08-28_ROS2-이행/2026-09-03_인수인계.md)** — 만지기 전에 읽어라.
 - **공간 지도·집 안 다니기 = [`ros2/tools/space_map.py`](ros2/tools/space_map.py)** (2026-10-22~)
   — Astra 깊이 → 3D 복셀 + 2D 점유격자, 자세는 **엔코더 대신 지도와 스캔매칭**, A* 길 → 넛지.
-  조작대 왼쪽 카드에서 스캔·바닥 클릭·가기·**🍅 토마토 찾기/정면 보기/앞으로/손목 근접**(2026-10-23~24, 마지막 60cm는 Astra 사각이라 손목 D405 거리로) · **🧭 방 둘러보기**(2026-11-05~, 스캔→찾기→경계로 가기 반복, 쓰러진 나무 열매도 센다 — 좁은 집에선 제자리 한 바퀴가 막힌다, [`docs/개발일지-2026-11-05-집안탐색.md`](docs/개발일지-2026-11-05-집안탐색.md)) · **🔭 둘러보기**(2026-11-06~, 차체를 안 돌리고 회전판·어깨로 손목 D405를 돌려 사방·뒤·토마토 방위를 본다 — 좁은 방은 이쪽, `--face`로 돌기까지). ⚠ `wrist_to_body` 회전판 사슬이 틀려 있다(11/05, 손목 D405 담기 쓰기 전 ChArUco로 재보정). 안전장치(근접 정지·회전 여유 0.45m·회전판 정면)도 거기. 한계(바닥 안 보임·60cm 사각) =
-  [`docs/space-map.md`](docs/space-map.md). 장착값은 `~/space_mount.json`(CAD 추정값이 기본).
+  조작대 왼쪽 카드에서 스캔·바닥 클릭·가기·**🍅 토마토 찾기/정면 보기/앞으로/손목 근접**(2026-10-23~24, 마지막 60cm는 Astra 사각이라 손목 D405 거리로) · **🧭 방 둘러보기**(2026-11-05~, 스캔→찾기→경계로 가기 반복, 쓰러진 나무 열매도 센다 — 좁은 집에선 제자리 한 바퀴가 막힌다, [`docs/2026-10-22_공간지도-집안탐색/2026-11-05_개발일지-집안탐색.md`](docs/2026-10-22_공간지도-집안탐색/2026-11-05_개발일지-집안탐색.md)) · **🔭 둘러보기**(2026-11-06~, 차체를 안 돌리고 회전판·어깨로 손목 D405를 돌려 사방·뒤·토마토 방위를 본다 — 좁은 방은 이쪽, `--face`로 돌기까지). ⚠ `wrist_to_body` 회전판 사슬이 틀려 있다(11/05, 손목 D405 담기 쓰기 전 ChArUco로 재보정). 안전장치(근접 정지·회전 여유 0.45m·회전판 정면)도 거기. 한계(바닥 안 보임·60cm 사각) =
+  [`docs/2026-10-22_공간지도-집안탐색/2026-10-22_space-map.md`](docs/2026-10-22_공간지도-집안탐색/2026-10-22_space-map.md). 장착값은 `~/space_mount.json`(CAD 추정값이 기본).
   **차체 IMU = MPU6050**(2026-10-22~, 젯슨 I²C 버스 7·0x68) → [`tools/imu_yaw.py`](tools/imu_yaw.py)
   (systemd `imu-yaw`) → `/dev/shm/imu.json`. 회전 짐작·회전 넛지 끊기·조작대 실시간 회전량에 쓴다.
   ⚠ **`base_nudge.open_link()`는 JetsonBase로 연다**(2026-10-22) — 맨 MotorLink로 열면 보드가 브라운아웃 리셋될 때
@@ -80,7 +80,7 @@ behavior the task requires stay in.
   ⚠ **회전판 기본 자리 = −88.9°**(2026-10-24, `config.BASE_YAW_HOME_DEG`) — 영점 2048은 차체 오른쪽을 본다(혼이 ≈90° 어긋남,
   범위는 물리적이라 영점은 안 옮김). 조작대 [대기 자세] = 팔 `0.6,22,78,81,6`(뒤로 접기) → 판 기본 자리. 이 자세에서만 손목 D405가
   바로 서서 주행 정면을 본다(D405는 팔을 앞으로 펴면 거꾸로다). 한계는 ±90°(=EEPROM).
-  ⚠ 그 전엔 로봇에 자이로가 **하나도** 없었다. 배경·STM32 계획 = [`docs/stm32-자세보드-목표.md`](docs/stm32-자세보드-목표.md).
+  ⚠ 그 전엔 로봇에 자이로가 **하나도** 없었다. 배경·STM32 계획 = [`docs/2026-08-22_메카넘-메인보드/2026-10-22_stm32-자세보드-목표.md`](docs/2026-08-22_메카넘-메인보드/2026-10-22_stm32-자세보드-목표.md).
 - **손-눈 보정 수학 = [`hardware/handeye.py`](src/tomato_picker/hardware/handeye.py)**
   — 카메라가 본 3D 점을 팔 좌표로 옮기는 강체 변환 하나를 **실측에서 푼다**(자로 재지 않는다).
   numpy만 쓰며 `fixed`(카메라 고정)와 `on_arm`(손목 장착) 두 식이 있다.
@@ -90,12 +90,12 @@ behavior the task requires stay in.
   `python tools/eye_check.py` (보정→통합 배선 102종 — 카메라 둘 포함) ·
   `python ros2/tools/ros_selfcheck.py` (레거시 경계·URDF↔기구학 일치·보드계약 5층 데드맨·계약테스트/0속도정지·서보캘리 틱스팬↔NormLimits 물리범위·limits_deg 과대개방 감사·부품 전장하한/mount.x기하·yolo_seg 줄기클래스/마스크추출 stem_cut 연동·6-DoF 절단 포즈 및 깊이 평활화·Pre-grasp/Retract 및 5-DoF 기구학 정합성 진단·복합 엔드이펙터 파지TCP↔커터TCP 기하 오프셋·4단계 시퀀셜 궤적 계획 및 줄기축 비정렬 과실 거절/retract_grasp_tcp·roll_limit_deg 매개변수화 및 비수치 방어·click_server grasp aim 모드 연동·stem_cut 전단(shear) 비직교 왜곡 및 NaN 거절·detect_node YOLO 플러그/폴백·깊이 거절·스탠드오프·프리셋/캘리 등 590종) ·
   `python tools/arm_cartesian_check.py` (직교 좌표 제어·관절 보간 대체·처짐 되먹임·접힌 자세 집게 축 98종).
-  **체크포인트 1·2·3차를 가상 3D에서** = `python ros2/tools/checkpoint_sim.py` → `docs/checkpoint_sim.html`(브라우저 재생, 2026-11-03~,
-  [`docs/체크포인트-2026-11.md`](docs/체크포인트-2026-11.md) 끝 절).
+  **체크포인트 1·2·3차를 가상 3D에서** = `python ros2/tools/checkpoint_sim.py` → `docs/2026-08-22_로봇팔-제어-잡기/2026-11-03_checkpoint_sim.html`(브라우저 재생, 2026-11-03~,
+  [`docs/2026-08-22_로봇팔-제어-잡기/2026-11-03_체크포인트-2026-11.md`](docs/2026-08-22_로봇팔-제어-잡기/2026-11-03_체크포인트-2026-11.md) 끝 절).
 
 
-- **역보정(kincal) = [`docs/역보정-kincal.md`](docs/역보정-kincal.md)** (2026-11-12~) — 책상 ChArUco로 팔+손목 카메라를 무인 수집·풀이(공식 SO-101 URDF 뼈대, 남겨 둔 자세 1.7px≈0.8mm), 현황판 `:8091`. ⚠ **팔 드라이버 값은 이미 도(度)다** — `arm_calib.to_deg`가 한 번 더 곱해 pan ×1.22·나머지 ×1.03 크게 믿는다(미반영, 문서 §5). ⚠ "FK 거울상"은 저장소 FK 규약 문제(URDF 기준 부호 전부 +1). ⚠ 책상 위 팔은 밑동을 고정 안 하면 뒤로 젖힐 때 발판째 13° 넘어간다(`ROCK_TAU`). 실기 보정 파일은 안 바꿨다(트윈만).
-- **최신 인수인계 = [`docs/인수인계-2026-11-09.md`](docs/인수인계-2026-11-09.md)** · 보정 종이 셋이 각각 무엇을 푸는지 = [`docs/보정-종이-세장.md`](docs/보정-종이-세장.md) — 0차 따라가기 2/3, 다음 = ChArUco 손-눈 재채집(종이 부착됨), 따라가기 한 회 돌리는 법·녹화(`tools/cam_record.py`).
+- **역보정(kincal) = [`docs/2026-11-09_손눈보정-역보정/2026-11-12_역보정-kincal.md`](docs/2026-11-09_손눈보정-역보정/2026-11-12_역보정-kincal.md)** (2026-11-12~) — 책상 ChArUco로 팔+손목 카메라를 무인 수집·풀이(공식 SO-101 URDF 뼈대, 남겨 둔 자세 1.7px≈0.8mm), 현황판 `:8091`. ⚠ **팔 드라이버 값은 이미 도(度)다** — `arm_calib.to_deg`가 한 번 더 곱해 pan ×1.22·나머지 ×1.03 크게 믿는다(미반영, 문서 §5). ⚠ "FK 거울상"은 저장소 FK 규약 문제(URDF 기준 부호 전부 +1). ⚠ 책상 위 팔은 밑동을 고정 안 하면 뒤로 젖힐 때 발판째 13° 넘어간다(`ROCK_TAU`). 실기 보정 파일은 안 바꿨다(트윈만).
+- **최신 인수인계 = [`docs/2026-11-09_손눈보정-역보정/2026-11-09_인수인계.md`](docs/2026-11-09_손눈보정-역보정/2026-11-09_인수인계.md)** · 보정 종이 셋이 각각 무엇을 푸는지 = [`docs/2026-11-09_손눈보정-역보정/2026-11-09_보정-종이-세장.md`](docs/2026-11-09_손눈보정-역보정/2026-11-09_보정-종이-세장.md) — 0차 따라가기 2/3, 다음 = ChArUco 손-눈 재채집(종이 부착됨), 따라가기 한 회 돌리는 법·녹화(`tools/cam_record.py`).
 
 ## 하드웨어 제어 — **현재 구성 (중요: 옛 문서와 혼동 주의)**
 로봇 = **메카넘 베이스(Moebius Uno + PCA9685)** + **SO-101 팔로워(집게)** + 젯슨 Orin Nano.
@@ -114,7 +114,7 @@ behavior the task requires stay in.
   "모터 튜닝" 패널에서 `F`(주파수)/`P`(듀티상한)/`R`(슬루)을 재플래시 없이 바꿔 찾는다.
   현재 기본 700Hz·듀티 4095(2026-10-22: 케이스 무게로 2600은 정지마찰을 못 넘김). ⚠ 포트를 열면 커널 DTR 토글로 **Uno가 리셋**되므로
   설정은 **첫 하트비트 이후**에 넣어야 먹는다(부트로더 ~2초가 다 먹어버림).
-  **차기 = STM32F405 보드**(2026-11-02~, 미제작): 펌웨어 [`firmware/mecanum_stm32/`](firmware/mecanum_stm32/)(**v4 네이티브 C·CMSIS 레지스터, 2026-11-09** — `make`/`make test`, 같은 프로토콜 + 거리 이동 `M` + 계약 `C`·`E`(플래시 저장)·`cap proto=2`·`st/tgt/act`, 엔코더 4·전류·nFAULT, 젯슨에서 `U`→`stm32flash`) · 기판 [`hardware_design/mecanum_stm32_pcb/`](hardware_design/mecanum_stm32_pcb/)(`gen_pcb.py`=회로도 겸 배치, DRV8874×4·CH340C+ADuM1201 절연·하드웨어 비상정지 릴레이, 전원 면·디커플링 3mm·절연 1.5mm 보강, DRC 오류 0·거버 있음(2026-11-09), 부품은 엘레파츠 장바구니 + README 증분표). 요구사항 = [`docs/STM32_메카넘_베이스컨트롤러_명세서.md`](docs/STM32_메카넘_베이스컨트롤러_명세서.md) v0.2.
+  **차기 = STM32F405 보드**(2026-11-02~, 미제작): 펌웨어 [`firmware/mecanum_stm32/`](firmware/mecanum_stm32/)(**v4 네이티브 C·CMSIS 레지스터, 2026-11-09** — `make`/`make test`, 같은 프로토콜 + 거리 이동 `M` + 계약 `C`·`E`(플래시 저장)·`cap proto=2`·`st/tgt/act`, 엔코더 4·전류·nFAULT, 젯슨에서 `U`→`stm32flash`) · 기판 [`hardware_design/mecanum_stm32_pcb/`](hardware_design/mecanum_stm32_pcb/)(`gen_pcb.py`=회로도 겸 배치, DRV8874×4·CH340C+ADuM1201 절연·하드웨어 비상정지 릴레이, 전원 면·디커플링 3mm·절연 1.5mm 보강, DRC 오류 0·거버 있음(2026-11-09), 부품은 엘레파츠 장바구니 + README 증분표). 요구사항 = [`docs/2026-08-22_메카넘-메인보드/2026-11-02_STM32_메카넘_베이스컨트롤러_명세서.md`](docs/2026-08-22_메카넘-메인보드/2026-11-02_STM32_메카넘_베이스컨트롤러_명세서.md) v0.2.
   ⚠ STM32 보드 비상정지는 **놓아도 잠긴다** — `X 0`(대시보드·조작대 [비상정지 해제])으로만 풀린다, `S`로는 안 풀림. 젯슨은 하트비트로 보드를 알아보고(`MotorLink.board`) 주파수를 보드별로 민다(Uno ≤1526Hz, STM32 20kHz). 검사 = `python tools/stm32_link_check.py`.
   ⚠️ **`firmware/PS2-MOTOR/`는 레거시**(PS2 직접조종, 불안정). `mecanum_serial/`은 폐기. 새 작업은 `mecanum_stable` 기준.
   모터↔바퀴 실측(2026-10-22 케이스 장착 후): A=RR B=RL C=FR D=FL, `POL={-1,1,-1,1}`.
@@ -122,7 +122,7 @@ behavior the task requires stay in.
 - **게임패드 주행은 폐지했다(2026-10-22)** — `controller_drive.py`·`controller-drive.service`·셋업 문서를
   지웠다(필요하면 git 이력에서). 주행은 대시보드·조작대(`base_nudge`)·ROS `cmd_vel_node`로 한다.
 - **팔 제어 = 대시보드 `/control`** ✅ 권장 — 리더암 연결·미러링·프리셋 **슬롯 0~19** 저장/재생·
-  **높이 앵커 보간**을 브라우저에서 전부 한다([`docs/dashboard-presets.md`](docs/dashboard-presets.md)).
+  **높이 앵커 보간**을 브라우저에서 전부 한다([`docs/2026-07-29_토마토로봇-기존스택/2026-08-06_dashboard-presets.md`](docs/2026-07-29_토마토로봇-기존스택/2026-08-06_dashboard-presets.md)).
   슬롯 수는 `presets.py`의 `SLOT_COUNT` 하나로 정한다(2026-08-17: 10→20).
   구현: [`hardware/presets.py`](src/tomato_picker/hardware/presets.py)(저장소·보간) +
   [`hardware/arm.py`](src/tomato_picker/hardware/arm.py)(미러링·재생).
@@ -135,7 +135,7 @@ behavior the task requires stay in.
   (영점·안전·조그). 화면 = `/control` "3D 좌표 이동", 영점 = `/settings` "3D 좌표 영점".
   설정은 `~/arm_cartesian.json`(있으면 config.py보다 이긴다). 자체검증
   `python tools/arm_cartesian_check.py`(팔 없이 93종). 자세한 건
-  [`docs/arm-cartesian.md`](docs/arm-cartesian.md).
+  [`docs/2026-08-22_로봇팔-제어-잡기/2026-08-22_arm-cartesian.md`](docs/2026-08-22_로봇팔-제어-잡기/2026-08-22_arm-cartesian.md).
   ⚠ **5축이라 제자리 yaw는 일반적으로 불가능**하다 — 집게 방향이 위치에 묶여 있다.
   단 **집게가 바닥을 볼 때(pitch≈-90°)만 wrist_roll이 곧 yaw**다. 그 밖에는 roll을 쓴다.
   ⚠ **먼저 영점을 잡아야 열린다** — 교시 자세는 **어깨는 정면, 나머지는 곧게 위로**
@@ -150,7 +150,7 @@ behavior the task requires stay in.
 - `ssh server@100.85.187.87`(Tailscale, 고정) — LAN은 DHCP라 바뀐다(2026-10-23 = 192.168.0.19, 예전 .8). 공개키 등록·passwordless sudo.
   Bash 툴은 `-i /c/Users/parkg/.ssh/id_ed25519` 명시 필요(HOME 다름).
 - 장치: `/dev/ttyUSB0`=모터보드, `/dev/ttyACM0`=팔로버(ID 1~6 팔 + ID 7 회전판).
-- **IP를 모를 때는 블루투스로 물어본다** ([`docs/bluetooth-console.md`](docs/bluetooth-console.md), 2026-08-22 추가).
+- **IP를 모를 때는 블루투스로 물어본다** ([`docs/2026-07-29_토마토로봇-기존스택/2026-08-22_bluetooth-console.md`](docs/2026-07-29_토마토로봇-기존스택/2026-08-22_bluetooth-console.md), 2026-08-22 추가).
   `ble-console.service`가 BLE로 `tomato-jetson`을 광고하고, **안드로이드 앱**
   ([`android/handset/`](android/handset/), `./build.sh install`) 또는 **PC 앱**
   ([`tools/ble_handset_pc.py`](tools/ble_handset_pc.py), `pip install bleak`)에서
@@ -199,10 +199,10 @@ behavior the task requires stay in.
   오검출이면 그게 무대가 됐다(x=1258 ← 1280 화면 끝) → 가운데·오른쪽 열매가
   왼쪽·가운데로 찍혔다. 지금은 상식 검사 + 확인 프레임 5회 + 불신 자동 탈출로 막는다.
   무대를 옮겼으면 **세 그루에 열매를 올린 뒤** [무대 다시 배우기](2그루면 가드가 막는다).
-- ⚠ **상세 교훈은 [`docs/개발노트-2026-08-09.md`](docs/개발노트-2026-08-09.md)** —
+- ⚠ **상세 교훈은 [`docs/2026-07-29_토마토로봇-기존스택/2026-08-09_개발노트.md`](docs/2026-07-29_토마토로봇-기존스택/2026-08-09_개발노트.md)** —
   증상↔원인이 어긋났던 사례(소음=PWM주파수, 라인분실=색캐스트, yaw발산=각추정,
   리더암 오구동=포트식별)와 진단 순서 치트시트.
-- ⚠ **잡기의 교훈은 [`docs/개발일지-2026-09-11.md`](docs/개발일지-2026-09-11.md)** —
+- ⚠ **잡기의 교훈은 [`docs/2026-08-22_로봇팔-제어-잡기/2026-09-11_개발일지.md`](docs/2026-08-22_로봇팔-제어-잡기/2026-09-11_개발일지.md)** —
   같은 병의 잡기 판(48회 2성공 → 3회 3성공). **틀린 전제 셋**: ① 겨눠 온 화소에 집게가
   있다(롤을 만지면 무효 — 겨냥이 정확할수록 틀린 자리로 정확히 간다) ② 가장 가까운 것이
   표적이다(자기 손가락이다) ③ 거리를 맞힐 수 있다(가는 표적의 깊이는 정답 구간보다 넓게

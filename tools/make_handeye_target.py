@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """손-눈 보정 4점 표적지(A4, 실제 크기 PDF) — target_check.py의 EXPECT_W/H를 그대로 쓴다.
 
-    python tools/make_handeye_target.py        → docs/print/handeye-target-A4.pdf
+    python tools/make_handeye_target.py        → docs/2026-11-09_손눈보정-역보정/print/handeye-target-A4.pdf
 
 인쇄는 **실제 크기(100%, 페이지 맞춤 끔)**. 아래 100mm 눈금자를 자로 재서 맞는지 본다 —
 배율이 틀리면 보정이 그만큼 통째로 틀린다(코드는 이 간격을 정답으로 쓴다).

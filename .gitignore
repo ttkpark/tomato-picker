@@ -48,3 +48,12 @@ data/
 
 # 시험 영상(수십 MB) — git엔 안 올린다, 로컬·젯슨 백업으로 보관
 docs/시험기록/영상/
+
+# 웹캠 원본 영상(수백 MB) — 저장소에 안 올린다
+docs/WIN_*.mp4
+docs/spring-media/**/*.mp4
+
+# 영상·대용량 원본은 저장소에 안 넣는다(깃허브 100MB 제한). 원본은 docs/ 묶음 폴더와 Downloads에 그대로 둔다.
+docs/**/*.mp4
+docs/**/*.mov
+docs/**/*.MOV

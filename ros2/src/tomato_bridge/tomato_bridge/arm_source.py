@@ -46,7 +46,7 @@ EXTRA_JOINTS = ("gripper",)
 YAW_JOINT = "base_yaw"
 
 MODES = ("direct", "proxy")
-# proxy가 사라지는 이정표. docs/ros2-이행계획.md의 "레거시 의존 졸업표"와 같은 값.
+# proxy가 사라지는 이정표. docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md의 "레거시 의존 졸업표"와 같은 값.
 PROXY_REMOVED_AT = "v2.0.0-ros.3"
 
 

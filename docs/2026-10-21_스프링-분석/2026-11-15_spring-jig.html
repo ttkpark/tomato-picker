@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>코일 포개기 지그</title>
+<style>
+:root { --bg: #f4f6f7; --surface: #fff; --fg: #1b2328; --muted: #5d6b73; --line: #d5dde1; --accent: #1d6b86; --bad: #c2412d; --good: #2c7a4b;
+  --coil: #2a3238; --coil2: #2f8fb3; --jig: #d9c7a3; --soft: #e08a3a; --table: #b9c4ca; }
+@media (prefers-color-scheme: dark) { :root { --bg: #12181b; --surface: #1a2226; --fg: #e3e9ec; --muted: #93a3ab; --line: #2c383e; --accent: #5fb3cf; --bad: #ef7a64; --good: #6cc48d;
+  --coil: #e8eef1; --coil2: #63c1e6; --jig: #6f6247; --soft: #f0a35c; --table: #4a5a63; color-scheme: dark; } }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.65 "Malgun Gothic", system-ui, sans-serif; }
+.wrap { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; display: grid; gap: 22px; }
+h1 { font-size: 26px; margin: 0; } h2 { font-size: 19px; margin: 14px 0 0; } p { margin: 0; max-width: 70ch; }
+.muted { color: var(--muted); } .lead { font-size: 17px; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+figcaption { color: var(--muted); font-size: 13.5px; margin-top: 8px; }
+svg { width: 100%; height: auto; display: block; }
+svg text { fill: var(--fg); font: 13px "Malgun Gothic", system-ui, sans-serif; }
+svg .s { fill: var(--muted); font-size: 12px; } svg .t { font-weight: 700; font-size: 14px; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.scroll { overflow-x: auto; } table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.o { color: var(--good); font-weight: 700; } .x { color: var(--bad); font-weight: 700; } .d { color: var(--muted); font-weight: 700; }
+.note { border-left: 4px solid var(--soft); background: var(--surface); padding: 10px 14px; border-radius: 0 8px 8px 0; }
+.key i { display: inline-block; width: 22px; height: 0; border-top: 4px solid; vertical-align: 4px; margin: 0 4px 0 12px; }
+</style>
+<div class="wrap">
+  <p class="muted">제본 코일 끝단 자동화 · 2026-11-15 · 제안(검증 전)</p>
+  <h1>포개는 자리에 V자 홈 받침을 둔다</h1>
+  <p class="lead">코일은 단면이 둥글어서 평평한 곳에 놓으면 구르고 튕긴다. 홈이 파인 받침에 놓으면 벽이 코일을 가운데로 모으고 구르지 못하게 막는다. 그 위에 엎은 세트를 내리면 같은 벽이 깔때기 노릇을 해서 두 세트가 맞는다.</p>
+  <p class="key muted">그림은 모두 끝에서 본 단면이다(실제 치수 비율).<i style="border-color:var(--coil)"></i>아래 세트<i style="border-color:var(--coil2)"></i>엎은 위 세트<i style="border-color:var(--soft)"></i>무른 안감</p>
+
+  <h2>1. 무엇이 문제인가</h2>
+  <div class="grid3">
+    <figure><svg id="p1" viewBox="0 0 300 200"></svg><figcaption><b>구른다.</b> 바닥이 둥글어서 닿는 순간 옆으로 기울거나 뒤집힌다.</figcaption></figure>
+    <figure><svg id="p2" viewBox="0 0 300 200"></svg><figcaption><b>튕긴다.</b> 철사가 용수철이고 가벼워서(세트 약 24g) 떨어뜨리면 되튄다.</figcaption></figure>
+    <figure><svg id="p3" viewBox="0 0 300 200"></svg><figcaption><b>어긋난다.</b> 위 세트는 아래 세트와 약 ±1.5mm 안에 내려와야 맞물린다(시뮬레이션 추정값).</figcaption></figure>
+  </div>
+
+  <h2>2. 바닥 세 가지 비교</h2>
+  <div class="grid3">
+    <figure><svg id="f1" viewBox="0 0 300 210"></svg><figcaption><b>가. 맨 테이블</b></figcaption></figure>
+    <figure><svg id="f2" viewBox="0 0 300 210"></svg><figcaption><b>나. 평평한 판 + 무른 깔개</b> (우드락, 폼, 펠트)</figcaption></figure>
+    <figure><svg id="f3" viewBox="0 0 300 210"></svg><figcaption><b>다. V자 홈 받침 + 무른 안감</b></figcaption></figure>
+  </div>
+  <div class="scroll"><table>
+    <tr><th></th><th>가. 맨 테이블</th><th>나. 평판 + 무른 깔개</th><th>다. V자 홈 받침</th></tr>
+    <tr><td>튕김</td><td class="x">그대로</td><td class="o">줄어든다</td><td class="o">줄어든다</td></tr>
+    <tr><td>구름·뒤집힘</td><td class="x">그대로</td><td class="d">조금 줄 뿐</td><td class="o">벽이 막는다</td></tr>
+    <tr><td>아래 세트 위치</td><td class="x">놓인 대로</td><td class="x">놓인 대로</td><td class="o">가운데로 모인다</td></tr>
+    <tr><td>위 세트 맞추기</td><td class="x">로봇 정밀도에만 의존</td><td class="x">로봇 정밀도에만 의존</td><td class="o">벽이 안내한다</td></tr>
+    <tr><td>만들기</td><td>없음</td><td>판 한 장</td><td>3D 프린트 또는 우드락 두 장을 비스듬히</td></tr>
+  </table></div>
+  <p class="muted">우드락만 까는 것(나)은 튕김에는 듣지만 구름과 정렬은 해결하지 못한다. 우드락은 겉이 종이라 단단한 편이어서, 튕김만 보면 폼이나 펠트가 더 나을 것으로 본다(이 코일로 확인한 것은 아니다).</p>
+
+  <h2>3. V자 홈 받침의 단면</h2>
+  <figure><svg id="jig" viewBox="0 0 860 430"></svg>
+    <figcaption>치수는 코일 실측(세트 폭 15.5 × 높이 9.5mm, 4개 묶음 16 × 12.7mm)에서 잡은 <b>제안값</b>이다. 만들어서 맞춰 봐야 한다.</figcaption></figure>
+  <ul>
+    <li><b>벽이 코일의 옆구리를 받친다.</b> 코일은 바닥이 아니라 양쪽 벽 두 곳에 걸쳐 앉으므로 좌우 어디에 놓아도 가운데로 미끄러져 온다.</li>
+    <li><b>윗폭 24mm.</b> 입구에서 묶음(16mm) 양쪽으로 약 3.5mm씩 남는다. 이만큼이 로봇이 틀려도 되는 양이고, 평평한 곳의 ±1.5mm보다 두 배 넘게 넓다.</li>
+    <li><b>깊이 16mm.</b> 코일이 바닥에서 2~3mm 떠서 앉으므로, 위 세트까지 벽 안에 들어오게 묶음 높이(12.7mm)보다 깊게 판다.</li>
+    <li><b>안감 1mm.</b> 폼 테이프나 펠트를 벽에 붙여 튕김을 죽인다.</li>
+  </ul>
+
+  <h2>4. 옆에서 본 모습 — 양 끝은 비운다</h2>
+  <figure><svg id="side" viewBox="0 0 860 210"></svg>
+    <figcaption>받침은 코일(280mm)보다 짧게 230mm쯤으로 한다. 로봇 핑거가 양 끝 25mm를 잡으므로 그 자리에는 받침이 없어야 한다.</figcaption></figure>
+
+  <h2>5. 순서</h2>
+  <div class="grid3">
+    <figure><svg id="s1" viewBox="0 0 300 230"></svg><figcaption><b>① 아래 세트를 내린다.</b> 조금 어긋나도 된다. 닿을 때까지 내린 뒤 놓는다.</figcaption></figure>
+    <figure><svg id="s2" viewBox="0 0 300 230"></svg><figcaption><b>② 벽을 타고 가운데로 온다.</b></figcaption></figure>
+    <figure><svg id="s3" viewBox="0 0 300 230"></svg><figcaption><b>③ 엎은 세트를 내린다.</b> 같은 벽이 깔때기가 된다.</figcaption></figure>
+    <figure><svg id="s4" viewBox="0 0 300 230"></svg><figcaption><b>④ 4개 묶음 완성.</b> 양 끝을 잡고 들어 트레이로 옮긴다.</figcaption></figure>
+  </div>
+  <p>트레이에는 깔개를 둘 수 없으므로, 거기서는 "떨어뜨리지 않고 닿은 뒤에 놓기"만으로 간다. 양 끝을 잡으면 가운데가 10mm쯤 처지는데, 그 가운데가 먼저 칸에 닿은 다음 끝을 내려놓는다(<a href="2026-11-14_spring-sag-share.html">처짐 측정 문서</a>).</p>
+
+  <h2>아직 모르는 것</h2>
+  <div class="note"><ul style="margin:0;padding-left:18px">
+    <li>이 받침은 만들어 본 적이 없다. 벽 각도와 깊이는 코일 단면 치수에서 계산한 제안이다.</li>
+    <li>위 세트가 벽에 걸려 비스듬히 끼는지는 실물로 봐야 한다. 벽이 너무 가파르면 끼고, 너무 완만하면 모아 주지 못한다.</li>
+    <li>"±1.5mm 안에 내려와야 맞물린다"는 단순한 시뮬레이션 모형에서 나온 숫자다. 손으로 어긋나게 얹어 보면 실제 값을 알 수 있다.</li>
+    <li>시뮬레이션은 튕김과 뒤집힘을 재현하지 못했다. 이 문서의 튕김·구름 판단은 손으로 해 본 관찰에 근거한다.</li>
+    <li>흰색 코일은 묶음 폭이 18mm라 이 치수에서는 벽에 거의 닿는다. 검정(16mm)과 받침을 따로 만들거나 홈을 2mm 넓혀야 한다.</li>
+  </ul></div>
+</div>
+<script>
+const HALF = [[0.71, 1], [0.81, 0.93], [0.92, 0.82], [0.985, 0.66], [1, 0.5], [0.98, 0.35], [0.9, 0.2], [0.75, 0.055], [0.55, 0], [0.27, 0.045], [0, 0.085]];
+const HW = 7.4, HT = 8.8, WIRE = 0.7, BUN = 12.7;
+const NS = "http://www.w3.org/2000/svg";
+function el(svg, tag, at, txt) { const e = document.createElementNS(NS, tag); for (const k in at) e.setAttribute(k, at[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
+// 코일 단면. cx·by = 가운데·바닥(mm), flip = 엎음, rot = 기울기(도)
+function coil(svg, o, cx, by, opt = {}) {
+  const pts = HALF.map(([z, y]) => [z * HW, y * HT]).concat(HALF.slice(0, -1).reverse().map(([z, y]) => [-z * HW, y * HT]));
+  const d = pts.map(([z, y], i) => { const yy = opt.flip ? HT - y : y; return (i ? "L" : "M") + (o.x + (cx + z) * o.s).toFixed(1) + " " + (o.y - (by + WIRE / 2 + yy) * o.s).toFixed(1); }).join(" ");
+  const g = el(svg, "g", opt.rot ? { transform: `rotate(${opt.rot} ${o.x + cx * o.s} ${o.y - by * o.s})` } : {});
+  el(g, "path", { d, fill: "none", stroke: `var(${opt.flip || opt.blue ? "--coil2" : "--coil"})`, "stroke-width": Math.max(1.6, WIRE * o.s), "stroke-linecap": "round", "stroke-linejoin": "round", opacity: opt.ghost ? 0.35 : 1 });
+}
+const P = (o, z, y) => (o.x + z * o.s).toFixed(1) + "," + (o.y - y * o.s).toFixed(1);
+function table(svg, o, w, soft) {
+  el(svg, "rect", { x: o.x - w * o.s, y: o.y, width: 2 * w * o.s, height: 5 * o.s, fill: "var(--table)" });
+  if (soft) el(svg, "rect", { x: o.x - w * o.s, y: o.y - 1.5 * o.s, width: 2 * w * o.s, height: 1.5 * o.s, fill: "var(--soft)" });
+}
+// V자 홈 받침: 바닥폭 12, 윗폭 24, 깊이 16(벽 약 70°). LIFT = 코일이 벽에 걸쳐 앉는 높이(단면에서 계산)
+const JB = 6, JT = 12, JD = 16, LIFT = 2.4;
+function jig(svg, o) {
+  el(svg, "polygon", { points: [[-20, JD], [-JT, JD], [-JB, 0], [JB, 0], [JT, JD], [20, JD], [20, -4], [-20, -4]].map(p => P(o, ...p)).join(" "), fill: "var(--jig)" });
+  el(svg, "polyline", { points: [[-JT, JD], [-JB, 0], [JB, 0], [JT, JD]].map(p => P(o, ...p)).join(" "), fill: "none", stroke: "var(--soft)", "stroke-width": Math.max(2, o.s), "stroke-linejoin": "round" });
+}
+function arrow(svg, x1, y1, x2, y2, col = "--accent") {
+  const a = Math.atan2(y2 - y1, x2 - x1), h = 7;
+  el(svg, "path", { d: `M${x1} ${y1} L${x2} ${y2} M${x2} ${y2} l${-h * Math.cos(a - 0.5)} ${-h * Math.sin(a - 0.5)} M${x2} ${y2} l${-h * Math.cos(a + 0.5)} ${-h * Math.sin(a + 0.5)}`, stroke: `var(${col})`, "stroke-width": 2, fill: "none", "stroke-linecap": "round" });
+}
+function dim(svg, x1, y1, x2, y2, txt, dx = 0, dy = -6) {
+  el(svg, "path", { d: `M${x1} ${y1} L${x2} ${y2}`, stroke: "var(--muted)", "stroke-width": 1 });
+  const v = x1 === x2; el(svg, "path", { d: v ? `M${x1 - 4} ${y1} h8 M${x2 - 4} ${y2} h8` : `M${x1} ${y1 - 4} v8 M${x2} ${y2 - 4} v8`, stroke: "var(--muted)", "stroke-width": 1 });
+  el(svg, "text", { x: (x1 + x2) / 2 + dx, y: (y1 + y2) / 2 + dy, "text-anchor": v ? "start" : "middle", class: "s" }, txt);
+}
+const $ = id => document.getElementById(id), S = { x: 150, y: 160, s: 8 };
+// 1. 문제
+table($("p1"), S, 16); coil($("p1"), S, -2, 0, { ghost: 1 }); coil($("p1"), S, 3, 0.6, { rot: 28 }); arrow($("p1"), 205, 70, 232, 96, "--bad");
+table($("p2"), S, 16); coil($("p2"), S, 0, 0, { ghost: 1 }); coil($("p2"), S, 1.5, 6, { rot: -12 }); arrow($("p2"), 150, 150, 150, 122, "--bad"); arrow($("p2"), 90, 40, 90, 75, "--muted");
+table($("p3"), S, 16); coil($("p3"), S, 0, 0); coil($("p3"), S, 3.2, BUN - HT - WIRE + 2.4, { flip: 1, rot: 7 });
+dim($("p3"), 150, 28, 150 + 3.2 * 8, 28, "어긋남", 13, -6);
+// 2. 바닥 셋
+const F = { x: 150, y: 170, s: 8 };
+table($("f1"), F, 16); coil($("f1"), F, -4, 0); arrow($("f1"), 80, 150, 55, 150, "--bad"); arrow($("f1"), 158, 150, 183, 150, "--bad"); el($("f1"), "text", { x: 150, y: 30, "text-anchor": "middle", class: "s" }, "어디로든 구른다");
+table($("f2"), F, 16, 1); coil($("f2"), F, -4, 1.5); arrow($("f2"), 80, 138, 55, 138, "--bad"); arrow($("f2"), 158, 138, 183, 138, "--bad"); el($("f2"), "text", { x: 150, y: 30, "text-anchor": "middle", class: "s" }, "덜 튀지만 구르는 것은 같다");
+jig($("f3"), F); coil($("f3"), F, 0, LIFT); arrow($("f3"), 62, 70, 80, 100, "--good"); arrow($("f3"), 238, 70, 220, 100, "--good"); el($("f3"), "text", { x: 150, y: 30, "text-anchor": "middle", class: "s" }, "벽이 가운데로 모은다");
+// 3. 받침 단면(크게)
+{ const v = $("jig"), o = { x: 400, y: 360, s: 17 };
+  jig(v, o); coil(v, o, 0, LIFT); coil(v, o, 0.3, LIFT + BUN - HT - WIRE, { flip: 1 });
+  dim(v, o.x - JT * o.s, o.y - (JD + 1.6) * o.s, o.x + JT * o.s, o.y - (JD + 1.6) * o.s, "윗폭 24mm");
+  dim(v, o.x - JB * o.s, o.y + 1.6 * o.s, o.x + JB * o.s, o.y + 1.6 * o.s, "바닥폭 12mm", 0, 18);
+  dim(v, o.x + 21 * o.s, o.y - JD * o.s, o.x + 21 * o.s, o.y, "깊이 16mm", 8, 4);
+  const lab = (x, y, t, tx, ty, left) => { el(v, "path", { d: `M${x} ${y} L${left ? tx + 6 : tx - 6} ${ty - 4}`, stroke: "var(--muted)", "stroke-width": 1 }); el(v, "text", { x: tx, y: ty, "text-anchor": left ? "end" : "start" }, t); };
+  lab(o.x + 9.6 * o.s, o.y - 9.5 * o.s, "벽 약 70°", 640, 175); el(v, "text", { x: 640, y: 193, class: "s" }, "코일 옆구리가 걸친다");
+  lab(o.x + 10.6 * o.s, o.y - 15.2 * o.s, "입구 여유 약 3.5mm", 640, 80); el(v, "text", { x: 640, y: 98, class: "s" }, "= 로봇이 틀려도 되는 양");
+  lab(o.x + 3 * o.s, o.y - 0.2 * o.s, "무른 안감 1mm", 640, 330); el(v, "text", { x: 640, y: 348, class: "s" }, "폼 테이프·펠트");
+  lab(o.x - 5.6 * o.s, o.y - (LIFT + 11) * o.s, "엎은 위 세트", 150, 130, 1); lab(o.x - 7 * o.s, o.y - (LIFT + 3.5) * o.s, "아래 세트", 150, 250, 1);
+  el(v, "text", { x: 70, y: 400, class: "s" }, "받침 몸통: 3D 프린트 또는 우드락"); }
+// 4. 옆모습
+{ const v = $("side"), s = 2.7, x0 = 50, y0 = 150;
+  el(v, "rect", { x: x0 - 20, y: y0 + 18, width: 800, height: 8, fill: "var(--table)" });
+  el(v, "rect", { x: x0 + 25 * s, y: y0 - 16 * s + 26, width: 230 * s, height: 16 * s - 8, fill: "var(--jig)" });
+  el(v, "rect", { x: x0, y: y0 - (LIFT + BUN) * s + 8, width: 280 * s, height: BUN * s, fill: "none", stroke: "var(--coil)", "stroke-width": 2, rx: 3 });
+  for (let i = 0; i < 34; i++) el(v, "path", { d: `M${x0 + (i + 0.5) * 280 / 34 * s} ${y0 - (LIFT + BUN) * s + 8} v${BUN * s}`, stroke: i % 2 ? "var(--coil2)" : "var(--coil)", "stroke-width": 1.4 });
+  [[0, "핑거"], [280 - 14, "핑거"]].forEach(([x, t]) => { el(v, "rect", { x: x0 + x * s, y: 40, width: 14 * s, height: y0 - 40 + 12, fill: "var(--accent)", opacity: 0.35 }); el(v, "text", { x: x0 + (x + 7) * s, y: 32, "text-anchor": "middle", class: "s" }, t); });
+  dim(v, x0 + 25 * s, y0 + 40, x0 + 255 * s, y0 + 40, "받침 230mm", 0, 16); dim(v, x0, y0 + 40, x0 + 25 * s, y0 + 40, "25", 0, 16); dim(v, x0 + 255 * s, y0 + 40, x0 + 280 * s, y0 + 40, "25", 0, 16);
+  el(v, "text", { x: x0 + 140 * s, y: 60, "text-anchor": "middle", class: "s" }, "코일 280mm (34고리)"); }
+// 5. 순서
+const Q = { x: 150, y: 190, s: 8 };
+jig($("s1"), Q); coil($("s1"), Q, 3, LIFT + 8); arrow($("s1"), 174, 30, 174, 62);
+jig($("s2"), Q); coil($("s2"), Q, 3, LIFT + 1.6, { ghost: 1 }); coil($("s2"), Q, 0, LIFT); arrow($("s2"), 236, 110, 218, 132, "--good");
+jig($("s3"), Q); coil($("s3"), Q, 0, LIFT); coil($("s3"), Q, -2.5, LIFT + BUN - HT - WIRE + 7, { flip: 1 }); arrow($("s3"), 130, 18, 130, 46); arrow($("s3"), 52, 62, 68, 84, "--good");
+jig($("s4"), Q); coil($("s4"), Q, 0, LIFT); coil($("s4"), Q, 0.3, LIFT + BUN - HT - WIRE, { flip: 1 });
+[-1, 1].forEach(k => el($("s4"), "rect", { x: 150 + k * 9.3 * 8 - 4, y: 20, width: 8, height: 78, fill: "var(--accent)", opacity: 0.5 })); el($("s4"), "text", { x: 150, y: 16, "text-anchor": "middle", class: "s" }, "핑거(양 끝에서)");
+</script>
+</html>

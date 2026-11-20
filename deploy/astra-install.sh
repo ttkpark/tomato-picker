@@ -14,7 +14,7 @@
 #   모자란다. 640x480으로 바꾸면 멀쩡하다. usbfs 버퍼 문제가 아니었다
 #   (usbfs_memory_mb를 16→1000으로 올려도 그대로였다). 그래서 여기서 고쳐 둔다.
 #
-# 근거와 실측은 docs/depth-camera.md §9.
+# 근거와 실측은 docs/2026-08-28_ROS2-이행/2026-09-03_depth-camera.md §9.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

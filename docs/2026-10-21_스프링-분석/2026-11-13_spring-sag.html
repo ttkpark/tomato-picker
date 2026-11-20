@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>코일 처짐 실측</title>
+<style>
+:root { --bg: #f4f6f7; --surface: #fff; --fg: #1b2328; --muted: #5d6b73; --line: #d5dde1; --accent: #1d6b86; --bad: #c2412d; }
+@media (prefers-color-scheme: dark) { :root { --bg: #12181b; --surface: #1a2226; --fg: #e3e9ec; --muted: #93a3ab; --line: #2c383e; --accent: #5fb3cf; --bad: #ef7a64; color-scheme: dark; } }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.65 "Malgun Gothic", system-ui, sans-serif; }
+.wrap { max-width: 900px; margin: 0 auto; padding: 32px 16px 64px; display: grid; gap: 20px; }
+h1 { font-size: 26px; margin: 0; } h2 { font-size: 18px; margin: 12px 0 0; } p { margin: 0; max-width: 68ch; }
+.muted { color: var(--muted); } .bad { color: var(--bad); }
+canvas { width: 100%; aspect-ratio: 16/9; display: block; border-radius: 8px; touch-action: none; }
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); cursor: pointer; }
+button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.scroll { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.key i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; border: 1px solid var(--line); }
+</style>
+<div class="wrap">
+  <h1>코일 처짐 실측 → 3D</h1>
+  <p class="muted">모니터 격자(한 칸 21.6mm) 앞에서 찍은 영상에서 중심선을 뽑아 그대로 얹었다. 끌어서 돌려 볼 수 있다. 뒤 격자가 그 모니터 격자다.</p>
+  <div class="tabs" id="tabs"></div>
+  <canvas id="cv" aria-label="휜 코일 3D"></canvas>
+  <p class="key muted"><i style="background:#f6f8f9"></i>사진에서 본 구간 <i style="background:#58b7e0"></i>손에 가려 이은 구간(추정) <i style="background:#e0453a"></i>실측 중심선 점</p>
+  <h2>처짐</h2>
+  <div class="scroll"><table id="sag"></table></div>
+  <h2>자중 처짐 모형 (팔마다 따로 맞춤)</h2>
+  <p class="muted">k = 단위길이 무게 ÷ 휨 강성. 뿌리 기울기는 통째로 기운 양이고, k는 팔 자체가 휘는 정도다 — 좌우 차이를 이 둘로 갈라 본다."140mm 처짐"은 수평으로 물린 140mm 팔의 끝이 내려가는 양으로, 장면끼리 견주는 잣대다.</p>
+  <div class="scroll"><table id="arms"></table></div>
+  <h2>부족한 것</h2>
+  <ul id="limits"></ul>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="2026-11-13_coil-sim.js"></script>
+<script src="2026-11-13_spring-sag-data.js"></script>
+<script>
+const D = window.SPRING_SAG, C = CoilSim, CELL = 21.6, TOP = 150;
+function build(name) {
+  const d = D[name], s = C.stage(), g = new THREE.Group();
+  const cx = (d.pts[0][0] + d.pts[d.pts.length - 1][0]) / 2;
+  g.add(C.bent(d.pts, d.hidden_x));
+  if (name.startsWith("double")) g.add(C.bent(d.pts, d.hidden_x, C.P / 2, true));   // 세트 = 같은 방향으로 포갠 둘째 코일
+  const dot = new THREE.MeshBasicMaterial({ color: 0xe0453a });
+  d.pts.forEach((p, i) => { if (i % 2 || (p[0] > d.hidden_x[0] && p[0] < d.hidden_x[1])) return;
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1.1, 8, 6), dot); m.position.set(p[0], p[1], C.W / 2 + 3); g.add(m); });
+  g.position.set(-cx, TOP, 0); s.add(g);
+  const grid = new THREE.GridHelper(CELL * 16, 16, 0xc2412d, 0x4a5a63); grid.rotation.x = Math.PI / 2; grid.position.set(0, TOP, -C.W / 2 - 1); s.add(grid);
+  return { scene: s, cam: [0, TOP - 20, 560], tgt: [0, TOP - 25, 0] };
+}
+const v = C.viewer(document.getElementById("cv"), build), tabs = document.getElementById("tabs");
+Object.keys(D).forEach((k, i) => { const b = document.createElement("button"); b.textContent = D[k].label; b.setAttribute("aria-pressed", !i);
+  b.onclick = () => { [...tabs.children].forEach(c => c.setAttribute("aria-pressed", c === b)); v.show(k); }; tabs.append(b); });
+v.show(Object.keys(D)[0]);
+const SIDE = { left: "왼팔", right: "오른팔" };
+const row = (cells, tag = "td") => "<tr>" + cells.map(c => `<${tag}>${c}</${tag}>`).join("") + "</tr>";
+document.getElementById("sag").innerHTML = row(["장면", "왼쪽 (가로 → 처짐)", "오른쪽 (가로 → 처짐)", "전체 호 길이", "가려진 폭"], "th") +
+  Object.values(D).map(d => d.mid_sag_mm != null
+    ? row([d.label, `폭 ${d.span_mm}mm`, `가운데 ${d.mid_sag_mm}mm`, "—", d.hidden_gap_mm + "mm"])
+    : row([d.label, `${d.left_reach_mm} → ${d.left_drop_mm}mm`, `${d.right_reach_mm} → ${d.right_drop_mm}mm`, d.arc_mm + "mm", d.hidden_gap_mm + "mm"])).join("");
+document.getElementById("arms").innerHTML = row(["장면", "팔", "본 길이", "끝 처짐", "뿌리 기울기", "k (×10⁻⁷/mm³)", "140mm 처짐", "맞춤 잔차"], "th") +
+  Object.values(D).flatMap(d => (d.arms || []).map(a => a.fit === null
+    ? row([d.label, SIDE[a.side], a.seen_mm + "mm", "—", "—", '<span class="bad">짧아서 못 맞춤</span>', "—", "—"])
+    : row([d.label, SIDE[a.side], a.seen_mm + "mm", a.drop_mm + "mm", a.root_tilt_deg + "°", a.k_1e7, a.droop140_mm + "mm", a.rms_mm + "mm"]))).join("");
+document.getElementById("limits").innerHTML = [
+  "손끝 받침 두 장면이 가장 믿을 만하다 — 양팔이 다 보이고 손가락이 가린 폭이 작다. 집은 장면은 손이 가려 덜 믿을 만하고, 두 개 겹침을 집은 장면은 오른팔을 못 맞췄다.",
+  "좌우 차이는 둘이 섞여 있다: ① 통째로 기운 것(뿌리 기울기 차이) ② 팔 자체가 더 휘는 것(k 차이). 한 개 · 손끝 받침은 71~84초 14프레임에서 왼팔 k 8.2±0.4, 오른팔 6.3±0.7로 매번 같은 쪽이었다 — 흔들림이 아니다. 다만 받친 점이 가운데가 아니었고 뒤집을 중심도 정할 수 없어서, 좌우를 맞대어 비교하는 것은 의미가 없다 — 팔마다 따로 맞춘 k만 쓴다.",
+  "고리 모양은 근접 사진을 보고 옮긴 것이다(쌍선 고리 끝 쪽이 높고 이음 쪽이 낮은 비대칭 단면). 치수(폭·높이·쌍선 간격)는 눈대중이고, 처짐 영상에서 코일의 어느 쪽이 위였는지는 모른다 — 3D는 열린 쪽을 위로 그렸다.",
+  "단면이 비대칭이라 휘는 방향(열린 쪽이 위·아래·옆)에 따라 강성이 다를 수 있는데, 영상에서는 그 방향을 통제하지 않았다.",
+  "무게를 안 쟀다(재기 어렵다). 처짐 모양은 k(무게÷강성 비)만으로 정해지므로 처짐 모형에는 지장이 없다. 휨 강성 절대값과 파지력에만 필요하고, 철사 굵기 1.1mm(눈대중) 기준 계산 추정은 14g 안팎(±30%)이다.",
+  "양끝 잡기는 손이 끝이 아니라 안쪽을 잡았고 당기는 힘·손목 각을 모른다. 재료 성질을 뽑는 데는 못 쓴다.",
+  "측정한 호 길이(295~303mm)가 모형(34고리 × 8.47mm)보다 3~5% 길다. 캘리퍼 눈금 100mm는 화면 격자로 98.6mm로 읽혀(눈으로 찍은 점, ±1mm) 축척은 대략 맞는다 — 모형의 고리 수·피치 쪽이 틀렸을 수 있다.",
+].map(t => `<li>${t}</li>`).join("");
+</script>
+</html>

@@ -6,7 +6,7 @@
 
 왜 — 2026-10-22까지 이 로봇엔 자이로가 **하나도** 없었다(D405·Astra·Uno·젯슨 전부).
 회전량은 space_map 스캔매칭뿐이었고, 그건 곧은 벽 한 토막이면 모호해진다.
-배경 = docs/stm32-자세보드-목표.md §1·§4 0단계.
+배경 = docs/2026-08-22_메카넘-메인보드/2026-10-22_stm32-자세보드-목표.md §1·§4 0단계.
 
 발행물 (원자적 교체, 50Hz)
     /dev/shm/imu.json  {ts, boot, yaw_deg(감기 누적, 반시계+), rate_dps, still, ready, bias_dps, up, hz, i2c_err}

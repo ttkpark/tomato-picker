@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 태그를 규칙대로 단다 — docs/ros2-이행계획.md §2.
+# 태그를 규칙대로 단다 — docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md §2.
 #
 #     tools/tag.sh v2.0.0-ros.2 "손-눈 보정 실측 통과"
 #     tools/tag.sh --list
@@ -21,7 +21,7 @@ usage() {
   tools/tag.sh <태그> "<한 줄 설명>"
   tools/tag.sh --list
 
-태그 형식 (docs/ros2-이행계획.md §2)
+태그 형식 (docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md §2)
   기존 스택   v1.MINOR.PATCH        예) v1.0.0    — master 계열에서만
   ROS 계통    v2.0.0-ros.N          예) v2.0.0-ros.2 — ros 브랜치에서만
   대체 완료   v2.0.0

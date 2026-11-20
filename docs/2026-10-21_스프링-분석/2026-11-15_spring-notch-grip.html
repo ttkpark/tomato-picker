@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>홈 두 곳 집게</title>
+<style>
+:root { --bg: #f4f6f7; --surface: #fff; --fg: #1b2328; --muted: #5d6b73; --line: #d5dde1; --accent: #1d6b86; --bad: #c2412d; --good: #2c7a4b;
+  --coil: #2a3238; --tray: #8fc3dd; --rib: #3b8fd0; --foam: #e6c36a; --plate: #e08a3a; --nb: #b9c4ca; }
+@media (prefers-color-scheme: dark) { :root { --bg: #12181b; --surface: #1a2226; --fg: #e3e9ec; --muted: #93a3ab; --line: #2c383e; --accent: #5fb3cf; --bad: #ef7a64; --good: #6cc48d;
+  --coil: #e8eef1; --tray: #2f5a70; --rib: #4a9bd6; --foam: #c9a646; --plate: #f0a35c; --nb: #4a5a63; color-scheme: dark; } }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.65 "Malgun Gothic", system-ui, sans-serif; }
+.wrap { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; display: grid; gap: 22px; }
+h1 { font-size: 26px; margin: 0; } h2 { font-size: 19px; margin: 14px 0 0; } p { margin: 0; max-width: 70ch; }
+.muted { color: var(--muted); } .lead { font-size: 17px; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-x: auto; }
+figcaption { color: var(--muted); font-size: 13.5px; margin-top: 8px; }
+svg { width: 100%; height: auto; display: block; }
+svg text { fill: var(--fg); font: 13px "Malgun Gothic", system-ui, sans-serif; } svg .s { fill: var(--muted); font-size: 12px; }
+.scroll { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.o { color: var(--good); font-weight: 700; } .x { color: var(--bad); font-weight: 700; }
+.note { border-left: 4px solid var(--plate); background: var(--surface); padding: 10px 14px; border-radius: 0 8px 8px 0; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+@media print { body { background: #fff; } .noprint { display: none; } }
+</style>
+<div class="wrap">
+  <p class="muted">제본 코일 끝단 자동화 · 2026-11-15 · 제안(만들어 보기 전)</p>
+  <h1>돌기의 홈 두 곳에서, 무른 패드로 윗부분만 잡는다</h1>
+  <p class="lead">트레이 돌기에는 낮아지는 홈이 두 곳 있다. 그 자리에서는 우드락 두께(5mm) 패드가 묶음 옆으로 내려갈 수 있다. 그래서 묶음을 떨어뜨리지 않고 바닥에 닿을 때까지 내린 뒤 놓을 수 있다.</p>
+
+  <h2>1. 옆에서 본 모습 — 이빨 두 개가 홈으로 들어간다</h2>
+  <figure><svg id="side" viewBox="0 0 900 300"></svg>
+    <figcaption>넓은 판은 돌기 꼭대기(12.7mm) 위에 머물고, 우드락 이빨 두 개만 홈으로 내려간다. 홈 중심은 가운데에서 ±30.35mm다.</figcaption></figure>
+
+  <h2>2. 끝에서 본 단면 — 홈 자리</h2>
+  <div class="grid2">
+    <figure><svg id="sec" viewBox="0 0 440 300"></svg><figcaption>홈에서는 돌기가 7.7mm로 낮다. 이빨 아랫단을 8.5mm에 두면 묶음 윗부분 약 4mm를 문다. 옆 칸 묶음과의 틈은 8mm(검정)라 5mm 패드와 벌릴 여유 1.5mm가 들어간다.</figcaption></figure>
+    <figure><svg id="sec2" viewBox="0 0 440 300"></svg><figcaption>홈이 아닌 곳에서는 돌기가 12.7mm라 패드가 내려갈 자리가 없다(한쪽 2mm). 그래서 이빨은 홈 폭 안에만 있어야 한다.</figcaption></figure>
+  </div>
+
+  <h2>3. 우드락 자르는 모양 (2장)</h2>
+  <figure><svg id="cut" viewBox="0 0 900 330"></svg>
+    <figcaption>이미 있는 평판형 덧판(160 × 45mm, <code>hardware_design/coil_gripper</code>의 flat)에 그대로 붙인다. 새로 뽑을 것이 없다. 이빨 폭은 홈(23~25mm)보다 좁은 20mm로 한다.</figcaption></figure>
+  <ul>
+    <li>이빨이 판 아랫단보다 6mm 내려온다. 판은 돌기 위에, 이빨만 홈 안에 있게 된다.</li>
+    <li>이빨 안쪽 면에 스펀지 테이프나 미끄럼 방지 매트 조각을 붙인다. 우드락 겉면은 종이라 미끄럽다.</li>
+    <li>흰색 코일(묶음 폭 18mm)은 옆 틈이 6mm라 5mm 우드락이 빠듯하다. 3mm 폼보드로 바꾼다.</li>
+  </ul>
+
+  <h2>4. 넣는 순서 — 휘어짐을 쓴다</h2>
+  <div class="scroll"><table>
+    <tr><th>단계</th><th>동작</th><th>왜</th></tr>
+    <tr><td>①</td><td>가운데 두 곳을 물고 든다. 양 끝이 아래로 늘어진다(약 10mm, 추정).</td><td>늘어진 끝이 길잡이가 된다</td></tr>
+    <tr><td>②</td><td>칸 위에서 내린다. 양 끝이 먼저 바닥에 닿는다.</td><td>멀리 떨어진 두 점이 먼저 칸에 들어가 방향이 맞춰진다</td></tr>
+    <tr><td>③</td><td>천천히(20mm/s 이하) 계속 내린다. 닿는 자리가 끝에서 가운데로 번지며 묶음이 펴진다.</td><td>떨어지는 구간이 없어 흐트러지지 않는다</td></tr>
+    <tr><td>④</td><td>이빨이 홈에 들어가고 묶음 가운데가 바닥에 닿으면 멈춘다.</td><td>판은 돌기 위 1~2mm에 있다</td></tr>
+    <tr><td>⑤</td><td>1.5mm만 벌리고 위로 뺀다.</td><td>많이 벌리면 옆 칸 묶음을 건드린다</td></tr>
+  </table></div>
+
+  <h2>5. 시뮬레이션에서 본 것</h2>
+  <p>양 끝을 잡는 조건으로 돌린 결과다(가운데를 잡는 것은 지금 모형으로 못 돌린다). 놓는 높이와 집게의 무르기를 바꿔, 놓은 뒤 위 세트가 얼마나 들썩이는지 봤다. 위치 오차는 가로 1.5mm에 1° 틀어진 조건이다.</p>
+  <div class="scroll"><table>
+    <tr><th>놓는 방식</th><th>딱딱하게 물었을 때</th><th>무르게 물었을 때</th></tr>
+    <tr><td>12mm 위에서 놓기</td><td>들어가지만 위 세트가 0.3~2.5mm 들썩임</td><td>0.5~2mm 들썩임, 잘 튀는 조건에서는 돌기에 걸림</td></tr>
+    <tr><td>2~4mm 위에서 놓기</td><td class="x">돌기에 걸림</td><td>들어감, 잘 튀는 조건에서 0.4~3mm 들썩임</td></tr>
+    <tr><td>바닥까지 내린 뒤 놓기</td><td class="x">돌기에 걸림 (어긋난 채 눌려서 튕김)</td><td class="o">들어감, 들썩임 0.0~0.1mm</td></tr>
+  </table></div>
+  <p class="muted">읽는 법: 떨어지는 구간이 있으면 들썩인다. 바닥까지 내리면 안 들썩이지만, 딱딱하게 물고 있으면 조금만 어긋나도 돌기 위에 눌린다. 무르게 물면 돌기가 묶음을 옆으로 밀어 제자리에 넣는다. 그래서 "무른 패드 + 바닥까지 내리기"가 답이다.</p>
+
+  <h2>미끄러지면 어떻게 하나</h2>
+  <div class="note"><ul style="margin:0;padding-left:18px">
+    <li><b>가장 큰 걱정은 미끄러짐보다 "아래 세트가 따라오는가"다.</b> 윗부분 4mm만 물면 주로 위 세트를 잡게 된다. 아래 세트가 고리 맞물림으로 같이 들리는지는 모른다. 손가락 두 개로 홈 자리(가운데에서 3cm씩)의 윗부분만 집어 들어 보면 1분 안에 알 수 있다.</li>
+    <li>아래 세트가 빠지면: 이빨을 더 내릴 수는 없으니(홈 돌기 7.7mm), 이빨 아랫단에 안쪽으로 1mm 턱을 붙여 아래 세트 벽을 걸거나, 양 끝 여백에 얇은 다리를 더하는 쪽으로 간다.</li>
+    <li>미끄러짐 자체는 패드 재질로 줄인다: 스펀지 테이프, 미끄럼 방지 매트. 철사가 패드에 살짝 박힐 만큼 물러야 한다.</li>
+    <li>세게 물어서 해결하지 않는다. 세게 물면 묶음이 찌그러지고, 집게 서보에 0 지령을 주면 과부하로 팔이 떨어진 적이 있다.</li>
+    <li>빨리 움직이면 늘어진 양 끝이 출렁인다. 옮길 때 가속을 낮추고, 칸 위에서 0.3초쯤 멈춘 뒤 내린다.</li>
+  </ul></div>
+
+  <h2>아직 모르는 것</h2>
+  <ul>
+    <li>홈 길이가 문서마다 23mm와 25mm로 다르다. 이빨 20mm는 둘 다에 들어가게 잡은 값이다.</li>
+    <li>가운데를 잡았을 때 4개 묶음 끝이 얼마나 늘어지는지는 재지 않았다. 10mm는 코일 한 개 측정에서 환산한 추정이다.</li>
+    <li>"무르게"의 정도: 시뮬레이션에서는 옆으로 1mm 밀 때 5~80g 정도의 힘이면 됐다. 스펀지 패드가 이 범위인지는 만들어 봐야 안다.</li>
+    <li>시뮬레이션은 튕김을 실물보다 작게 본다. 표의 들썩임 숫자는 크기보다 순서로 읽는다.</li>
+  </ul>
+</div>
+<script>
+const NS = "http://www.w3.org/2000/svg";
+function el(svg, tag, at, txt) { const e = document.createElementNS(NS, tag); for (const k in at) e.setAttribute(k, at[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
+function dim(svg, x1, y1, x2, y2, txt, dx = 0, dy = -6) {
+  el(svg, "path", { d: `M${x1} ${y1} L${x2} ${y2}`, stroke: "var(--muted)", "stroke-width": 1 });
+  const v = x1 === x2; el(svg, "path", { d: v ? `M${x1 - 4} ${y1} h8 M${x2 - 4} ${y2} h8` : `M${x1} ${y1 - 4} v8 M${x2} ${y2 - 4} v8`, stroke: "var(--muted)", "stroke-width": 1 });
+  el(svg, "text", { x: (x1 + x2) / 2 + dx, y: (y1 + y2) / 2 + dy, "text-anchor": v ? "start" : "middle", class: "s" }, txt);
+}
+const $ = id => document.getElementById(id);
+const H = 12.7, NX = 30.35, NW = 12, ND = 5, RL = 116.45, HL = 148.75, CL = 139.75, TW = 20, TZ = 8.5, PZ = 14.5;
+// 1. 옆모습 (X = 길이). 세로는 4배 과장
+{ const v = $("side"), s = 2.8, cx = 450, y0 = 230, k = 9;
+  const X = x => cx + x * s, Y = z => y0 - z * k;
+  el(v, "rect", { x: X(-HL) - 6, y: Y(0), width: 2 * HL * s + 12, height: 8, fill: "var(--tray)" });
+  [-1, 1].forEach(q => el(v, "rect", { x: q < 0 ? X(-HL) - 6 : X(HL), y: Y(H), width: 6, height: H * k, fill: "var(--tray)" }));
+  // 돌기(홈 두 곳)
+  const rib = [[-RL, 0], [-RL + 6, H], [-NX - NW, H], [-NX - NW + 4, H - ND], [-NX + NW - 4, H - ND], [-NX + NW, H], [NX - NW, H], [NX - NW + 4, H - ND], [NX + NW - 4, H - ND], [NX + NW, H], [RL - 6, H], [RL, 0]];
+  el(v, "polygon", { points: rib.map(p => X(p[0]) + "," + Y(p[1])).join(" "), fill: "var(--rib)", opacity: 0.55 });
+  // 묶음(앉은 모습)
+  el(v, "rect", { x: X(-CL), y: Y(H), width: 2 * CL * s, height: H * k, fill: "none", stroke: "var(--coil)", "stroke-width": 2, rx: 4 });
+  for (let i = 0; i < 34; i++) el(v, "path", { d: `M${X(-CL + (i + 0.5) * 2 * CL / 34)} ${Y(H)} v${H * k}`, stroke: "var(--coil)", "stroke-width": 1, opacity: 0.5 });
+  // 판 + 이빨
+  el(v, "rect", { x: X(-80), y: Y(PZ + 8), width: 160 * s, height: 8 * k, fill: "var(--plate)", opacity: 0.85 });
+  [-1, 1].forEach(q => el(v, "rect", { x: X(q * NX - TW / 2), y: Y(PZ), width: TW * s, height: (PZ - TZ) * k, fill: "var(--foam)", stroke: "var(--plate)" }));
+  el(v, "text", { x: X(0), y: Y(PZ + 3.5), "text-anchor": "middle" }, "덧판 160mm + 우드락");
+  el(v, "text", { x: X(-NX), y: Y(H) + 26, "text-anchor": "middle", class: "s" }, "이빨"); el(v, "text", { x: X(NX), y: Y(H) + 26, "text-anchor": "middle", class: "s" }, "이빨");
+  dim(v, X(-NX), y0 + 30, X(NX), y0 + 30, "이빨 중심 사이 60.7mm", 0, -6);
+  dim(v, X(-CL), y0 + 56, X(CL), y0 + 56, "코일 280mm", 0, 16);
+  el(v, "text", { x: X(-RL + 30), y: Y(H) - 8, class: "s" }, "돌기 12.7"); el(v, "text", { x: X(NX + NW + 4), y: Y(H - ND) + 14, class: "s" }, "홈 7.7");
+  el(v, "text", { x: 20, y: 24, class: "s" }, "세로는 3배쯤 키워 그렸다"); }
+// 2. 단면
+function section(id, ribH, withTooth) { const v = $(id), s = 11, cx = 220, y0 = 250, X = y => cx + y * s, Y = z => y0 - z * s;
+  el(v, "rect", { x: 10, y: Y(0), width: 420, height: 8, fill: "var(--tray)" });
+  const kk = ribH / H; [-12, 12].forEach(c => el(v, "polygon", { points: [[-5.15, 0], [-2.15, 3 * kk], [-1.15, ribH], [1.15, ribH], [2.15, 3 * kk], [5.15, 0]].map(p => X(c + p[0]) + "," + Y(p[1])).join(" "), fill: "var(--rib)", opacity: 0.6 }));
+  [-24, 24].forEach(c => el(v, "rect", { x: X(c - 8), y: Y(H), width: 16 * s, height: H * s, rx: 5 * s, fill: "none", stroke: "var(--nb)", "stroke-width": 3 }));
+  el(v, "rect", { x: X(-8), y: Y(H), width: 16 * s, height: H * s, rx: 5 * s, fill: "none", stroke: "var(--coil)", "stroke-width": 4 });
+  el(v, "text", { x: X(0), y: Y(5.5), "text-anchor": "middle", class: "s" }, "묶음 16 × 12.7"); el(v, "text", { x: X(-24), y: Y(5.5), "text-anchor": "middle", class: "s" }, "옆 칸"); el(v, "text", { x: X(24), y: Y(5.5), "text-anchor": "middle", class: "s" }, "옆 칸");
+  [-1, 1].forEach(q => { const x0 = q > 0 ? 8.2 : -13.2;
+    el(v, "rect", { x: X(x0), y: Y(PZ + 8), width: 5 * s, height: (PZ + 8 - (withTooth ? TZ : PZ)) * s, fill: "var(--foam)", stroke: "var(--plate)" });
+    el(v, "rect", { x: X(q > 0 ? 13.2 : -16.2), y: Y(PZ + 8), width: 3 * s, height: 8 * s, fill: "var(--plate)" }); });
+  el(v, "text", { x: X(-12), y: Y(ribH) - 6, "text-anchor": "middle", class: "s" }, "돌기 " + ribH);
+  if (withTooth) { dim(v, X(16.5), Y(TZ), X(16.5), Y(0), "8.5", 6, 4); el(v, "text", { x: X(13.6), y: Y(PZ + 9), "text-anchor": "start", class: "s" }, "우드락 5 + 판 3"); }
+  else el(v, "text", { x: X(0), y: 24, "text-anchor": "middle", fill: "var(--bad)" }, "여기서는 못 내려간다"); }
+section("sec", 7.7, true); section("sec2", 12.7, false);
+// 3. 자르는 모양 (5px = 1mm)
+{ const v = $("cut"), s = 5, x0 = 50, y0 = 40, W = 160, Hh = 45, T = 6;
+  const pts = [[0, 0], [W, 0], [W, Hh], [80 + NX + TW / 2, Hh], [80 + NX + TW / 2, Hh + T], [80 + NX - TW / 2, Hh + T], [80 + NX - TW / 2, Hh], [80 - NX + TW / 2, Hh], [80 - NX + TW / 2, Hh + T], [80 - NX - TW / 2, Hh + T], [80 - NX - TW / 2, Hh], [0, Hh]];
+  el(v, "polygon", { points: pts.map(p => (x0 + p[0] * s) + "," + (y0 + p[1] * s)).join(" "), fill: "var(--foam)", stroke: "var(--fg)", "stroke-width": 1.5 });
+  dim(v, x0, y0 - 14, x0 + W * s, y0 - 14, "160mm"); dim(v, x0 + W * s + 16, y0, x0 + W * s + 16, y0 + Hh * s, "45", 8, 4);
+  dim(v, x0 + (80 - NX - TW / 2) * s, y0 + (Hh + T) * s + 16, x0 + (80 - NX + TW / 2) * s, y0 + (Hh + T) * s + 16, "20", 0, 16);
+  dim(v, x0 + (80 + NX - TW / 2) * s, y0 + (Hh + T) * s + 16, x0 + (80 + NX + TW / 2) * s, y0 + (Hh + T) * s + 16, "20", 0, 16);
+  dim(v, x0 + (80 - NX + TW / 2) * s, y0 + (Hh + T) * s + 16, x0 + (80 + NX - TW / 2) * s, y0 + (Hh + T) * s + 16, "40.7", 0, 16);
+  dim(v, x0 + (80 - NX - TW / 2) * s - 14, y0 + Hh * s, x0 + (80 - NX - TW / 2) * s - 14, y0 + (Hh + T) * s, "6", -22, 4);
+  dim(v, x0, y0 + (Hh + T) * s + 16, x0 + (80 - NX - TW / 2) * s, y0 + (Hh + T) * s + 16, "39.65", 0, 16);
+  el(v, "text", { x: x0 + 80 * s, y: y0 + 22 * s, "text-anchor": "middle" }, "우드락 5mm · 같은 모양 2장");
+  el(v, "text", { x: x0 + 80 * s, y: y0 + 27 * s, "text-anchor": "middle", class: "s" }, "이 면을 덧판에 붙인다. 이빨 안쪽(묶음 쪽)에 스펀지 테이프"); }
+</script>
+</html>

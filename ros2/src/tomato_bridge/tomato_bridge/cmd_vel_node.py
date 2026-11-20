@@ -106,7 +106,7 @@ class CmdVelNode(Node):
         if base_type == "uno" and not self._calib.measured:
             self.get_logger().warning(
                 "duty 환산이 실측이 아니다 — /cmd_vel의 m/s는 방향과 비율만 맞다. "
-                "docs/ros2-이행계획.md의 'duty 곡선 재기'를 하고 duty_measured:=true로.")
+                "docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md의 'duty 곡선 재기'를 하고 duty_measured:=true로.")
 
         self._sub = self.create_subscription(Twist, "cmd_vel", self._on_cmd, 10)
         self._estop_sub = self.create_subscription(Bool, "estop", self._on_estop, 10)

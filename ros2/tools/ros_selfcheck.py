@@ -192,7 +192,7 @@ def test_legacy_boundary() -> None:
         check(f"금지된 의존 — {module}", False, f"{reason} (쓰는 곳: {where})")
     for module, where, _ in unknown:
         check(f"표에 없는 의존 — {module}", False,
-              f"허용/과도기/금지 어디에도 없다. docs/ros2-이행계획.md의 "
+              f"허용/과도기/금지 어디에도 없다. docs/2026-08-28_ROS2-이행/2026-08-28_ros2-이행계획.md의 "
               f"'레거시 의존 졸업표'에 판정을 적고 이 목록에 넣어라 (쓰는 곳: {where})")
 
     # 웹 서비스는 import가 아니라 HTTP로 붙으므로 위 검사에 안 걸린다. 기본값을 본다.
@@ -815,7 +815,7 @@ def test_board_contract() -> None:
           base_cfg.get("sign_vx") == 1 and base_cfg.get("sign_vy") == 1 and base_cfg.get("sign_w") == 1,
           f"vx={base_cfg.get('sign_vx')} vy={base_cfg.get('sign_vy')} w={base_cfg.get('sign_w')}")
 
-    # ⑤ [감사] 보드 계약 v2 5층 데드맨 안전 시한 크로스 레이어 실물 검증 (docs/보드-계약.md §9)
+    # ⑤ [감사] 보드 계약 v2 5층 데드맨 안전 시한 크로스 레이어 실물 검증 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §9)
     # 1층 & 2층: 펌웨어(mecanum_stable.ino) 하드 1000ms / 소프트 300ms
     ino_path = os.path.join(REPO, "firmware", "mecanum_stable", "mecanum_stable.ino")
     ino_text = open(ino_path, encoding="utf-8").read()
@@ -848,7 +848,7 @@ def test_board_contract() -> None:
           cmd_estop_real.rejected and cmd_estop_real.payload == "S" and "비상정지" in cmd_estop_real.reason,
           f"payload={cmd_estop_real.payload} reason={cmd_estop_real.reason}")
 
-    # ⑥ [보드계약 v2] 능력선언(cap) 확장 필드 및 하트비트(hb) 상태 파싱 검증 (docs/보드-계약.md §6, §7)
+    # ⑥ [보드계약 v2] 능력선언(cap) 확장 필드 및 하트비트(hb) 상태 파싱 검증 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §6, §7)
     v2_full = bc.Caps.parse("cap proto=2 fw=3.0.0 board=stm32f411 id=A3F2C918 drive=mecanum wheels=4 "
                             "units=1 closed_loop=1 enc=4 calib=1 "
                             "vmax=800 vymax=600 wmax=180000 "
@@ -878,7 +878,7 @@ def test_board_contract() -> None:
           hb_soft.soft_deadman and not hb_soft.hard_deadman,
           f"st=0x{hb_soft.st:02X} soft={hb_soft.soft_deadman}")
 
-    # ⑦ [보드계약 v2] MobileBase 프로토콜 및 Telemetry 스냅샷 검증 (docs/보드-계약.md §11.1)
+    # ⑦ [보드계약 v2] MobileBase 프로토콜 및 Telemetry 스냅샷 검증 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §11.1)
     telem = bc.Telemetry.from_heartbeat(hb_full)
     check("보드계약 §11.1 Telemetry가 Heartbeat로부터 무손실 복제 생성된다",
           telem.ms == hb_full.ms and telem.st == hb_full.st and telem.tgt == hb_full.tgt and telem.act == hb_full.act and telem.vin_mv == hb_full.vin_mv,
@@ -917,7 +917,7 @@ def test_board_contract() -> None:
           LegacyBase is not bc.MobileBase and hasattr(LegacyBase, "drive_to") and not hasattr(bc.MobileBase, "drive_to"),
           "레거시 상위 스킬 ABC vs 보드계약 v2 물리 인터페이스 Protocol")
 
-    # ⑧ [보드계약 v2] LegacyDutyControl 격리 및 베이스 구현체(MockBase, SimBase) 검증 (docs/보드-계약.md §11.1, §11.2)
+    # ⑧ [보드계약 v2] LegacyDutyControl 격리 및 베이스 구현체(MockBase, SimBase) 검증 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §11.1, §11.2)
     class _DutyImpl:
         def set_duty(self, dx: int, dy: int, dw: int) -> None:
             pass
@@ -954,7 +954,7 @@ def test_board_contract() -> None:
           act_vx > 50 and sim.telemetry().act == (0, 0, 0) and sim.telemetry().st & 0x01 != 0,
           f"act_before_estop={act_vx} act_after={sim.telemetry().act} st=0x{sim.telemetry().st:02X}")
 
-    # ⑨ [보드계약 v2] SimBase 물리 한계(포화·정지마찰·1차지연) 계측 감사 (docs/보드-계약.md §6, §7, §11.2)
+    # ⑨ [보드계약 v2] SimBase 물리 한계(포화·정지마찰·1차지연) 계측 감사 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §6, §7, §11.2)
     # SimBase가 caps.vmax_mms(800) 초과 지령 시 속도 상한으로 클램프하고 output_saturated(0x20) 반영
     sim_sat = bc.SimBase(ks_mms=50, ks_w_mdegs=15000)
     sim_sat.set_velocity(1500, 0, 0)
@@ -989,7 +989,7 @@ def test_board_contract() -> None:
           sim_sat.caps().vmax_mms < 1382 and calib.vmax_mms < 1382 and sim_sat._ks_mms > 0,
           f"sim_vmax={sim_sat.caps().vmax_mms} calib_vmax={calib.vmax_mms:.1f}")
 
-    # ⑩ [보드계약 v2] UnoAdapterBase (Uno 개루프 + DutyCalib 어댑터) 검증 (docs/보드-계약.md §11.2, §13 단계 1)
+    # ⑩ [보드계약 v2] UnoAdapterBase (Uno 개루프 + DutyCalib 어댑터) 검증 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §11.2, §13 단계 1)
     class _DummyMotorLink:
         def __init__(self) -> None:
             self.last_cmd = (0, 0, 0)
@@ -1032,7 +1032,7 @@ def test_board_contract() -> None:
           dummy_link.last_cmd == (0, 0, 0) and telem_uno.estop_latched and telem_uno.ms == 15000,
           f"last_cmd={dummy_link.last_cmd} st=0x{telem_uno.st:02X} ms={telem_uno.ms}")
 
-    # ⑪ [감사] 보드 계약 v2 §12 계약 테스트 스위트 및 0속도 정지 안전 검증 (docs/보드-계약.md §11.2, §12)
+    # ⑪ [감사] 보드 계약 v2 §12 계약 테스트 스위트 및 0속도 정지 안전 검증 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §11.2, §12)
     # 1. 0 속도 지령 안전 정지 (UnoAdapterBase): 300mm/s 주행 중 set_velocity(0,0,0) 수신 시 즉시 정지 및 duty 0
     uno_base.estop(False)
     uno_base.set_velocity(300, 0, 0)
@@ -1182,7 +1182,7 @@ def test_board_contract() -> None:
           all(stop_results),
           f"stop_results={stop_results}")
 
-    # ⑫ [보드계약 v2] cmd_vel_node MobileBase 인터페이스 및 UnoAdapterBase 주입 연동 검증 (docs/보드-계약.md §11.1, §13 단계 1)
+    # ⑫ [보드계약 v2] cmd_vel_node MobileBase 인터페이스 및 UnoAdapterBase 주입 연동 검증 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §11.1, §13 단계 1)
     # AST 및 정적 검사: cmd_vel_node가 MobileBase 및 UnoAdapterBase를 import하고 의존 주입 지원
     import ast
     parsed_cmd_node = ast.parse(cmd_node_text)
@@ -1302,7 +1302,7 @@ def test_board_contract() -> None:
           and 'self._halt("비상정지 래치 중 — 지령 차단")' in cmd_node_text,
           "cmd_vel_node estop 래치 중 속도 지령 차단 안전 로직")
 
-    # ⑬ [보드계약 v2] §12 프로토콜 계약 테스트 및 Response/ProtocolParser 검증 (docs/보드-계약.md §4, §5.4, §12)
+    # ⑬ [보드계약 v2] §12 프로토콜 계약 테스트 및 Response/ProtocolParser 검증 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §4, §5.4, §12)
     # 1. 체크섬 오류 시 nak crc 판정 및 카운트 누적
     parser = bc.ProtocolParser(expected_proto=2)
     r_bad_crc = parser.feed_line("C 350 0 0*99")
@@ -1351,7 +1351,7 @@ def test_board_contract() -> None:
           bc.ResponseParser is bc.ProtocolParser and hasattr(bc, "parse_response"),
           f"ResponseParser={bc.ResponseParser}")
 
-    # ⑭ [보드계약 v2] Stm32Base 폐루프 구현체 및 §12 폐루프 계약 테스트 (docs/보드-계약.md §11.2, §12, §13 단계 4)
+    # ⑭ [보드계약 v2] Stm32Base 폐루프 구현체 및 §12 폐루프 계약 테스트 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §11.2, §12, §13 단계 4)
     class _DummyStmLink:
         def __init__(self) -> None:
             self.last_raw = ""
@@ -1438,7 +1438,7 @@ def test_board_contract() -> None:
           f"last_cmd={last_cmd}")
     stm_base.estop(False)
 
-    # ⑮ [계측 감사] MobileBase 축 부호(AxisSigns) 계약 통합 및 DutyCalib 물리 한계 검산 (docs/보드-계약.md §2, §8, §14)
+    # ⑮ [계측 감사] MobileBase 축 부호(AxisSigns) 계약 통합 및 DutyCalib 물리 한계 검산 (docs/2026-08-22_메카넘-메인보드/2026-08-22_보드-계약.md §2, §8, §14)
     # 1. Stm32Base가 AxisSigns를 수용하고 C 물리 지령 발행 시 부호 변환을 정확히 반영한다
     mock_link_signs = _DummyStmLink()
     stm_signs_base = bc.Stm32Base(motor_link=mock_link_signs, caps=stm_caps, signs=bc.AxisSigns(vx=1, vy=-1, w=-1))
@@ -2693,7 +2693,7 @@ def test_arm_stage_park() -> None:
 # ----------------------------------------------------------------------
 
 # 2026-09-18 젯슨 실기에서 **실제로 기록된** 거절 문장들. 둘 다 stage=tf로
-# 적혔고 둘 다 TF와 무관했다(docs/시험기록/move-to-point-2026-09-18.jsonl).
+# 적혔고 둘 다 TF와 무관했다(docs/2026-08-22_로봇팔-제어-잡기/시험기록/move-to-point-2026-09-18.jsonl).
 POSE_DETAIL_2026_09_18 = (
     "이동 실패 — 팔이 몸통 뒤로 넘어가 있습니다 — 수평거리 -136mm < 90mm. "
     "이 근처에서는 집게가 회전축 위에 있어 xyz 방향이 정해지지 않습니다. "
@@ -2709,7 +2709,7 @@ TF_DETAIL = ("목표를 arm_base 좌표로 못 옮겼다: lookup failed. "
 
 # 2026-09-18 사이클20 실기에서 **실제로 기록된** 경로 실패 문장 2종(T34).
 # 둘 다 stage=ik로 적혔고 둘 다 목표는 멀쩡했다 — 막힌 것은 첫 걸음이다
-# (docs/시험기록/move-to-point-2026-09-18.jsonl). ik는 "목표가 무리"라는 뜻이라
+# (docs/2026-08-22_로봇팔-제어-잡기/시험기록/move-to-point-2026-09-18.jsonl). ik는 "목표가 무리"라는 뜻이라
 # 이 오분류는 다음 사이클을 표적 뽑기로 보낸다(고칠 곳은 경로다).
 PATH_FLOOR_2026_09_18 = (
     "이동 실패 — 9걸음 중 1번째에서 멈췄습니다 — z=-19mm는 바닥 아래입니다"
@@ -2746,7 +2746,7 @@ def _escape_limits():
 # 막힌다(elbow norm -127) — 그러니 "직교 직선이 유효한 두 끝점 사이에서도
 # 막힌다"는 결론 자체는 살아 있다, 다만 원인은 "시작이 이미 밖"이 아니라
 # **직선이 관절공간에서 볼록하지 않다**는 기하 성질이다(자세한 근거 =
-# docs/인수인계-2026-09-04.md "T50" 절).
+# docs/2026-08-28_ROS2-이행/2026-09-04_인수인계.md "T50" 절).
 PATH_START_DEG = {"shoulder_pan": 0.0, "shoulder_lift": 55.0, "elbow_flex": -30.0,
                   "wrist_flex": 10.0, "wrist_roll": 0.0}
 # 이 자리는 **끝점 둘 다 갈 수 있는데 그 사이가 막히는** 목표다(사이클20이 실기
@@ -4224,7 +4224,7 @@ def test_service_exclusivity() -> None:
     Conflicts를 적으면 systemd가 먼저 상대를 내리고 띄운다. 문서로는 09-03부터
     "꺼져 있어야 한다"고 적혀 있었지만 사람이 매번 지켜야 하는 규칙이었다.
     ⚠ 검사가 못 보는 것: 젯슨에서 무엇이 enabled인가. 그건 `systemctl
-      is-enabled`로만 알 수 있다(운영 정책 = docs/인수인계-2026-09-03.md §1).
+      is-enabled`로만 알 수 있다(운영 정책 = docs/2026-08-28_ROS2-이행/2026-09-03_인수인계.md §1).
     """
     print("\n[서비스] 같은 장치를 다투는 유닛이 서로를 밀어내는가")
     for why, units in EXCLUSIVE_UNITS.items():
@@ -4258,11 +4258,11 @@ def test_service_exclusivity() -> None:
 
     # 운영 정책(어느 쪽이 부팅 자동실행인가)은 코드가 아니라 문서에 산다.
     # 문서가 사라지면 다음 사람이 둘 다 enable 해서 같은 병이 돌아온다.
-    policy = open(os.path.join(REPO, "docs", "인수인계-2026-09-03.md"),
+    policy = open(os.path.join(REPO, "docs", "2026-09-03_인수인계.md"),
                   encoding="utf-8").read()
     check("운영 정책이 문서에 적혀 있다(어느 쪽이 부팅 자동실행인가)",
           "Conflicts" in policy and "disable tomato-voice" in policy,
-          "docs/인수인계-2026-09-03.md §1")
+          "docs/2026-08-28_ROS2-이행/2026-09-03_인수인계.md §1")
 
     # T77/배치 검증: docker-compose가 카메라 및 시리얼 통신에 필요한 cgroup/마운트를 선언했는가
     dc_text = open(os.path.join(REPO, "ros2", "docker", "docker-compose.yml"),
@@ -4338,7 +4338,7 @@ def test_hold_on_connect() -> None:
     부딪혔다. 원인은 레거시 `arm.py._connect`가 붙자마자 `disable_torque()`로
     **아예 놓은 것**이고, 되켜지는 것은 다음 이동 때뿐이었다. click-server를
     다시 켜도 회복되지 않는다 — 다음 도구가 떨어진 자리를 붙들기 때문이다(래칫).
-    실측표 = docs/인수인계-2026-09-04.md §26.
+    실측표 = docs/2026-08-28_ROS2-이행/2026-09-04_인수인계.md §26.
 
     고친 규칙은 두 계통이 **같아야 한다**: 한쪽만 고치면 그 서비스로 전환하는
     순간 같은 낙하가 돌아온다. 그래서 순서를 여기서 못 박는다 —

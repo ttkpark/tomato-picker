@@ -156,8 +156,8 @@ def main() -> int:
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--dot", default="tl", choices=("tl", "tr", "bl", "br"))
     ap.add_argument("--target", default="dots", choices=("dots", "charuco"),
-                    help="벽의 표적: dots = 4점 종이(docs/aruco/dots_wall.pdf) · "
-                         "charuco = ChArUco 5x7 보드(docs/aruco/charuco_wall.pdf, 모서리 최대 24개·PnP)")
+                    help="벽의 표적: dots = 4점 종이(docs/2026-11-09_손눈보정-역보정/aruco/dots_wall.pdf) · "
+                         "charuco = ChArUco 5x7 보드(docs/2026-11-09_손눈보정-역보정/aruco/charuco_wall.pdf, 모서리 최대 24개·PnP)")
     ap.add_argument("--home", default="2.8,-9.1,100.8,83.2,-3.6",
                     help="시작 자세(도): pan,lift,elbow,wflex,wroll. "
                          "'here'면 지금 자세를 그대로 쓴다")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ArUco 인쇄물 두 장(A4, **실제 크기 100%로** 인쇄) → docs/aruco/*.pdf
+"""ArUco 인쇄물 두 장(A4, **실제 크기 100%로** 인쇄) → docs/2026-11-09_손눈보정-역보정/aruco/*.pdf
 
     python tools/aruco_print.py
 

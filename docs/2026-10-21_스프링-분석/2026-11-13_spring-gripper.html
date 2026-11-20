@@ -1,0 +1,429 @@
+<title>코일 그리퍼 대안</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: 한 줄 기둥 — 무엇을 잡나 → 안 A/B 3D → 구조도 → 집 실험표. 분석 페이지와 같은 토큰. */
+:root {
+  --bg: #f4f6f7; --surface: #ffffff; --fg: #1b2328; --muted: #5d6b73; --line: #d5dde1;
+  --accent: #1d6b86; --ok: #2f7d4f; --bad: #c2412d; --warn: #a8690b;
+  --foam: #b08a2e; --print: #c8641c; --coil: #6f7f87;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Consolas", monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12181b; --surface: #1a2226; --fg: #e3e9ec; --muted: #93a3ab; --line: #2c383e;
+  --accent: #5fb3cf; --ok: #5cbf83; --bad: #ef7a64; --warn: #e0a64a; --foam: #e2c36f; --print: #f09a55; --coil: #a9b8bf; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #12181b; --surface: #1a2226; --fg: #e3e9ec; --muted: #93a3ab; --line: #2c383e;
+  --accent: #5fb3cf; --ok: #5cbf83; --bad: #ef7a64; --warn: #e0a64a; --foam: #e2c36f; --print: #f09a55; --coil: #a9b8bf; color-scheme: dark; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.65; }
+.wrap { max-width: 880px; margin: 0 auto; padding-block: 40px 72px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 52px; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: clamp(26px, 5vw, 36px); font-weight: 700; }
+h2 { font-size: 22px; font-weight: 700; } h3 { font-size: 16px; font-weight: 600; }
+p { margin: 0; max-width: 66ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.sec { display: grid; gap: 16px; min-width: 0; } .sec-head { display: grid; gap: 6px; }
+.muted { color: var(--muted); } .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 20px; }
+.two > * { min-width: 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; align-content: start; }
+.card img, .card canvas { width: 100%; border-radius: 6px; display: block; background: #1c262c; }
+.card img { aspect-ratio: 4/3; object-fit: cover; }
+.tag { font-family: var(--font-mono); font-size: 11px; padding: 2px 8px; border-radius: 99px; color: var(--surface); }
+.tag.a { background: var(--foam); } .tag.b { background: var(--print); }
+.head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+ul.list { margin: 0; padding-left: 1.2em; display: grid; gap: 5px; font-size: 14px; }
+.btn { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+.btn[aria-pressed="true"] { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.btn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ctl { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 13px; }
+.ctl input[type=range] { flex: 1 1 160px; accent-color: var(--accent); }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--bg); }
+td.id { font-family: var(--font-mono); font-size: 12.5px; color: var(--accent); font-weight: 600; white-space: nowrap; }
+td.blank { min-width: 90px; border-left: 1px dashed var(--line); }
+svg.dia { width: 100%; height: auto; display: block; }
+svg.dia text { font-family: var(--font-mono); font-size: 11px; fill: var(--fg); }
+svg.dia .dim { stroke: var(--accent); fill: none; stroke-width: 1; } svg.dia text.dimt { fill: var(--accent); }
+svg.dia .coil { stroke: var(--coil); fill: none; stroke-width: 2; }
+svg.dia .arm { fill: var(--muted); } svg.dia .foam { fill: var(--foam); } svg.dia .print { fill: var(--print); }
+svg.dia .tray { stroke: var(--accent); fill: none; stroke-width: 1.5; stroke-dasharray: 4 3; }
+svg.dia .ln { stroke: var(--fg); stroke-width: 1; fill: none; }
+.callout { border-left: 3px solid var(--warn); padding: 8px 14px; background: var(--surface); font-size: 14px; max-width: 70ch; }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; display: grid; gap: 4px; }
+</style>
+
+<div class="wrap">
+<header class="sec">
+  <div class="eyebrow">포너즈 · 제본 코일 끝단 · 그리퍼 초안 2026-11-13</div>
+  <h1>코일 그리퍼 대안</h1>
+  <p class="muted">손 스케치 두 장(우드락 판 실험안, 3D 프린트 분리조립형)을 3D 모형과 구조도로 옮겼다. 지금 쓰는 팔(SO-101)의 집게를 그대로 두고 그 위에 붙이는 것이 전제다. 치수는 샘플 실측 전의 추정값이다.</p>
+</header>
+
+<section class="sec" aria-labelledby="ring">
+  <div class="sec-head"><div class="eyebrow">Ring spec 필요</div><h2 id="ring">무엇을 잡나</h2></div>
+  <div class="two">
+    <div class="card">
+      <svg class="dia" viewBox="0 0 360 210" role="img" aria-label="묶음 단면과 길이 치수">
+        <rect class="coil" x="60" y="60" width="110" height="70" rx="32"/><rect class="coil" x="66" y="66" width="98" height="58" rx="27" opacity=".5"/>
+        <path class="dim" d="M60 150 H170 M60 144 V156 M170 144 V156"/><text class="dimt" x="104" y="170">W 폭</text>
+        <path class="dim" d="M190 60 V130 M184 60 H196 M184 130 H196"/><text class="dimt" x="200" y="99">H 높이</text>
+        <text x="60" y="40">묶음(4개) 단면</text>
+        <path class="coil" d="M240 80 H340 M240 110 H340"/><path class="ln" d="M240 80 V110 M250 80 V110 M260 80 V110 M270 80 V110 M280 80 V110 M290 80 V110 M300 80 V110 M310 80 V110 M320 80 V110 M330 80 V110 M340 80 V110" opacity=".5"/>
+        <path class="dim" d="M240 130 H340 M240 124 V136 M340 124 V136"/><text class="dimt" x="262" y="150">L 길이 · 34공</text>
+        <path class="dim" d="M270 70 H280 M270 64 V74 M280 64 V74"/><text class="dimt" x="262" y="58">p 피치</text>
+      </svg>
+    </div>
+    <div class="tbl"><table>
+      <thead><tr><th>기호</th><th>뜻</th><th>추정</th><th>실측</th></tr></thead>
+      <tbody>
+        <tr><td class="id">W</td><td>묶음 폭(코일 4개 · 버니어 11/14: 검정 16.0, 흰색 18.0)</td><td class="mono">16~18 mm</td><td class="blank"></td></tr>
+        <tr><td class="id">H</td><td>묶음 높이(버니어 11/14)</td><td class="mono">12.7 mm</td><td class="blank"></td></tr>
+        <tr><td class="id">L</td><td>길이(34공)</td><td class="mono">≈ 280~290 mm</td><td class="blank"></td></tr>
+        <tr><td class="id">p</td><td>고리 피치(3:1)</td><td class="mono">8.47 mm</td><td class="blank"></td></tr>
+        <tr><td class="id">m</td><td>묶음 무게</td><td class="mono">&lt; 100 g</td><td class="blank"></td></tr>
+        <tr><td class="id">s</td><td>트레이 칸 간격(11/13 사진 보정 ±0.7)</td><td class="mono">24.0 mm</td><td class="blank"></td></tr>
+      </tbody></table></div>
+  </div>
+  <p class="muted">핑거 안쪽 곡면과 칸 사이 여유는 W·H·s로 정해진다. 9.5와 11 계열 샘플을 각각 재서 "실측" 칸을 채운 뒤 핑거 치수를 확정한다.</p>
+</section>
+
+<section class="sec" aria-labelledby="opts">
+  <div class="sec-head"><div class="eyebrow">두 가지 안</div><h2 id="opts">긴 판으로 길이 전체를 받친다</h2>
+  <p class="muted">링 한 점을 물면 양 끝이 처진다. 두 안 모두 코일 길이만큼 긴 판을 집게 양쪽에 달아 길이 전체를 받치는 생각이다. 집게의 회전축과 판의 긴 방향이 나란해서, 여닫을 때 판은 길이 방향으로 평행을 유지한다.</p></div>
+  <div class="two">
+    <div class="card">
+      <div class="head"><span class="tag a">안 A</span><h3>우드락 판 — 오늘 집에서 실험</h3></div>
+      <img id="imgA" alt="우드락 판을 단 집게 3D 그림" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
+      <ul class="list">
+        <li>고정 집게와 움직이는 집게 안쪽 면에 5mm 우드락 판(약 300 × 45mm)을 붙인다</li>
+        <li>30분이면 만든다. 잡힌다/안 잡힌다를 빨리 본다</li>
+        <li>평평한 판이라 옆에서 누르기만 한다 — 아래를 받치지 못해 미끄러져 빠질 수 있다</li>
+        <li>우드락이 휘면 가운데만 물리고 끝이 벌어진다</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="head"><span class="tag b">안 B</span><h3>3D 프린트 분리조립형 — 현 ARM 사용</h3></div>
+      <img id="imgB" alt="3D 프린트 핑거를 단 집게 3D 그림" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
+      <ul class="list">
+        <li>지금 집게에 씌우는 <b>슬리브</b>(볼트 2개)와 <b>긴 핑거</b>를 따로 뽑아 조립한다 → 사이즈(9.5/11)마다 핑거만 바꾼다</li>
+        <li>핑거 안쪽이 링 단면을 따라 굽은 J자 — 옆을 누르면서 <b>아래를 받친다</b></li>
+        <li>고정 핑거 바닥은 테이블에 닿게 평평하게, 움직이는 핑거가 반대편에서 감싼다</li>
+        <li>300mm는 흔한 프린터 베드(220~256mm)보다 길다 → 둘로 나눠 뽑아 잇거나 대각선으로 눕힌다</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head" style="justify-content:space-between"><h3>3D로 돌려 보기</h3>
+      <div class="head" role="group" aria-label="안 선택"><button class="btn" type="button" data-opt="A" aria-pressed="true">안 A 우드락</button><button class="btn" type="button" data-opt="B" aria-pressed="false">안 B 프린트</button></div></div>
+    <canvas id="gv" style="aspect-ratio:16/9; touch-action:none" aria-label="그리퍼 3D 뷰어"></canvas>
+    <div class="ctl"><label for="ang">집게 벌림</label><input id="ang" type="range" min="0" max="24" step="0.5" value="0"><span class="mono" id="angv">0°</span><span class="muted" id="gapv"></span></div>
+    <p class="muted" style="font-size:13px">끌어서 돌린다. 슬라이더로 움직이는 집게를 연다. 팔 손목과 집게는 단순한 상자로 그렸다(실제 SO-101 형상 아님).</p>
+  </div>
+</section>
+
+<section class="sec" aria-labelledby="dia">
+  <div class="sec-head"><div class="eyebrow">구조도</div><h2 id="dia">끝에서 본 단면</h2></div>
+  <div class="two">
+    <div class="card">
+      <div class="head"><span class="tag a">안 A</span><h3>평판으로 옆에서 누르기</h3></div>
+      <svg class="dia" viewBox="0 0 360 300" role="img" aria-label="안 A 단면 구조도">
+        <rect class="arm" x="140" y="20" width="80" height="44" rx="4"/><text x="150" y="14">손목(서보)</text>
+        <circle cx="206" cy="64" r="5" class="ln"/><text x="216" y="60">회전축</text>
+        <rect class="arm" x="146" y="64" width="10" height="150"/><text x="60" y="110">고정 집게</text><path class="ln" d="M118 106 H144"/>
+        <rect class="foam" x="158" y="150" width="8" height="84"/><text x="60" y="190">우드락 5mm</text><path class="ln" d="M128 186 H156"/>
+        <g transform="rotate(-9 206 64)"><rect class="arm" x="202" y="64" width="10" height="150"/><rect class="foam" x="192" y="150" width="8" height="84"/></g>
+        <text x="262" y="140">움직이는 집게</text><path class="ln" d="M236 136 H260"/>
+        <rect class="coil" x="168" y="202" width="32" height="32" rx="14"/>
+        <path class="ln" d="M40 236 H320"/><text x="286" y="250">테이블</text>
+        <path class="dim" d="M168 258 H200 M168 252 V264 M200 252 V264"/><text class="dimt" x="176" y="278">W</text>
+        <path class="dim" d="M230 96 q22 30 12 70" marker-end="url(#ar)"/><text class="dimt" x="252" y="100">닫힘</text>
+        <defs><marker id="ar" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--accent)"/></marker></defs>
+      </svg>
+      <p class="muted" style="font-size:13px">움직이는 판은 회전해서 닫히므로 물렸을 때 수직이 아니라 살짝 기운다. 판이 W 간격에서 서로 평행이 되게 붙이는 각도를 맞춘다.</p>
+    </div>
+    <div class="card">
+      <div class="head"><span class="tag b">안 B</span><h3>J자 핑거로 감싸 받치기</h3></div>
+      <svg class="dia" viewBox="0 0 360 300" role="img" aria-label="안 B 단면 구조도">
+        <rect class="arm" x="140" y="20" width="80" height="44" rx="4"/><circle cx="206" cy="64" r="5" class="ln"/>
+        <rect class="arm" x="146" y="64" width="10" height="110"/>
+        <rect class="print" x="138" y="120" width="26" height="56" rx="3" opacity=".85"/><circle cx="151" cy="134" r="3" fill="var(--surface)"/><circle cx="151" cy="162" r="3" fill="var(--surface)"/>
+        <text x="30" y="150">슬리브 + M3 ×2</text><path class="ln" d="M118 146 H136"/>
+        <path class="print" d="M158 176 h8 v36 a18 18 0 0 0 14 17 l-1 6 a25 25 0 0 1 -21 -24 z"/>
+        <text x="30" y="216">고정 핑거(J자)</text><path class="ln" d="M112 212 H156"/>
+        <g transform="rotate(-7 206 64)"><rect class="arm" x="202" y="64" width="10" height="110"/><rect class="print" x="194" y="120" width="26" height="56" rx="3" opacity=".85"/>
+          <path class="print" d="M210 176 h-8 v36 a18 18 0 0 1 -12 17 l1 6 a25 25 0 0 0 19 -24 z"/></g>
+        <text x="262" y="196">움직이는 핑거</text><path class="ln" d="M232 192 H260"/>
+        <rect class="coil" x="168" y="202" width="32" height="32" rx="14"/>
+        <path class="tray" d="M150 206 a34 34 0 0 0 68 0"/><text class="dimt" x="226" y="232">트레이 칸</text>
+        <path class="tray" d="M68 206 a34 34 0 0 0 68 0" opacity=".5"/><path class="tray" d="M232 206 a34 34 0 0 0 68 0" opacity=".5"/>
+        <path class="dim" d="M102 262 H184 M102 256 V268 M184 256 V268"/><text class="dimt" x="128" y="282">s 칸 간격</text>
+      </svg>
+      <p class="muted" style="font-size:13px">핑거 끝은 묶음 아래로 조금만 들어간다(끝끼리 닿지 않게). 칸에 내려놓을 때 핑거 두께가 칸 벽과 옆 칸 묶음 사이 틈보다 얇아야 한다.</p>
+    </div>
+  </div>
+  <div class="callout">
+    <b>칸 사이 틈이 핑거 두께의 상한이다.</b> 칸 간격 s = 24mm, 묶음 폭 W = 16mm(검정)라면 옆 칸 묶음과의 틈은 한쪽에 약 <span class="mono">(24 − 16) / 2 = 4mm</span>, 흰색(18mm)은 3mm다. 여기에 핑거 두께와 벌릴 여유가 다 들어가야 한다. <b>우드락 5mm는 안 들어가고</b>, 프린트 핑거도 2mm 안팎이어야 한다(9.5는 닫았을 때 지름이고, 열린 코일은 폭 15.5mm다). s는 트레이 샘플로 꼭 잰다.
+  </div>
+</section>
+
+<section class="sec" aria-labelledby="test">
+  <div class="sec-head"><div class="eyebrow">집에서 할 실험 · 안 A</div><h2 id="test">무엇을 보고 무엇을 적나</h2></div>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>볼 것</th><th>방법</th><th>통과 기준</th><th>결과</th></tr></thead>
+    <tbody>
+      <tr><td class="id">T-1</td><td>세트(2개)가 잡히나</td><td>테이블 위 세트를 위에서 내려와 집고 50mm 든다</td><td>10번 중 9번 이상</td><td class="blank"></td></tr>
+      <tr><td class="id">T-2</td><td>묶음(4개)이 잡히나</td><td>포갠 묶음을 같은 방식으로</td><td>맞물림이 풀리지 않는다</td><td class="blank"></td></tr>
+      <tr><td class="id">T-3</td><td>처짐</td><td>든 상태를 옆에서 사진. 가운데와 끝의 높이 차</td><td>끝 처짐 ≤ 3mm</td><td class="blank"></td></tr>
+      <tr><td class="id">T-4</td><td>미끄러짐</td><td>든 채로 팔을 좌우로 빠르게 움직인다</td><td>빠지지 않는다</td><td class="blank"></td></tr>
+      <tr><td class="id">T-5</td><td>얹기</td><td>세트 하나를 다른 세트 위에 내려놓는다</td><td>고리가 맞물린다 · 아래 세트가 밀리지 않는다</td><td class="blank"></td></tr>
+      <tr><td class="id">T-6</td><td>놓기</td><td>집게를 열 때 묶음이 판에 붙어 끌려오는지</td><td>제자리에 남는다</td><td class="blank"></td></tr>
+      <tr><td class="id">T-7</td><td>칸에 넣기</td><td>트레이 2번 칸에 넣고, 옆 칸에 묶음이 있을 때도</td><td>옆 칸을 건드리지 않는다</td><td class="blank"></td></tr>
+      <tr><td class="id">T-8</td><td>서보 힘·열</td><td>잡은 채 5분 유지, 서보 온도와 전류</td><td>힘이 풀리지 않는다 · 뜨겁지 않다</td><td class="blank"></td></tr>
+    </tbody></table></div>
+  <ul class="list">
+    <li>집게를 끝까지 닫는 지령을 주지 않는다 — 물체를 문 채 0을 지령하면 과부하로 팔이 떨어진 적이 있다. 묶음 폭에서 멈추는 값을 먼저 찾는다</li>
+    <li>판 안쪽에 얇은 스펀지 테이프를 붙이면 미끄러짐이 준다(10년 전 공장 장치도 스펀지 테이프를 붙인 판으로 4개를 잡았다)</li>
+    <li>T-3·T-6이 A에서 안 되면 B의 J자 받침이 필요한 근거가 된다</li>
+  </ul>
+</section>
+
+<section class="sec" aria-labelledby="cmp">
+  <div class="sec-head"><div class="eyebrow">비교</div><h2 id="cmp">A로 확인하고 B로 간다</h2></div>
+  <div class="tbl"><table>
+    <thead><tr><th></th><th>안 A 우드락</th><th>안 B 프린트 분리조립형</th></tr></thead>
+    <tbody>
+      <tr><td>만드는 시간</td><td>30분</td><td>설계 반나절 + 출력 4~6시간</td></tr>
+      <tr><td>잡는 원리</td><td>양옆에서 마찰</td><td>양옆 + 아래 받침(J자)</td></tr>
+      <tr><td>처짐</td><td>판이 곧으면 적다. 우드락은 휜다</td><td>단면이 굽어 있어 판 자체가 뻣뻣하다</td></tr>
+      <tr><td>놓을 때</td><td>열면 바로 떨어진다(높이만큼 낙하)</td><td>바닥에 닿은 뒤 열어 낙하가 없다</td></tr>
+      <tr><td>칸 사이 틈</td><td>5mm ×2 — 빠듯하다</td><td>2.5~3mm ×2</td></tr>
+      <tr><td>사이즈 바꾸기</td><td>그대로</td><td>핑거만 교체</td></tr>
+      <tr><td>쓰임</td><td>오늘 가능성 확인</td><td>시연·공장 시험용</td></tr>
+    </tbody></table></div>
+</section>
+
+<footer>
+  <div>근거: 손 스케치 2장(11/13) · 공장 미팅 녹음의 차장님 제안("규격 폭에 맞춘 양쪽 발로 집으면 처짐 없이") · 요구사항 F-4·F-5</div>
+  <div>3D와 구조도는 생각을 옮긴 그림이다. 실제 SO-101 집게 치수와 트레이 칸 치수를 재서 고쳐야 한다.</div>
+</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+/*COILSIM-BEGIN*/
+// 제본 코일 3D 모형 — 사진 대신 쓰는 시뮬레이션 그림. THREE(r128) 전역 필요.
+// 단위 mm. X = 코일 길이, Y = 위, Z = 깊이.
+window.CoilSim = (() => {
+  // 치수 = 2026-11-14 자와 함께 찍은 사진 42장(docs/spring-media/코일모양-2026-11-14/1114 - 코일모양 상세 촬영.zip)에서 읽음: 열린 코일 겉 폭 15.5 × 높이 9.5mm(±5%),
+  // 쌍선 간격 2.3mm. 철사 굵기 0.7mm는 사용자 캘리퍼 실측(흰색·검은색 같음, 코팅 포함 — 사진으로는 0.9로 읽혔으나 캘리퍼를 따른다). 피치 8.47은 규격(3:1)이고 사진 축척을 맞추는 데 썼다.
+  const P = 8.47, N = 34, L = P * (N - 1), W = 15.5, H = 9.5, R = 0.35;
+  const TRAY = { slots: 5, gap: 24, r: 10.5, len: L + 30 };   // 칸 간격 24.0±0.7(11/13 사진 보정). 칸 모양은 단순화 — 실제는 돌기(리브) 사이 칸이다(tools/spring_tray_sim.py)
+  let _loop, _curve, _mats;
+  const mats = () => _mats || (_mats = {
+    wire: new THREE.MeshStandardMaterial({ color: 0xf6f8f9, roughness: 0.45, metalness: 0.05 }),
+    wireB: new THREE.MeshStandardMaterial({ color: 0x8fd0e6, roughness: 0.45, metalness: 0.05 }),
+    table: new THREE.MeshStandardMaterial({ color: 0x26323a, roughness: 0.95 }),
+    dark: new THREE.MeshStandardMaterial({ color: 0x1b2328, roughness: 0.6 }),
+    steel: new THREE.MeshStandardMaterial({ color: 0x8d9aa1, roughness: 0.4, metalness: 0.5 }),
+    accent: new THREE.MeshStandardMaterial({ color: 0x1d6b86, roughness: 0.6 }),
+    foam: new THREE.MeshStandardMaterial({ color: 0xfbf6e6, roughness: 0.9 }),
+    print: new THREE.MeshStandardMaterial({ color: 0xe0863a, roughness: 0.65 }),
+    tray: new THREE.MeshStandardMaterial({ color: 0xd8f1f8, roughness: 0.15, transparent: true, opacity: 0.42, side: THREE.DoubleSide }),
+  });
+  // ── 고리 모양: 끝에서 본 사진(19번)과 위에서 본 사진(16번)에서 옮김.
+  // 등뼈 막대가 없다. 철사 한 가닥이 빗처럼 이어진다: 쌍선 갈래(큰 고리, −Z 입술에서 좁게 U턴) ↔ 이웃 갈래를 잇는 이음(작은 고리, +Z 입술을 따라 축 방향으로 달린다).
+  // 단면은 좌우가 거의 같은 넓은 U: 바닥 가운데가 0.7mm 솟고, 옆벽이 불룩하고, 입술이 2mm쯤 안으로 말린다(입 폭 10.4 < 몸통 폭 14.6, 중심선 기준).
+  const G = 2.3, HW = W / 2 - R, HT = H - 2 * R;   // 쌍선 간격(중심-중심) · 중심선 반폭 · 중심선 높이
+  // 단면 반쪽 [z ÷ HW, y ÷ HT]: 입술 끝 → 옆벽 → 바닥 가운데
+  const HALF = [[0.71, 1], [0.81, 0.93], [0.92, 0.82], [0.985, 0.66], [1, 0.5], [0.98, 0.35], [0.9, 0.2], [0.75, 0.055], [0.55, 0], [0.27, 0.045], [0, 0.085]];
+  function loopGeo() {
+    if (_loop) return _loop;
+    const pts = [], v = (x, h, s) => new THREE.Vector3(x, h[1] * HT, s * h[0] * HW), n = HALF.length - 1, lip = HALF[0];
+    const side = x => { for (let i = 0; i <= n; i++) pts.push(v(x, HALF[i], 1)); for (let i = n - 1; i >= 0; i--) pts.push(v(x, HALF[i], -1)); };   // +Z 입술 → 바닥 → −Z 입술
+    pts.push(v(-P / 2, lip, 1), v(-G / 2 - 1.4, lip, 1));                       // 이음(작은 고리) 절반
+    side(-G / 2);
+    pts.push(new THREE.Vector3(0, HT + 0.25, -lip[0] * HW + 0.9));              // 큰 고리 끝 U턴(입술이 말린 방향으로 조금 더 나간다)
+    const back = pts.length; side(G / 2); pts.splice(back, pts.length - back, ...pts.slice(back).reverse());
+    pts.push(v(G / 2 + 1.4, lip, 1), v(P / 2, lip, 1));
+    _curve = new THREE.CatmullRomCurve3(pts, false, "centripetal");
+    return (_loop = new THREE.TubeGeometry(_curve, 220, R, 6, false));
+  }
+  // 코일 하나: 피치 34개. 열린 쪽이 위, 고리 끝 입술(높다)이 −Z, 이음 입술(낮다)이 +Z.
+  function coil(mat) {
+    const g = new THREE.Group(), im = new THREE.InstancedMesh(loopGeo(), mat || mats().wire, N), m = new THREE.Matrix4();
+    for (let i = 0; i < N; i++) { m.makeTranslation(-L / 2 + i * P, R, 0); im.setMatrixAt(i, m); }
+    im.castShadow = true; im.receiveShadow = true; g.add(im);
+    return g;
+  }
+  // ── 포갬 자세는 손으로 맞추지 않는다: tools/coil_fit_check.html(철사 중심선 사이 거리 ≥ 철사 굵기)로 찾은 값이다.
+  // 2개 세트 = 두 코일을 **같은 방향으로** 포갠 것(2026-11-14 사용자 확인). 입(10.4)이 몸통(14.6)보다 좁아 위에서는 못 내려앉는다 —
+  // 축 방향으로 밀어 넣어 만든다. 겹친 자리에서 안 뚫는 가장 가까운 자세 = 반 피치 + 철사 한 가닥(0.7mm)만큼 비켜 앉음.
+  const SETP = { dx: P / 2, dy: 0.5, dz: 0.5 };
+  // 4개 묶음 = 세트 둘을 위아래로 포갠 닫힌 관. 맞는 모양 "작은 고리끼리": 엎은 세트를 옆으로 BZ만큼 밀어야 내려간다 —
+  // 작은 고리(이음) 쪽은 아래 세트 벽 **바깥**으로 걸치고, 큰 고리 끝은 아래 세트 입 **안**으로 들어간다. 그렇게 내려앉은 높이가 BH.
+  // 검산: 계산 20.0 × 10.7mm ↔ 사진(0~2번·33~38번) 17.3~18.5 × 11.8~12.9mm. 폭은 8%쯤 크고 높이는 12%쯤 낮다 — 강체 가정과 단면 읽기 오차.
+  // (철사를 0.9로 두면 높이 12.4로 맞는다 — 굵기가 0.7~0.9 사이일 수 있다.)
+  // ⚠ 버니어 실측(11/14)은 묶음 폭 16.0(검정)·18.0(흰색) × 높이 12.7mm다. 이 강체 계산(20 × 10.7)은 폭이 2~4mm 넓고 높이가 2mm 낮다 —
+  //   치수가 필요하면 버니어 값을 쓴다. 이 모형은 '철사가 안 뚫는 포갬 모양'을 보여 주는 용도다.
+  const SW = W + SETP.dz, SH = H + SETP.dy, BZ = 4, BH = 10.7, BW = SW + BZ;
+  function set(mat) {
+    const g = new THREE.Group(), a = coil(mat), b = coil(mat);
+    b.position.set(SETP.dx, SETP.dy, SETP.dz); g.add(a, b); return g;
+  }
+  // 휜 코일: pts = 중심선 [[x,y],...](mm, 실측 — tools/spring_sag_measure.py). 고리를 호 길이 따라 P 간격으로 놓고
+  // 접선만큼 기울인다. hidden = [x0,x1] 구간(사진에서 손에 가려 이은 곳)은 파랗게 칠한다. off = 호 방향 밀기, mate = true면 세트의 둘째 코일(뒤집혀 덮는 쪽).
+  function bent(pts, hidden, off, mate) {
+    const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    const total = cum[cum.length - 1], n = Math.min(N, Math.floor((total - 1.7) / P) + 1), s0 = (total - (n - 1) * P) / 2;
+    const at = s => { let i = 1; while (i < cum.length - 1 && cum[i] < s) i++; const t = Math.min(1, Math.max(0, (s - cum[i - 1]) / (cum[i] - cum[i - 1]))), a = pts[i - 1], b = pts[i];
+      return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, a: Math.atan2(b[1] - a[1], b[0] - a[0]) }; };
+    const g = new THREE.Group(), im = new THREE.InstancedMesh(loopGeo(), mats().wire, n), m = new THREE.Matrix4(), q = new THREE.Quaternion(), z = new THREE.Vector3(0, 0, 1);
+    const seen = new THREE.Color(0xffffff), gues = new THREE.Color(0x58b7e0), rz = new THREE.Matrix4();
+    // 고리 원점(바닥)을 중심선에 맞추는 자리 옮김. 둘째 코일은 같은 방향으로 SETP만큼 얹는다.
+    const local = new THREE.Matrix4().makeTranslation(0, -H / 2 + (mate ? SETP.dy : 0), mate ? SETP.dz : 0);
+    for (let i = 0; i < n; i++) {
+      const p = at(Math.min(total, Math.max(0, s0 + i * P + (off || 0))));
+      m.makeTranslation(p.x, p.y, 0).multiply(rz.makeRotationZ(p.a)).multiply(local);
+      im.setMatrixAt(i, m); im.setColorAt(i, hidden && p.x > hidden[0] && p.x < hidden[1] ? gues : seen);
+    }
+    im.castShadow = true; g.add(im);
+    return g;
+  }
+  // 세트를 엎는다(열린 쪽이 아래). 작은 고리 쪽은 그대로 같은 쪽에 둔다 — 그대로 얹으면 "작은 고리끼리"가 된다.
+  function flipped(obj) { const o = new THREE.Group(); obj.position.y = -SH / 2; o.add(obj); o.rotation.z = Math.PI; o.position.y = SH / 2; const w = new THREE.Group(); w.add(o); return w; }
+  // 4개 묶음: 세트(열린 쪽 위) + 엎은 세트를 옆으로 BZ 밀어 덮은 관. 가운데 정렬.
+  function bundle() { const g = new THREE.Group(), bot = set(), top = set(mats().wireB); bot.position.z = -(BZ + SETP.dz) / 2;
+    top.rotation.z = Math.PI; top.position.set(P / 2, BH, bot.position.z + BZ); g.add(bot, top); return g; }
+  function halfPipe(len, r) {
+    const geo = new THREE.PlaneGeometry(len, Math.PI * r, 1, 18), p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) { const a = p.getY(i) / r; p.setXYZ(i, p.getX(i), r - r * Math.cos(a), r * Math.sin(a)); }
+    geo.computeVertexNormals(); return geo;
+  }
+  function tray() {
+    const g = new THREE.Group(), M = mats(), depth = TRAY.slots * TRAY.gap + 22;
+    const base = new THREE.Mesh(new THREE.BoxGeometry(TRAY.len + 40, 1.2, depth), M.tray); base.position.y = 0.6; base.receiveShadow = true; g.add(base);
+    for (let i = 0; i < TRAY.slots; i++) { const m = new THREE.Mesh(halfPipe(TRAY.len, TRAY.r), M.tray); m.position.set(0, 1.3, slotZ(i)); g.add(m); }
+    const rim = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(TRAY.len + 40, 6, depth)), new THREE.LineBasicMaterial({ color: 0x6f8f9b })); rim.position.y = 3; g.add(rim);
+    return g;
+  }
+  const slotZ = i => (i - (TRAY.slots - 1) / 2) * TRAY.gap;
+  function box(w, h, d, mat, x, y, z) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; return m; }
+  function stage() {
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1c262c); scene.fog = new THREE.Fog(0x1c262c, 700, 1500);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x55636a, 0.5));
+    const d = new THREE.DirectionalLight(0xffffff, 0.62); d.position.set(-140, 320, 180); d.castShadow = true;
+    d.shadow.mapSize.set(2048, 2048); Object.assign(d.shadow.camera, { left: -280, right: 280, top: 220, bottom: -220, near: 50, far: 800 }); d.shadow.bias = -0.0015; scene.add(d);
+    const t = new THREE.Mesh(new THREE.PlaneGeometry(1600, 1600), mats().table); t.rotation.x = -Math.PI / 2; t.receiveShadow = true; scene.add(t);
+    return scene;
+  }
+  // 단계 1~11 = 방문자가 책상에서 재현한 사진 1~11과 같은 장면
+  function step(n) {
+    const s = stage(), M = mats(); let cam = [-185, 125, 215], tgt = [0, 0, 0];
+    const put = (o, x, y, z) => { o.position.set(x || 0, y || 0, z || 0); s.add(o); return o; };
+    if (n === 1) { put(coil(), 14, 0, -17); put(coil(), 14, 0, 17); s.add(box(70, 46, 110, M.dark, -L / 2 - 18, 23, 0)); s.add(box(8, 14, 24, M.steel, -L / 2 + 18, 30, -17)); s.add(box(8, 14, 24, M.steel, -L / 2 + 18, 30, 17)); }
+    if (n === 2) { put(coil(), 0, 0, 0); const pv = new THREE.Group(), c = coil(); c.position.x = -L / 2 + P / 2; pv.add(c); pv.position.set(L / 2, 0.4, 0.5); pv.rotation.y = 0.075; s.add(pv);
+      [-1, 1].forEach(k => { const r = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 16, 20), M.steel); r.position.set(L / 2 - 55, 8, k * 12.5); r.castShadow = true; s.add(r); });
+      s.add(box(30, 4, 40, M.steel, L / 2 - 55, 18, 0)); cam = [215, 120, 200]; tgt = [30, 0, 0]; }
+    if (n === 3) { put(set()); cam = [-150, 95, 170]; }
+    if (n === 4) { put(set(), 0, 0, -20); put(set(), 0, 0, 20); }
+    if (n === 5) { put(set(), 0, 0, -20); put(flipped(set(M.wireB)), 0, 0, 20); }
+    if (n === 6) { put(set(), 0, 0, -6); const b = flipped(set(M.wireB)); b.rotation.x = 0.14; put(b, 0, 24, 4); const g = gripperBars(); put(g, 0, 24, 4); cam = [-190, 130, 230]; tgt = [0, 14, 0]; }
+    if (n === 7) { put(bundle()); cam = [L / 2 + 62, BH / 2 + 4, 0.01]; tgt = [L / 2 - 40, BH / 2, 0]; }
+    if (n === 8) { put(bundle()); cam = [L / 2 + 70, 42, 58]; tgt = [L / 2 - 50, 3, 0]; }
+    if (n === 9) { put(bundle()); cam = [-150, 95, 170]; }
+    if (n === 10) { put(tray(), 0, 0, -40); put(bundle(), 0, 0, 80); cam = [-170, 250, 330]; tgt = [0, 0, 20]; }
+    if (n === 11) { put(tray()); put(bundle(), 0, 2.5, slotZ(1)); cam = [-150, 230, 290]; }
+    return { scene: s, cam, tgt };
+  }
+  // 단순 그리퍼(긴 받침 두 쌍) — 6번 장면용
+  function gripperBars() {
+    const g = new THREE.Group(), M = mats(); g.add(box(L * 0.72, 5, 7, M.dark, 0, SH + 26, 0));
+    [-1, 1].forEach(k => { g.add(box(5, 22, 5, M.dark, k * L * 0.3, SH + 14, 0)); [-1, 1].forEach(j => g.add(box(26, 12, 1.6, M.accent, k * L * 0.3, SH / 2 + 2, j * (SW / 2 + 1.2)))); });
+    return g;
+  }
+  function camera(aspect, cam, tgt, fov) { const c = new THREE.PerspectiveCamera(fov || 30, aspect, 1, 3000); c.position.set(...cam); c.lookAt(...tgt); return c; }
+  // 한 번에 여러 장면을 그림(JPEG data URL)으로 뽑는다.
+  function renderSteps(steps, w, h, builder) {
+    const r = new THREE.WebGLRenderer({ antialias: true }); r.setPixelRatio(1); r.setSize(w, h); r.outputEncoding = THREE.sRGBEncoding; r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
+    const out = {};
+    steps.forEach(n => { const st = (builder || step)(n); r.render(st.scene, camera(w / h, st.cam, st.tgt, st.fov)); out[n] = r.domElement.toDataURL("image/jpeg", 0.86); });
+    r.dispose(); if (r.forceContextLoss) r.forceContextLoss(); return out;
+  }
+  // 돌려 볼 수 있는 뷰어
+  function viewer(canvas, builder) {
+    const r = new THREE.WebGLRenderer({ canvas, antialias: true }); r.outputEncoding = THREE.sRGBEncoding; r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
+    let st, cam, ctl, tick = null;
+    const fit = () => { const w = canvas.clientWidth, h = canvas.clientHeight; r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); r.setSize(w, h, false); if (cam) { cam.aspect = w / h; cam.updateProjectionMatrix(); } draw(); };
+    const draw = () => { if (st) { if (tick) tick(st); r.render(st.scene, cam); } };
+    function show(n, arg) {
+      st = (builder || step)(n, arg); cam = camera(canvas.clientWidth / canvas.clientHeight, st.cam, st.tgt, st.fov);
+      if (ctl) ctl.dispose();
+      if (THREE.OrbitControls) { ctl = new THREE.OrbitControls(cam, canvas); ctl.target.set(...st.tgt); ctl.maxPolarAngle = Math.PI / 2 - 0.02; ctl.update(); ctl.addEventListener("change", draw); }
+      fit();
+    }
+    window.addEventListener("resize", fit);
+    return { show, draw, get state() { return st; }, onTick(f) { tick = f; } };
+  }
+  const centerline = n => (loopGeo(), _curve.getSpacedPoints(n));   // 한 피치 철사 중심선(간섭 검사용)
+  return { centerline, P, N, L, W, H, R, SETP, SW, SH, BW, BH, TRAY, mats, coil, bent, set, flipped, bundle, tray, slotZ, box, stage, step, camera, renderSteps, viewer };
+})();
+
+/*COILSIM-END*/
+(() => {
+  const S = window.CoilSim; if (!window.THREE || !S) return;
+  const { BW: W, BH: H, L, R } = S, PLATE   /* 집는 대상 = 4개 묶음 겉치수 */ = 300, HINGE = [0, 86, 9];
+  function jFinger(mat, sign) {            // 단면(z,y)을 X로 300 뽑은 J자 핑거. sign=-1 고정쪽, +1 움직이는 쪽
+    const ri = W / 2 + 1.2, ro = ri + 2.6, cy = ri + 0.4, sh = new THREE.Shape(), pts = [];
+    for (let a = 180; a <= 248; a += 4) pts.push([ro * Math.cos(a * Math.PI / 180), cy + ro * Math.sin(a * Math.PI / 180)]);
+    for (let a = 248; a >= 180; a -= 4) pts.push([ri * Math.cos(a * Math.PI / 180), cy + ri * Math.sin(a * Math.PI / 180)]);
+    pts.push([-ri, 34], [-ro, 34]);
+    pts.forEach((p, i) => i ? sh.lineTo(p[0], p[1]) : sh.moveTo(p[0], p[1]));
+    const g = new THREE.ExtrudeGeometry(sh, { depth: PLATE, bevelEnabled: false }); g.translate(0, 0, -PLATE / 2);
+    const m = new THREE.Mesh(g, mat); m.rotation.y = Math.PI / 2; m.scale.x = sign < 0 ? -1 : 1; m.castShadow = true;   // local x → world -z
+    const w = new THREE.Group(); w.add(m); return w;
+  }
+  function build(opt, openDeg) {
+    const scene = S.stage(), M = S.mats(), side = new THREE.MeshStandardMaterial({ color: opt === "A" ? 0xfbf6e6 : 0xe0863a, roughness: 0.8, side: THREE.DoubleSide });
+    const b = S.bundle(); scene.add(b);
+    const arm = new THREE.Group(); scene.add(arm);
+    arm.add(S.box(46, 34, 40, M.dark, 0, HINGE[1] + 22, 2));                                   // 손목
+    const zf = -(W / 2 + (opt === "A" ? 5.6 : 4.4));
+    arm.add(S.box(24, 78, 5, M.steel, 0, HINGE[1] - 39, zf - (opt === "A" ? 2.6 : 0)));       // 고정 집게
+    const pv = new THREE.Group(); pv.position.set(...HINGE); arm.add(pv);                      // 움직이는 집게(회전축 = X)
+    const zm = W / 2 + (opt === "A" ? 5.6 : 4.4) - HINGE[2];
+    pv.add(S.box(24, 78, 5, M.steel, 0, -39, zm + (opt === "A" ? 2.6 : 0)));
+    const ax = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 30, 16), M.accent); ax.rotation.z = Math.PI / 2; ax.position.set(...HINGE); arm.add(ax);
+    if (opt === "A") {
+      const p1 = S.box(PLATE, 46, 5, side, 0, 23 + 1, -(W / 2 + 2.6)); arm.add(p1);
+      const p2 = S.box(PLATE, 46, 5, side, 0, 24 - HINGE[1], W / 2 + 2.6 - HINGE[2]); pv.add(p2);
+    } else {
+      arm.add(S.box(34, 30, 11, side, 0, 44, zf)); pv.add(S.box(34, 30, 11, side, 0, 44 - HINGE[1], zm));   // 슬리브
+      [-1, 1].forEach(k => { const s1 = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 13, 10), M.dark); s1.rotation.x = Math.PI / 2; s1.position.set(k * 10, 44, zf); arm.add(s1);
+        const s2 = s1.clone(); s2.position.set(k * 10, 44 - HINGE[1], zm); pv.add(s2); });
+      const f1 = jFinger(side, -1); f1.position.y = 0.2; arm.add(f1);
+      const f2 = jFinger(side, 1); f2.position.set(0, 0.2 - HINGE[1], -HINGE[2]); pv.add(f2);
+    }
+    pv.rotation.x = -(openDeg || 0) * Math.PI / 180;
+    return { scene, cam: [340, 125, 160], tgt: [10, 22, 0], pv };
+  }
+  try {
+    const urls = S.renderSteps(["A", "B"], 800, 600, o => { const st = build(o, 9); st.cam = [330, 115, 150]; return st; });
+    document.getElementById("imgA").src = urls.A; document.getElementById("imgB").src = urls.B;
+    const v = S.viewer(document.getElementById("gv"), build), ang = document.getElementById("ang"), angv = document.getElementById("angv"), gapv = document.getElementById("gapv");
+    let opt = "A";
+    const upd = () => { const d = +ang.value; v.state.pv.rotation.x = -d * Math.PI / 180; angv.textContent = d.toFixed(1) + "°";
+      gapv.textContent = "판 아래쪽이 약 " + (Math.tan(d * Math.PI / 180) * 86).toFixed(0) + "mm 더 벌어짐"; v.draw(); };
+    document.querySelectorAll("[data-opt]").forEach(b => b.addEventListener("click", () => { opt = b.dataset.opt;
+      document.querySelectorAll("[data-opt]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); v.show(opt, +ang.value); upd(); }));
+    ang.addEventListener("input", upd); v.show("A", 0); upd();
+  } catch (e) { console.error(e); document.getElementById("gapv").textContent = "이 브라우저에서는 3D를 그릴 수 없다(WebGL 필요)."; }
+})();
+</script>

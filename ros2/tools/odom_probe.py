@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """엔코더 없이 몸체 움직임을 얼마나 아나 — 펄스마다 Astra 전후 두 장 ICP + IMU 회전·진동.
     ~/lerobot/.venv/bin/python ros2/tools/odom_probe.py      (조작대가 주행 포트를 안 쥔 때)
-결과 해석 = docs/space-map.md "엔코더 없는 몸체 움직임".  ⚠ 바퀴가 움직인다 — 정면 70cm 안이면 전진은 건너뛴다."""
+결과 해석 = docs/2026-10-22_공간지도-집안탐색/2026-10-22_space-map.md "엔코더 없는 몸체 움직임".  ⚠ 바퀴가 움직인다 — 정면 70cm 안이면 전진은 건너뛴다."""
 import sys, os, time, json, math
 import numpy as np
 R = os.path.expanduser("~/tomato-picker")
