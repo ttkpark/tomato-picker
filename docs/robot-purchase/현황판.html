@@ -1,0 +1,202 @@
+<title>로봇팔 구매 현황</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* 배치: 맨 위 비교표 → 업체별 카드(담당·시간순 기록·받은 자료·남은 것) → 할 일. 공유용이라 한 단. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --fg:#17202b; --muted:#5b6777; --line:#d9dee6;
+  --accent:#0f5fa8; --ok:#1f7a4d; --warn:#9a6700; --stop:#a3261d; --chip:#eef2f7;
+  --sans:"Pretendard","Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#12161c; --surface:#1b212a; --fg:#e7ecf2; --muted:#9aa6b6; --line:#313a47;
+  --accent:#6db3f2; --ok:#6fd3a0; --warn:#e3b341; --stop:#f0958d; --chip:#242c38; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#12161c; --surface:#1b212a; --fg:#e7ecf2; --muted:#9aa6b6; --line:#313a47;
+  --accent:#6db3f2; --ok:#6fd3a0; --warn:#e3b341; --stop:#f0958d; --chip:#242c38; color-scheme:dark }
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:16px;line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 56px}
+main{max-width:920px;margin:0 auto;display:flex;flex-direction:column;gap:26px}
+h1{font-size:1.5rem;margin:0;line-height:1.25}
+h2{font-size:1.2rem;margin:0}
+h3{font-size:.85rem;margin:0 0 4px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;font-weight:700}
+p{margin:0}
+.lede{color:var(--muted)}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:.8rem;letter-spacing:.03em}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px 22px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.head{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline}
+.chip{display:inline-block;background:var(--chip);border-radius:999px;padding:2px 10px;font-size:.8rem;color:var(--muted)}
+.chip.ok{color:var(--ok)} .chip.warn{color:var(--warn)} .chip.stop{color:var(--stop)}
+.who{color:var(--muted);font-size:.9rem}
+ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:7px}
+.tl{list-style:none;padding:0}
+.tl li{display:grid;grid-template-columns:7.6em 1fr;gap:12px;padding:3px 0;border-bottom:1px dashed var(--line)}
+.tl li:last-child{border-bottom:0}
+.tl li b{font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
+.two{display:grid;grid-template-columns:1.15fr 1fr;gap:22px}
+@media (max-width:640px){.two{grid-template-columns:1fr}.tl li{grid-template-columns:1fr}}
+.docs li{overflow-wrap:anywhere}
+code{font-family:ui-monospace,Consolas,monospace;font-size:.8em;background:var(--chip);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+.tl li span{min-width:0}
+.open{border-left:3px solid var(--warn);padding-left:10px}
+.status{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;border-top:1px solid var(--line);padding-top:14px;margin-top:4px}
+.status>div:nth-child(1) h3{color:var(--stop)} .status>div:nth-child(2) h3{color:var(--ok)} .status>div:nth-child(3) h3{color:var(--accent)}
+.status.one>div h3{color:var(--warn)}
+.status>div{min-width:0;display:flex;flex-direction:column;gap:6px}
+.status.one{grid-template-columns:1fr}
+@media (max-width:720px){.status{grid-template-columns:1fr}}
+a{color:var(--accent)}
+</style>
+
+<main>
+  <header>
+    <h1>로봇팔 구매 현황</h1>
+    <p class="lede">포너즈 · 책 제본 코일 포장 자동화용 로봇팔 1대. 2026-11-20 17:10 기준, 업체별로 담당·오간 내용·받은 자료·남은 것을 모았습니다. 녹취·PDF 원본은 저장소 <code>docs/robot-purchase/</code>에 있습니다 (README.md가 입구).</p>
+  </header>
+
+  <section class="card">
+    <h2>한눈에</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>후보</th><th>가격 (부가세 포함)</th><th>납기</th><th>Jetson(리눅스) 제어</th><th>상태</th></tr></thead>
+      <tbody>
+        <tr><td><b>Dobot MG400</b> — 로보게이츠</td><td>4,312,000원 (견적서 -05)</td><td>데모 장비 입금 후 2~3일 → 신품 한 달 뒤 교체</td><td>됨 (TCP/IP, 공개 프로토콜)</td><td><span class="chip ok">1순위</span></td></tr>
+        <tr><td><b>Epson T3-B401S</b> — DH오토메이션</td><td><b>8,580,000원</b> (로봇만, 11/20 견적). API 110만·셋업지원 55만/일은 선택</td><td>메일: 재고 있어 원하는 날짜 출고 가능 / 견적서 비고: 발주 후 8~12주 — <b>상충, 확인 필요</b>. 출하 전 전액 현금</td><td>됨 — "API 불필요" 대리점 서면 확답(11/20). 로봇 프로그램도 대리점이 작성해 줌</td><td><span class="chip ok">견적 받음</span></td></tr>
+        <tr><td><b>HITBOT Z-Arm 1832</b> — 제조사 직접</td><td>$2,900 + 운송 $380 + 세금 (약 490만 추정)</td><td>재고 있음, 출고·운송 일수 미답</td><td><b>안 됨</b> — SDK가 x86 전용. ARM64 빌드 문의 메일 발송(11/19 17:38), 답 대기</td><td><span class="chip warn">조건부</span></td></tr>
+        <tr><td>디지시스(이노서브)</td><td>—</td><td>—</td><td>—</td><td><span class="chip stop">제외</span> 재고 없음·취급 안 함</td></tr>
+        <tr><td>UFactory</td><td>—</td><td>—</td><td>—</td><td><span class="chip stop">제외 예정</span> 무응답</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="card">
+    <div class="head"><h2>㈜로보게이트 — Dobot MG400</h2><span class="chip">Dobot 공식 리셀러</span></div>
+    <p class="who">고객지원실 · help@robogates.com · 070-4814-0501 · 참조 이창우(cw.lee@robogates.com) · 군포 IT밸리</p>
+    <div class="two">
+      <div>
+        <h3>오간 내용</h3>
+        <ul class="tl">
+          <li><b>11/18 14:40</b><span>견적 문의 → 14:47 답: 납기 약 한 달, 사양 질문</span></li>
+          <li><b>11/18 15:03</b><span>MG400 본체만, 질문 4개 → 16:54 답: 데모 장비 선출고 가능, 부가세 포함 427만, 명함 요청</span></li>
+          <li><b>11/19 08:54</b><span>명함·동작 설명·그리퍼 계획·끝단 도면 요청</span></li>
+          <li><b>11/19 15:27</b><span>답: 견적서(-02), 데모 입금 후 2~3일, "튼튼해서 무리 없을 것", J4 30W, 500g 이내 SW 설정, 플랜지 도면은 홈페이지</span></li>
+          <li><b>11/19 16:37</b><span>질문 5개: 데모 조건 문서화, 고장 책임 범위, 공장 반복 사용 시 보증, 홈페이지가 차이, 발주 서류</span></li>
+          <li><b>11/19 17:23</b><span>답: 견적서(-05) 비고에 데모 무상 대여 명기, 견적가는 데모 대여 감안, 회수 배송 자부담, 신품 입금 후 한 달, MTBF 2만 시간 인증서, AS 동의서 날인 요청, 사업자등록증 요청</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3>받은 자료</h3>
+        <ul class="docs">
+          <li>견적서 RGQ20261119DOBOT-02 (15:27) — <code>quotes/robogates/</code></li>
+          <li>견적서 RGQ20261119DOBOT-05 (17:23) — 공급가 392만 + VAT 39.2만 = <b>431.2만</b>, 선금 100%, 유효 30일, 납품 발주 후 30일, 비고: 무상 유지보수 1년 / <b>구매품 도착 전까지 데모 장비 무상 대여(발주 후 2~3일)</b> / 24×365 기술지원 / 연 1회 교육</li>
+          <li>AS 정책 동의서 (RG-AS-동의서-2026111902) — Dobot 보증 1년(제조 결함), 출장비·부품비 실비, <b>무상 종료 후 연 60만원(VAT 별도) 유상 유지보수 계약 조항 포함</b>, 날인 요청</li>
+          <li>MG400 신뢰성 인증서 (SRI-A-21017-E, 2022-01) — <b>MTBF 20,000시간</b>, 국가로봇시험평가센터</li>
+          <li>플랜지 도면 — Ø40 H7, 턱 Ø22, M3×4 PCD30, 핀 Ø3 (<code>media/robots/mg400_flange_drawing.png</code>)</li>
+        </ul>
+      </div>
+    </div>
+    <div class="status">
+      <div><h3>미해결</h3><ul class="open"><li>데모 장비 고장 시 책임 범위. 16:37 질문에 답 없음. 남은 문구는 "고객 과실 추정, 손망실 약 200만"(15:27)뿐. 발주 전 명백한 과실 한정으로 확답 필요</li></ul></div>
+      <div><h3>해결·확인됨</h3><ul><li>공장 반복 사용 시 보증 — MTBF 20,000시간 인증서 + "무상 1년 적용" 답(17:23). 사양에 가동 시간 제한 없음. 메일에 한 줄 확인만</li><li>데모 대여 조건 — 견적서 -05 비고에 명기, 입금 후 2~3일, 회수 배송 자부담</li><li>신품 입고 — 입금일로부터 한 달</li></ul></div>
+      <div><h3>우리 쪽 결정</h3><ul><li>AS 동의서 날인 — 2년 차부터 연 60만원(VAT 별도) 유상 유지보수 조항. 짱짱맨 결재</li><li>사업자등록증·계산서 수신 메일 전달 — 기종 확정 후</li></ul></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="head"><h2>한국엡손 / ㈜디에이치 오토메이션 — Epson T3-B401S</h2><span class="chip">엡손 대리점 (T3 재고 보유)</span></div>
+    <p class="who">엡손 박민규 · 대리점 최현수 과장 · 010-8649-1558 · hschoi@dhauto.kr · 용인 기흥</p>
+    <div class="two">
+      <div>
+        <h3>오간 내용</h3>
+        <ul class="tl">
+          <li><b>11/18 14:31</b><span>엡손(master@epson.co.kr)에 견적·납기 문의 메일</span></li>
+          <li><b>11/19 09:24</b><span>엡손 박민규 통화: 대리점 통해서만 판매, 12월 첫 주 납기는 T3만 가능, 보증 1년, 수리는 엡손 직접 2~3일, 듀티(권장 가동 시간) 있음 → 대리점 이관</span></li>
+          <li><b>11/19 16:09</b><span>DH 최현수 통화: 다음 주 월·화 미팅 요청. 사유 = 데모 장비 건에 엡손 직원 동석 필요. 우리 사무실 방문 가능</span></li>
+          <li><b>11/19 16:30</b><span>문자: 결정권자 출장이라 미팅은 그 뒤로, 견적·컨트롤러 포함 여부·리눅스 TCP/IP 가능 여부 메일 요청 → "금일 공유"</span></li>
+          <li><b>11/19 16:35</b><span>대리점 문자: 외부 제어(파이썬)에는 API 라이선스 필요 / RC+ 프로그램 쓰면 Modbus로 가능</span></li>
+          <li><b>11/19 17:03</b><span>통화: RC+로 내부 프로그램 작성 + 외부에서 Remote Ethernet/Modbus = <b>라이선스 불필요</b>, RC+ 안 쓰고 외부가 전부 제어 = API 유료. 통화 끝에 "API"라고 답해 오해 소지 → 17:32 문자로 정정</span></li>
+          <li><b>11/19 17:20</b><span>대리점: 견적 발행용 사업자등록증 요청 (hschoi@dhauto.kr)</span></li>
+          <li><b>11/20 08:00</b><span>사업자등록증 송부 + 견적 요청 메일 (로봇 본체 기준, API 불필요 확인, 12월 둘째 주 수령 목표)</span></li>
+          <li><b>11/20 11:25</b><span>답: 견적서(로봇 858만 VAT 포함 / API 110만 / 셋업 55만·일), SW 포함, 출하 전 전액 현금, 재고 있어 원하는 날짜 출고 가능, <b>API 불필요 맞음</b>, 로봇 프로그램 별도 작성해 송부 예정, LAN 포트·매뉴얼·RC+ 7.5.4 설치 파일 링크(12/20까지)</span></li>
+          <li><b>11/20 11:43</b><span>T시리즈 매뉴얼 별도 메일</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3>받은 자료 · 근거</h3>
+        <ul class="docs">
+          <li>녹취 3건 — <code>calls/통화 01092206831_261119_091751.txt</code>, <code>…01086491558_261119_160143.txt</code>, <code>…01086491558_261119_165143.txt</code></li>
+          <li>Epson RC+ 7.0 User's Guide Ver.7.5 — §11.7.1 "Modbus TCP·RTU는 기본 기능", §12.2 Remote Ethernet(TCP/IP 원격 명령) — <a href="https://download.epson.biz/robots/ww/data/pdf/en/EPSONRC+UsersGuide75.pdf">PDF</a></li>
+          <li>제품 사진 — <code>media/robots/3_epson_t3b.png</code></li>
+          <li>견적서 2026/11/20-8 — T3-B401S 컨트롤러 내장형 780만 + VAT = <b>858만</b>, RC+ API 7.0 License 100만(+VAT, 선택), 국내 셋업지원 50만/일(+VAT, 선택). 케이블 5m 연장 불가. 사양 정격 1kg/최대 3kg, 400mm, Z 150mm, ±0.02mm — <code>quotes/dhauto/</code></li>
+          <li>매뉴얼 — T-B 로봇 매뉴얼, EPSON RC+ User Manual(Remote Ethernet 435쪽), RC7.0 설치 매뉴얼 — <code>quotes/dhauto/</code>, Downloads</li>
+        </ul>
+      </div>
+    </div>
+    <div class="status">
+      <div><h3>미해결</h3><ul class="open"><li>납기 상충 — 메일은 "재고 있어 원하는 날짜 출고", 견적서 비고는 "발주 후 8~12주". 발주 전 출고일을 날짜로 서면 확답</li><li>데모 장비 선수령 — 가능성 있음(엡손 협조), 조건 미정. 재고 즉시 출고면 필요 없음</li></ul></div>
+      <div><h3>해결·확인됨</h3><ul><li>API 라이선스 불필요 — 서면 확답</li><li>제어: Jetson ↔ 로봇 LAN, Modbus/Remote Ethernet. 로봇 쪽 프로그램은 대리점이 작성해 줌</li><li>가격 858만(로봇만), SW 포함, 출하 전 전액 현금</li></ul></div>
+      <div><h3>우리 쪽 결정</h3><ul><li>MG400(431.2만) 대비 1.99배 — 기준선(2배) 안쪽. 신품·산업용·즉시 출고·수리 2~3일 vs 가격 427만 차이</li><li>셋업지원 1일(55만) 쓸지</li></ul></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="head"><h2>HITBOT (Huiling-tech) — Z-Arm 1832</h2><span class="chip">제조사 직접, 한국 대리점 없음</span></div>
+    <p class="who">Simon Chen, Global Sales Director · simon@hitbot.cc · 선전</p>
+    <div class="two">
+      <div>
+        <h3>오간 내용</h3>
+        <ul class="tl">
+          <li><b>11/18 14:59</b><span>1632/2442 견적 문의 (영문)</span></li>
+          <li><b>11/18 18:11</b><span>답: 1632→1832 교체, 1832 $2,900 / 2442 $3,900, 2~3주, 보증 1년, 연속 4만 시간, 윈도 SDK(리눅스는 예제), 설명서 PDF 첨부</span></li>
+          <li><b>11/19 09:32</b><span>[v3] 추가 질문: 운송, ARM64 리눅스, 그리퍼 계획, 24시간, 수리·결제</span></li>
+          <li><b>11/19 10:23</b><span>답: 1832 재고 있음, EXW, 운송 $380, 리눅스 Python SDK(드라이브), 최대 1kg, 24시간 가능, 100% T/T 선입금</span></li>
+          <li><b>11/19 16시</b><span>SDK 확인: <code>libsmall_scara_interface.so</code>가 <b>x86-64</b> → Jetson(aarch64) 불가. ARM64 빌드·프로토콜 문서 요청 메일 발송 (17:38)</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3>받은 자료</h3>
+        <ul class="docs">
+          <li>Z-Arm 1832 / 2442 제품 설명서 PDF — 1832: 팔 320mm, 0.5kg(최대 1kg), ±0.02mm, 권장 관성 0.002 kg·m², 플랜지 Ø60·M3×6 — <code>C:\Users\parkg\Downloads\</code></li>
+          <li>리눅스 Python SDK (HitbotInterface.py + .so + API PDF) — <code>sdk/hitbot/</code></li>
+          <li>제품 사진 — <code>media/robots/2_hitbot_zarm1832.png</code></li>
+        </ul>
+      </div>
+    </div>
+    <div class="status one"><div><h3>남은 것</h3><ul class="open"><li>ARM64 빌드 또는 프로토콜 문서 — 없으면 제외</li>
+          <li>재고품 출고 일수·운송 일수, 수리 절차, Z-EFG-8S 그리퍼 견적</li></ul></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="head"><h2>디지시스(주) / 이노서브 쇼핑몰 — Dobot MG400</h2><span class="chip stop">종료</span></div>
+    <p class="who">전인호 프로 · 1600-4758 · info@digisys.co.kr</p>
+    <ul class="tl">
+      <li><b>11/18~19</b><span>카톡 채널 문의(4문항) → B2B 담당 통화 요청</span></li>
+      <li><b>11/19 17시</b><span>통화: MG400 재고 없음, 현재 취급 안 함, 납품 불가. 쇼핑몰 표시가 395만원은 구매 불가 — <code>calls/통화 디지시스_261119_1700.txt</code></span></li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <div class="head"><h2>UFactory — Lite 6 / xArm 5</h2><span class="chip stop">제외 예정</span></div>
+    <p class="who">sales@ufactory.cc</p>
+    <ul class="tl"><li><b>11/18 15:01</b><span>견적 문의 (영문) → 답 없음</span></li></ul>
+  </section>
+
+  <section class="card">
+    <h2>앞으로 할 일</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>언제</th><th>할 일</th><th>누가</th></tr></thead>
+      <tbody>
+                <tr><td>오늘·내일</td><td>짱짱맨께 포너즈 사업자등록증 요청 → DH오토메이션(hschoi@dhauto.kr)에 전달 (엡손 견적 발행 조건)</td><td>호이 → 짱짱맨</td></tr>
+        <tr><td>답 오면</td><td>DH오토메이션 "API 불필요" 확답 확인, 엡손 견적·출고일 수령</td><td>호이</td></tr>
+        <tr><td>엡손 견적 후</td><td>MG400 vs 엡손 비교표 → 짱짱맨 보고 → 기종 확정 (기준: 엡손이 MG400의 2배 이내면 엡손)</td><td>호이 → 짱짱맨</td></tr>
+        <tr><td>MG400으로 갈 때</td><td>로보게이츠에 데모 장비 고장 책임 범위 문서화 요청 → AS 동의서(연 60만 유상 조항) 결재 → 사업자등록증 전달 → 발주·입금</td><td>호이 → 짱짱맨</td></tr>
+        <tr><td>엡손으로 갈 때</td><td>데모 장비 조건(기간·비용·책임) 메일로 확인 또는 출장 뒤 미팅 → 발주</td><td>호이</td></tr>
+        <tr><td>이번 주</td><td>손 시험: 집게를 수직으로만 들고 4개 묶음을 트레이에 넣기 (4축 확정 근거, 영상)</td><td>호이</td></tr>
+        <tr><td>이번 주</td><td>그리퍼 공통 몸체 설계 시작 (SO-101 집게 기반), PGE-2 vs 서보 자작 예산 질문</td><td>호이</td></tr>
+        <tr><td>로봇 도착 후 첫날</td><td>Jetson에서 TCP/Modbus 연결 확인, 소프트웨어에 실제 하중 설정, 손가락 연결판 출력</td><td>호이</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+</main>
